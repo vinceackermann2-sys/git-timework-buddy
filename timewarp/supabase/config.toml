@@ -1,0 +1,10 @@
+project_id = "mrqoeywofslgnquvzhuf"
+
+[functions.timewarp-energy]
+verify_jwt = false
+
+[functions.stripe-billing]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false

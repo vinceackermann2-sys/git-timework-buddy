@@ -1,0 +1,34 @@
+{
+  "name": "timewarp-energy-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Timewarp local desktop harness with cloud authentication, models, billing and chat history",
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "test:portable": "node scripts/test-portable.cjs",
+    "verify:cloud-source": "node scripts/verify-cloud-source.cjs",
+    "test:email": "deno test --allow-env --config supabase/functions/auth-email-hook/deno.json tests/email.test.ts",
+    "preview:emails": "deno run --allow-env --allow-write=reports/email-previews --config supabase/functions/auth-email-hook/deno.json scripts/preview-emails.ts",
+    "verify:email-layout": "node scripts/verify-email-layout.cjs",
+    "check": "node --check desktop/runtime.cjs && node --check desktop/auth.cjs && node --check desktop/auth-ui.js && node --check desktop/organization-gate.js && node --check desktop/bridge.cjs && node --check desktop/ai-funding.cjs && node --check desktop/product-bridge.cjs && node --check desktop/local-history.cjs && node --check desktop/native-billing.js && node --check scripts/build.cjs && node --check desktop/chatgpt.cjs && node --check desktop/codex-funding.cjs && node --check desktop/composio.cjs && node --check desktop/mascots.cjs && node --check desktop/protected-store.cjs && node --check scripts/build-icons.cjs",
+    "build": "node scripts/build.cjs",
+    "build:icons": "node scripts/build-icons.cjs",
+    "verify:build": "node scripts/verify-build.cjs",
+    "verify:contracts": "node scripts/verify-contracts.cjs",
+    "verify:appearance": "node scripts/verify-appearance.cjs",
+    "verify:auth-layout": "node scripts/verify-auth-appearance.cjs",
+    "verify:hosted-auth-branding": "node scripts/verify-hosted-auth-branding.cjs",
+    "verify:agents": "node scripts/verify-agents.cjs",
+    "verify:workspace": "node scripts/verify-workspace.cjs",
+    "verify:oauth": "node scripts/verify-google-oauth.cjs",
+    "verify:branded-auth": "node scripts/verify-branded-google.cjs",
+    "dev": "node scripts/dev.cjs",
+    "verify:organizations": "node scripts/verify-organizations.cjs"
+  },
+  "devDependencies": {
+    "@electron/asar": "4.0.1",
+    "@resvg/resvg-js": "2.6.2",
+    "acorn": "8.15.0",
+    "sharp": "0.35.5"
+  }
+}

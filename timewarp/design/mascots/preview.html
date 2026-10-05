@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Timewarp mascots</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #e4ecf8; color: #1d2433; }
+  section { padding: 24px 32px; }
+  section.dark { background: #15161c; color: #e8eaf2; }
+  h2 { font-size: 13px; font-weight: 600; margin: 0 0 16px; opacity: .7; }
+  .row { display: flex; align-items: center; gap: 28px; margin-bottom: 18px; }
+  .row b { width: 64px; font-weight: 500; }
+  .sidebar { display: flex; flex-direction: column; gap: 10px; }
+  .sidebar span { display: flex; align-items: center; gap: 10px; }
+  img { object-fit: contain; }
+</style>
+<section><h2>App avatar sizes (animated) · light</h2><div id="light"></div></section>
+<section class="dark"><h2>App avatar sizes (animated) · dark</h2><div id="dark"></div></section>
+<section><h2>Icons · transparent and badge</h2><div id="icons"></div></section>
+<script>
+  const names = ['orbit', 'nova', 'cosmo'];
+  const sizes = [14, 16, 20, 24, 36, 40, 80, 160];
+  for (const id of ['light', 'dark'])
+    document.getElementById(id).innerHTML = names.map(n => `<div class="row"><b>${n}</b>` +
+      sizes.map(s => `<img src="../../assets/mascots/${n}.png" width="${s}" height="${s}">`).join('') + '</div>').join('') +
+      `<div class="sidebar">${names.map(n => `<span><img src="../../assets/mascots/${n}.png" width="24" height="24">${n[0].toUpperCase() + n.slice(1)} assistant</span>`).join('')}</div>`;
+  document.getElementById('icons').innerHTML = names.map(n => `<div class="row"><b>${n}</b>` +
+    [16, 24, 32, 48, 64, 128].map(s => `<img src="icons/${n}/${n}-${s}.png" width="${s}">`).join('') +
+    [16, 24, 32, 48, 64, 128].map(s => `<img src="icons/${n}/${n}-badge-${s}.png" width="${s}">`).join('') + '</div>').join('');
+</script>

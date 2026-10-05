@@ -1,0 +1,26 @@
+.timewarp-agent-avatar { display: grid; justify-items: center; gap: 12px; }
+.timewarp-agent-avatar-preview { width: 112px; height: 112px; }
+.timewarp-mascot-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  max-width: 330px;
+}
+.timewarp-mascot-option {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border: 2px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-size: 13px;
+  cursor: pointer;
+}
+.timewarp-mascot-option:hover { background: var(--color-muted); }
+.timewarp-mascot-option[aria-pressed="true"] { border-color: var(--color-primary); background: var(--color-accent); }
+.timewarp-mascot-option:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 3px; }
+.timewarp-mascot-option:disabled { opacity: .5; cursor: default; }
+.timewarp-mascot-image { width: 64px; height: 64px; object-fit: contain; }
