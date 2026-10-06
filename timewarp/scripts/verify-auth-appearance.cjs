@@ -53,6 +53,15 @@ if(process.versions.electron){
       await evaluate('document.querySelector("input[type=email]").value="fixture@example.com";document.querySelector("form").requestSubmit()');console.log('Email form submitted');
       assert.equal(await evaluate('window.authCalls.some(call=>call.action==="sendOtp")'),true);
       assert.equal(await evaluate('document.querySelector("input[autocomplete=one-time-code]")!==null'),true);
+      await evaluate('Date.now=()=>new Date().getTime()+61000;[...document.querySelectorAll("button")].find(node=>node.textContent.startsWith("Resend")).click()');
+      assert.equal(await evaluate('window.authCalls.filter(call=>call.action==="sendOtp").length'),2,'Resending a sign-in code sends another sign-in email');
+      assert.equal(await evaluate('window.authCalls.some(call=>call.action==="resendConfirmation")'),false,'Sign-in codes must not use signup resends');
+      await evaluate('document.querySelector("input[autocomplete=one-time-code]").value="01234-56789";document.querySelector("input[autocomplete=one-time-code]").dispatchEvent(new Event("input"));document.querySelector("form").requestSubmit()');
+      assert.equal(await evaluate('window.authCalls.find(call=>call.action==="verifyOtp")?.input.code'),'0123456789','Grouped codes submit with leading zeroes preserved');
+      await load();
+      await evaluate('const original=window.timewarp.request;window.timewarp.request=async(action,input)=>action==="signUp"?(window.authCalls.push({action,input}),{confirmationRequired:true}):original(action,input);[...document.querySelectorAll("button")].find(node=>node.textContent==="Create account").click();document.querySelector("input[type=email]").value="fixture@example.com";document.querySelectorAll("input[type=password]").forEach(node=>node.value="Password123");document.querySelector("input[type=checkbox]").checked=true;document.querySelector("form").requestSubmit()');
+      await evaluate('Date.now=()=>new Date().getTime()+61000;[...document.querySelectorAll("button")].find(node=>node.textContent.startsWith("Resend")).click()');
+      assert.equal(await evaluate('window.authCalls.filter(call=>call.action==="resendConfirmation").length'),1,'Signup resends still send confirmation emails');
       console.log('Checking account dialog');await load();
       await evaluate('window.timewarpAuth.showAccount()');
       assert.equal(await evaluate('document.querySelector("dialog .timewarp-auth-brand img").complete'),true);

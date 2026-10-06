@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "timewarp-site",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["timewarp-site/preview.cjs"],
+      "port": 4178,
+      "url": "http://127.0.0.1:4178"
+    }
+  ]
+}

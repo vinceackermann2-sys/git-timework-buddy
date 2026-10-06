@@ -71,7 +71,20 @@ function createAuth({config,storage,fetcher=fetch,now=Date.now,onChange=async()=
     async sendOtp(address){const expected=newAttempt();await request(redirect('otp'),{email:email(address),create_user:false,...flow('email',expected)});return {sent:true};},
     async resendConfirmation(address){await request(redirect('resend'),{type:'signup',email:email(address)});return {sent:true};},
     async sendRecovery(address){const expected=newAttempt();await request(redirect('recover'),{email:email(address),...flow('recovery',expected)});return {sent:true};},
-    async verifyOtp(address,code,type='email'){if(!['email','recovery'].includes(type)||!/^\d{6,10}$/.test(String(code)))throw fail(400,'Enter the code from your email.');const expected=newAttempt();const value=await request('verify',{email:email(address),token:String(code),type});pending=null;storage.saveFlow(null);return commit({...value,_timewarpRecovery:type==='recovery'},expected);},
+    async verifyOtp(address,code,type='email'){
+      const token=String(code||'').replace(/[\s-]/g,'');
+      if(!['email','recovery'].includes(type)||!/^\d{6,10}$/.test(token))throw fail(400,'Enter the code from your email.');
+      const expected=generation,current=pending;
+      const value=await request('verify',{email:email(address),token,type});
+      if(expected!==generation)throw fail(401,'This sign-in was cancelled.');
+      validate(value);
+      // Invalid codes must leave the pending link usable. Only a successful
+      // verification cancels other in-flight sign-ins and consumes this flow.
+      const verified=newAttempt();
+      const result=await commit({...value,_timewarpRecovery:type==='recovery'},verified);
+      if(generation===verified&&pending===current){pending=null;storage.saveFlow(null);}
+      return result;
+    },
     async completeOAuth(code){
       if(!pending||pending.expires<=now()||pending.generation!==generation)throw fail(400,'Start sign-in again from Timewarp.');
       if(completing===pending)throw fail(400,'This sign-in is already being completed.');

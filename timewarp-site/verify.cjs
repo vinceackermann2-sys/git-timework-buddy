@@ -1,0 +1,82 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const source = fs.readFileSync(path.join(__dirname, 'dist/download.js'), 'utf8');
+
+function render(navigatorLike, downloads = { windows:null, mac:null }) {
+  class Element {
+    constructor(dataset = {}) { this.dataset = dataset; this.attributes = {}; this.events = {}; this.textContent = ''; this.innerHTML = ''; this.hidden = false; this.children = {}; }
+    setAttribute(key,value) { this.attributes[key] = value; }
+    removeAttribute(key) { delete this.attributes[key]; if (key === 'href') delete this.href; }
+    addEventListener(key,callback) { this.events[key] = callback; }
+    querySelector(selector) { return this.children[selector]; }
+    showModal() { this.open = true; }
+    close() { this.open = false; }
+    getBoundingClientRect() { return { left:0, right:100, top:0, bottom:100 }; }
+  }
+  const ids = new Map();
+  const get = id => { if (!ids.has(id)) ids.set(id,new Element()); return ids.get(id); };
+  const actions = [new Element(),new Element(),new Element()];
+  actions.forEach(action => { action.children = { '.download-label':new Element(), '.os-icon':new Element() }; action.href = '#download'; });
+  const alts = [new Element(),new Element()];
+  alts.forEach(alt => { alt.hidden = true; });
+  const platforms = ['windows','mac'].map(platform => new Element({platform}));
+  const elements = { '.dialog-close':new Element(), '.availability-note':new Element() };
+  const selectors = { '[data-platform]':platforms, '.download-action':actions, '.alt-download':alts };
+  const location = { href:'about:blank' };
+  const context = { navigator:navigatorLike, window:{ TIMEWARP_DOWNLOADS:downloads, location }, document:{ querySelector:selector => elements[selector], querySelectorAll:selector => selectors[selector] || [], getElementById:get }, URL };
+  vm.runInNewContext(source,context);
+  return { actions,alts,platforms,get,elements,location };
+}
+
+const windows = { platform:'Win32',userAgent:'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',maxTouchPoints:0 };
+const mac = { platform:'MacIntel',userAgent:'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',maxTouchPoints:0 };
+const cases = [
+  [windows,'Download for Windows','Also for macOS'],
+  [mac,'Download for macOS','Also for Windows'],
+  [{userAgentData:{platform:'macOS'},userAgent:'',maxTouchPoints:0},'Download for macOS','Also for Windows'],
+  [{userAgentData:{platform:'Windows'},userAgent:'',maxTouchPoints:0},'Download for Windows','Also for macOS'],
+  [{platform:'MacIntel',userAgent:'Mozilla/5.0 (Macintosh)',maxTouchPoints:5},'Get Timewarp','Windows & macOS'],
+  [{platform:'iPhone',userAgent:'Mozilla/5.0 (iPhone)',maxTouchPoints:5},'Get Timewarp','Windows & macOS'],
+  [{platform:'Linux armv8l',userAgent:'Mozilla/5.0 (Linux; Android 14)',maxTouchPoints:5},'Get Timewarp','Windows & macOS'],
+  [{platform:'Linux x86_64',userAgent:'Mozilla/5.0 (X11; Linux x86_64)',maxTouchPoints:0},'Get Timewarp','Windows & macOS'],
+  [{platform:'',userAgent:'',maxTouchPoints:0},'Get Timewarp','Windows & macOS']
+];
+for (const [nav,label,alt] of cases) {
+  const page = render(nav);
+  page.actions.forEach(action => { assert.equal(action.querySelector('.download-label').textContent,label); assert.match(action.querySelector('.os-icon').innerHTML,/<svg/); });
+  page.alts.forEach(button => { assert.equal(button.hidden,false); assert.equal(button.textContent,alt); });
+  page.actions[0].events.click({preventDefault(){}});
+  assert.equal(page.get('download-dialog').open,true);
+  assert.equal(page.get('platform-download').hidden,true);
+  assert.equal(page.elements['.availability-note'].textContent,'Download links coming soon');
+}
+
+const officialURLs = {windows:'https://downloads.example.test/Timewarp.exe',mac:'https://downloads.example.test/Timewarp.dmg'};
+for (const [nav,platform,otherPlatform] of [[windows,'windows','mac'],[mac,'mac','windows']]) {
+  const page = render(nav,officialURLs);
+  page.actions.forEach(action => { assert.equal(action.href,officialURLs[platform]); assert.equal(action.events.click,undefined); });
+  page.alts[0].events.click();
+  assert.equal(page.location.href,officialURLs[otherPlatform]);
+  assert.equal(page.elements['.availability-note'].textContent,'Available for Windows & macOS');
+}
+for (const invalid of ['javascript:alert(1)','http://downloads.example.test/setup.exe','not-a-url',null]) {
+  const page = render(windows,{windows:invalid});
+  assert.equal(page.actions[0].href,'#download');
+  page.actions[0].events.click({preventDefault(){}});
+  assert.equal(page.get('platform-download').hidden,true);
+}
+const mobilePage = render(cases[5][0],officialURLs);
+mobilePage.actions[0].events.click({preventDefault(){}});
+mobilePage.platforms[1].events.click();
+assert.equal(mobilePage.get('platform-download').href,officialURLs.mac);
+assert.equal(mobilePage.get('platform-download').hidden,false);
+
+const html = fs.readFileSync(path.join(__dirname,'dist/index.html'),'utf8');
+for (const [,url] of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+  if (url.startsWith('#')) { if (url.length > 1) assert.ok(html.includes('id="' + url.slice(1) + '"'), 'Missing anchor ' + url); continue; }
+  if (/^https?:/.test(url)) continue;
+  assert.ok(fs.existsSync(path.join(__dirname,'dist',url)), 'Missing asset ' + url);
+}
+console.log('Verified: 9 OS cases, alternate-platform links, configured Windows/Mac URLs, unavailable/unsafe URL handling, mobile platform selection, and local assets/anchors.');

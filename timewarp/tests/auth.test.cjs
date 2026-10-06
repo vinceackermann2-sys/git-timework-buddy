@@ -49,6 +49,29 @@ test('OAuth uses PKCE, restores the pending verifier after restart, and rejects 
   const verifier=disk.flow().verifier;assert.equal(target.searchParams.get('code_challenge'),crypto.createHash('sha256').update(verifier).digest('base64url'));assert.ok(!target.href.includes(verifier));
   const reopened=createAuth({config,storage:disk,fetcher:async(_url,options)=>{payload=JSON.parse(options.body);return Response.json(session());}});await reopened.init();await reopened.completeOAuth('valid-code');assert.equal(payload.code_verifier,verifier);assert.equal(disk.flow(),null);await assert.rejects(reopened.completeOAuth('valid-code'),/again/);
 });
+test('the shipped Google configuration uses the branded domain and device-bound handoff',async()=>{
+  const shipped=require('../config.json'),auth=createAuth({config:shipped,storage:storage()});await auth.init();
+  const target=new URL(await auth.beginOAuth('google'));
+  assert.equal(target.origin,'https://timewarpdev.com');assert.equal(target.pathname,'/auth/google');assert.equal(target.searchParams.get('target'),'energy-desktop');assert.match(target.searchParams.get('desktop_state'),/^[a-f0-9]{64}$/);assert.match(target.searchParams.get('desktop_key'),/^[A-Za-z0-9_-]{100,256}$/);assert.match(target.searchParams.get('desktop_nonce'),/^[a-f0-9]{64}$/);
+});
+test('a rejected email code leaves the pending email link usable',async()=>{
+  const disk=storage();const auth=createAuth({config,storage:disk,fetcher:async url=>url.endsWith('/verify')?Response.json({msg:'Token is invalid'},{status:403}):Response.json(session())});await auth.init();
+  await auth.sendOtp('owner@example.com');const pending=disk.flow();
+  await assert.rejects(auth.verifyOtp('owner@example.com','000000'),/invalid/);
+  assert.deepEqual(disk.flow(),pending);assert.equal(auth.user(),null);
+  await auth.completeOAuth('valid-email-link');assert.equal(auth.userId(),'owner');assert.equal(disk.flow(),null);
+});
+test('a cancelled code verification cannot clear a newer Google sign-in attempt',async()=>{
+  let release;const disk=storage(),auth=createAuth({config,storage:disk,fetcher:()=>new Promise(resolve=>release=resolve)});await auth.init();
+  const verification=auth.verifyOtp('owner@example.com','123456');
+  await auth.beginOAuth('google');const next=disk.flow();release(Response.json(session()));
+  await assert.rejects(verification,/cancelled/);assert.deepEqual(disk.flow(),next);assert.equal(auth.user(),null);
+});
+test('copied email codes accept grouping while preserving leading zeroes',async()=>{
+  let payload;const auth=createAuth({config,storage:storage(),fetcher:async(_url,options)=>{payload=JSON.parse(options.body);return Response.json(session());}});await auth.init();
+  await auth.verifyOtp('owner@example.com',' 01234-56789\n');assert.equal(payload.token,'0123456789');assert.equal(payload.type,'email');
+  await assert.rejects(auth.verifyOtp('owner@example.com','01234x56789'),/code/);
+});
 test('recovery state survives restart and clears only after a successful password update',async()=>{
   const disk=storage(),auth=createAuth({config,storage:disk,fetcher:()=>response(session())});await auth.init();await auth.verifyOtp('owner@example.com','123456','recovery');assert.equal(auth.passwordRecovery(),true);
   const reopened=createAuth({config,storage:disk,fetcher:()=>response({id:'owner',email:'owner@example.com'})});await reopened.init();assert.equal(reopened.passwordRecovery(),true);await reopened.updatePassword('NewPassword123');assert.equal(reopened.passwordRecovery(),false);
