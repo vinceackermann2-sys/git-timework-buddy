@@ -1,0 +1,25 @@
+"use strict";
+// Temporary acceptance package: validate the live user's service metadata only.
+// Never exports credentials, personal connected-app content, or starts an action.
+const {app,BrowserWindow}=require('electron'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+module.exports.init=()=>{
+  const root=path.resolve(process.resourcesPath,'../../../timewarp'),checks={},wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  const pass=(name,value)=>{checks[name]=!!value;assert.ok(value,name);};
+  app.whenReady().then(async()=>{
+    const runtime=require('./desktop/runtime.cjs');let native;
+    for(let i=0;i<100;i++){native=runtime.getNativeRuntime();if(native)break;await wait(500);}pass('nativeServicesReady',!!native);await runtime.flushHistory();
+    const caller=native.caller(),agents=await caller.product.agents.list({});pass('assistantsHaveAlienMascots',agents.length>0&&agents.every(agent=>agent.avatar&&(/\/mascots\/(orbit|nova|cosmo)\.png/.test(agent.avatar.url)||agent.avatar.type!=='native')));
+    const models=await caller.product.models.list();pass('modelsParseNativeSchema',models.length>0);
+    const connection=await caller.product.chatgpt.connection();pass('chatgptConnectionParsesNativeSchema',['available','disconnected','reauth_required'].includes(connection.status));
+    const apps=await caller.product.integrations.list({owner:{kind:'user'}});pass('liveComposioCatalog',apps.items.length>0&&apps.items.every(app=>app.id.startsWith('composio-')));
+    const available=await runtime.integrations.connections(agents[0].id);checks.realConnectedAccounts=available.length;checks.connectedToolkits=available.map(account=>account.toolkit);
+    const github=available.find(account=>account.toolkit==='github');if(github){const found=await runtime.integrations.searchTools({assistantId:agents[0].id,toolkit:'github',query:'get authenticated user'});const tool=found.tools.find(tool=>tool.slug==='GITHUB_GET_THE_AUTHENTICATED_USER');pass('liveComposioToolSchema',!!tool&&typeof tool.inputParameters==='object');const result=await runtime.integrations.execute({assistantId:agents[0].id,connectedAccountId:github.connectionId,toolSlug:tool.slug,arguments:{}});pass('realReadOnlyComposioToolExecuted',result.successful!==false&&!result.error);}
+    const gmail=available.find(account=>account.toolkit==='gmail');if(!github&&gmail){const found=await runtime.integrations.searchTools({assistantId:agents[0].id,toolkit:'gmail',query:'get profile'});const tool=found.tools.find(tool=>tool.slug==='GMAIL_GET_PROFILE');pass('liveComposioToolSchema',!!tool&&typeof tool.inputParameters==='object');const result=await runtime.integrations.execute({assistantId:agents[0].id,connectedAccountId:gmail.connectionId,toolSlug:tool.slug,arguments:{user_id:'me'}});pass('realReadOnlyComposioToolExecuted',result.successful!==false&&!result.error);}
+    let status;for(let i=0;i<30;i++){status=await runtime.inspectTools();const server=status.data.find(item=>item.name==='timewarp_composio');if(server&&Object.keys(server.tools||{}).length===4)break;await wait(500);}pass('fourComposioToolsRegisteredInNativeHarness',status.data.some(item=>item.name==='timewarp_composio'&&Object.keys(item.tools||{}).length===4));
+    const img=await fetch(runtime.mascot(agents[0].displayName).avatarUrl);pass('mascotServedOnLocalDevice',img.ok&&img.headers.get('content-type')==='image/png');
+    checks.composioApps=apps.items.length;checks.chatgptState=connection.status;
+    for(let i=0;i<40;i++){if(BrowserWindow.getAllWindows().some(w=>w.webContents.getURL().startsWith('app://app/')))break;await wait(250);}
+    const window=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().startsWith('app://app/'));if(window){await wait(2000);fs.writeFileSync(path.join(root,'reports/alien-assistants.png'),(await window.webContents.capturePage()).toPNG());await window.loadURL('app://app/#/customize/billing');await wait(4000);pass('chatgptUsagePageRendered',await window.webContents.executeJavaScript("document.body.innerText.includes('Continue with ChatGPT')&&document.body.innerText.includes('Usage through this device')||document.body.innerText.includes('Remaining ChatGPT allowance')"));fs.writeFileSync(path.join(root,'reports/chatgpt-usage.png'),(await window.webContents.capturePage()).toPNG());await window.loadURL('app://app/#/customize/tools');await wait(3500);pass('toolsPageHasNoRelayError',await window.webContents.executeJavaScript("!document.body.innerText.includes('This feature uses the local desktop harness.')"));fs.writeFileSync(path.join(root,'reports/composio-tools.png'),(await window.webContents.capturePage()).toPNG());}
+    fs.writeFileSync(path.join(root,'reports/services.json'),JSON.stringify({verifiedAt:new Date().toISOString(),passed:true,checks},null,2));console.log(JSON.stringify({passed:true,checks}));app.quit();
+  }).catch(error=>{fs.writeFileSync(path.join(root,'reports/services.json'),JSON.stringify({passed:false,checks,error:error.message},null,2));console.error(error.message);app.quit();});
+};

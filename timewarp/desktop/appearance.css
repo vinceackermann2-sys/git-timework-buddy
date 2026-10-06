@@ -1,0 +1,84 @@
+:root {
+  --theme-accent: #B7D6FF;
+  --color-primary: var(--theme-accent);
+  --color-primary-foreground: #172033;
+  --timewarp-accent-ink: oklch(from var(--theme-accent) .43 .095 h);
+  --color-ring: oklch(from var(--theme-accent) .55 .12 h);
+  --color-accent: color-mix(in srgb, var(--theme-accent) 28%, #fff);
+  --color-user-message: color-mix(in srgb, var(--theme-accent) 40%, #fff);
+}
+.dark {
+  --color-primary: var(--theme-accent);
+  --color-accent: color-mix(in srgb, var(--theme-accent) 18%, var(--color-background));
+  --timewarp-accent-ink: var(--theme-accent);
+  --color-ring: var(--theme-accent);
+}
+.text-primary { color: var(--timewarp-accent-ink); }
+.theme-editor { max-height: calc(100dvh - 96px); overflow-x: hidden; overflow-y: auto; }
+.timewarp-palette { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 10px 2px; }
+.timewarp-preset { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding: 7px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-background); color: var(--color-foreground); cursor: pointer; text-align: left; }
+.timewarp-preset:hover { background: var(--color-accent); }
+.timewarp-preset:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+.timewarp-preset[aria-pressed=true] { border-color: var(--color-ring); box-shadow: 0 0 0 1px var(--color-ring); }
+.timewarp-preset:disabled { opacity: .6; cursor: default; }
+.timewarp-preset-swatch { display: block; width: 100%; height: 18px; border: 1px solid #17203318; border-radius: 5px; }
+.timewarp-preset-name { font-size: 11px; font-weight: 500; line-height: 1.3; }
+.timewarp-preset-hex { color: var(--color-muted-foreground); font-size: 9px; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.timewarp-sidebar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 0 0 0 20px; color: var(--color-sidebar-foreground); font-size: 16px; font-weight: 600; }
+.timewarp-sidebar-brand img { width: 24px; height: 24px; flex-shrink: 0; object-fit: contain; }
+.timewarp-account-dock { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+.timewarp-usage-card:empty { display: none; }
+.timewarp-account-trigger { width: 100%; height: auto; min-height: 48px; justify-content: flex-start; padding-left: 11px; gap: 8px; border-radius: 10px; }
+.timewarp-account-label { display: grid; min-width: 0; flex: 1; text-align: left; line-height: 1.25; }
+.timewarp-account-chevron { margin-left: auto; transform: rotate(180deg); }
+.timewarp-usage-card { padding: 4px 0 8px; }
+.timewarp-usage-card [role=progressbar] { height: 6px; }
+.timewarp-usage-card { display: block; color: inherit; text-decoration: none; border-radius: 10px; }
+.timewarp-usage-card:hover { background: var(--color-sidebar-accent); }
+.timewarp-usage-card:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+/* Sidebar: one 8px inset, one icon column (centered at 32px) and one text column (52px). */
+[data-slot=sidebar-header] { padding-inline: 0; }
+[data-slot=sidebar-header] > .h-9 { height: 44px; padding-right: 8px; }
+[data-slot=sidebar-header] > .h-9 [data-slot=tooltip-trigger] { width: 34px; height: 34px; }
+[data-slot=sidebar-header] > .h-9 [data-slot=tooltip-trigger] svg { width: 18px; height: 18px; }
+[data-slot=sidebar-header] > .flex.flex-col.gap-2.px-2 { padding-inline: 8px; }
+[data-slot=sidebar-header] > .flex.flex-col.gap-2.px-2 > [data-slot=tooltip-trigger] { height: 38px; gap: 8px; border-radius: 10px; font-size: 14px; }
+[data-slot=sidebar-header] > .flex.flex-col.gap-2.px-2 > [data-slot=tooltip-trigger] svg { width: 16px; height: 16px; }
+[data-slot=sidebar-content] [data-slot=sidebar-menu].px-1 { padding-inline: 8px; }
+.group\/assistant-task-group { height: 36px; border-radius: 10px; }
+.group\/assistant-task-group [data-slot=assistant-group-title] { font-size: 13px; }
+[data-slot=sidebar-content] [data-slot=sidebar-menu-item] > a.group\/status-row { min-height: 36px; border-radius: 10px; }
+[data-slot=sidebar-content] [data-slot=sidebar-menu-item] > a.group\/status-row [data-slot=assistant-task-title] { font-size: 14px; }
+[data-slot=sidebar-content] [data-slot=sidebar-menu-item] > button.h-8 { height: 36px; border-radius: 10px; }
+[data-slot=sidebar-content] [data-slot=sidebar-menu].px-1 > [data-slot=sidebar-menu-item] > button.rounded-md { min-height: 36px; border-radius: 10px; }
+[data-slot=sidebar-content] [data-slot=sidebar-menu].px-1 > [data-slot=sidebar-menu-item] > button.rounded-md svg { width: 16px; height: 16px; }
+/* Standard organization picture: the Timewarp mark on the accent tint. */
+.timewarp-org-default { display: inline-grid; place-items: center; overflow: hidden; flex-shrink: 0; background: color-mix(in srgb, var(--theme-accent) 45%, var(--color-background, #fff)); }
+.timewarp-org-default > img { width: 66%; height: 66%; object-fit: contain; }
+/* Organization gate: shown until the account creates or joins an organization. */
+.timewarp-org-gate { position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center; padding: 24px; overflow: auto; background: var(--color-background, #fff); color: var(--color-foreground, #172033); }
+.timewarp-org-gate-shell { width: min(100%, 440px); }
+.timewarp-org-gate-card { display: grid; gap: 16px; padding: 32px; border: 1px solid var(--color-border, #d4d4d8); border-radius: 16px; background: var(--color-card, var(--color-background, #fff)); box-shadow: 0 1px 2px #0000000d; }
+.timewarp-org-gate-card h1 { margin: 0; font-family: var(--font-display, inherit); font-size: 28px; line-height: 1.2; text-align: center; }
+.timewarp-org-gate-lead { margin: 0; color: var(--color-muted-foreground, #6b7280); font-size: 14px; line-height: 1.5; text-align: center; }
+.timewarp-org-gate-card form { display: grid; gap: 16px; }
+.timewarp-org-gate-picture { display: flex; align-items: center; gap: 16px; }
+.timewarp-org-gate-frame { display: inline-grid; place-items: center; width: 72px; height: 72px; flex-shrink: 0; overflow: hidden; border-radius: 14px; border: 1px solid var(--color-border, #d4d4d8); }
+.timewarp-org-gate-frame > img { width: 100%; height: 100%; object-fit: cover; }
+.timewarp-org-gate-frame.timewarp-org-default > img { width: 66%; height: 66%; object-fit: contain; }
+.timewarp-org-gate-picture-actions { display: grid; justify-items: start; gap: 6px; }
+.timewarp-org-gate-card label { display: grid; gap: 8px; font-size: 14px; font-weight: 500; }
+.timewarp-org-gate-card input:not([type=file]) { height: 44px; padding: 10px 12px; border: 1px solid var(--color-border, #d4d4d8); border-radius: 8px; background: var(--color-background, #fff); color: inherit; font: inherit; font-weight: 400; }
+.timewarp-org-gate-card input:focus-visible, .timewarp-org-gate-card button:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+.timewarp-org-gate-primary { height: 44px; border: 0; border-radius: 8px; background: var(--color-primary); color: var(--color-primary-foreground); font-weight: 500; cursor: pointer; }
+.timewarp-org-gate-secondary { height: 36px; padding: 0 14px; border: 1px solid var(--color-border, #d4d4d8); border-radius: 8px; background: var(--color-background, #fff); color: inherit; font-size: 14px; cursor: pointer; }
+.timewarp-org-gate-link { justify-self: center; padding: 4px; border: 0; background: none; color: var(--color-muted-foreground, #6b7280); font-size: 13px; cursor: pointer; }
+.timewarp-org-gate-picture-actions .timewarp-org-gate-link { justify-self: start; padding: 0 2px; }
+.timewarp-org-gate-card button:disabled { opacity: .6; cursor: default; }
+.timewarp-org-gate-error { margin: 0; min-height: 0; color: var(--color-destructive, #dc2626); font-size: 13px; }
+.timewarp-org-gate-error:empty { display: none; }
+.timewarp-org-gate-invites { display: grid; gap: 8px; padding-top: 16px; border-top: 1px solid var(--color-border, #d4d4d8); }
+.timewarp-org-gate-invites h2 { margin: 0; color: var(--color-muted-foreground, #6b7280); font-size: 13px; font-weight: 500; }
+.timewarp-org-gate-invite { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.timewarp-org-gate-invite > div { display: grid; min-width: 0; font-size: 14px; }
+.timewarp-org-gate-invite span { color: var(--color-muted-foreground, #6b7280); font-size: 12px; }

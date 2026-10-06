@@ -1,0 +1,141 @@
+/* Shared controls follow the active Timewarp palette, including open menus. */
+:where(button, input[type=button], input[type=submit], input[type=reset]) {
+  appearance: none;
+  font-family: inherit;
+}
+
+.timewarp-button,
+:where(button:not([class]):not([style]), button[class=""]:not([style]), input[type=button], input[type=submit], input[type=reset]),
+input::file-selector-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+.timewarp-button:hover:not(:disabled),
+:where(button:not([class]):not([style]), button[class=""]:not([style]), input[type=button], input[type=submit], input[type=reset]):hover:not(:disabled),
+input:not(:disabled)::file-selector-button:hover {
+  background: var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-foreground) 20%, var(--color-border));
+}
+
+.timewarp-button[aria-pressed=true] {
+  background: color-mix(in srgb, var(--color-primary) 18%, var(--color-background));
+  border-color: var(--color-ring);
+  color: var(--timewarp-accent-ink, var(--color-foreground));
+}
+
+.timewarp-button:disabled,
+:where(button:not([class]):not([style]), button[class=""]:not([style]), input[type=button], input[type=submit], input[type=reset]):disabled,
+input:disabled::file-selector-button {
+  opacity: .6;
+  cursor: default;
+}
+
+.timewarp-button:focus-visible,
+:where(button:not([class]):not([style]), button[class=""]:not([style]), input[type=button], input[type=submit], input[type=reset]):focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 3px;
+}
+
+/* base-select renders the picker in the app's top layer instead of an OS menu.
+   Keep the select's built-in keyboard, labeling and change-event behavior. */
+:where(select:not([multiple]):is(:not([size]), [size="0"], [size="1"])),
+:where(select:not([multiple]):is(:not([size]), [size="0"], [size="1"]))::picker(select) {
+  appearance: base-select;
+}
+
+:where(select:not([multiple]):is(:not([size]), [size="0"], [size="1"])) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 35px;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+:where(select):hover:not(:disabled) { background: var(--color-accent); }
+:where(select):open { border-color: var(--color-ring); }
+:where(select):focus-visible { outline: 2px solid var(--color-ring); outline-offset: 3px; }
+:where(select):disabled { opacity: .5; cursor: default; }
+
+:where(select)::picker-icon {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  margin-inline-end: 3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  color: var(--color-muted-foreground);
+  transform: translateY(-2px) rotate(45deg);
+}
+:where(select):open::picker-icon { transform: translateY(2px) rotate(225deg); }
+
+:where(select)::picker(select) {
+  min-width: anchor-size(width);
+  max-width: calc(100vw - 24px);
+  max-height: min(320px, 60vh);
+  margin-block: 5px;
+  padding: 5px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-popover, var(--color-background));
+  color: var(--color-popover-foreground, var(--color-foreground));
+  font: inherit;
+  box-shadow: 0 8px 24px #0000001f, 0 2px 6px #0000000d;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+:where(select) option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.4;
+  cursor: pointer;
+}
+:where(select) option:checked {
+  background: color-mix(in srgb, var(--color-primary) 18%, var(--color-background));
+  color: var(--timewarp-accent-ink, var(--color-foreground));
+  font-weight: 500;
+}
+:where(select) option:hover,
+:where(select) option:focus { background: var(--color-accent); outline: none; }
+:where(select) option:disabled { opacity: .5; cursor: default; }
+:where(select) option::checkmark { order: 1; margin-inline-start: auto; color: var(--timewarp-accent-ink, var(--color-foreground)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .timewarp-button, :where(select) { transition: none; }
+}

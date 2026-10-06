@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#B7D6FF" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Timewarp · Return to the app</title>
+    <link rel="icon" href="/desktop-auth-logo.svg" />
+    <link rel="stylesheet" href="/desktop-auth.css" />
+  </head>
+  <body class="timewarp-auth-page">
+    <div class="brand"><img src="/desktop-auth-logo.svg" alt="" /><span>Timewarp</span></div>
+    <main class="card" id="card" aria-labelledby="title">
+      <div class="signal" id="signal" aria-hidden="true"><div class="ring"></div></div>
+      <h1 id="title">Returning to Timewarp</h1>
+      <p id="msg" role="status" aria-live="polite">Completing sign-in. Return to the desktop app to continue.</p>
+      <div class="actions" id="actions" hidden>
+        <a id="local" href="#">Return to running app</a>
+        <a id="open" href="#">Open Timewarp</a>
+      </div>
+    </main>
+    <p class="hint" id="hint">Keep Timewarp open while signing in.</p>
+    <script>
+      (function () {
+        var params = new URLSearchParams(window.location.search);
+        var hash = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
+        hash.forEach(function (value, key) { params.set(key, value); });
+        var payload = params.toString() ? "?" + params.toString() : "";
+        var localCallback = "http://127.0.0.1:17654/oauth-callback" + payload;
+        var deepLink = "timewarp://auth-callback" + payload;
+        // Clear credentials from browser history before the handoff.
+        window.history.replaceState(null, "", window.location.pathname);
+        if (params.has("code") && !params.has("access_token") && !params.has("refresh_token")) {
+          document.getElementById("open").setAttribute("href", deepLink);
+          document.getElementById("local").setAttribute("href", localCallback);
+          document.getElementById("actions").hidden = false;
+          // Reach the running app without an external-protocol prompt.
+          window.location.assign(localCallback);
+        } else {
+          document.getElementById("signal").innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 7v6m0 4h.01"/></svg>';
+          document.getElementById("title").textContent = "Sign-in could not complete";
+          document.getElementById("msg").textContent = "No sign-in result was received. Please return to Timewarp and sign in again.";
+          document.getElementById("msg").setAttribute("role", "alert");
+          document.getElementById("hint").textContent = "Start again from the Timewarp app.";
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,39 @@
+name: Source checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: timewarp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: timewarp/package-lock.json
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: '2.9.5'
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run test:portable
+      - run: npm run verify:cloud-source
+      - run: npm run test:email
+      - name: Check all cloud entry points with the shared email JSX types
+        run: deno check --frozen --config supabase/functions/auth-email-hook/deno.json cloud/index.ts supabase/functions/timewarp-energy/index.ts supabase/functions/stripe-billing/index.ts supabase/functions/stripe-webhook/index.ts supabase/functions/timewarp-workspaces/index.ts supabase/functions/contact/index.ts supabase/functions/auth-email-hook/index.ts
+      - run: npm audit --audit-level=high

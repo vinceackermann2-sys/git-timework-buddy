@@ -1,0 +1,109 @@
+name: Native release artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      signed:
+        description: Build signed artifacts using the protected release configuration
+        type: boolean
+        default: false
+      store:
+        description: Build an unsigned MSIX update for the existing Microsoft Store listing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    environment: desktop-release
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: timewarp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: timewarp/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Provision the pinned official Electron runtime
+        run: node node_modules/electron/install.js
+      - name: Provision and verify the privately supplied application inputs
+        env:
+          INPUT_URL: ${{ secrets.TIMEWARP_UPSTREAM_BUNDLE_URL }}
+          INPUT_SHA256: ${{ vars.TIMEWARP_UPSTREAM_BUNDLE_SHA256 }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:INPUT_URL -or $env:INPUT_SHA256 -notmatch '^[a-f0-9]{64}$') { throw 'Configure the protected upstream bundle URL and SHA256 first.' }
+          $inputUri = [uri]$env:INPUT_URL
+          if ($inputUri.Scheme -ne 'https' -or $inputUri.UserInfo) { throw 'The input bundle must use HTTPS.' }
+          $archivePath = Join-Path $env:RUNNER_TEMP 'timewarp-upstream.zip'
+          Invoke-WebRequest -Uri $inputUri -OutFile $archivePath
+          if ((Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:INPUT_SHA256) { throw 'Upstream download integrity check failed.' }
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+          try { foreach ($entry in $zip.Entries) { if ($entry.FullName -match '(^/|\\|:|(^|/)\.\.(/|$))') { throw 'Invalid bundle path.' } } } finally { $zip.Dispose() }
+          Expand-Archive -LiteralPath $archivePath -DestinationPath (Join-Path $env:GITHUB_WORKSPACE 'energy-testv1')
+          npm run verify:upstream
+      - name: Configure release identity and signing
+        if: ${{ inputs.signed && !inputs.store }}
+        env:
+          RELEASE_CONFIG_JSON: ${{ vars.TIMEWARP_RELEASE_CONFIG_JSON }}
+          SIGNING_PFX_BASE64: ${{ secrets.TIMEWARP_SIGNING_PFX_BASE64 }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:RELEASE_CONFIG_JSON -or -not $env:SIGNING_PFX_BASE64) { throw 'Release identity and certificate secrets are required.' }
+          [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'release.json'), $env:RELEASE_CONFIG_JSON)
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'timewarp-release.pfx'
+          [System.IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:SIGNING_PFX_BASE64))
+          "WIN_CSC_LINK=$certificatePath" >> $env:GITHUB_ENV
+      - name: Build and validate installer
+        env:
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.TIMEWARP_SIGNING_PFX_PASSWORD }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ inputs.store }}' -eq 'true' -and '${{ inputs.signed }}' -eq 'true') { throw 'Choose Store signing or direct-download signing, not both.' }
+          if ('${{ inputs.store }}' -eq 'true') { npm run installer:store } elseif ('${{ inputs.signed }}' -eq 'true') { npm run installer:release } else { npm run installer:draft }
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build or verification failed.' }
+          npm run verify:startup
+          if ($LASTEXITCODE -ne 0) { throw 'Native startup acceptance failed.' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Native contract tests failed.' }
+          npm audit --audit-level=moderate
+          if ($LASTEXITCODE -ne 0) { throw 'Build dependency audit failed.' }
+      - name: Verify the preview installer lifecycle
+        if: ${{ !inputs.signed && !inputs.store }}
+        shell: pwsh
+        run: |
+          npm run verify:installer-preview
+          if ($LASTEXITCODE -ne 0) { throw 'Preview installation acceptance failed.' }
+      - name: Remove temporary signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'timewarp-release.pfx'
+          if (Test-Path -LiteralPath $certificatePath) { Remove-Item -LiteralPath $certificatePath -Force }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timewarp-windows-${{ inputs.store && 'store' || (inputs.signed && 'signed' || 'preview') }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            timewarp/build/installer-draft/*.exe
+            timewarp/build/installer-draft/*.blockmap
+            timewarp/build/release/*.exe
+            timewarp/build/release/*.blockmap
+            timewarp/build/release/latest.yml
+            timewarp/build/release/release-verification.json
+            timewarp/build/store/*.msix
+            timewarp/reports/store-package.json
+            timewarp/reports/native-startup.json
+            timewarp/reports/installer-preview.json
+            timewarp/reports/runtime-audit.json

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Timewarp is an AI agent that works in your browser, files and apps and hands you the finished deliverable. Built for independent marketing consultants.">
+  <title>Timewarp — Be the strategist again</title>
+  <meta property="og:title" content="Timewarp — Be the strategist again">
+  <meta property="og:description" content="An AI agent that works in your browser, files and apps and hands you the finished deliverable.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="assets/favicon.png" type="image/png">
+  <link rel="preload" href="assets/fonts/quadrant-text-regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+  <script src="download-config.js" defer></script>
+  <script src="download.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#" aria-label="Timewarp home"><img src="assets/timewarp-logo-512.png" alt="" width="32" height="32"><span>Timewarp</span></a>
+      <a class="btn btn-sm download-action" href="#download"><span class="os-icon" aria-hidden="true"></span><span class="download-label">Get Timewarp</span></a>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- HERO -->
+    <section class="hero" aria-labelledby="hero-title">
+      <img class="hero-mark" src="assets/timewarp-logo-512.png" alt="" aria-hidden="true" width="512" height="512">
+      <div class="wrap">
+        <p class="pill">For independent marketing consultants</p>
+        <h1 id="hero-title">Be the strategist again.</h1>
+        <p class="lede">Timewarp is an AI agent that works in your browser, files and apps, and hands you the finished proposal, report or research.</p>
+        <div class="actions">
+          <a class="btn download-action" href="#download"><span class="os-icon" aria-hidden="true"></span><span class="download-label">Get Timewarp</span></a>
+          <button type="button" class="alt-download" hidden></button>
+        </div>
+
+        <div class="app reveal" aria-label="The Timewarp app with a new task being typed">
+          <aside class="app-side" aria-hidden="true">
+            <div class="side-dots"><i></i><i></i><i></i></div>
+            <div class="side-new">+ New Task</div>
+            <p class="side-head">Agents</p>
+            <div class="side-agent is-on"><img src="assets/cosmo.png" alt="" width="24" height="24">Cosmo</div>
+            <div class="side-agent"><img src="assets/nova.png" alt="" width="24" height="24">Nova</div>
+            <div class="side-agent"><img src="assets/orbit.png" alt="" width="24" height="24">Orbit</div>
+          </aside>
+          <div class="app-main">
+            <p class="greeting" aria-hidden="true">Time to carpe the diem</p>
+            <div class="composer">
+              <p class="composer-text" aria-hidden="true"><span id="typed"></span><span class="caret"></span></p>
+              <p class="sr-only">Write the Lumen Co. proposal from Tuesday’s call notes and draft the follow-up email.</p>
+              <div class="composer-bar" aria-hidden="true">
+                <span class="cb-plus">+</span>
+                <span class="cb-chip"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>Browser</span>
+                <span class="cb-chip"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3z"/></svg>Files</span>
+                <span class="cb-chip"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>Email</span>
+                <span class="send" id="send"><svg viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1. THE PROBLEM -->
+    <section class="section wrap" id="problem" aria-labelledby="problem-title">
+      <p class="label">The problem</p>
+      <h2 id="problem-title">ChatGPT writes the text.<br>You still do the work.</h2>
+      <div class="card chores reveal" id="chores">
+        <ol>
+          <li><span class="ci"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3z"/></svg></span>Find the call notes<span class="who you">You</span></li>
+          <li><span class="ci"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg></span>Research the client’s website<span class="who you">You</span></li>
+          <li class="ai-row"><span class="ci"><svg viewBox="0 0 24 24"><path d="M5 5h14v10H9l-4 4z"/></svg></span>Write the proposal<span class="who ai">ChatGPT</span></li>
+          <li><span class="ci"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h4"/></svg></span>Paste and format it in your template<span class="who you">You</span></li>
+          <li><span class="ci"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></span>Write the follow-up email<span class="who you">You</span></li>
+        </ol>
+        <p class="chores-clock"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><span id="clock">17:30</span><span class="clock-note">and still at it</span></p>
+      </div>
+    </section>
+
+    <!-- 2. HOW IT WORKS -->
+    <section class="section wrap" id="how" aria-labelledby="how-title">
+      <p class="label">How Timewarp works</p>
+      <h2 id="how-title">Tell it the task.<br>It does all of it.</h2>
+      <div class="steps-grid">
+        <article class="card step reveal">
+          <span class="num">1</span>
+          <h3>You give the brief</h3>
+          <div class="mini-composer">Write the Lumen Co. proposal from Tuesday’s call notes and draft the follow-up email.<span class="mini-send"><svg viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></span></div>
+        </article>
+        <article class="card step step-main reveal" id="agent">
+          <span class="num">2</span>
+          <h3>Timewarp does the work</h3>
+          <div class="agent-head"><img src="assets/cosmo.webp" onerror="this.src='assets/cosmo.png'" alt="" width="44" height="44" loading="lazy"><b>Cosmo</b><span class="status" id="status">Working…</span></div>
+          <ol class="ticks" id="ticks">
+            <li>Find the call notes</li>
+            <li>Research the client’s website</li>
+            <li>Write the proposal</li>
+            <li>Format it in your template</li>
+            <li>Draft the follow-up email</li>
+          </ol>
+        </article>
+        <article class="card step reveal">
+          <span class="num">3</span>
+          <h3>You check it and send</h3>
+          <div class="result" id="result">
+            <div class="doc"><span class="doc-ic"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h4M10 12h5m-5 4h5"/></svg></span><div><b>Lumen Co. proposal</b><small>Saved to your files</small></div></div>
+            <div class="doc"><span class="doc-ic"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></span><div><b>Follow-up email</b><small>Draft, ready to send</small></div></div>
+            <span class="approve">Approve</span>
+          </div>
+        </article>
+      </div>
+      <p class="note reveal"><svg viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8.5 12l2.5 2.5 4.5-5"/></svg>Runs on your computer. Your files and agent memory stay with you.</p>
+    </section>
+
+    <!-- 3. THE RESULT -->
+    <section class="section wrap" id="result-day" aria-labelledby="day-title">
+      <p class="label">The result</p>
+      <h2 id="day-title">Done by six.<br>The evening is yours.</h2>
+      <div class="card day reveal" id="day" aria-label="Illustrative workday, 9:00 to 22:00, without and with Timewarp">
+        <div class="day-row">
+          <p class="day-name">Without Timewarp</p>
+          <div class="bar">
+            <i class="seg client" style="--a:0;--b:1.5">Client call</i>
+            <i class="seg grind" style="--a:1.5;--b:9">Assembling the proposal</i>
+            <i class="seg grind late" style="--a:10;--b:13">Still at it</i>
+          </div>
+        </div>
+        <div class="day-row">
+          <p class="day-name">With Timewarp</p>
+          <div class="bar">
+            <i class="seg client" style="--a:0;--b:1.5">Client call</i>
+            <i class="seg check" style="--a:1.5;--b:2.5">Review</i>
+            <i class="seg focus" style="--a:2.5;--b:9">Strategy and new clients</i>
+            <i class="seg free" style="--a:9;--b:13">Your evening</i>
+          </div>
+          <img class="nova" src="assets/nova.webp" onerror="this.src='assets/nova.png'" alt="" width="70" height="70" loading="lazy">
+        </div>
+        <div class="hours" aria-hidden="true"><span>09:00</span><span>12:00</span><span>15:00</span><span>18:00</span><span>21:00</span></div>
+      </div>
+      <p class="caption">An illustrative day. Results vary by task.</p>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta wrap" id="download" aria-labelledby="cta-title">
+      <div class="cta-card reveal">
+        <div class="mascots" aria-hidden="true"><img src="assets/orbit.webp" onerror="this.src='assets/orbit.png'" alt="" width="88" height="88" loading="lazy"><img src="assets/nova.webp" onerror="this.src='assets/nova.png'" alt="" width="88" height="88" loading="lazy"><img src="assets/cosmo.webp" onerror="this.src='assets/cosmo.png'" alt="" width="88" height="88" loading="lazy"></div>
+        <h2 id="cta-title">Time to carpe the diem.</h2>
+        <p class="lede">Start with one task you do every week.</p>
+        <ul class="fit" aria-label="Timewarp works best when">
+          <li>The task repeats</li>
+          <li>Its inputs are in files, sites or apps</li>
+          <li>You can judge a good draft</li>
+        </ul>
+        <div class="actions">
+          <a class="btn btn-lg download-action" href="#download"><span class="os-icon" aria-hidden="true"></span><span class="download-label">Get Timewarp</span></a>
+          <button type="button" class="alt-download" hidden></button>
+        </div>
+        <p class="fine"><span class="availability-note">Download links coming soon</span> · Free plan with your ChatGPT account · AI can make mistakes, so you review</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap footer">
+    <a class="brand" href="#" aria-label="Timewarp home"><img src="assets/timewarp-logo-512.png" alt="" width="24" height="24"><span>Timewarp</span></a>
+    <span>© <span id="year">2026</span> Timewarp</span>
+  </footer>
+
+  <dialog id="download-dialog" aria-labelledby="dialog-title" aria-describedby="platform-message">
+    <button type="button" class="dialog-close" aria-label="Close">×</button>
+    <img src="assets/timewarp-logo-512.png" alt="" width="56" height="56">
+    <h2 id="dialog-title">Choose your platform.</h2>
+    <div class="platform-options"><button type="button" data-platform="windows">Windows</button><button type="button" data-platform="mac">macOS</button></div>
+    <p id="platform-message" class="platform-message" role="status" aria-live="polite"></p>
+    <a class="btn" id="platform-download" hidden>Download Timewarp</a>
+  </dialog>
+</body>
+</html>

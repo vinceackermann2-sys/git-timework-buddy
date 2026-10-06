@@ -1,32 +1,49 @@
-# Logs
-logs
+node_modules/
+.env*
+!.env.example
+**/secrets.*
+.temp/
+timewarp/backups/
+timewarp/build/
+timewarp/design/mascots/render/
+timewarp/reports/
+timewarp/release.json
+# Keep the editable upstream patch tools; runtime binaries and old stubs stay local.
+energy-testv1/*
+!energy-testv1/README.md
+!energy-testv1/package.json
+!energy-testv1/build/
+energy-testv1/build/*
+!energy-testv1/build/patch.js
+!energy-testv1/build/fix-asar-integrity.js
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+*.private.*
+*.sqlite*
+*.db
+.DS_Store
+Thumbs.db
 
-node_modules
-dist
-dist-ssr
-.output
-.vinxi
-.tanstack/**
-.nitro
-*.local
-
-# Wrangler / Cloudflare
+# Lovable website build outputs
+/dist/
+/dist-ssr/
+.output/
+.vinxi/
+.tanstack/
+.nitro/
 .wrangler/
 .dev.vars
-
-# Editor directories and files
+*.local
+.idea/
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+
+# Existing website exports copied for the Lovable build by sync-website.cjs.
+/public/assets/
+/public/app.js
+/public/styles.css
+/public/download.js
+/public/download-config.js
+/public/auth-bridge.html
+/public/desktop-auth-logo.svg
+/public/desktop-auth.css
+/public/timewarp-desktop-auth.json
