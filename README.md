@@ -1,5 +1,17 @@
 # Timewarp
 
+This repository contains the Timewarp desktop source and the existing Timewarp website hosted through Lovable.
+
+- Website: `timewarp-site/dist`; the root TanStack app serves these existing files.
+- Desktop: `timewarp`; see the build and operations documentation below.
+- Lovable editor: https://lovable.dev/projects/cbb636a5-6463-4d72-8642-2660fb02af3e
+
+Run `npm ci` and `npm run dev` from this folder for the website. Desktop commands run inside `timewarp`.
+
+Private backend credentials remain in the existing production Supabase secret manager. Never add service keys to browser code or Git.
+
+## Desktop integration
+
 This is the **timework** source repository for the Timewarp desktop integration.
 The current build is **not ready for a public production release**. See the
 [production readiness review](docs/production-readiness.md) and

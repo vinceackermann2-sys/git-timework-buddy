@@ -1,0 +1,7 @@
+{
+  "protocol": "timewarp-google-desktop-v1",
+  "target": "energy-desktop",
+  "startUrl": "https://timewarpdev.com/auth/google",
+  "googleCallback": "https://timewarpdev.com/auth/v1/callback",
+  "desktopCallback": "http://127.0.0.1:17654/oauth-callback"
+}

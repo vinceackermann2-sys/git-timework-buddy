@@ -11,6 +11,7 @@ timewarp/release.json
 # Keep the editable upstream patch tools; runtime binaries and old stubs stay local.
 energy-testv1/*
 !energy-testv1/README.md
+!energy-testv1/package.json
 !energy-testv1/build/
 energy-testv1/build/*
 !energy-testv1/build/patch.js
@@ -21,3 +22,17 @@ energy-testv1/build/*
 *.db
 .DS_Store
 Thumbs.db
+
+# Lovable website build outputs
+/dist/
+/dist-ssr/
+.output/
+.vinxi/
+.tanstack/
+.nitro/
+.wrangler/
+.dev.vars
+*.local
+.idea/
+.vscode/*
+!.vscode/extensions.json
