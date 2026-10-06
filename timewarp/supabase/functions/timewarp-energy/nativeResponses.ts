@@ -27,8 +27,8 @@ export async function nativeStream(admin: any, userId: string, model: string, pa
     const reader = meter.getReader(); const decoder = new TextDecoder(); let buffer = '', usage: any = null;
     try {
       while (true) {
-        const chunk = await reader.read(); if (chunk.done) break;
-        buffer += decoder.decode(chunk.value, { stream: true });
+        const chunk = await reader.read();
+        buffer += chunk.done ? decoder.decode() + '\n' : decoder.decode(chunk.value, { stream: true });
         if (buffer.length > 2 * 1024 * 1024) throw new Error('Provider event exceeded its size limit.');
         let end;
         while ((end = buffer.indexOf('\n')) >= 0) {
@@ -36,10 +36,15 @@ export async function nativeStream(admin: any, userId: string, model: string, pa
           if (!line.startsWith('data:')) continue;
           try { const event = JSON.parse(line.slice(5)); if (event.type === 'response.completed' || event.type === 'response.incomplete') usage = event.response?.usage; } catch { /* Non-data framing. */ }
         }
+        if (chunk.done) break;
       }
       if (usage && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)) await reservation.finish('settled', usage.input_tokens, usage.output_tokens);
       else await reservation.finish('uncertain');
-    } catch { await reservation.finish('uncertain').catch(() => {}); }
+    } catch {
+      const known = usage && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens);
+      await reservation.finish(known ? 'settled' : 'uncertain', known ? usage.input_tokens : 0, known ? usage.output_tokens : 0)
+        .catch(() => console.error('[timewarp] Stream settlement requires operator recovery.', { reservationId: reservation.id }));
+    }
     finally { reader.releaseLock(); }
   })();
   (globalThis as any).EdgeRuntime?.waitUntil(settle);

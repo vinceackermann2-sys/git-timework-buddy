@@ -88,6 +88,8 @@ if (process.versions.electron) {
       assert.equal(await evaluate('workspaceCheck.browser.tabs.length'), 1);
       assert.equal(await evaluate('!!document.querySelector("[data-workspace-home]")'), true);
       // Reset only the fixture's browser surface; persisted recommendations survive.
+      // Finish theme changes immediately in the hidden window's paused compositor.
+      await evaluate('document.querySelectorAll(".timewarp-workspace-tool-card,.timewarp-workspace-site").forEach(button=>button.style.transition="none")');
       const layouts = [];
       for (const [width, height, dark] of [[540, 820, false], [540, 820, true], [360, 740, false]]) {
         window.setSize(width, height);
@@ -96,7 +98,10 @@ if (process.versions.electron) {
         assert.equal(layout.overflow, false); assert.equal(layout.toolbarOverflow, false); assert.ok(layout.inputWidth > 90);
         const cards=await evaluate('({tools:Array.from(document.querySelectorAll(".timewarp-workspace-tool-card")).map(button=>button.getBoundingClientRect().height),favicon:document.querySelector(".timewarp-workspace-site-icon").getBoundingClientRect().width,center:document.querySelector(".timewarp-workspace-home-content").getBoundingClientRect().left+document.querySelector(".timewarp-workspace-home-content").getBoundingClientRect().width/2,pane:document.querySelector("[data-workspace-home]").getBoundingClientRect().left+document.querySelector("[data-workspace-home]").clientWidth/2})');
         assert.ok(cards.tools.every(height=>height>=150));assert.ok(cards.favicon>=64);assert.ok(Math.abs(cards.center-cards.pane)<2);
-        layouts.push({ width, height, dark, ...layout });
+        const colors=await evaluate('(()=>{const button=document.querySelector(".timewarp-workspace-tool-card"),style=getComputedStyle(button);return{background:style.backgroundColor,foreground:style.color,themeBackground:style.getPropertyValue("--color-background"),themeForeground:style.getPropertyValue("--color-foreground")}})()');
+        layouts.push({ width, height, dark, ...layout,colors });
+        await evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
+        await new Promise(resolve=>setTimeout(resolve,300));
         await window.webContents.capturePage().then(image => fs.writeFileSync(path.join(reports, `workspace-${width}-${dark ? 'dark' : 'light'}.png`), image.toPNG()));
       }
       await evaluate('workspaceCheck.noProfiles()'); await pause();
@@ -104,6 +109,7 @@ if (process.versions.electron) {
       await click('.timewarp-workspace-tool-card:last-child');
       assert.equal(await evaluate('!!document.querySelector("#files-content")'), true);
       assert.deepEqual(errors, []);
+      fs.rmSync(path.join(reports,'workspace-error.txt'),{force:true});
       fs.writeFileSync(path.join(reports, 'workspace-ui.json'), JSON.stringify({ verifiedAt: new Date().toISOString(), nativeBrowser: 'isolated API fixture', checks: ['default tab without Chat or Workspace heading', 'Agent and Files with persistent toolbar', 'file opening', 'multiple tabs and tool restoration', 'URL and search navigation', 'back/forward/refresh', 'native page visibility', 'recent visits and reopen', 'four distinct recommended websites', 'large native favicons with error fallback', 'centered large tool cards', 'profile isolation', 'history persistence', 'last tab returns home', 'tools without a browser profile', 'light/dark/narrow layout'], layouts }, null, 2));
       console.log('Verified unified Workspace UI, tabs, tools, search, browser actions, profile isolation and light/dark/narrow layouts.');
     } catch (error) { fs.writeFileSync(path.join(reports,'workspace-error.txt'),error.stack+'\n'+errors.join('\n'));console.error(error.stack); if(errors.length)console.error(errors.join('\n')); exitCode = 1; }
@@ -119,7 +125,7 @@ if (process.versions.electron) {
     assert.throws(() => patchWorkspacePane('changed upstream bundle'), /contract changed/);
     const declarations = acorn.parse(ui, { ecmaVersion: 'latest', sourceType: 'module' }).body.flatMap(node => node.declarations || []);
     const extract = names => names.map(name => { const node = declarations.find(item => item.id.name === name); assert.ok(node, name); return 'const ' + ui.slice(node.start, node.end) + ';'; }).join('\n');
-    const dependencyRoot = path.dirname(path.dirname(require('../config.json').brandSource));
+    const dependencyRoot = path.resolve(__dirname,'..');
     const resolve = name => require.resolve(name, { paths: [dependencyRoot] });
     const renderer = path.join(root, 'build/app/out/renderer');
     const entry = `import * as b from ${JSON.stringify(resolve('react'))};

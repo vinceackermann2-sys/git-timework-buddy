@@ -14,6 +14,12 @@ const root = path.resolve(__dirname, "..");
 const energy = path.resolve(root, "../energy-testv1");
 const tree = path.join(root, "build/app");
 const config = require("../config.json");
+const { verifyUpstream, copyRuntime } = require('./upstream.cjs');
+const { validateRelease } = require('../shared/release.cjs');
+const storeBuild = process.argv.includes('--store');
+const macBuild = process.argv.includes('--mac');
+const macRelease = macBuild && process.env.TIMEWARP_MAC_RELEASE === '1';
+const stageOnly = process.argv.includes('--stage') || storeBuild || macBuild;
 const acceptance = process.env.TIMEWARP_ACCEPTANCE_HARNESS === '1';
 const localAcceptance = process.env.TIMEWARP_LOCAL_HARNESS_CHECK === '1';
 const servicesAcceptance=process.env.TIMEWARP_VERIFY_SERVICES==='1';
@@ -36,19 +42,27 @@ function patchConnectorRouting(source){
 }
 async function build() {
   const asar = await import("@electron/asar");
+  if (macBuild && (storeBuild || process.env.TIMEWARP_RELEASE_CONFIG)) throw new Error('The Mac build uses its separate signing and distribution configuration.');
+  const inputs = macBuild ? require('./mac-inputs.cjs').verifyMacInputs() : verifyUpstream();
+  const store = storeBuild ? require('../shared/store.cjs').validateStore(JSON.parse(fs.readFileSync(process.env.TIMEWARP_STORE_CONFIG || path.join(root,'store.json'),'utf8'))) : null;
+  const release = process.env.TIMEWARP_RELEASE_CONFIG ? validateRelease(JSON.parse(fs.readFileSync(process.env.TIMEWARP_RELEASE_CONFIG, 'utf8'))) : { enabled: false };
+  if (store && process.env.TIMEWARP_RELEASE_CONFIG) throw new Error('Store updates are managed by Microsoft; remove TIMEWARP_RELEASE_CONFIG.');
+  if (release.enabled && !stageOnly) throw new Error('Public releases must use the isolated staging build.');
+  if (release.enabled && [acceptance,localAcceptance,servicesAcceptance,billingAcceptance,chatgptAcceptance].some(Boolean)) throw new Error('Acceptance harnesses cannot enter a public release.');
+  if (store && [acceptance,localAcceptance,servicesAcceptance,billingAcceptance,chatgptAcceptance].some(Boolean)) throw new Error('Acceptance harnesses cannot enter a Store package.');
+  if (macBuild && [acceptance,localAcceptance,servicesAcceptance,billingAcceptance,chatgptAcceptance].some(Boolean)) throw new Error('Acceptance harnesses cannot enter a Mac package.');
   const exe = path.join(energy, "app/Timewarp.exe");
   const requireClosedApp = () => {
     const snapshot = cp.execFileSync("powershell.exe", ["-NoProfile", "-Command", `Get-CimInstance Win32_Process -Filter "Name='Timewarp.exe'" | Where-Object { $_.ExecutablePath -eq '${exe.replaceAll("'", "''")}' } | Select-Object -ExpandProperty ProcessId`], { windowsHide: true, encoding: "utf8" });
     if (snapshot.trim()) throw new Error("Close this workspace's Timewarp app before rebuilding.");
   };
-  requireClosedApp();
+  if (!stageOnly) requireClosedApp();
   await require('./build-icons.cjs').buildIcons();
   fs.mkdirSync(path.join(root, "backups"), { recursive: true });
-  const baselineExe = path.join(root, "backups/upstream-Energy.exe");
-  if (!fs.existsSync(baselineExe)) fs.copyFileSync(path.join(energy, "app/energy testv1.exe"), baselineExe);
+  const baselineExe = inputs.executable;
   const oldAsar = path.join(energy, "app/resources/app.asar");
   const backupAsar = path.join(root, "backups/pre-timewarp.asar");
-  if (!fs.existsSync(backupAsar)) fs.copyFileSync(oldAsar, backupAsar);
+  if (!stageOnly && !fs.existsSync(backupAsar)) fs.copyFileSync(oldAsar, backupAsar);
   fs.mkdirSync(path.dirname(tree), { recursive: true });
   if (fs.existsSync(tree)) {
     const actual = fs.realpathSync(tree);
@@ -56,12 +70,19 @@ async function build() {
     if (actual !== path.join(expectedBase, "app") || fs.lstatSync(tree).isSymbolicLink()) throw new Error("Unsafe build output path.");
     fs.rmSync(actual, { recursive: true, maxRetries: 5, retryDelay: 200 });
   }
-  asar.extractAll(path.join(energy, "build/app.asar.pristine"), tree);
+  asar.extractAll(inputs.archive, tree);
+  // Patch a YAML parser used by the inherited updater with the reviewed local
+  // version. The rest of the vendor dependency inventory is audited separately.
+  fs.cpSync(path.dirname(require.resolve('js-yaml/package.json')), path.join(tree, 'node_modules/js-yaml'), { recursive: true });
+  fs.cpSync(path.dirname(require.resolve('undici/package.json')), path.join(tree, 'node_modules/undici'), { recursive: true });
   const bootFile = path.join(tree, "out/main/bootstrap.js");
+  run(path.join(energy, "build/patch.js"), [tree, "Timewarp", "http://127.0.0.1:7788", '--no-shim']);
   const bootstrap = fs.readFileSync(bootFile, "utf8");
-  run(path.join(energy, "build/patch.js"), [tree, "Timewarp", "http://127.0.0.1:7788"]);
   const mainFile = path.join(tree, "out/main/index.js");
   let main = fs.readFileSync(mainFile, "utf8");
+  // Stop the inherited service resetting the Timewarp feed and update policy.
+  for(const method of ['start','configure','useFeed']) main=replaceMethodBody(main,'BRe',method,'{}');
+  for(const method of ['checkCurrentFeed','requestInstall']) main=replaceMethodBody(main,'BRe',method,'{return Promise.resolve({ok:false,error:"Timewarp updates use the verified release feed.",data:this.state})}');
   // Preserve the upstream attribution. Rebranding does not convey a license.
   main = main.replaceAll("Copyright © 2026 Timewarp", "Copyright © 2026 Energy");
   main = replaceOnce(main, 'applicationVersion:"0.8.20"', 'applicationVersion:""', "about panel version");
@@ -100,16 +121,20 @@ async function build() {
   main = replaceOnce(main,'K=i7(nh,un);return{services:jn,appRouter:nh', 'K=i7(nh,un);await require("./timewarp/desktop/runtime.cjs").attachNativeRuntime({entities:r,paths:n,settings:s,workspace:O,caller:()=>un.createCaller(hq({services:jn,source:"ipc",auth:u,settingsStore:s,assetBaseUrl:g,appBaseUrl:g,telemetry:d,featureFlags:c,fetch:C}))});return{services:jn,appRouter:nh', 'local history synchronization');
   main = patchAgentAvatarResolver(patchAppearanceDefaults(rebrandJavaScript(main)));
   fs.writeFileSync(mainFile, main);
-  const profileShim = `"use strict";\n(() => {\n const {app}=require('electron');const path=require('node:path');const fs=require('node:fs');\n const base=process.env.TIMEWARP_USER_DATA_DIR?path.resolve(process.env.TIMEWARP_USER_DATA_DIR):path.join(app.getPath('appData'),'Timewarp Energy');\n fs.mkdirSync(base,{recursive:true});app.setName('Timewarp');app.setPath('userData',base);app.setPath('sessionData',base);app.setAppLogsPath(path.join(base,'logs'));\n process.env.ENERGY_DATA_DIR=path.join(base,'runtime');\n require('./timewarp/desktop/runtime.cjs');\n})();\n`;
+  const profileName = stageOnly && !release.enabled && !store && !macRelease ? 'Timewarp Preview' : 'Timewarp Energy';
+  const appId=store?store.appUserModelId:(stageOnly&&!release.enabled?'com.timewarp.desktop.preview':'com.timewarp.desktop');
+  const profileShim = `"use strict";\n(() => {\n const {app}=require('electron');const path=require('node:path');const fs=require('node:fs');\n const base=process.env.TIMEWARP_USER_DATA_DIR?path.resolve(process.env.TIMEWARP_USER_DATA_DIR):path.join(app.getPath('appData'),${JSON.stringify(profileName)});\n fs.mkdirSync(base,{recursive:true});app.setName('Timewarp');app.setPath('userData',base);app.setPath('sessionData',base);app.setAppLogsPath(path.join(base,'logs'));\n process.env.ENERGY_DATA_DIR=path.join(base,'runtime');\n require('./timewarp/desktop/runtime.cjs');\n})();\n`;
   const entry=profileShim.replace("require('./timewarp/desktop/runtime.cjs');",`if(!app.requestSingleInstanceLock()){app.exit(0);return;}app.on('second-instance',()=>{for(const window of require('electron').BrowserWindow.getAllWindows()){if(window.isMinimized())window.restore();window.show();window.focus();}});\n ${localAcceptance?"require('./timewarp/verify-local-harness.cjs').init();":''}\n require('./timewarp/${acceptance?'verify-packaged-auth.cjs':'desktop/runtime.cjs'}');`);
-  fs.writeFileSync(bootFile, entry + (acceptance?'':bootstrap.replaceAll("Energy failed to start", "Timewarp failed to start")));
+  fs.writeFileSync(bootFile, entry.replace("app.setName('Timewarp');",`app.setName('Timewarp');if(process.platform==='win32')app.setAppUserModelId(${JSON.stringify(appId)});`) + (acceptance?'':bootstrap.replaceAll("Energy failed to start", "Timewarp failed to start")));
   const pkgFile = path.join(tree, "package.json");
   const pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8"));
-  pkg.name = "timewarp-energy"; pkg.productName = "Timewarp"; pkg.description = "Timewarp desktop with hosted agents";
+  pkg.name = "timewarp-desktop"; pkg.productName = "Timewarp"; pkg.description = "Timewarp desktop with a local agent harness";
+  pkg.version = macRelease ? require('../mac-release.json').version : (store ? store.version : (release.enabled ? release.version : (stageOnly ? require('../package.json').version + '-draft.1' : require('../package.json').version)));
   fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2));
   const target = path.join(tree, "out/main/timewarp");
   for (const folder of ["desktop", "shared", "assets"]) fs.cpSync(path.join(root, folder), path.join(target, folder), { recursive: true });
   fs.copyFileSync(path.join(root, "config.json"), path.join(target, "config.json"));
+  fs.writeFileSync(path.join(target, 'release.json'), JSON.stringify(release, null, 2));
   if(acceptance)fs.copyFileSync(path.join(root,'scripts/verify-packaged-auth.cjs'),path.join(target,'verify-packaged-auth.cjs'));
   if(localAcceptance)fs.copyFileSync(path.join(root,'scripts/verify-local-harness.cjs'),path.join(target,'verify-local-harness.cjs'));
   if(servicesAcceptance){fs.copyFileSync(path.join(root,'scripts/verify-services.cjs'),path.join(target,'verify-services.cjs'));fs.appendFileSync(bootFile,'\nrequire("./timewarp/verify-services.cjs").init();\n');}
@@ -123,8 +148,8 @@ async function build() {
   for (const file of fs.readdirSync(rendererAssets).filter(name => name.endsWith(".js"))) {
     const targetFile = path.join(rendererAssets, file);
     let source = rebrandJavaScript(fs.readFileSync(targetFile, "utf8"));
-    if (file === "index-C6BbfH_v.js") source = patchSmoothBackdrop(patchRendererPalette(patchAppearanceDefaults(rebrandAssistantLogo(source, fs.readFileSync(brandSource, "utf8")))));
-    if (file === "mermaid-GHXKKRXX-YWFhvrpV.js") {
+    if (file === (macBuild ? inputs.lock.rendererIndex : "index-C6BbfH_v.js")) source = patchSmoothBackdrop(patchRendererPalette(patchAppearanceDefaults(rebrandAssistantLogo(source, fs.readFileSync(brandSource, "utf8")))));
+    if (file === (macBuild ? inputs.lock.rendererUi : "mermaid-GHXKKRXX-YWFhvrpV.js")) {
       source=patchAgentCreation(patchConnectorRouting(source));
       // Connected Codex catalog ids are unprefixed (gpt-5.5), so they never
       // resolved to provider "openai" and the free-credit gate blocked them.
@@ -168,15 +193,41 @@ async function build() {
   if (!preloads.length) throw new Error("Desktop preload not found.");
   for (const file of preloads) fs.appendFileSync(file, '\nrequire("electron").contextBridge.exposeInMainWorld("timewarp",{request:(action,input)=>require("electron").ipcRenderer.invoke("timewarp:request",action,input)});\n');
   // File-backed app resources and PE integrity remain verifiable after packing.
-  const stagedAsar = path.join(root, "build/timewarp-app.asar");
+  const stagedAsar = path.join(root, macBuild ? 'build/timewarp-mac-app.asar' : "build/timewarp-app.asar");
   const stagedExe = path.join(root, "build/Timewarp.exe");
+  if (macBuild) {
+    await asar.createPackageWithOptions(tree, stagedAsar, { unpack: '**/*.{node,dylib}' });
+    fs.mkdirSync(path.join(root,'reports'), {recursive:true});
+    fs.writeFileSync(path.join(root,'reports/mac-patched-app.json'),JSON.stringify({version:pkg.version,archive:stagedAsar,arch:inputs.lock.arch,upstreamVersion:inputs.lock.productVersion,asarSha256:crypto.createHash('sha256').update(fs.readFileSync(stagedAsar)).digest('hex'),profile:profileName},null,2));
+    console.log('Patched macOS application archive: '+stagedAsar);
+    return;
+  }
   await asar.createPackage(tree, stagedAsar);
-  fs.copyFileSync(baselineExe, stagedExe);
-  const rcedit = path.join(path.dirname(path.dirname(config.brandSource)), "node_modules/electron-winstaller/vendor/rcedit.exe");
+  if(stageOnly)await require('./electron-runtime.cjs').prepareExecutable(stagedExe,stagedAsar);
+  else fs.copyFileSync(baselineExe, stagedExe);
   const ico = path.join(path.dirname(brandSource), "app-icon.ico");
-  if (!fs.existsSync(rcedit)) throw new Error('Windows icon resource editor is missing: ' + rcedit);
-  cp.execFileSync(rcedit, [stagedExe, "--set-icon", ico, "--set-version-string", "ProductName", "Timewarp", "--set-version-string", "FileDescription", "Timewarp desktop"], { windowsHide: true, stdio: "pipe" });
+  await (await import('rcedit')).rcedit(stagedExe, { icon: ico, 'version-string': { ProductName: 'Timewarp', FileDescription: 'Timewarp desktop' }, 'file-version': pkg.version.split('-')[0], 'product-version': pkg.version.split('-')[0] });
   run(path.join(energy, "build/fix-asar-integrity.js"), [stagedExe, stagedAsar]);
+  if (stageOnly) {
+    const destination = path.join(root, 'build/native');
+    if (fs.existsSync(destination)) {
+      const actual = fs.realpathSync(destination), base = fs.realpathSync(path.join(root, 'build'));
+      if (actual !== path.join(base, 'native') || fs.lstatSync(destination).isSymbolicLink()) throw new Error('Unsafe native staging path.');
+      const running = cp.execFileSync('powershell.exe', ['-NoProfile','-Command', 'Get-CimInstance Win32_Process -Filter "Name=\'Timewarp.exe\' OR Name=\'Timewarp Preview.exe\'" | Where-Object { [System.IO.Path]::GetDirectoryName($_.ExecutablePath) -eq $env:TIMEWARP_STAGED_DIRECTORY } | Select-Object -ExpandProperty ProcessId'], { windowsHide: true, encoding: 'utf8', env: { ...process.env, TIMEWARP_STAGED_DIRECTORY: destination } });
+      if (running.trim()) throw new Error('Close the staged preview before rebuilding it.');
+      fs.rmSync(actual, { recursive: true, maxRetries: 5, retryDelay: 200 });
+    }
+    copyRuntime(inputs, destination);
+    require('./electron-runtime.cjs').copyElectronCore(destination);
+    fs.mkdirSync(path.join(destination, 'resources'), { recursive: true });
+    fs.copyFileSync(stagedExe, path.join(destination, 'Timewarp.exe'));
+    fs.copyFileSync(stagedAsar, path.join(destination, 'resources/app.asar'));
+    if (release.enabled) fs.writeFileSync(path.join(destination, 'resources/app-update.yml'), require('js-yaml').dump({ provider: 'generic', url: release.updateUrl, channel: 'latest', updaterCacheDirName: 'timewarp-updater', publisherName: release.publisherNames }));
+    fs.mkdirSync(path.join(root, 'reports'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'reports/staged-build.json'), JSON.stringify({ builtAt: new Date().toISOString(), version: pkg.version, upstreamVersion: inputs.lock.productVersion, electronVersion:require('electron/package.json').version, exe: path.join(destination, 'Timewarp.exe'), asarSha256: crypto.createHash('sha256').update(fs.readFileSync(stagedAsar)).digest('hex'), cloud: config.supabaseUrl, signed: false, publicRelease: release.enabled, profile: profileName }, null, 2));
+    console.log('Timewarp staged at ' + destination + '. The working app was preserved.');
+    return;
+  }
   requireClosedApp();
   const previousExe = path.join(root, "build/previous-Timewarp.exe");
   const previousAsar = path.join(root, "build/previous-app.asar");

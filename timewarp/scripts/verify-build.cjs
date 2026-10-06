@@ -5,11 +5,21 @@ const { presets, defaultAccent } = require('../shared/appearance.cjs');
 async function verify() {
   const asar = await import('@electron/asar');
   const root = path.resolve(__dirname, '..');
-  const archive = path.resolve(root, '../energy-testv1/app/resources/app.asar');
-  const exe = path.resolve(root, '../energy-testv1/app/Timewarp.exe');
+  const mac = process.argv.includes('--mac'), archiveOnly = process.argv.includes('--archive-only');
+  if (archiveOnly && !mac) throw new Error('Archive-only verification is reserved for the Mac archive; Windows requires executable integrity checks.');
+  const staged = process.argv.includes('--staged') || mac;
+  const supplied=process.argv.indexOf('--app-dir');
+  const native = mac ? path.join(supplied>=0?path.resolve(process.argv[supplied+1]):path.join(root,'build/mac-preview/mac-arm64/Timewarp Preview.app'),'Contents') : (staged ? path.join(root,'build/native') : path.resolve(root,'../energy-testv1/app'));
+  const archive = archiveOnly ? path.join(root,'build/timewarp-mac-app.asar') : path.join(native,mac?'Resources/app.asar':'resources/app.asar');
+  const exe = mac ? path.dirname(native) : (staged&&!fs.existsSync(path.join(native,'Timewarp.exe'))?path.join(native,'Timewarp Preview.exe'):path.join(native,'Timewarp.exe'));
   const read = name => asar.extractFile(archive, name.split('/').join(path.sep)).toString('utf8');
   assert.equal(JSON.parse(read('package.json')).productName, 'Timewarp');
   const main = read('out/main/index.js');
+  const updaterNode=acorn.parseExpressionAt(main,main.indexOf('class BRe'),{ecmaVersion:'latest'});
+  const NativeUpdater=require('node:vm').runInNewContext('('+main.slice(updaterNode.start,updaterNode.end)+')');
+  const inherited=new NativeUpdater({isPackaged:true},'0.8.20','https://upstream.invalid',async()=> 'beta',{},{});
+  inherited.start();inherited.configure();inherited.useFeed('http://127.0.0.1/desktop');
+  assert.equal((await inherited.checkCurrentFeed()).ok,false);assert.equal((await inherited.requestInstall({})).ok,false);
   assert.ok(main.includes('async backend(){return{type:"local",vault:this.local}}'));
   assert.ok(main.includes('sanitizeCard(r,e)'));
   assert.ok(main.includes('.bindNativeAccount(new Jre('));
@@ -18,7 +28,7 @@ async function verify() {
   assert.ok(main.includes('.attachNativeRuntime({entities:r'));
   assert.ok(!main.includes('revision:"hosted:unavailable"'));
   const boot = read('out/main/bootstrap.js');
-  assert.ok(boot.includes("'Timewarp Energy'"));
+  assert.ok(boot.includes('Timewarp Energy') || (staged && boot.includes('Timewarp Preview')));
   assert.ok(boot.includes("require('./timewarp/desktop/runtime.cjs')"));
   assert.ok(boot.includes('requestSingleInstanceLock'));
   assert.throws(()=>read('out/main/timewarp/verify-packaged-auth.cjs'));
@@ -41,13 +51,19 @@ async function verify() {
     if (['string','template'].includes(token.type.label) && typeof token.value === 'string' && !/copyright|licensed under/i.test(token.value)) assert.ok(!/\bEnergy\b/.test(token.value), 'Old display brand remains: ' + token.value.slice(0,80));
   }
   for(const name of ['orbit','nova','cosmo'])assert.ok(asar.extractFile(archive,('out/main/timewarp/assets/mascots/'+name+'.png').split('/').join(path.sep)).length>100000);
-  assert.ok(read('out/main/timewarp/desktop/runtime.cjs').includes('autoUpdater.checkForUpdates = async () => null'));
+  assert.ok(read('out/main/timewarp/desktop/runtime.cjs').includes("require('./updates.cjs').configureUpdates"));
+  assert.equal(read('out/main/timewarp/desktop/updates.cjs'),fs.readFileSync(path.join(root,'desktop/updates.cjs'),'utf8'));
+  const release = require('../shared/release.cjs').validateRelease(JSON.parse(read('out/main/timewarp/release.json')));
+  if(release.enabled){const feed=require('js-yaml').load(fs.readFileSync(path.join(native,'resources/app-update.yml'),'utf8'));assert.equal(feed.url,release.updateUrl);assert.deepEqual(feed.publisherName,release.publisherNames);}
+  if(staged&&!release.enabled&&!archiveOnly)assert.ok(!fs.existsSync(path.join(native,mac?'Resources/app-update.yml':'resources/app-update.yml')),'Package never inherits an Energy update feed');
   const config = JSON.parse(read('out/main/timewarp/config.json'));
-  assert.equal(config.supabaseUrl, 'https://mrqoeywofslgnquvzhuf.supabase.co');
+  const cloudUrl=new URL(config.supabaseUrl);
+  assert.equal(cloudUrl.protocol,'https:');assert.ok(!cloudUrl.username&&!cloudUrl.password&&!cloudUrl.search&&!cloudUrl.hash);
+  assert.ok(cloudUrl.hostname.endsWith('.supabase.co'),'Configured Timewarp Supabase project');
   assert.ok(config.publishableKey.startsWith('sb_publishable_'));
   assert.deepEqual(config,JSON.parse(fs.readFileSync(path.join(root,'config.json'),'utf8')));
-  assert.ok(Object.keys(config).every(key=>['brandSource','publishableKey','supabaseUrl','googleAuthBridgeUrl'].includes(key)));
-  if(config.googleAuthBridgeUrl)assert.equal(config.googleAuthBridgeUrl,'https://timewarpdev.com');
+  assert.ok(Object.keys(config).every(key=>['publishableKey','supabaseUrl','googleAuthBridgeUrl'].includes(key)));
+  if(config.googleAuthBridgeUrl){const bridge=new URL(config.googleAuthBridgeUrl);assert.equal(bridge.protocol,'https:');assert.ok(!bridge.username&&!bridge.password&&!bridge.search&&!bridge.hash);}
   assert.equal(read('out/main/timewarp/desktop/auth.cjs'),fs.readFileSync(path.join(root,'desktop/auth.cjs'),'utf8'));
   assert.equal(read('out/main/timewarp/shared/google-oauth.cjs'),fs.readFileSync(path.join(root,'shared/google-oauth.cjs'),'utf8'));
   assert.equal(read('out/renderer/timewarp-logo.svg'), fs.readFileSync(path.join(root,'assets/timewarp-logo.svg'), 'utf8'));
@@ -58,6 +74,11 @@ async function verify() {
     assert.deepEqual(asar.extractFile(archive, ('out/main/timewarp/assets/' + name).split('/').join(path.sep)), fs.readFileSync(path.join(root, 'assets', name)), 'Packaged app icon matches the vector export: ' + name);
   }
   const runtime=read('out/main/timewarp/desktop/runtime.cjs');
+  if(staged&&!archiveOnly){const {getCurrentFuseWire,FuseState,FuseV1Options}=await import('@electron/fuses');const fuses=await getCurrentFuseWire(exe);for(const name of ['RunAsNode','EnableNodeOptionsEnvironmentVariable','EnableNodeCliInspectArguments','GrantFileProtocolExtraPrivileges'])assert.equal(fuses[FuseV1Options[name]],FuseState.DISABLE);for(const name of ['EnableCookieEncryption','EnableEmbeddedAsarIntegrityValidation','OnlyLoadAppFromAsar'])assert.equal(fuses[FuseV1Options[name]],FuseState.ENABLE);}
+  assert.ok(runtime.includes('config.supabaseUrl}/functions/v1/timewarp-energy'));
+  for(const file of asar.listPackage(archive).filter(file=>/[/\\]out[/\\].*\.(?:js|cjs|json)$/.test(file)&&!file.includes('licenses'))){
+    assert.ok(!/(?:https?|wss?):\/\/[^\s"'`]*?(?:getenergy\.com|generalwork\.ai|newco-trace-ingest\.computerwork\.workers\.dev)/i.test(read(file.replace(/^[/\\]/,''))),'Upstream server URL in executable code: '+file);
+  }
   assert.equal(read('out/main/timewarp/desktop/chatgpt.cjs'),fs.readFileSync(path.join(root,'desktop/chatgpt.cjs'),'utf8'));
   assert.equal(read('out/main/timewarp/desktop/ai-funding.cjs'),fs.readFileSync(path.join(root,'desktop/ai-funding.cjs'),'utf8'));
   assert.equal(read('out/main/timewarp/desktop/codex-funding.cjs'),fs.readFileSync(path.join(root,'desktop/codex-funding.cjs'),'utf8'));
@@ -84,7 +105,7 @@ async function verify() {
   assert.ok(read('out/main/timewarp/desktop/runtime.cjs').includes('migrateAppearance(preferences.appearance)'));
   assert.ok(read('out/renderer/timewarp-auth.css').includes('.timewarp-auth-actions'));
   assert.throws(()=>read('out/renderer/timewarp-native.js'));
-  const ui = read('out/renderer/assets/mermaid-GHXKKRXX-YWFhvrpV.js');
+  const ui = read('out/renderer/assets/'+(mac?require('../mac-upstream-lock.json').rendererUi:'mermaid-GHXKKRXX-YWFhvrpV.js'));
   assert.ok(ui.includes('Quit Timewarp?'));
   assert.ok(ui.includes('Timewarp agent'));
   assert.ok(ui.includes('children:"Add agent"'));
@@ -112,7 +133,7 @@ async function verify() {
   assert.ok(!ui.includes('Pick a color, radiance, and backdrop texture'));
   assert.ok(!ui.includes('children:"E"'));
   for (const preset of presets) assert.ok(ui.includes(JSON.stringify(preset)), preset.name);
-  const rendererIndex=read('out/renderer/assets/index-C6BbfH_v.js');
+  const rendererIndex=read('out/renderer/assets/'+(mac?require('../mac-upstream-lock.json').rendererIndex:'index-C6BbfH_v.js'));
   assert.ok(rendererIndex.includes('accent:' + JSON.stringify(defaultAccent)));
   assert.ok(rendererIndex.includes('texture:{type:"dots",step:0}'));
   assert.ok(rendererIndex.includes('u8=()=>"none"'));
@@ -139,6 +160,15 @@ async function verify() {
   assert.ok(read('out/main/timewarp/desktop/bridge.cjs').includes('/api/funding/current'));
   const bytes = fs.readFileSync(archive);
   const wanted = crypto.createHash('sha256').update(bytes.subarray(16, 16 + bytes.readUInt32LE(12))).digest('hex');
+  if(mac){
+    if(!archiveOnly){
+      const plist=JSON.parse(require('node:child_process').execFileSync('/usr/bin/plutil',['-convert','json','-o','-',path.join(native,'Info.plist')],{encoding:'utf8'}));
+      assert.equal(plist.ElectronAsarIntegrity['Resources/app.asar'].hash,wanted,'Signed Mac bundle pins its ASAR header');
+      assert.deepEqual(fs.readFileSync(path.join(native,'Resources',plist.CFBundleIconFile)),fs.readFileSync(path.join(root,'assets/app-icon.icns')));
+    }
+    console.log('Verified Mac application contracts, Timewarp service routing, isolated profile and packaged native bridge'+(archiveOnly?' (archive only).':', ASAR integrity, icon and hardened fuses.'));
+    return;
+  }
   const binary = fs.readFileSync(exe);
   const icon = fs.readFileSync(path.join(root, 'assets/app-icon.ico'));
   for (let i = 0; i < icon.readUInt16LE(4); i++) {

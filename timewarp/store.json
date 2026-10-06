@@ -1,0 +1,12 @@
+{
+  "storeId": "9N6WRN6GN0KR",
+  "identityName": "TimeWarpDev.TimeWarpDev",
+  "publisher": "CN=B2BAE52B-CBF1-4A62-A0CD-60F8F262B802",
+  "publisherDisplayName": "TimeWarpDev",
+  "packageFamilyName": "TimeWarpDev.TimeWarpDev_m60bgk3k2x9p0",
+  "applicationId": "TimeWarp",
+  "displayName": "TimeWarp Dev",
+  "version": "1.1.22",
+  "previousPackageVersion": "1.1.21.0",
+  "minimumWindowsVersion": "10.0.17763.0"
+}

@@ -76,7 +76,7 @@ if (process.versions.electron) {
   });
 } else {
   const acorn=require('acorn'),cp=require('node:child_process'),{pathToFileURL}=require('node:url');
-  const dependencyRoot=path.dirname(path.dirname(require('../config.json').brandSource));
+  const dependencyRoot=path.resolve(__dirname,'..');
   const resolve=name=>require.resolve(name,{paths:[dependencyRoot]});
   const renderer=path.join(root,'build/app/out/renderer');
   const ui=fs.readFileSync(path.join(renderer,'assets/mermaid-GHXKKRXX-YWFhvrpV.js'),'utf8');

@@ -20,7 +20,7 @@
   padding: 24px 16px;
   border: 1px solid var(--color-border);
   border-radius: 18px;
-  background: var(--color-card);
+  background: color-mix(in srgb, var(--color-foreground) 3%, var(--color-background));
   color: var(--color-foreground);
   cursor: pointer;
   text-align: center;
@@ -50,7 +50,7 @@
   transition: background .15s;
 }
 .timewarp-workspace-site:hover { background: var(--color-accent); }
-.timewarp-workspace-site-icon { display: grid; place-items: center; flex-shrink: 0; width: 64px; height: 64px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-card); }
+.timewarp-workspace-site-icon { display: grid; place-items: center; flex-shrink: 0; width: 64px; height: 64px; border: 1px solid var(--color-border); border-radius: 16px; background: color-mix(in srgb, var(--color-foreground) 3%, var(--color-background)); }
 .timewarp-workspace-site-icon > img, .timewarp-workspace-site-icon > svg { width: 44px; height: 44px; object-fit: contain; border-radius: 7px; }
 .timewarp-workspace-site-icon > svg { color: var(--color-muted-foreground); }
 .timewarp-workspace-site-copy { width: 100%; min-width: 0; }

@@ -53,7 +53,7 @@ function createWorkspaceHome({ h, AgentIcon, FilesIcon, SiteIcon }) {
     const siteLabel = url => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } };
     const origins = new Set();
     const websites = recents.filter(site => {
-      try { const origin = new URL(site.url).origin; if (origins.has(origin)) return false; origins.add(origin); return true; }
+      try { const origin = new URL(site.url).hostname.replace(/^www\./, ''); if (origins.has(origin)) return false; origins.add(origin); return true; }
       catch { return false; }
     }).slice(0, 4);
     return h.jsx('div', { className: 'timewarp-workspace-home', 'data-workspace-home': true, children: h.jsxs('div', { className: 'timewarp-workspace-home-content', children: [

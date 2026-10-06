@@ -187,7 +187,14 @@ ipcMain.handle('timewarp:request',async(event,action,input={})=>{
 });
 app.on('before-quit',()=>{chatgpt.stop();historySync?.stop();server.close();oauthServer?.close();});
 const {autoUpdater}=require('electron-updater');
-autoUpdater.autoDownload=false;autoUpdater.autoInstallOnAppQuit=false;
-autoUpdater.checkForUpdates = async () => null;
-autoUpdater.checkForUpdatesAndNotify = async () => null;
+let release;
+try { release=JSON.parse(require('node:fs').readFileSync(path.join(__dirname,'../release.json'),'utf8')); } catch { release={enabled:false}; }
+require('./updates.cjs').configureUpdates({app,autoUpdater,release,
+  readUpdateConfig:()=>require('js-yaml').load(require('node:fs').readFileSync(path.join(process.resourcesPath,'app-update.yml'),'utf8')),
+  notify:install=>{
+    const {Notification,dialog}=require('electron');
+    const prompt=()=>{void dialog.showMessageBox({type:'info',title:'Timewarp update',message:'An update is ready. Restart Timewarp to install it.',buttons:['Restart and install','Later'],defaultId:1,cancelId:1}).then(result=>{if(result.response===0)install();}).catch(()=>{});};
+    if(Notification.isSupported()){const notification=new Notification({title:'Timewarp update ready',body:'Click to restart and install the verified update.'});notification.on('click',prompt);notification.show();}
+    else prompt();
+  }});
 module.exports={bindNativeAccount,attachNativeRuntime,getNativeRuntime:()=>nativeRuntime,flushHistory:()=>historySync?.sync(),chatgpt,availableModels,createIntegrations,bindCodexClient,bindToolRuntime,bindBrowserManager,integrations,mascot:mascots.mascot,inspectTools:async()=>{await registerTools();return toolRuntime.client.request('mcpServerStatus/list',{cursor:null,limit:1000,detail:'full'});}};

@@ -10,8 +10,8 @@
 // "Personal" is a workspace too — solo, and the default — carried as
 // workspaceId === null.
 //
-// Entitlement is never written here. Only stripe-webhook writes subscription
-// rows, so what the database believes always came from Stripe.
+// Entitlement comes from Stripe through the webhook or the verified checkout
+// return. A pending checkout attempt never grants a subscription or credits.
 import { createClient } from 'npm:@supabase/supabase-js@2.106.2';
 import { authenticateRequest, type AdminSupabaseClient } from '../_shared/auth.ts';
 import {
@@ -26,6 +26,7 @@ import {
 import { AI_COST_MARKUP, CREDIT_PACKS, getCreditPack, USD_PER_CREDIT } from '../_shared/credits.ts';
 import { energyPlanPrice, energyCreditPackPrice, monthlyExtraCredits, MONTHLY_CREDIT_ADDONS, energySubscriptionExtras, syncEnergyMonthlyCredits } from '../_shared/energyPricing.ts';
 import { corsHeaders, getSiteUrl, getStripe, jsonResponse, type Stripe } from '../_shared/stripe.ts';
+import { subscriptionCheckout } from '../_shared/subscriptionCheckout.ts';
 
 interface SubscriptionRow {
   id: string;
@@ -96,9 +97,10 @@ const loadSubscription = async (
   const query = admin
     .from('timewarp_subscriptions')
     .select('id, workspace_id, owner_user_id, stripe_customer_id, stripe_subscription_id, plan, subscription_status, cancel_at_period_end, current_period_end, energy_monthly_extra_credits, energy_monthly_usd');
-  const { data } = workspaceId
+  const { data, error } = workspaceId
     ? await query.eq('workspace_id', workspaceId).maybeSingle<SubscriptionRow>()
     : await query.is('workspace_id', null).eq('owner_user_id', userId).maybeSingle<SubscriptionRow>();
+  if (error) throw new Error('Could not verify the current subscription. No billing changes were made.');
   return data ?? null;
 };
 
@@ -128,20 +130,24 @@ const ensureCustomer = async (
   userId: string,
   email: string | undefined,
 ): Promise<string> => {
-  const { data: existing } = await admin
+  const { data: existing, error: lookupError } = await admin
     .from('timewarp_billing_customers')
     .select('stripe_customer_id')
     .eq('user_id', userId)
     .maybeSingle<{ stripe_customer_id: string }>();
+  if (lookupError) throw new Error('Could not verify the billing customer. No checkout was started.');
   if (existing?.stripe_customer_id) return existing.stripe_customer_id;
 
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
+  const customerKey = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2,'0')).join('');
   const customer = await stripe.customers.create({
     email: email ?? undefined,
     metadata: { supabase_user_id: userId },
-  });
-  await admin
+  }, { idempotencyKey: 'timewarp-billing-customer-' + customerKey });
+  const { error: storeError } = await admin
     .from('timewarp_billing_customers')
     .upsert({ user_id: userId, stripe_customer_id: customer.id }, { onConflict: 'user_id' });
+  if (storeError) throw new Error('Could not save the billing customer. No checkout was started.');
   return customer.id;
 };
 
@@ -597,9 +603,7 @@ Deno.serve(async (req) => {
       // workspace and bill twice. Swap the price on the existing item and let
       // Stripe prorate.
       if (subscription?.stripe_subscription_id) {
-        const existing = await stripe.subscriptions
-          .retrieve(subscription.stripe_subscription_id)
-          .catch(() => null);
+        const existing = await stripe.subscriptions.retrieve(subscription.stripe_subscription_id);
 
         if (existing && existing.status !== 'canceled' && existing.status !== 'incomplete_expired') {
           if (subscription.owner_user_id !== user.id) {
@@ -652,7 +656,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      const session = await stripe.checkout.sessions.create({
+      const session = await subscriptionCheckout(admin, stripe, user.id, workspaceId, {
         mode: 'subscription',
         ...(body.surface === 'energy' ? { payment_method_types: ['card' as const] } : {}),
         customer: customerId,
@@ -691,6 +695,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Billing request failed.';
     console.error('[stripe-billing]', message);
-    return jsonResponse({ error: message }, 500);
+    const status = error && typeof error === 'object' && 'status' in error && [409,503].includes(Number(error.status)) ? Number(error.status) : 500;
+    return jsonResponse({ error: message }, status);
   }
 });

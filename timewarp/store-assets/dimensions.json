@@ -1,0 +1,92 @@
+[
+  {
+    "file": "box-art-1080.png",
+    "width": 1080,
+    "height": 1080,
+    "bytes": 306807,
+    "format": "png",
+    "hasAlpha": true,
+    "alphaMin": 0,
+    "alphaMax": 255
+  },
+  {
+    "file": "logo-150.png",
+    "width": 150,
+    "height": 150,
+    "bytes": 22094,
+    "format": "png",
+    "hasAlpha": true,
+    "alphaMin": 0,
+    "alphaMax": 255
+  },
+  {
+    "file": "logo-300.png",
+    "width": 300,
+    "height": 300,
+    "bytes": 66099,
+    "format": "png",
+    "hasAlpha": true,
+    "alphaMin": 0,
+    "alphaMax": 255
+  },
+  {
+    "file": "logo-71.png",
+    "width": 71,
+    "height": 71,
+    "bytes": 6641,
+    "format": "png",
+    "hasAlpha": true,
+    "alphaMin": 0,
+    "alphaMax": 255
+  },
+  {
+    "file": "poster-art-1440x2160.png",
+    "width": 1440,
+    "height": 2160,
+    "bytes": 425746,
+    "format": "png",
+    "hasAlpha": true,
+    "alphaMin": 0,
+    "alphaMax": 255
+  },
+  {
+    "file": "screenshot-01.png",
+    "width": 1920,
+    "height": 1080,
+    "bytes": 374387,
+    "format": "png",
+    "hasAlpha": true,
+    "alphaMin": 255,
+    "alphaMax": 255
+  },
+  {
+    "file": "screenshot-02.png",
+    "width": 1920,
+    "height": 1080,
+    "bytes": 233380,
+    "format": "png",
+    "hasAlpha": true,
+    "alphaMin": 255,
+    "alphaMax": 255
+  },
+  {
+    "file": "screenshot-03.png",
+    "width": 1920,
+    "height": 1080,
+    "bytes": 135431,
+    "format": "png",
+    "hasAlpha": true,
+    "alphaMin": 255,
+    "alphaMax": 255
+  },
+  {
+    "file": "screenshot-04.png",
+    "width": 1920,
+    "height": 1080,
+    "bytes": 190926,
+    "format": "png",
+    "hasAlpha": true,
+    "alphaMin": 255,
+    "alphaMax": 255
+  }
+]

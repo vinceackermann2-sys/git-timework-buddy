@@ -94,7 +94,7 @@ if(process.versions.electron){
     if(new URLSearchParams(location.search).has('dark'))document.documentElement.classList.add('dark');
     window.authCalls=[];window.timewarp={request:async(action,input={})=>{window.authCalls.push({action,input});if(action==='authProviders')return{google:!new URLSearchParams(location.search).has('google'),signup:true};if(action==='state')return{user:null};return{};}};
     </script><script src="${pathToFileURL(path.join(root,'desktop/auth-ui.js')).href}" defer></script></head><body class="bg-background text-foreground"><main id="timewarp-auth-view" style="height:100vh"></main></body></html>`);
-  const dependencyRoot=path.dirname(path.dirname(require('../config.json').brandSource));
+  const dependencyRoot=path.resolve(__dirname,'..');
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
   const child=require('node:child_process').spawn(require(require.resolve('electron',{paths:[dependencyRoot]})),[__filename],{env,windowsHide:true,stdio:'inherit'});
   const timeout=setTimeout(()=>{console.error('Auth appearance verification timed out');child.kill();},60000);
