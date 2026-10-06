@@ -9,9 +9,10 @@ The supplied Electron runtime, device data, credentials, backups and generated
 acceptance reports stay outside Git. GitHub Actions runs portable source and
 email checks. A manual Windows job now builds verified preview/signed artifacts
 from the hash-pinned supplied inputs; it does not publish them. The repository
-is public, and the Apple Silicon Mac workflow has built a preview DMG with
-verified native startup, packaged contracts and ad hoc signatures. Developer ID
-signing and notarization remain pending; see [native distribution](docs/native-distribution.md).
+is public, and the Apple Silicon Mac workflow has built a candidate DMG with
+verified native startup, packaged contracts, Developer ID signatures and
+hardened runtime. Apple notarization, stapling and Gatekeeper acceptance remain
+pending; see [native distribution](docs/native-distribution.md).
 
 Run **launch.cmd** in this folder. The single desktop app keeps the original
 Energy interface with Timewarp's name, logo and Windows icon.

@@ -85,7 +85,8 @@ The checkout guard and AI settlement migrations were applied to the existing
 Timewarp Production project `mrqoeywofslgnquvzhuf` on October 6, 2026. The rollout
 used the actual remote migration history and pushed exactly the two pending
 migrations. A local logical database backup was created and its 1,609-entry
-restore catalog checked before cutover. New subscription checkout was paused
+restore catalog checked before cutover. A full archive readback also succeeds;
+an isolated database restore rehearsal is still required. New subscription checkout was paused
 while the old handlers drained, then restored with `stripe-billing` version 47.
 `timewarp-energy` version 23 is active. Both new tables have RLS; the sensitive
 RPCs are restricted to the service role. The once-per-minute recovery job has

@@ -2,9 +2,10 @@
 
 Checked 6 October 2026. Partner Center shows submission 8 as **Live**. Submission
 9 is a saved artwork update draft with transparent logos and images captured
-from the actual Timewarp app. No new product was registered. The Mac preview
-DMG has passed native acceptance; Developer ID signing, notarization and the
-remaining [release checklist](production-readiness.md) are still open.
+from the actual Timewarp app. No new product was registered. The Mac candidate
+DMG has passed native startup and Developer ID signing checks; notarization,
+stapling, Gatekeeper and the remaining [release checklist](production-readiness.md)
+are still open.
 
 ## Windows
 
@@ -49,8 +50,10 @@ certificate ID `2Y2GKN9487`, expiring 17 September 2031. Its public SHA256
 fingerprint is `35b48167357f672c4ff1dc9a14c503ca7c0b7c427a7f455dbe2c15552c30a901`.
 The certificate matches the generated RSA private key and was exported as an
 encrypted PKCS#12 identity. The key and DPAPI-protected password remain in a
-restricted local directory outside OneDrive and Git. No signing credentials
-have been uploaded to GitHub.
+restricted local directory outside OneDrive and Git. At the user's authorization,
+the encrypted signing identity and notarization credentials were stored in the
+protected GitHub `desktop-release` environment. Credentials are excluded from
+source, build artifacts and logs.
 
 For a directly downloadable DMG, [Apple requires a Developer ID Application
 certificate](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/).
@@ -87,16 +90,22 @@ and the shipped dependency audit reported zero vulnerabilities. The artifact is
 `Timewarp-Preview-0.1.0-draft.1-arm64.dmg`; it is an isolated acceptance preview,
 not a Developer ID signed or notarized release.
 
+The signed candidate from [run 37499383055](https://github.com/vinceackermann2-sys/timework/actions/runs/37499383055)
+passed native startup, approved Developer ID/team checks and hardened-runtime
+checks. Its Apple submission `3acbade8-b9b3-4bb3-88c9-165332b0fab5` exceeded the
+initial wait. The original unstapled DMG SHA256 is
+`34f41b002a8d758fcdefb938c875c94c1a2b8aa40fb2c4ff9587650a7695ccf1`.
+[Recovery run 37504330079](https://github.com/vinceackermann2-sys/timework/actions/runs/37504330079)
+resumes that exact submission and candidate; it does not submit another build.
+The initial job's green status did not establish Apple acceptance. Final release
+validation now requires matching accepted-notarization, stapling, Gatekeeper and
+DMG-checksum evidence, and a failed notarization wait fails the job.
+
 Remaining before a public Mac release:
 
-1. Authorize transfer of the signing identity to the protected release runner,
-   or use it on the user's build Mac.
-2. Supply notarization credentials directly to the Mac keychain or protected
-   runner secrets. App-specific passwords must be created and entered by the
-   user. Do not put credentials in chat, source or artifacts.
-3. Run the signed build and require accepted notarization, stapling and Gatekeeper
-   verification before distributing the release DMG.
-4. Verify installation, existing-data migration and live Timewarp services on a
+1. Require accepted notarization, stapling and Gatekeeper verification before
+   distributing the release DMG, then verify the hosted artifact checksum.
+2. Verify installation, existing-data migration and live Timewarp services on a
    clean Mac. This initial build targets Apple Silicon; Intel is not validated.
 
 [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
@@ -106,3 +115,23 @@ ticket, and validates Gatekeeper before retaining the release DMG. The workflow
 does not publish. Ad hoc previews are for local acceptance. Mac automatic
 updates remain disabled while a reviewed Mac feed is absent. No accepted
 notarization ticket or production DMG release is claimed yet.
+
+## Website downloads
+
+[Website PR 35](https://github.com/vinceackermann2-sys/Desktop-APP/pull/35) is merged
+at `34e158d0734f45b9c254f864c58314cb2e9c79cf`. The updated Lovable preview links
+the existing Microsoft Store listing and the intended Apple Silicon DMG at
+`https://github.com/vinceackermann2-sys/timework/releases/download/v1.1.22/Timewarp-1.1.22-arm64.dmg`.
+That DMG URL is reserved for the verified release and is not available yet.
+The existing `timewarpdev.com` and `www.timewarpdev.com` domain registrations were
+restored in Lovable using their already-matching DNS records. The production
+root domain and sign-in page load over HTTPS; the published site still uses the
+Mac waitlist until the release is available and publication is verified.
+
+The website production build, type checks, lint, 1,895 portable tests and 12
+native Electron browser tests pass locally. Wallet policy static verification
+uses the repository's CI structural configuration and does not establish live
+payment acceptance. Its dependency audit has no high or critical findings;
+7 low and 14 moderate findings remain. Private-repository GitHub CI could not
+start because of an account billing/spending restriction. The existing branch
+has no protection requirements; none were changed or bypassed.
