@@ -26,10 +26,10 @@ async function installer(){
     publish:null,
     electronFuses:{runAsNode:false,enableCookieEncryption:true,enableNodeOptionsEnvironmentVariable:false,enableNodeCliInspectArguments:false,enableEmbeddedAsarIntegrityValidation:true,onlyLoadAppFromAsar:true,grantFileProtocolExtraPrivileges:false},
     mac:{target:'dmg',icon:path.join(root,'assets/app-icon.icns'),category:'public.app-category.productivity',
-      identity:draft?'-':config.identity,hardenedRuntime:true,notarize:false,gatekeeperAssess:false,
+      identity:draft?'-':config.identity.replace(/^Developer ID Application: /,''),hardenedRuntime:true,notarize:false,gatekeeperAssess:false,
       entitlements:path.join(root,'assets/entitlements.mac.plist'),entitlementsInherit:path.join(root,'assets/entitlements.mac.plist'),
       minimumSystemVersion:config.minimumSystemVersion,
-      extendInfo:{NSMicrophoneUsageDescription:'Timewarp uses the microphone when you dictate messages.',NSCameraUsageDescription:'Timewarp uses the camera when an authorized browser website requests it.',NSAppDataUsageDescription:'Timewarp imports browser sign-in data only when you request it.'}},
+      extendInfo:{NSMicrophoneUsageDescription:'Timewarp uses the microphone when you dictate messages.',NSCameraUsageDescription:'Timewarp uses the camera when an authorized browser website requests it.',NSAudioCaptureUsageDescription:'Timewarp captures audio when you authorize a browser capture request.',NSAppDataUsageDescription:'Timewarp imports browser sign-in data only when you request it.',NSAppTransportSecurity:{NSAllowsLocalNetworking:true}}},
     dmg:{sign:!draft,artifactName:draft?'Timewarp-Preview-${version}-${arch}.${ext}':'Timewarp-${version}-${arch}.${ext}'}
   }});
   const app=path.join(output,'mac-arm64',draft?'Timewarp Preview.app':'Timewarp.app');

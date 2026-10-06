@@ -61,20 +61,28 @@ updater cannot override Timewarp's feed or install policy.
   If the database cannot persist evidence, usage-only function logs support
   operator recovery. Unknown provider usage stays reserved for review; it is
   never automatically charged at an estimate or released by age.
+- Apple Developer ID Application was issued for team `6XD78664VT` and matches
+  the securely retained private key. The Mac build pins the matching 0.8.20
+  arm64 DMG and 1,031 native resources. Shared archive contracts pass, and the
+  130 shipped Mac npm modules have zero reported audit findings. The Mac DMG
+  workflow includes native startup, signatures, notarization, stapling and
+  Gatekeeper checks. Its first runner job was blocked by GitHub billing before
+  any build step started; no DMG or notarization acceptance is claimed.
 
 The checkout guard, AI migration/callers and Cron setup have **not been deployed**.
-Real signing could not be tested because the certificate/service and feed are
-pending. No paid transaction was submitted and no production service was changed.
+Windows direct signing and update hosting remain pending. Mac signing identity
+preparation passed, but native signing cannot yet run because GitHub Actions
+is blocked and notarization credentials are absent. No paid transaction was
+submitted and no production service was changed.
 
 ## Remaining public-release gates
 
 1. **Signing and distribution:** finish Microsoft Store certification for the
    existing listing after release acceptance. Direct EXE downloads still require
-   a signing identity/service and HTTPS update hosting. For macOS, provide matching
-   native inputs, a Mac/runner, Developer ID Application private-key identity and
-   notarization credentials, then build and test the DMG. The signed-in Apple
-   account currently has an Apple Distribution certificate, which cannot sign a
-   direct DMG release. See [native distribution](native-distribution.md).
+   a signing identity/service and HTTPS update hosting. For macOS, restore Actions
+   access or provide a Mac; the pinned native inputs and approved Developer ID
+   identity are now prepared. Supply notarization credentials, then build, sign,
+   notarize and test the DMG. See [native distribution](native-distribution.md).
 2. **Staged deployment:** version the matching existing Timewarp service baseline,
    use a separate staging project, apply the checkout/AI migrations, enable and
    verify the recovery Cron job, then deploy matching function versions. Drain
@@ -104,8 +112,8 @@ The precise rollout, alert conditions and acceptance checklist are in
 | Check | Result |
 | --- | --- |
 | `npm run check` | Pass |
-| `npm test` | 127 pass, no skips |
-| `npm run test:portable` | 110 pass, no skips |
+| `npm test` plus the three new Mac input tests | 130 pass, no skips |
+| `npm run test:portable` | 116 pass, no skips |
 | `npm run test:email` | 18 pass |
 | Deno check, editable/staged cloud plus all other edge entry points | Pass |
 | `npm run verify:cloud-source` | All 11 staged modules match |

@@ -76,7 +76,10 @@ architecture, the Git binding, deep code signatures and entitlements.
 
 Remaining before a public Mac release:
 
-1. Run and pass the native Mac packaging and startup job.
+1. Restore GitHub Actions access or provide a Mac, then run the native packaging
+   and startup job. [The first run](https://github.com/vinceackermann2-sys/timework/actions/runs/37481698280)
+   was blocked before any step started: GitHub reported failed recent payments
+   or a spending limit needing attention. Billing settings were not changed.
 2. Authorize transfer of the signing identity to the protected release runner,
    or use it on the user's build Mac.
 3. Supply notarization credentials directly to the Mac keychain or protected

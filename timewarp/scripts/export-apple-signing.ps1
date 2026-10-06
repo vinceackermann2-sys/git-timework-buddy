@@ -10,6 +10,8 @@ $keyPath = Join-Path $signingDirectory 'developer-id.key.pem'
 $passwordPath = Join-Path $signingDirectory 'password.dpapi'
 $pemPath = Join-Path $signingDirectory 'developer-id.cert.pem'
 $p12Path = Join-Path $signingDirectory 'developer-id.p12'
+$caPath = Join-Path $signingDirectory 'developer-id-g2.cer'
+$caPemPath = Join-Path $signingDirectory 'developer-id-g2.pem'
 $securePassword = Get-Content -LiteralPath $passwordPath -Raw | ConvertTo-SecureString
 try {
   $env:TIMEWARP_CSR_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
@@ -20,7 +22,10 @@ try {
   $certPublicKey = (& $OpenSsl x509 -in $pemPath -pubkey -noout) -join "`n"
   $privatePublicKey = (& $OpenSsl pkey -in $keyPath -passin env:TIMEWARP_CSR_PASSWORD -pubout) -join "`n"
   if ($LASTEXITCODE -ne 0 -or $certPublicKey -ne $privatePublicKey) { throw 'The certificate does not match the retained private key.' }
-  & $OpenSsl pkcs12 -export -inkey $keyPath -in $pemPath -passin env:TIMEWARP_CSR_PASSWORD -passout env:TIMEWARP_CSR_PASSWORD -out $p12Path -name "Developer ID Application ($TeamId)"
+  Invoke-WebRequest -Uri 'https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer' -OutFile $caPath
+  & $OpenSsl x509 -inform DER -in $caPath -out $caPemPath
+  if ($LASTEXITCODE -ne 0) { throw 'Invalid Apple G2 intermediary.' }
+  & $OpenSsl pkcs12 -export -inkey $keyPath -in $pemPath -certfile $caPemPath -passin env:TIMEWARP_CSR_PASSWORD -passout env:TIMEWARP_CSR_PASSWORD -out $p12Path -name "Developer ID Application ($TeamId)"
   if ($LASTEXITCODE -ne 0) { throw 'Signing identity export failed.' }
   & $OpenSsl x509 -in $pemPath -noout -subject -dates -fingerprint -sha256
 } finally {
