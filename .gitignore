@@ -36,3 +36,14 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Existing website exports copied for the Lovable build by sync-website.cjs.
+/public/assets/
+/public/app.js
+/public/styles.css
+/public/download.js
+/public/download-config.js
+/public/auth-bridge.html
+/public/desktop-auth-logo.svg
+/public/desktop-auth.css
+/public/timewarp-desktop-auth.json

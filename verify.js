@@ -15,4 +15,3 @@ for(const m of new Set(t.match(/https?:\/\/[a-z0-9.-]*getenergy[a-z0-9.-]*|https
 console.log("\n--- remaining bare 'Energy' display strings ---");
 const re=/Energy/g; let mm,c=0;
 while((mm=re.exec(t))&&c<25){const ctx=t.slice(Math.max(0,mm.index-50),mm.index+50).replace(/\s+/g," ");if(!/energy-|ENERGY_|getenergy|newco|computerwork|EnergyL|energy\b/i.test(ctx)){console.log("  ..."+ctx+"...");c++}}
-
