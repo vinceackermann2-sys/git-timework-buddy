@@ -7,7 +7,7 @@ async function configure(){
   if(process.platform!=='darwin'||!process.env.RUNNER_TEMP||!process.env.GITHUB_ENV)throw new Error('Use this helper only on the isolated macOS Actions runner.');
   const temporary=fs.realpathSync(process.env.RUNNER_TEMP);
   const p12=path.join(temporary,'timewarp-developer-id.p12'),pem=path.join(temporary,'timewarp-developer-id-leaf.pem'),keychain=path.join(temporary,'timewarp-notary.keychain-db'),chain=path.join(temporary,'timewarp-developer-id-g2.cer');
-  const run=(tool,args,options={})=>{const result=cp.spawnSync(tool,args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],...options});if(result.status!==0)throw new Error('Temporary Apple credential setup failed ('+path.basename(tool)+'/'+args[0]+').');return result.stdout;};
+  const run=(tool,args,options={})=>{const result=cp.spawnSync(tool,args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],...options});if(result.status!==0)throw new Error('Temporary Apple credential setup failed ('+path.basename(tool)+'/'+args[0]+(args[0]==='import'?'/'+path.basename(args[1]):'')+').');return result.stdout;};
   if(process.argv.includes('--cleanup')){
     if(fs.existsSync(keychain))run('/usr/bin/security',['delete-keychain',keychain]);
     for(const file of [p12,pem,chain])if(fs.existsSync(file))fs.unlinkSync(file);

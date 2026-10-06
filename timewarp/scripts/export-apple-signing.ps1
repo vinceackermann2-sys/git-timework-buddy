@@ -25,7 +25,9 @@ try {
   Invoke-WebRequest -Uri 'https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer' -OutFile $caPath
   & $OpenSsl x509 -inform DER -in $caPath -out $caPemPath
   if ($LASTEXITCODE -ne 0) { throw 'Invalid Apple G2 intermediary.' }
-  & $OpenSsl pkcs12 -export -inkey $keyPath -in $pemPath -certfile $caPemPath -passin env:TIMEWARP_CSR_PASSWORD -passout env:TIMEWARP_CSR_PASSWORD -out $p12Path -name "Developer ID Application ($TeamId)"
+  # Apple's Security import requires the interoperable PKCS#12 PBE/MAC format.
+  # Keep the high-entropy protected password and an explicit iteration count.
+  & $OpenSsl pkcs12 -export -inkey $keyPath -in $pemPath -certfile $caPemPath -passin env:TIMEWARP_CSR_PASSWORD -passout env:TIMEWARP_CSR_PASSWORD -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -iter 100000 -out $p12Path -name "Developer ID Application ($TeamId)"
   if ($LASTEXITCODE -ne 0) { throw 'Signing identity export failed.' }
   & $OpenSsl x509 -in $pemPath -noout -subject -dates -fingerprint -sha256
 } finally {
