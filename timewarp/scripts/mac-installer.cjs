@@ -39,4 +39,6 @@ async function installer(){
   if(!draft)run('notarize-mac.cjs',[artifacts.find(file=>file.endsWith('.dmg'))]);
   console.log((draft?'Local acceptance DMG (ad hoc signed): ':'Signed and notarized DMG: ')+output);
 }
-installer().catch(error=>{console.error(error.message);process.exitCode=1;});
+// electron-builder registers shutdown handlers; terminate explicitly so a
+// failed post-build acceptance step cannot be reset to a successful exit.
+installer().catch(error=>{console.error(error.message);process.exit(1);});

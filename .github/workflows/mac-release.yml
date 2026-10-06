@@ -9,9 +9,29 @@ on:
         description: Sign and notarize using the protected Apple release identity
         type: boolean
         default: false
+      resume_run_id:
+        description: Existing candidate artifact run to resume without rebuilding
+        type: string
+        default: ''
+      submission_id:
+        description: Apple submission ID belonging to that exact candidate DMG
+        type: string
+        default: ''
+      candidate_sha256:
+        description: SHA256 of the exact DMG originally submitted to Apple
+        type: string
+        default: ''
+      resume_artifact:
+        description: Artifact name from the candidate run
+        type: choice
+        default: timewarp-macos-arm64-candidate
+        options:
+          - timewarp-macos-arm64-candidate
+          - timewarp-macos-arm64-signed
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   preview:
@@ -47,7 +67,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.signed }}
     runs-on: macos-15
     environment: desktop-release
-    timeout-minutes: 40
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: timewarp
@@ -60,6 +80,21 @@ jobs:
           cache-dependency-path: timewarp/package-lock.json
       - run: npm ci --ignore-scripts
       - run: node scripts/prepare-mac-inputs.cjs
+        if: ${{ !inputs.resume_run_id }}
+      - name: Validate notarization recovery inputs
+        if: ${{ inputs.resume_run_id }}
+        env:
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+          CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+        run: node -e "if(!/^\d+$/.test(process.env.RESUME_RUN_ID)||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(process.env.SUBMISSION_ID)||!/^[a-f0-9]{64}$/i.test(process.env.CANDIDATE_SHA256))process.exit(1)"
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.resume_run_id }}
+        with:
+          name: ${{ inputs.resume_artifact }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.resume_run_id }}
+          path: timewarp
       - name: Configure temporary signing and notarization credentials
         env:
           APPLE_P12_BASE64: ${{ secrets.TIMEWARP_APPLE_P12_BASE64 }}
@@ -68,6 +103,15 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.TIMEWARP_APPLE_APP_PASSWORD }}
         run: node scripts/configure-mac-signing.cjs
       - run: npm run installer:mac:release
+        if: ${{ !inputs.resume_run_id }}
+      - name: Resume the existing Apple notarization submission
+        if: ${{ inputs.resume_run_id }}
+        env:
+          TIMEWARP_NOTARY_SUBMISSION_ID: ${{ inputs.submission_id }}
+          TIMEWARP_NOTARY_CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+        run: node scripts/notarize-mac.cjs build/mac-release/Timewarp-1.1.22-arm64.dmg
+      - name: Require final notarization and artifact acceptance evidence
+        run: node scripts/verify-mac-release.cjs
       - run: npm run test:portable
       - run: npm audit --audit-level=moderate
       - name: Remove temporary signing material
@@ -82,3 +126,12 @@ jobs:
             timewarp/build/mac-release/*.dmg
             timewarp/reports/mac-*.json
             timewarp/reports/runtime-audit.json
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: timewarp-macos-arm64-candidate
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            timewarp/build/mac-release/*.dmg
+            timewarp/reports/mac-*.json
