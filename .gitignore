@@ -7,6 +7,7 @@ timewarp/backups/
 timewarp/build/
 timewarp/design/mascots/render/
 timewarp/reports/
+timewarp/release.json
 # Keep the editable upstream patch tools; runtime binaries and old stubs stay local.
 energy-testv1/*
 !energy-testv1/README.md

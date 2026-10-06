@@ -1,0 +1,10 @@
+"use strict";
+const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process');
+const {verifyUpstream,hash}=require('./upstream.cjs');
+const root=path.resolve(__dirname,'..'),inputs=verifyUpstream();
+const output=path.join(root,'build/upstream-inputs.zip'),list=path.join(root,'build/upstream-inputs.txt');fs.mkdirSync(path.dirname(output),{recursive:true});
+if(fs.existsSync(output))throw new Error('The exported upstream bundle already exists. Move it aside before creating another bundle.');
+fs.writeFileSync(list,[inputs.lock.archive,inputs.lock.executable,...inputs.lock.files].map(e=>e.path).join('\n'));
+cp.execFileSync(require('7zip-bin').path7za,['a','-tzip','-mx=3',output,'@'+list],{cwd:inputs.base,stdio:'pipe',windowsHide:true});
+const digest=hash(output);fs.writeFileSync(path.join(root,'build/upstream-inputs.sha256'),digest+'\n');
+console.log('Vendor input bundle prepared: '+output+'\nSHA256: '+digest);

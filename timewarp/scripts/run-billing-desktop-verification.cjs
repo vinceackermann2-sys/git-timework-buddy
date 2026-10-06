@@ -6,7 +6,7 @@ const verifier=path.join(reports,'billing-live-verify.cjs'),entry=path.join(repo
 fs.copyFileSync(path.join(__dirname,'verify-billing-desktop.cjs'),verifier);
 fs.writeFileSync(entry,"const {app}=require('electron');Object.defineProperty(app,'isPackaged',{value:true});Object.defineProperty(process,'resourcesPath',{value:"+JSON.stringify(resources)+"});app.setAppPath("+JSON.stringify(archive)+");require("+JSON.stringify(path.join(archive,'out/main/bootstrap.js'))+");require("+JSON.stringify(verifier)+").init({root:"+JSON.stringify(root)+",runtime:require("+JSON.stringify(path.join(archive,'out/main/timewarp/desktop/runtime.cjs'))+")});");
 const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
-const dependencyRoot=path.dirname(path.dirname(require('../config.json').brandSource));
+const dependencyRoot=path.resolve(__dirname,'..');
 const result=cp.spawnSync(require(require.resolve('electron',{paths:[dependencyRoot]})),[entry],{env,windowsHide:true,encoding:'utf8',timeout:90000});
 if(result.stdout)process.stdout.write(result.stdout);
 const report=JSON.parse(fs.readFileSync(path.join(reports,'billing-desktop.json'),'utf8'));

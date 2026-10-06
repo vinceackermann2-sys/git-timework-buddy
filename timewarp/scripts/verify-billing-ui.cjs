@@ -143,7 +143,7 @@ if (process.versions.electron) {
     return{};
   }};`;
   fs.writeFileSync(path.join(reports, 'billing-ui-preview.html'), '<!doctype html><html lang="en"><head><meta charset="utf-8">' + styles + '<title>Billing UI verification</title></head><body class="bg-background text-foreground"><script>' + fixture + '</script><script src="' + pathToFileURL(path.join(root, 'desktop/native-billing.js')).href + '"></script></body></html>');
-  const dependencyRoot = path.dirname(path.dirname(require('../config.json').brandSource)), env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+  const dependencyRoot = path.resolve(__dirname,'..'), env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
   const result = cp.spawnSync(require(require.resolve('electron', { paths: [dependencyRoot] })), [__filename], { env, windowsHide: true, encoding: 'utf8', timeout: 45000 });
   if (result.stdout) process.stdout.write(result.stdout); if (result.status !== 0) { if (result.stderr) process.stderr.write(result.stderr); process.exitCode = 1; }
 }

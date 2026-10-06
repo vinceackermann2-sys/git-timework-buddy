@@ -1,82 +1,129 @@
 # Production readiness review
 
-Reviewed 5 October 2026. Verdict: **hold a public production release**.
-The existing local build has useful functional and security coverage, but the
-release and acceptance gaps below remain.
+Reviewed 6 October 2026. Verdict: **hold the public production release**.
+An unsigned preview installer and an MSIX update are built and verified locally.
+Partner Center validated the MSIX and accepted the existing TimeWarp Dev update
+for certification. Publication is held until an explicit Publish now action.
+Certification approval, macOS packaging, deployment and live acceptance remain
+outstanding.
 
-## Release blockers
+## Backend clarification
 
-1. **No signed installer or working update feed.** The executable is unsigned
-   (`reports/build.json`, `signed: false`). `desktop/runtime.cjs` disables
-   automatic update checks. Build signing, install/uninstall, clean-machine
-   startup, signed upgrades and rollback need acceptance before distribution.
+The configured application backend is **Timewarp's Supabase project**, with the
+Timewarp Google website bridge. Energy's original desktop distribution is a
+build input. Names such as `timewarp-energy`, `surface: energy`, database/bucket
+identifiers and the existing device profile are compatibility names, not an
+Energy-hosted server dependency.
 
-2. **A clone cannot reproduce the desktop build.** `scripts/build.cjs` reads a
-   privately supplied Energy archive/runtime and locates `rcedit.exe` through
-   an absolute external `config.json.brandSource` path. Several visual verifiers
-   load dependencies from that external checkout. Pin and provision the upstream
-   input with integrity checks and local build tooling. Source CI is now present,
-   but it does not substitute for a native packaging job.
+The staged package check now rejects Energy server URLs in executable app code.
+It caught and fixed two startup-recovery URLs missed by the earlier repack.
+The inherited update file is excluded from release inputs and the inherited
+updater cannot override Timewarp's feed or install policy.
 
-3. **Billing acceptance stops before a paid transaction.** Existing local
-   `billing-cloud.json` and `checkout-payment.json` reports cover real checkout
-   amounts, unpaid denial, ownership and unsigned webhook rejection. The README
-   explicitly records that no payment was submitted. Complete an approved Stripe
-   test-mode payment through the signed webhook, and exercise duplicate delivery,
-   subscription renewal, cancellation, failed payment and applicable refund
-   handling with ledger assertions. No real payment was made during this review.
+## Fixes completed locally
 
-4. **Owner authentication/inference acceptance remains incomplete.** The
-   recorded `chatgpt-desktop.json` has `liveInference.completed: false` and
-   `lastCompletedAt: null` because the connected account reached its usage limit.
-   Unit tests verify the provider flow and no paid fallback, but do not prove a
-   completed live Codex turn. Record a successful turn with an eligible account
-   and available allowance. The Google routing checks stop at Google's sign-in
-   page; record full browser approval, desktop callback, session refresh and
-   fresh-device recovery too.
+- Subscription/customer lookup failures stop checkout. Stable customer retry
+  keys, a durable checkout attempt, exact immutable Stripe parameters and scope
+  locks prevent concurrent/retried requests from creating duplicate subscriptions.
+  Lost responses and legacy open sessions/subscriptions are checked across all
+  pages. Twenty-one regression scenarios use the actual migration in PostgreSQL
+  via PGlite with mocked Stripe, including lookup/save failures, concurrency,
+  cancellation, ownership, role isolation and retries after Stripe key expiry.
+- The native build no longer depends on an absolute path into another desktop
+  project. Local tools are pinned, and SHA256/size checks verify the pristine
+  archive, executable and 1,056 supplied runtime files. A bundle export and manual
+  Windows artifact workflow provision those inputs without publishing anything.
+- Isolated staging builds an NSIS preview installer with a separate install
+  name, app identity and device profile. The working app is preserved. Release
+  staging uses official Electron 43.7.7 instead of the vendor's 43.2.0, with
+  hardened fuses and Windows ASAR integrity. Shipped YAML/HTTP dependencies were
+  patched; the installed npm inventory is now separately audited.
+- Preview installation verifies every staged file after extraction. Installer
+  handling preserves deeply nested files, removes them during uninstall, and
+  rejects unsupported installation roots before removing an existing app.
+- The Microsoft Store update preserves the existing package/publisher/application
+  identity and raises version 1.1.21.0 to 1.1.22.0. All 1,059 MSIX payload files
+  match staging. Partner Center shows the saved replacement as validated in the
+  existing submission; Microsoft certification was requested with publication
+  held, and no new listing was created. External app updates are
+  disabled for the Store package, which Microsoft signs after certification.
+- Public builds require a stable version, HTTPS Timewarp feed, expected publisher
+  and signing configuration. Main executable, installer and uninstaller signing
+  is enforced; artifact checks require valid timestamped matching signatures and
+  correct update-file checksums. Runtime verification fails closed if PowerShell
+  cannot verify a signature. Updates reject downgrades and ask for an explicit
+  restart. Development/preview updates remain disabled.
+- AI completion stores immutable usage-only evidence before ledger settlement.
+  A failed ledger call rolls back partial charges and leaves known usage queued
+  for idempotent retry. Database-local Cron setup, bounded backoff, operator-review
+  status and aggregate recovery checks are included. Streaming handles terminal
+  events without a newline and preserves known usage after transport errors.
+  If the database cannot persist evidence, usage-only function logs support
+  operator recovery. Unknown provider usage stays reserved for review; it is
+  never automatically charged at an estimate or released by age.
 
-## Operational and repository gaps
+The checkout guard, AI migration/callers and Cron setup have **not been deployed**.
+Real signing could not be tested because the certificate/service and feed are
+pending. No paid transaction was submitted and no production service was changed.
 
-- The database migrations extend an existing platform. They reference billing,
-  organization and reservation objects whose definitions are outside this repo.
-  The Composio function and branded Google website implementation are external.
-  A new-environment deployment needs the matching service baseline.
-- Requests with missing usage or provider timeouts become `uncertain` AI
-  reservations. This source records that state, but contains no reconciliation
-  worker. Verify the external service's resolution process and user-visible
-  recovery, including a failed settlement RPC, before taking production traffic.
-- Add tested backup/restore, deployment rollback, service health/error alerts and
-  an incident runbook. Their operation was not verified in this review.
-- The zero-finding npm audit below covers this integration's npm dependency
-  graph. It does not audit every module embedded in the inherited Electron
-  archive or the Deno dependency graph. Audit the shipped runtime separately.
+## Remaining public-release gates
+
+1. **Signing and distribution:** finish Microsoft Store certification for the
+   existing listing after release acceptance. Direct EXE downloads still require
+   a signing identity/service and HTTPS update hosting. For macOS, provide matching
+   native inputs, a Mac/runner, Developer ID Application private-key identity and
+   notarization credentials, then build and test the DMG. The signed-in Apple
+   account currently has an Apple Distribution certificate, which cannot sign a
+   direct DMG release. See [native distribution](native-distribution.md).
+2. **Staged deployment:** version the matching existing Timewarp service baseline,
+   use a separate staging project, apply the checkout/AI migrations, enable and
+   verify the recovery Cron job, then deploy matching function versions. Drain
+   old checkout handlers during production cutover.
+3. **Live acceptance:** complete signed Stripe test-mode payment/webhook lifecycle,
+   duplicate delivery and ledger assertions; full Google approval/callback and
+   fresh-device restore; a completed Codex turn with available allowance; real
+   connector and Timewarp model/voice flows, including failed settlement and
+   database-outage recovery. Historic reports stop short of these outcomes.
+4. **Windows release acceptance:** clean-machine install/uninstall/reinstall,
+   protected credentials, signed N to N+1 upgrade, rejected tampered/unsigned or
+   wrong-publisher updates, and rollback/data compatibility on supported systems.
+   The unsigned preview passes install, installed startup, same-version reinstall
+   and uninstall on this development machine. Clean-machine acceptance and the
+   signed upgrade/security cases remain unproven.
+5. **Operations:** rehearse backup/restore and rollout rollback; configure retained
+   recovery logs, actionable service/webhook/credit alerts, responsible operator
+   and a support deadline for unresolved reservations. Verify alert delivery and
+   recovery against deployed services.
+
+The precise rollout, alert conditions and acceptance checklist are in
+[operations](operations.md). Commands and signing/CI configuration are in
+[building](building.md#isolated-installers-and-release-signing).
 
 ## Verification performed
 
 | Check | Result |
 | --- | --- |
 | `npm run check` | Pass |
-| `npm test` | 86 tests pass, no skips |
-| `npm run test:email` | 18 tests pass |
-| Deno check, editable and staged cloud plus all five other edge entry points, using email JSX config | Pass |
-| `npm run verify:contracts` | Pass against the existing extracted native build |
-| `npm run verify:build` | Pass against the existing packaged executable/archive |
-| `npm audit --json` | Zero reported vulnerabilities in this npm graph |
-| Export of exactly the staged source, followed by a fresh `npm ci --ignore-scripts` and all CI commands | 72 portable tests and 18 email tests pass; syntax, cloud-copy, type and audit checks pass |
+| `npm test` | 127 pass, no skips |
+| `npm run test:portable` | 110 pass, no skips |
+| `npm run test:email` | 18 pass |
+| Deno check, editable/staged cloud plus all other edge entry points | Pass |
+| `npm run verify:cloud-source` | All 11 staged modules match |
+| `npm run verify:upstream` | Archive, original executable and runtime inventory verified |
+| `npm run verify:staged` | Packaged code/routing, disabled inherited updater, icons, fuses and ASAR integrity pass |
+| `npm run verify:contracts` | Original desktop schemas accept restored data/settings |
+| Native startup in an empty test profile | Auth screen/preload bridge load using Electron 43.7.7 |
+| NSIS preview installer build | Pass, unsigned internal artifact |
+| Preview install, installed startup, reinstall and uninstall | Pass on this development machine; all 1,060 installed files match staging, unsupported roots are rejected, and deep files/registration/test directory are removed |
+| Existing Microsoft Store MSIX update | Version 1.1.22.0; all 1,059 payload hashes pass; Partner Center validation passes; submitted for certification with manual publication hold; approval/installed upgrade still pending |
+| Root npm audit | Zero reported vulnerabilities |
+| Shipped installed npm inventory/audit | 120 modules, zero reported vulnerabilities |
+| Account/callback visual verifier using local dependencies | 16 layouts and associated UI checks pass |
+| Workspace visual verifier using local dependencies | Light/dark/narrow layouts, tabs, tools, browser actions and profile isolation pass |
+| Independent adversarial review of final hardening | No remaining concrete P1/P2 findings; live signing/log retention still required |
 
-The existing app was running, so this review did not overwrite it or perform a
-fresh native build. Historic local acceptance reports were inspected as evidence;
-their live cloud scenarios were not rerun. Generated reports are ignored because
-they can contain account identifiers, session material or fixture credentials.
-
-## Repository preparation
-
-The private timework repository contains the editable desktop/cloud integration,
-shared modules, assets, mascot sources, migrations, tests and upstream patch
-tools. Git ignores runtime binaries, dependencies, device state, backups,
-Supabase CLI temporary credentials and all generated acceptance reports.
-GitHub Actions runs portable Node tests, email tests, syntax/type checks, npm
-audit and a check that deployable cloud copies match the editable modules.
-
-The full native suite remains available as `npm test`. Its three upstream bundle
-suites are deliberately outside source-only CI and must pass for a release build.
+The npm inventories do not enumerate every compiled-in library or every native
+binary/Deno import; they are scoped evidence, not a claim of total vulnerability
+coverage. GitHub native workflow/signing and clean-machine acceptance have not
+run. Generated reports, verification profiles, binaries and signing credentials
+are ignored. The original local build and production configuration were preserved.

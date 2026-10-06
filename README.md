@@ -7,7 +7,8 @@ The current build is **not ready for a public production release**. See the
 
 The supplied Electron runtime, device data, credentials, backups and generated
 acceptance reports stay outside Git. GitHub Actions runs portable source and
-email checks; packaging and upstream contract checks require the supplied base.
+email checks. A manual Windows job now builds verified preview/signed artifacts
+from the hash-pinned supplied inputs; it does not publish them.
 
 Run **launch.cmd** in this folder. The single desktop app keeps the original
 Energy interface with Timewarp's name, logo and Windows icon.
@@ -145,15 +146,20 @@ all cloud modules, then deploy `timewarp-energy`, `stripe-billing` and `stripe-w
 Supabase `getUser` inside the handler. Release packages contain no acceptance
 harness, and the backend exposes no verification endpoint.
 
-The hosted document/memory tables and this integration's worker scheduler have
-been removed. Earlier migrations and dated reports describe historical
+The hosted document/memory tables and remote-execution worker scheduler have
+been removed. The new database-local credit settlement retry job handles billing
+recovery only. Earlier migrations and dated reports describe historical
 versions. Current checks are in `timewarp/reports/local-harness-execute.json`,
 `local-harness-restore.json` and `local-cloud-verification.json`.
 
 The supplied Energy base is compiled JavaScript. This project reproducibly
 patches it with editable integration code. Copyright and third-party notices
-are preserved. The executable remains unsigned and automatic updates are
-disabled until a signed installer and update feed exist.
+are preserved. Development builds are unsigned with updates disabled. Release
+staging now builds an isolated NSIS installer, requires timestamped Timewarp
+signatures for public artifacts, and uses a Timewarp HTTPS update feed with
+closed-on-error signature verification. Certificate/feed provisioning and live
+acceptance remain outstanding. See [release building](docs/building.md#isolated-installers-and-release-signing)
+and the [operations runbook](docs/operations.md).
 
 ## Branded emails
 
@@ -280,6 +286,13 @@ their current price until their owner explicitly changes plan. Purchasers can
 open their own Stripe portal for invoices, including on Free. Checkout returns
 reconcile against Stripe, pending sessions can be cancelled, and unpaid or
 another person's checkout cannot grant entitlement.
+
+Subscription checkout stops on failed database or Stripe lookups. A durable
+pending attempt per billing scope makes concurrent requests and lost responses
+reuse the same Stripe session. The guard also checks previous open sessions and
+live subscriptions before creating a checkout. This source fix requires the
+new guard migration and a coordinated billing-function deployment; see
+[billing guard deployment](docs/building.md#billing-guard-deployment).
 
 Timewarp-funded requests debit 2.5 × the configured provider token cost,
 converted at $0.125 per credit. Reservations cap output and prevent concurrent

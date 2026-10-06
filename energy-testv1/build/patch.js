@@ -208,6 +208,7 @@ const USERDATA_SHIM = `"use strict";
 // The original file begins with `"use strict";\n`. Swap that for the shim, which
 // opens with its own `"use strict";` so the module semantics are unchanged.
 function injectShim(rel, text, edits) {
+  if (process.argv.includes('--no-shim')) return text;
   if (rel !== "out/main/bootstrap.js") return text;
   const m = /^("use strict";)/.exec(text);
   if (!m) {

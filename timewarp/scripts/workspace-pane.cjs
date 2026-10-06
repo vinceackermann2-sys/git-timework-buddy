@@ -29,6 +29,7 @@ function patchWorkspacePane(source) {
     component = replaceOnce(component, 'a&&h.jsx(_o,', 'a&&(v==="files"&&(n||l.openItems.length>0)||!window.newco?.browserView)&&h.jsx(_o,', 'default tab replaces the heading row');
     component = replaceOnce(component, '(l.openItems.length>0||c?.tabs.some(_=>_.pinned))', 'l.openItems.length>0', 'file tabs in the Files tool');
     component = replaceOnce(component, 'window.newco?.browserView&&h.jsx(WMn,{ownerId:t}),', '', 'pinned sites remain in the browser tab strip');
+    component = replaceOnce(component, 'h.jsx(GMn,{})', '!window.newco?.browserView&&h.jsx(GMn,{})', 'pane controls only in the browser tab strip');
     const start = component.indexOf('children:v==="assistant"?r:');
     const end = component.indexOf('})]})}', start);
     if (start < 0 || end < 0) throw new Error('Workspace pane contract changed: pane content');

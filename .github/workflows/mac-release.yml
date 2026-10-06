@@ -1,0 +1,84 @@
+name: macOS release artifacts
+
+on:
+  push:
+    branches: [codex/macos-release]
+  workflow_dispatch:
+    inputs:
+      signed:
+        description: Sign and notarize using the protected Apple release identity
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    if: ${{ !inputs.signed }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: timewarp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: timewarp/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: node scripts/prepare-mac-inputs.cjs
+      - run: npm run installer:mac:draft
+      - run: npm run test:portable
+      - run: npm audit --audit-level=moderate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timewarp-macos-arm64-preview
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            timewarp/build/mac-preview/*.dmg
+            timewarp/reports/mac-*.json
+            timewarp/reports/runtime-audit.json
+
+  release:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.signed }}
+    runs-on: macos-15
+    environment: desktop-release
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: timewarp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: timewarp/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: node scripts/prepare-mac-inputs.cjs
+      - name: Configure temporary signing and notarization credentials
+        env:
+          APPLE_P12_BASE64: ${{ secrets.TIMEWARP_APPLE_P12_BASE64 }}
+          APPLE_P12_PASSWORD: ${{ secrets.TIMEWARP_APPLE_P12_PASSWORD }}
+          APPLE_ID: ${{ secrets.TIMEWARP_APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.TIMEWARP_APPLE_APP_PASSWORD }}
+        run: node scripts/configure-mac-signing.cjs
+      - run: npm run installer:mac:release
+      - run: npm run test:portable
+      - run: npm audit --audit-level=moderate
+      - name: Remove temporary signing material
+        if: always()
+        run: node scripts/configure-mac-signing.cjs --cleanup
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timewarp-macos-arm64-signed
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            timewarp/build/mac-release/*.dmg
+            timewarp/reports/mac-*.json
+            timewarp/reports/runtime-audit.json

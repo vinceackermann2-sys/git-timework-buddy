@@ -51,7 +51,7 @@ if (process.versions.electron) {
   });
 } else {
   const cp = require('node:child_process');
-  const dependencyRoot = path.dirname(path.dirname(require('../config.json').brandSource));
+  const dependencyRoot = path.resolve(__dirname,'..');
   const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
   const result = cp.spawnSync(require(require.resolve('electron', { paths: [dependencyRoot] })), [__filename], { env, windowsHide: true, encoding: 'utf8', timeout: 60000 });
   if (result.stdout) process.stdout.write(result.stdout);
