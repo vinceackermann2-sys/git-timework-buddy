@@ -1,16 +1,15 @@
 # Native distribution status
 
-Checked 6 October 2026. The existing Microsoft Store draft has been updated and
-Partner Center shows the replacement package as **Validated**, and submission 8
-is now **In certification** (pre-processing in progress). Publication is held
-until **Publish now** is selected. No new product was registered. Public
-production release remains on hold under
-the [release checklist](production-readiness.md).
+Checked 6 October 2026. Partner Center shows submission 8 as **Live**. Submission
+9 is a saved artwork update draft with transparent logos and images captured
+from the actual Timewarp app. No new product was registered. The Mac preview
+DMG has passed native acceptance; Developer ID signing, notarization and the
+remaining [release checklist](production-readiness.md) are still open.
 
 ## Windows
 
 - Product: **TimeWarp Dev**, Store ID `9N6WRN6GN0KR`.
-- Existing draft: submission `1152921505701896345`, containing 1.1.21.0.
+- Existing artwork draft: submission `1152921505702057240` (submission 9).
 - Package identity: `TimeWarpDev.TimeWarpDev`.
 - Publisher: `CN=B2BAE52B-CBF1-4A62-A0CD-60F8F262B802`.
 - Publisher display name: `TimeWarpDev`.
@@ -19,11 +18,11 @@ the [release checklist](production-readiness.md).
 - New artifact: `timewarp/build/store/Timewarp-Store-1.1.22-x64.msix`.
 - SHA256: `5db8d9ca30aee8dc1bed03f26fb9d923ed4e3f50f998f1724a0f3d7639e381d6`.
 
-The existing draft was saved, then submitted for Microsoft certification. Its
-automatic publication setting was changed to a manual hold because installed
-upgrade and live service acceptance remain open. Pricing, markets, Store listing
-content and the existing live release were not changed. No review approval or
-new Microsoft signature is available yet.
+The replacement package was validated and submitted through the existing
+listing; Partner Center subsequently showed submission 8 as live. The artwork
+correction is saved in submission 9 and has not been submitted for certification.
+Local package validation does not prove installed upgrade or live service
+acceptance.
 
 The new package passes local identity/version, ASAR/fuse, dependency audit and
 all 1,059 payload SHA256 checks. All 127 application tests pass, and an empty
@@ -74,17 +73,29 @@ tools, ASAR integrity, hardened fuses and an isolated preview profile. The
 `macos-15` hosted runner builds a DMG and checks cold startup, native tool
 architecture, the Git binding, deep code signatures and entitlements.
 
+The repository was made public at the user's request after scanning all three
+tracked commits. The only scanner finding was the intended public Supabase
+publishable key; private signing material is outside Git. GitHub secret scanning
+and push protection are enabled. Public standard runners removed the earlier
+billing block without changing account billing settings.
+
+[Mac preview run 37494238772](https://github.com/vinceackermann2-sys/timework/actions/runs/37494238772)
+passed on Apple Silicon macOS: pinned inputs, packaged contracts, ASAR integrity,
+hardened fuses, cold signed-out startup, native tool architecture, the Git
+binding, deep ad hoc signature and entitlements. All 116 portable tests passed,
+and the shipped dependency audit reported zero vulnerabilities. The artifact is
+`Timewarp-Preview-0.1.0-draft.1-arm64.dmg`; it is an isolated acceptance preview,
+not a Developer ID signed or notarized release.
+
 Remaining before a public Mac release:
 
-1. Restore GitHub Actions access or provide a Mac, then run the native packaging
-   and startup job. [The first run](https://github.com/vinceackermann2-sys/timework/actions/runs/37481698280)
-   was blocked before any step started: GitHub reported failed recent payments
-   or a spending limit needing attention. Billing settings were not changed.
-2. Authorize transfer of the signing identity to the protected release runner,
+1. Authorize transfer of the signing identity to the protected release runner,
    or use it on the user's build Mac.
-3. Supply notarization credentials directly to the Mac keychain or protected
+2. Supply notarization credentials directly to the Mac keychain or protected
    runner secrets. App-specific passwords must be created and entered by the
    user. Do not put credentials in chat, source or artifacts.
+3. Run the signed build and require accepted notarization, stapling and Gatekeeper
+   verification before distributing the release DMG.
 4. Verify installation, existing-data migration and live Timewarp services on a
    clean Mac. This initial build targets Apple Silicon; Intel is not validated.
 
@@ -94,4 +105,4 @@ assumed instantaneous. The signed build requires an Accepted result, staples the
 ticket, and validates Gatekeeper before retaining the release DMG. The workflow
 does not publish. Ad hoc previews are for local acceptance. Mac automatic
 updates remain disabled while a reviewed Mac feed is absent. No accepted
-notarization ticket or public DMG release is claimed yet.
+notarization ticket or production DMG release is claimed yet.

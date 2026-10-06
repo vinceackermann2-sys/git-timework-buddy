@@ -8,7 +8,10 @@ The current build is **not ready for a public production release**. See the
 The supplied Electron runtime, device data, credentials, backups and generated
 acceptance reports stay outside Git. GitHub Actions runs portable source and
 email checks. A manual Windows job now builds verified preview/signed artifacts
-from the hash-pinned supplied inputs; it does not publish them.
+from the hash-pinned supplied inputs; it does not publish them. The repository
+is public, and the Apple Silicon Mac workflow has built a preview DMG with
+verified native startup, packaged contracts and ad hoc signatures. Developer ID
+signing and notarization remain pending; see [native distribution](docs/native-distribution.md).
 
 Run **launch.cmd** in this folder. The single desktop app keeps the original
 Energy interface with Timewarp's name, logo and Windows icon.
@@ -23,7 +26,8 @@ behind the same purple-and-white artwork. `app-icon.svg` is
 exported to the 1024px `app-icon.png`, and every icon size is resized from that
 same PNG. Exports are in `timewarp/assets/icons`. Windows uses `app-icon.ico`,
 macOS assets include `app-icon.icns` and its Dock uses the transparent PNG, and Linux
-windows use the PNG. This workspace's executable build targets Windows.
+windows use the PNG. Local executable builds target Windows; the Mac workflow
+builds Apple Silicon DMGs on `macos-15`.
 `npm run build:icons` in `timewarp` regenerates these assets; the desktop build
 runs this too.
 The app chrome and Settings omit version, release-channel badges and the
