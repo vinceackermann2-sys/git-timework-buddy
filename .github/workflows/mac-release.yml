@@ -109,7 +109,7 @@ jobs:
         env:
           TIMEWARP_NOTARY_SUBMISSION_ID: ${{ inputs.submission_id }}
           TIMEWARP_NOTARY_CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
-        run: node scripts/notarize-mac.cjs build/mac-release/Timewarp-1.1.22-arm64.dmg
+        run: node -e "const c=require('./mac-release.json'),cp=require('node:child_process');cp.execFileSync(process.execPath,['scripts/notarize-mac.cjs','build/mac-release/Timewarp-'+c.version+'-'+c.arch+'.dmg'],{stdio:'inherit'})"
       - name: Require final notarization and artifact acceptance evidence
         run: node scripts/verify-mac-release.cjs
       - run: npm run test:portable

@@ -1,11 +1,12 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto');
 const {verifyMacRelease}=require('../scripts/verify-mac-release.cjs');
+const config=require('../mac-release.json');
 function fixture(t){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'timewarp-mac-acceptance-'));
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   fs.mkdirSync(path.join(root,'reports'));fs.mkdirSync(path.join(root,'build/mac-release'),{recursive:true});
-  const artifact=path.join(root,'build/mac-release/Timewarp-1.1.22-arm64.dmg');
+  const artifact=path.join(root,'build/mac-release',`Timewarp-${config.version}-${config.arch}.dmg`);
   fs.writeFileSync(artifact,'fixture final stapled bytes');
   const sha256=crypto.createHash('sha256').update(fs.readFileSync(artifact)).digest('hex');
   const id='3acbade8-b9b3-4bb3-88c9-165332b0fab5';
@@ -13,7 +14,7 @@ function fixture(t){
   write('mac-notary.json',{id,status:'Accepted'});
   write('mac-release.json',{artifact,sha256,submissionId:id,status:'Accepted',stapled:true,gatekeeperAccepted:true});
   write('mac-package.json',{arch:'arm64',teamId:'6XD78664VT',nativeTools:true,gitBinding:true,deepSignature:true,hardenedRuntime:true,developerId:true});
-  write('mac-startup.json',{authScreen:true,preloadBridge:true,emptyProfile:true,version:'1.1.22'});
+  write('mac-startup.json',{authScreen:true,preloadBridge:true,emptyProfile:true,version:config.version});
   return {root,artifact,sha256,id,write};
 }
 test('release acceptance binds Apple proof to the exact final stapled DMG',t=>{
