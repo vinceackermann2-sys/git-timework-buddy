@@ -1,12 +1,15 @@
 # Production readiness review
 
-Reviewed 6 October 2026. Verdict: **hold the public production release**.
+Reviewed 6 October 2026. Distribution checks passed; full live acceptance
+remains incomplete.
 An unsigned Windows preview installer and an MSIX update are built and verified
 locally. Partner Center shows the existing TimeWarp Dev submission 8 as live;
 the corrected artwork is saved in submission 9 as a draft. An Apple Silicon Mac
 preview DMG now passes native startup and package checks on GitHub Actions.
-Mac Developer ID signing/notarization, deployment and live acceptance remain
-outstanding for the remaining release changes.
+The checkout and AI recovery backend changes are deployed to Timewarp
+Production. The Apple Silicon Developer ID DMG passed accepted notarization,
+stapling and Gatekeeper checks in GitHub run `37499383055`. The remaining
+live acceptance and operational gates are listed below.
 
 ## Backend clarification
 
@@ -71,14 +74,29 @@ updater cannot override Timewarp's feed or install policy.
   Gatekeeper checks. Making the repository public removed the earlier runner
   billing block. The Mac preview DMG passed packaged contracts, ASAR/fuse checks,
   native startup, native arm64 tools, the Git binding, deep ad hoc signatures,
-  entitlements, all 116 portable tests and the shipped dependency audit. Developer
-  ID signing and notarization have not run.
+  entitlements, all 116 portable tests and the shipped dependency audit. The
+  production DMG also passed the approved Developer ID signature/team checks,
+  hardened runtime, accepted Apple notarization, stapling and Gatekeeper in
+  [signed run 37499383055](https://github.com/vinceackermann2-sys/timework/actions/runs/37499383055).
 
-The checkout guard, AI migration/callers and Cron setup have **not been deployed**.
-Windows direct signing and update hosting remain pending. Mac signing identity
-preparation and native preview acceptance passed. Protected signing transfer
-and notarization credentials are still pending. No paid transaction was
-submitted and no production service was changed.
+The checkout guard and AI settlement migrations were applied to the existing
+Timewarp Production project `mrqoeywofslgnquvzhuf` on October 6, 2026. The rollout
+used the actual remote migration history and pushed exactly the two pending
+migrations. A local logical database backup was created and its 1,609-entry
+restore catalog checked before cutover. New subscription checkout was paused
+while the old handlers drained, then restored with `stripe-billing` version 47.
+`timewarp-energy` version 23 is active. Both new tables have RLS; the sensitive
+RPCs are restricted to the service role. The once-per-minute recovery job has
+completed successfully, with zero pending, review or unrecorded stale records.
+Anonymous requests to both deployed functions return 401. These checks do not
+establish authenticated payment or provider acceptance; no paid transaction
+was submitted.
+
+The approved Apple identity and notarization credentials are stored in the
+protected GitHub release environment. Native preview and the signed Developer
+ID release build passed. Windows direct EXE
+signing and update hosting remain pending; the public Windows route is the
+existing Microsoft Store listing.
 
 ## Remaining public-release gates
 
@@ -86,13 +104,14 @@ submitted and no production service was changed.
    Store release and submit the saved artwork draft when ready. Direct EXE
    downloads still require a signing identity/service and HTTPS update hosting.
    For macOS, the native preview DMG and approved Developer ID identity are now
-   prepared. Authorize protected signing transfer, supply notarization
-   credentials, then build, sign,
-   notarize and test the DMG. See [native distribution](native-distribution.md).
-2. **Staged deployment:** version the matching existing Timewarp service baseline,
-   use a separate staging project, apply the checkout/AI migrations, enable and
-   verify the recovery Cron job, then deploy matching function versions. Drain
-   old checkout handlers during production cutover.
+   prepared and protected signing credentials are configured. The signed build,
+   accepted notarization, stapling and Gatekeeper checks passed. Complete
+   publication verification and clean-Mac acceptance.
+   See [native distribution](native-distribution.md).
+2. **Staged acceptance:** the two production migrations, guarded billing/AI
+   functions and recovery Cron job are deployed and verified. A separate staging
+   project with Stripe test-mode configuration is still required for the full
+   authenticated payment and provider acceptance below.
 3. **Live acceptance:** complete signed Stripe test-mode payment/webhook lifecycle,
    duplicate delivery and ledger assertions; full Google approval/callback and
    fresh-device restore; a completed Codex turn with available allowance; real
@@ -130,7 +149,9 @@ The precise rollout, alert conditions and acceptance checklist are in
 | NSIS preview installer build | Pass, unsigned internal artifact |
 | Preview install, installed startup, reinstall and uninstall | Pass on this development machine; all 1,060 installed files match staging, unsupported roots are rejected, and deep files/registration/test directory are removed |
 | Existing Microsoft Store MSIX update | Version 1.1.22.0; all 1,059 payload hashes pass; Partner Center validation passes; submission 8 is live; installed upgrade acceptance is still pending; artwork correction is saved in submission 9 |
-| Apple Silicon Mac preview DMG | GitHub run 37494238772 passed native startup, packaged contracts, ASAR/fuses, architecture, Git binding, deep ad hoc signature, entitlements and 116 portable tests; Developer ID signing/notarization still pending |
+| Apple Silicon Mac preview DMG | GitHub run 37494238772 passed native startup, packaged contracts, ASAR/fuses, architecture, Git binding, deep ad hoc signature, entitlements and 116 portable tests |
+| Apple Silicon production DMG | GitHub run 37499383055 passed Developer ID/team/hardened-runtime checks, native acceptance, Accepted notarization, stapling, Gatekeeper, 116 portable tests and the build dependency audit |
+| Production backend rollout | Exactly two migrations; stripe-billing v47 and timewarp-energy v23 active; service-only RPCs, RLS, anonymous 401 responses and successful recovery Cron verified |
 | Root npm audit | Zero reported vulnerabilities |
 | Shipped installed npm inventory/audit | 120 modules, zero reported vulnerabilities |
 | Account/callback visual verifier using local dependencies | 16 layouts and associated UI checks pass |
@@ -139,7 +160,7 @@ The precise rollout, alert conditions and acceptance checklist are in
 
 The npm inventories do not enumerate every compiled-in library or every native
 binary/Deno import; they are scoped evidence, not a claim of total vulnerability
-coverage. The GitHub Mac preview workflow passed; Developer ID signing,
-notarization and clean-machine acceptance have not run. Generated reports,
+coverage. The GitHub Mac preview and signed release workflows passed;
+clean-machine acceptance has not run. Generated reports,
 verification profiles, binaries and signing credentials
 are ignored. The original local build and production configuration were preserved.
