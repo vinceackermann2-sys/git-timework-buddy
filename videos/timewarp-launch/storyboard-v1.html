@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timewarp Launch Storyboard</title>
+<style>
+@font-face{font-family:'Quadrant Text';src:url("assets/fonts/captured-quadrant-text-regular.ttf") format('truetype');font-weight:400}
+@font-face{font-family:'Inter';src:url("assets/fonts/inter-latin-400-normal.woff2") format('woff2');font-weight:400}
+@font-face{font-family:'Inter';src:url("assets/fonts/inter-latin-500-normal.woff2") format('woff2');font-weight:500}
+@font-face{font-family:'Inter';src:url("assets/fonts/inter-latin-600-normal.woff2") format('woff2');font-weight:600}
+@font-face{font-family:'Inter';src:url("assets/fonts/inter-latin-700-normal.woff2") format('woff2');font-weight:700}
+:root{
+  --bg:#fff;--bg-lav:#FAF6FF;--lav100:#F4EAFF;--lav200:#E9D2FF;--lav300:#D1A2FF;--lav400:#BA71FF;
+  --primary:#8C14FF;--pink:#6A0FC4;--ink:#172033;--muted:#626B7C;--light:#9AA1AE;--line:#EBE6F3;
+  --warm:#FFF1D6;--done:#3F8F62;--grey:#F1F0F5;
+  --float:0 1px 2px rgba(23,32,51,.04),0 24px 48px -24px rgba(106,15,196,.28);
+  --lift:0 2px 6px rgba(23,32,51,.06),0 40px 80px -30px rgba(106,15,196,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#EEEAF4;color:var(--ink);font-family:Inter,'Segoe UI',system-ui,sans-serif;padding:40px 32px 80px}
+header{max-width:1640px;margin:0 auto 28px;display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap}
+header h1{font-family:'Quadrant Text',Georgia,serif;font-weight:400;font-size:44px;line-height:1.05}
+header h1 small{font-family:Inter;font-size:15px;font-weight:600;color:var(--pink);background:var(--lav100);padding:4px 10px;border-radius:100px;margin-left:10px;vertical-align:middle}
+header p{color:var(--muted);font-size:15px;margin-top:8px;max-width:760px;line-height:1.5}
+.tag{font-size:13px;font-weight:600;color:var(--pink);background:#fff;border:1px solid var(--line);padding:8px 14px;border-radius:100px;white-space:nowrap}
+.act{max-width:1640px;margin:34px auto 14px;display:flex;align-items:center;gap:12px;font-weight:600;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--pink)}
+.act:after{content:"";flex:1;height:1px;background:var(--lav300)}
+.grid{max-width:1640px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:28px 22px}
+.grid.v{grid-template-columns:repeat(5,1fr)}
+@media (max-width:1100px){.grid{grid-template-columns:1fr 1fr}.grid.v{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:700px){.grid,.grid.v{grid-template-columns:1fr}}
+.item{display:flex;flex-direction:column;gap:9px}
+.cell{position:relative;aspect-ratio:16/9;container-type:inline-size;overflow:hidden;border-radius:10px;background:#fff;box-shadow:0 1px 2px rgba(23,32,51,.06),0 12px 30px -16px rgba(106,15,196,.25)}
+.v .cell{aspect-ratio:9/16}
+.lab{display:flex;justify-content:space-between;font-size:12.5px;font-weight:600}
+.lab span:last-child{color:var(--muted);font-weight:500;font-variant-numeric:tabular-nums}
+.note{font-size:13px;line-height:1.45;color:var(--muted)}
+.note b{color:var(--ink)}
+.seam{align-self:flex-start;font-size:11.5px;font-weight:600;color:var(--pink);background:var(--lav100);padding:3px 9px;border-radius:100px}
+
+/* ---------- in-frame atoms (all sized in cqw of the cell) ---------- */
+.st{position:absolute;inset:0}
+.a{position:absolute}
+.q{font-family:'Quadrant Text',Georgia,serif;font-weight:400;color:var(--ink);letter-spacing:-.01em;line-height:1.08}
+.c{text-align:center}
+.pu{color:var(--primary)}
+.glow{position:absolute;border-radius:50%;background:radial-gradient(circle,rgba(209,162,255,.55),rgba(233,210,255,.25) 45%,transparent 70%)}
+.spiro{position:absolute;opacity:.08}
+.spiro img{width:100%;height:100%}
+/* porthole */
+.port{position:absolute;border-radius:50%;overflow:hidden;background:var(--grey);box-shadow:inset 0 0 0 .5cqw #fff,inset 0 0 3cqw rgba(23,32,51,.18),0 0 0 .35cqw var(--lav200)}
+.ticks{position:absolute;border-radius:50%;background:repeating-conic-gradient(var(--lav300) 0 .6deg,transparent .6deg 6deg);-webkit-mask:radial-gradient(circle,transparent 63%,#000 64%,#000 67%,transparent 68%);mask:radial-gradient(circle,transparent 63%,#000 64%,#000 67%,transparent 68%)}
+/* app window */
+.win{position:absolute;background:#fff;border:1px solid var(--line);border-radius:1.2em;box-shadow:var(--lift);overflow:hidden;display:flex;color:var(--ink);font-family:Inter,sans-serif}
+.side{width:21%;background:var(--bg-lav);border-right:1px solid var(--line);padding:1.1em .9em;display:flex;flex-direction:column;gap:.55em;font-size:.82em}
+.dots{display:flex;gap:.35em;margin-bottom:.4em}.dots i{width:.6em;height:.6em;border-radius:50%;background:var(--lav300)}
+.newt{background:#fff;border:1px solid var(--line);border-radius:.6em;padding:.55em;text-align:center;font-weight:500}
+.slab{color:var(--muted);font-size:.85em;margin-top:.6em}
+.ag{display:flex;align-items:center;gap:.5em;padding:.45em .5em;border-radius:.55em;font-weight:500}
+.ag img{width:1.5em;height:1.5em;border-radius:50%}
+.ag.on{background:#fff;box-shadow:var(--float)}
+.main{flex:1;display:flex;min-width:0}
+.chat{flex:1;padding:1.2em 1.3em;display:flex;flex-direction:column;gap:.75em;font-size:.85em;min-width:0}
+.ub{align-self:flex-end;background:var(--lav100);border-radius:1.1em;padding:.7em .95em;max-width:88%;line-height:1.35}
+.who{display:flex;align-items:center;gap:.45em;font-weight:600}
+.who img{width:1.6em;height:1.6em}
+.pill{font-size:.78em;font-weight:600;padding:.2em .6em;border-radius:100px;background:var(--lav100);color:var(--pink)}
+.pill.ok{background:#E3F2E8;color:var(--done)}
+.pill.warn{background:#FFE9D6;color:#B4581E}
+.steps{display:flex;flex-direction:column;gap:.45em;padding-left:.2em}
+.stp{display:flex;align-items:center;gap:.55em;color:var(--ink)}
+.stp i{width:1.05em;height:1.05em;border-radius:50%;background:var(--primary);position:relative;flex:none}
+.stp i:after{content:"";position:absolute;left:.33em;top:.2em;width:.25em;height:.45em;border:solid #fff;border-width:0 .12em .12em 0;transform:rotate(45deg)}
+.fc{display:flex;align-items:center;gap:.65em;border:1px solid var(--line);border-radius:.8em;padding:.6em .75em;background:#fff;box-shadow:var(--float)}
+.ft{width:1.9em;height:2.3em;border-radius:.35em;flex:none}
+.ft.x{background:#DDF1E3;border:1px solid #9FD3AE}.ft.m{background:#F4EAFF;border:1px solid var(--lav300)}
+.fc b{display:block;font-weight:600}.fc small{color:var(--muted);font-size:.85em}
+.btns{display:flex;gap:.5em}
+.btn{padding:.5em .9em;border-radius:.6em;font-weight:600;border:1px solid var(--line);background:#fff}
+.btn.p{background:var(--primary);color:#fff;border-color:var(--primary)}
+.pane{width:52%;border-left:1px solid var(--line);background:#FBFAFD;display:flex;flex-direction:column;font-size:.8em;min-width:0}
+.tabs{display:flex;gap:.4em;padding:.6em .7em;border-bottom:1px solid var(--line);background:#fff}
+.tab{padding:.3em .7em;border-radius:.5em;background:var(--grey);color:var(--muted);white-space:nowrap;overflow:hidden}
+.tab.on{background:var(--lav100);color:var(--pink);font-weight:600}
+table.sh{border-collapse:collapse;width:100%;font-size:.92em}
+.sh th{background:var(--bg-lav);color:var(--pink);font-weight:600;text-align:left;padding:.45em .55em;border-bottom:1px solid var(--line)}
+.sh td{padding:.42em .55em;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:9em}
+.sh tr.new td{background:linear-gradient(90deg,rgba(233,210,255,.0),rgba(233,210,255,.55),rgba(233,210,255,0))}
+.comp{border:1px solid var(--line);border-radius:1em;box-shadow:var(--float);background:#fff;padding:.9em 1em;display:flex;flex-direction:column;gap:.8em}
+.comp .row{display:flex;align-items:center;gap:.7em;color:var(--muted);font-size:.8em}
+.send{margin-left:auto;width:2.1em;height:2.1em;border-radius:50%;background:var(--primary);display:grid;place-items:center;color:#fff;font-weight:700}
+.cursor{position:absolute;width:2.4cqw;height:2.4cqw;background:url("data:image/svg+xml;utf8,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27><path d=%27M4 2l15.5 10.6-6.8 1.4 4 7.6-3 1.5-4-7.6-5.7 4.5z%27 fill=%27%23172033%27 stroke=%27white%27 stroke-width=%271.6%27 stroke-linejoin=%27round%27/></svg>") no-repeat center/contain;filter:drop-shadow(0 .2cqw .4cqw rgba(23,32,51,.25))}
+.btn{position:relative}
+.btn .cursor{width:1.6em;height:1.6em;left:62%;top:45%}
+.card{position:absolute;background:#fff;border:1px solid var(--line);border-radius:1em;box-shadow:var(--lift),0 0 0 .5em rgba(140,20,255,.08);font-family:Inter,sans-serif;color:var(--ink)}
+.lock{width:1.3em;height:1.05em;border:.16em solid var(--pink);border-radius:.25em;position:relative;margin-top:.45em;flex:none}
+.lock:before{content:"";position:absolute;left:.18em;top:-.62em;width:.65em;height:.55em;border:.16em solid var(--pink);border-bottom:0;border-radius:.4em .4em 0 0}
+.chipr{display:inline-flex;align-items:center;gap:.5em;background:#fff;border:1px solid var(--line);border-radius:100px;padding:.5em .9em .5em .5em;box-shadow:var(--float);font-family:Inter;font-weight:600;color:var(--ink)}
+.chipr img{width:1.6em;height:1.6em}
+.ok-dot{width:1.1em;height:1.1em;border-radius:50%;background:var(--done);position:relative}
+.ok-dot:after{content:"";position:absolute;left:.36em;top:.22em;width:.26em;height:.48em;border:solid #fff;border-width:0 .13em .13em 0;transform:rotate(45deg)}
+.streak{position:absolute;height:.18cqw;border-radius:100px;background:linear-gradient(90deg,transparent,var(--lav300),#fff)}
+.urlpill{display:inline-block;background:var(--primary);color:#fff;font-family:Inter;font-weight:600;border-radius:100px}
+/* closing cells */
+.meta{background:#fff;border-radius:10px;padding:18px 20px;font-size:13px;line-height:1.5;box-shadow:0 1px 2px rgba(23,32,51,.06)}
+.meta h3{font-family:'Quadrant Text';font-weight:400;font-size:22px;margin-bottom:10px}
+.sw{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
+.sw span{display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:var(--muted)}
+.sw span i{width:52px;height:32px;border-radius:6px;border:1px solid var(--line)}
+.seamstrip{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.seamstrip b{font-size:12px;background:var(--lav100);color:var(--pink);padding:3px 8px;border-radius:6px}
+.seamstrip em{font-style:normal;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Timewarp — launch film <small>v1</small></h1>
+    <p>Sketch sheet: every frame at its key moment, with the real copy in Quadrant Text + Inter and the timewarpdev.com palette. Nothing moves yet; check placement, hierarchy and words. Music: "Do It For You", cut to put drop 1 on <b>Introducing Timewarp</b> and drop 2 on <b>Allow</b>.</p>
+  </div>
+  <div class="tag">1920×1080 + 1080×1920 · 56.5 s · 9 frames · no VO · music + soft SFX</div>
+</header>
+
+<div class="act">Act 1 — The work → Timewarp (0:00–0:14)</div>
+<div class="grid">
+
+<!-- F1 -->
+<div class="item" id="frame-01">
+  <div class="cell"><div class="st" style="background:#fff">
+    <div class="a q" style="left:7cqw;top:14.5cqw;font-size:4.2cqw">For 45 years,<br>a third of your<br>waking hours<br>go to work.</div>
+    <div class="ticks" style="left:44.5cqw;top:6.6cqw;width:43cqw;height:43cqw"></div>
+    <div class="port" style="left:47.5cqw;top:9.6cqw;width:37cqw;height:37cqw">
+      <div class="a" style="left:5cqw;top:6cqw;width:27cqw;height:25cqw;background:#fff;border-radius:1cqw;box-shadow:0 .4cqw 1.6cqw rgba(23,32,51,.12);font-family:Inter;font-size:1cqw;color:#8A8F99;padding:1.2cqw">
+        <div style="font-weight:600;color:#5b606b;margin-bottom:.8cqw">Proposal_v4_FINAL.docx</div>
+        <div style="height:.7cqw;background:#E6E5EA;border-radius:.3cqw;margin:.6cqw 0;width:92%"></div>
+        <div style="height:.7cqw;background:#E6E5EA;border-radius:.3cqw;margin:.6cqw 0;width:78%"></div>
+        <div style="height:.7cqw;background:#E6E5EA;border-radius:.3cqw;margin:.6cqw 0;width:86%"></div>
+        <div style="height:.7cqw;background:#E6E5EA;border-radius:.3cqw;margin:.6cqw 0;width:60%"></div>
+        <div style="margin-top:1.6cqw;display:flex;gap:.6cqw"><span style="background:#E6E5EA;border-radius:.4cqw;padding:.3cqw .7cqw">Copy</span><span style="background:#E6E5EA;border-radius:.4cqw;padding:.3cqw .7cqw">Paste</span><span style="background:#E6E5EA;border-radius:.4cqw;padding:.3cqw .7cqw">Inbox 48</span></div>
+        <div style="position:absolute;right:1.2cqw;bottom:1cqw;font-weight:600;color:#5b606b">23:48</div>
+      </div>
+      <div class="cursor" style="left:24cqw;top:24cqw"></div>
+    </div>
+  </div></div>
+  <div class="lab"><span>01 · THE WORK</span><span>frame-01 · 0.00–6.86</span></div>
+  <div class="note"><b>Words pop on 8th notes; the porthole flip-book cuts faster and faster (8→6→4→2 f).</b> At 5.15 the music stops: freeze, headline rises out, porthole irises to one lilac dot.</div>
+  <span class="seam">→ collapse to dot</span>
+</div>
+
+<!-- F2 -->
+<div class="item" id="frame-02">
+  <div class="cell"><div class="st" style="background:#fff">
+    <div class="glow" style="left:18cqw;top:-14cqw;width:64cqw;height:64cqw"></div>
+    <div class="a" style="left:31cqw;top:-4.3cqw;width:38cqw;height:38cqw;border:.15cqw solid rgba(209,162,255,.45);border-radius:50%;top:9.2cqw"></div>
+    <div class="a" style="left:26cqw;top:4.2cqw;width:48cqw;height:48cqw;border:.12cqw solid rgba(209,162,255,.25);border-radius:50%"></div>
+    <div class="a c" style="left:0;right:0;top:17.3cqw;font-family:Inter;font-weight:600;font-size:1.6cqw;color:var(--pink);letter-spacing:.02em">Introducing</div>
+    <div class="a" style="left:22.5cqw;top:21.5cqw;display:flex;align-items:center;gap:2.2cqw">
+      <img src="capture/assets/brand/timewarp-logo.svg" style="width:13cqw;height:13cqw" alt="">
+      <div class="q" style="font-size:7.6cqw">Timewarp</div>
+    </div>
+  </div></div>
+  <div class="lab"><span>02 · INTRODUCING</span><span>frame-02 · 6.86–10.29</span></div>
+  <div class="note"><b>On drop 1 the dot blooms into the logo (turns −120°→0°, two rings ripple out).</b> "Introducing" rises a beat later; the wordmark lands on the full drop at 8.58.</div>
+  <span class="seam">cut ↑</span>
+</div>
+
+<!-- F3 -->
+<div class="item" id="frame-03">
+  <div class="cell"><div class="st" style="background:#fff">
+    <div class="spiro" style="left:20cqw;top:-12cqw;width:60cqw;height:60cqw"><img src="capture/assets/brand/timewarp-logo.svg" alt=""></div>
+    <div class="a q c" style="left:0;right:0;top:19.5cqw;font-size:4.2cqw">Anything you can do on a computer,<br><span style="display:inline-flex;align-items:center;gap:1cqw"><img src="capture/assets/brand/timewarp-logo.svg" style="width:4.4cqw;height:4.4cqw" alt="">Timewarp does <span class="pu">for you.</span></span></div>
+  </div></div>
+  <div class="lab"><span>03 · THE PROMISE</span><span>frame-03 · 10.29–13.72</span></div>
+  <div class="note"><b>Line 1 words pop on 8ths; line 2 lands on bar 32 with the logo glyph popping inline.</b> Block whips up and out; the app rises from below on the cut.</div>
+  <span class="seam">whip ↑ into app</span>
+</div>
+</div>
+
+<div class="act">Act 2 — It does the work (0:14–0:41)</div>
+<div class="grid">
+
+<!-- F4 -->
+<div class="item" id="frame-04">
+  <div class="cell"><div class="st" style="background:var(--bg-lav)">
+    <div class="glow" style="left:10cqw;top:-10cqw;width:80cqw;height:70cqw;opacity:.6"></div>
+    <div class="win" style="left:5cqw;top:3.5cqw;width:90cqw;height:49.5cqw;font-size:1.75cqw">
+      <div class="side"><div class="dots"><i></i><i></i><i></i></div><div class="newt">+ New Task</div><div class="slab">Agents</div>
+        <div class="ag on"><img src="capture/assets/brand/cosmo.png" alt="">Cosmo</div><div class="ag"><img src="capture/assets/brand/nova.png" alt="">Nova</div><div class="ag"><img src="capture/assets/brand/orbit.png" alt="">Orbit</div></div>
+      <div class="main">
+        <div class="chat">
+          <div class="ub">Find business leads for me — independent cafés in Austin.</div>
+          <div class="who"><img src="capture/assets/brand/cosmo.png" alt="">Cosmo <span class="pill ok">Done</span></div>
+          <div class="steps"><div class="stp"><i></i>Searching the web</div><div class="stp"><i></i>Reading 38 café sites</div><div class="stp"><i></i>Building your sheet</div></div>
+          <div class="fc"><span class="ft x"></span><div><b>leads.xlsx</b><small>20 leads · Saved to Files</small></div></div>
+        <div class="comp" style="margin-top:auto;padding:.6em .8em"><div class="row"><span>Ask a follow-up…</span><span class="send" style="width:1.7em;height:1.7em;font-size:.9em">↑</span></div></div></div>
+        <div class="pane">
+          <div class="tabs"><span class="tab">Search</span><span class="tab">juniper.coffee</span><span class="tab on">leads.xlsx</span></div>
+          <table class="sh"><tr><th>Business</th><th>Website</th><th>Contact</th><th>Why it fits</th></tr>
+            <tr><td>Juniper Coffee</td><td>juniper.coffee</td><td>hello@…</td><td>No online ordering</td></tr>
+            <tr><td>Bean &amp; Bloom</td><td>beanbloom.co</td><td>orders@…</td><td>Menu is a PDF</td></tr>
+            <tr><td>Cuppa Collective</td><td>cuppa.co</td><td>hi@…</td><td>No pickup option</td></tr>
+            <tr class="new"><td>Little Ember</td><td>littleember.com</td><td>team@…</td><td>Phone orders only</td></tr>
+            <tr class="new"><td>Northside Roast</td><td>nsroast.com</td><td>hey@…</td><td>Site not mobile</td></tr>
+            <tr><td style="color:var(--light)">…</td><td></td><td></td><td></td></tr></table>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="lab"><span>04 · FIND LEADS</span><span>frame-04 · 13.72–22.29</span></div>
+  <div class="note"><b>Window rises 0.9→1; camera pushes onto the composer while the prompt types (1 char/f).</b> Send on a beat, pull back; steps tick; café sites flick on 8ths; the sheet fills column by column; "Done" on the 20.58 splice.</div>
+  <span class="seam">hold window → same window</span>
+</div>
+
+<!-- F5 -->
+<div class="item" id="frame-05">
+  <div class="cell"><div class="st" style="background:var(--bg-lav)">
+    <div class="glow" style="left:10cqw;top:-10cqw;width:80cqw;height:70cqw;opacity:.6"></div>
+    <div class="win" style="left:5cqw;top:3.5cqw;width:90cqw;height:49.5cqw;font-size:1.75cqw">
+      <div class="side"><div class="dots"><i></i><i></i><i></i></div><div class="newt">+ New Task</div><div class="slab">Agents</div>
+        <div class="ag"><img src="capture/assets/brand/cosmo.png" alt="">Cosmo</div><div class="ag on"><img src="capture/assets/brand/nova.png" alt="">Nova</div><div class="ag"><img src="capture/assets/brand/orbit.png" alt="">Orbit</div></div>
+      <div class="main">
+        <div class="chat">
+          <div class="ub">Three clients haven't paid. Chase them.</div>
+          <div class="who"><img src="capture/assets/brand/nova.png" alt="">Nova <span class="pill">Working…</span></div>
+          <div class="steps"><div class="stp"><i></i>Checking Stripe</div><div class="stp"><i></i>Drafting reminders</div></div>
+          <div style="line-height:1.4">3 friendly reminders are ready. Send them?</div>
+          <div class="btns"><span class="btn">Review</span><span class="btn p">Send all<i class="cursor"></i></span></div>
+        <div class="comp" style="margin-top:auto;padding:.6em .8em"><div class="row"><span>Ask a follow-up…</span><span class="send" style="width:1.7em;height:1.7em;font-size:.9em">↑</span></div></div></div>
+        <div class="pane" style="padding-bottom:.8em">
+          <div class="tabs"><span class="tab">Stripe · Invoices</span><span class="tab on">Gmail · Drafts</span></div>
+          <table class="sh"><tr><th>Invoice</th><th>Client</th><th>Amount</th><th>Status</th></tr>
+            <tr><td>#1042</td><td>Northwind Studio</td><td>$1,800</td><td><span class="pill warn">Overdue</span></td></tr>
+            <tr><td>#1047</td><td>Harbor &amp; Pine</td><td>$1,200</td><td><span class="pill warn">Overdue</span></td></tr>
+            <tr><td>#1051</td><td>Fieldwork Co.</td><td>$950</td><td><span class="pill warn">Overdue</span></td></tr></table>
+          <div style="position:relative;height:9em;margin:.9em .9em 0">
+            <div class="fc" style="position:absolute;left:1.2em;top:1.2em;right:0;opacity:.6"><span class="ft m"></span><div><b>Quick reminder: invoice #1051</b><small>Hi Sam, just a friendly nudge…</small></div></div>
+            <div class="fc" style="position:absolute;left:.6em;top:.6em;right:.6em;opacity:.8"><span class="ft m"></span><div><b>Quick reminder: invoice #1047</b><small>Hi Ana, just a friendly nudge…</small></div></div>
+            <div class="fc" style="position:absolute;left:0;top:0;right:1.2em"><span class="ft m"></span><div><b>Quick reminder: invoice #1042</b><small>Hi Jordan, just a friendly nudge…</small></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="lab"><span>05 · CHASE INVOICES</span><span>frame-05 · 22.29–32.58</span></div>
+  <div class="note"><b>Cursor clicks + New Task, Nova takes over; prompt types, send on bar 43.</b> Overdue pills pop 2 f apart, drafts fan out; camera pushes onto Send all, click on bar 47, drafts slide away → "Sent ✓ 3 reminders".</div>
+  <span class="seam">hold window → same window</span>
+</div>
+
+<!-- F6 -->
+<div class="item" id="frame-06">
+  <div class="cell"><div class="st" style="background:var(--bg-lav)">
+    <div class="win" style="left:5cqw;top:3.5cqw;width:90cqw;height:49.5cqw;font-size:1.75cqw;filter:saturate(.8);opacity:.55">
+      <div class="side"><div class="dots"><i></i><i></i><i></i></div><div class="newt">+ New Task</div><div class="slab">Agents</div>
+        <div class="ag"><img src="capture/assets/brand/cosmo.png" alt="">Cosmo</div><div class="ag"><img src="capture/assets/brand/nova.png" alt="">Nova</div><div class="ag on"><img src="capture/assets/brand/orbit.png" alt="">Orbit</div></div>
+      <div class="main">
+        <div class="chat"><div class="ub">Get me an oat latte from Bean There.</div><div class="who"><img src="capture/assets/brand/orbit.png" alt="">Orbit <span class="pill">Working…</span></div><div class="steps"><div class="stp"><i></i>Opening beanthere.coffee</div><div class="stp"><i></i>Added oat latte to cart</div></div><div class="comp" style="margin-top:auto;padding:.6em .8em"><div class="row"><span>Ask a follow-up…</span><span class="send" style="width:1.7em;height:1.7em;font-size:.9em">↑</span></div></div></div>
+        <div class="pane"><div class="tabs"><span class="tab on">beanthere.coffee · Checkout</span></div>
+          <div style="padding:1.2em"><div class="q" style="font-size:1.7em;margin-bottom:.6em">Bean There Coffee</div><div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--line);padding:.5em 0">Oat latte · 12 oz<b>$5.40</b></div><div style="color:var(--muted);padding:.5em 0">Pickup in 10 min</div></div></div>
+      </div>
+    </div>
+    <div class="card" style="left:27cqw;top:10.5cqw;width:46cqw;font-size:1.6cqw;padding:1.5em 1.6em">
+      <div style="display:flex;gap:.8em;align-items:flex-start"><span class="lock"></span><div style="font-weight:600;line-height:1.35"><span style="display:inline-flex;align-items:center;gap:.35em"><img src="capture/assets/brand/orbit.png" style="width:1.4em;height:1.4em" alt="">Orbit</span> wants to pay with a card from your Vault</div></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:1.1em 0 .4em;padding:.75em .9em;background:var(--bg-lav);border-radius:.7em"><span style="font-weight:600">VISA •• 4242</span><span style="color:var(--muted)">Bean There Coffee</span><b>$5.40</b></div>
+      <div style="font-size:.8em;color:var(--muted);margin-bottom:1.1em">Stored encrypted on this device</div>
+      <div style="display:flex;gap:.6em"><span class="btn" style="flex:1;text-align:center">Deny</span><span class="btn p" style="flex:1;text-align:center;box-shadow:0 0 0 .35em rgba(140,20,255,.15)">Allow<i class="cursor"></i></span></div>
+    </div>
+  </div></div>
+  <div class="lab"><span>06 · ORDER COFFEE</span><span>frame-06 · 32.58–41.16</span></div>
+  <div class="note"><b>Orbit checks out in the built-in browser; at bar 59 the approval card rises.</b> At 39.44 the music stops: camera pushes onto Allow (×1.8), cursor glides in and hovers; press-down on the 40.73 pickup.</div>
+  <span class="seam">press → release on drop 2</span>
+</div>
+</div>
+
+<div class="act">Act 3 — Safe, fast, Timewarp (0:41–0:56)</div>
+<div class="grid">
+
+<!-- F7 -->
+<div class="item" id="frame-07">
+  <div class="cell"><div class="st" style="background:#fff">
+    <div class="glow" style="left:-6cqw;top:-6cqw;width:60cqw;height:60cqw;opacity:.7"></div>
+    <div class="a chipr" style="left:7cqw;top:6.5cqw;font-size:1.45cqw"><span class="ok-dot"></span>Paid · Oat latte, ready at 9:40</div>
+    <div class="card" style="left:7cqw;top:13cqw;width:37cqw;font-size:1.45cqw;padding:1.3em 1.4em">
+      <div style="display:flex;align-items:center;gap:.7em;margin-bottom:1em"><span class="lock" style="margin-top:.35em"></span><b style="font-size:1.15em">Vault</b><span class="pill" style="margin-left:auto">On this device · Encrypted</span></div>
+      <div style="display:flex;flex-direction:column;gap:.55em">
+        <div style="display:flex;justify-content:space-between;padding:.6em .8em;background:var(--bg-lav);border-radius:.6em"><b>VISA •• 4242</b><span style="color:var(--muted)">Card</span></div>
+        <div style="display:flex;justify-content:space-between;padding:.6em .8em;background:var(--bg-lav);border-radius:.6em"><b>Google Ads</b><span style="color:var(--muted)">Login</span></div>
+        <div style="display:flex;justify-content:space-between;padding:.6em .8em;background:var(--bg-lav);border-radius:.6em"><b>Stripe</b><span style="color:var(--muted)">Login</span></div>
+      </div>
+    </div>
+    <div class="a q" style="left:48cqw;top:16cqw;width:44cqw;font-size:3.1cqw;line-height:1.14">Your cards and logins stay in an encrypted vault on your computer.</div>
+    <div class="a" style="left:48cqw;top:33cqw;font-family:Inter;font-weight:500;font-size:1.8cqw;color:var(--muted)">Agents ask before they pay.</div>
+  </div></div>
+  <div class="lab"><span>07 · SAFE BY DESIGN</span><span>frame-07 · 41.16–46.30</span></div>
+  <div class="note"><b>Allow releases on drop 2 with a lilac ring burst → "Paid".</b> The card shrinks into the Vault panel; the line builds on bar 62, the sub-line on bar 63.</div>
+  <span class="seam">rise out ↑</span>
+</div>
+
+<!-- F8 -->
+<div class="item" id="frame-08">
+  <div class="cell"><div class="st" style="background:#fff">
+    <div class="glow" style="left:20cqw;top:-12cqw;width:60cqw;height:60cqw;opacity:.55"></div>
+    <div class="streak" style="left:4cqw;top:14cqw;width:30cqw"></div>
+    <div class="streak" style="left:8cqw;top:43cqw;width:26cqw"></div>
+    <div class="streak" style="left:66cqw;top:16cqw;width:28cqw;transform:scaleX(-1)"></div>
+    <div class="streak" style="left:64cqw;top:41cqw;width:30cqw;transform:scaleX(-1)"></div>
+    <div class="a q c" style="left:0;right:0;top:22.6cqw;font-size:5.8cqw">Work at the speed of <span style="background:linear-gradient(90deg,var(--ink) 0%,var(--ink) 35%,#B985FF 55%,var(--ink) 80%);-webkit-background-clip:text;background-clip:text;color:transparent">light.</span></div>
+  </div></div>
+  <div class="lab"><span>08 · SPEED OF LIGHT</span><span>frame-08 · 46.30–51.45</span></div>
+  <div class="note"><b>Three result chips pop on beats (leads.xlsx ✓ · 3 reminders sent ✓ · Oat latte ordered ✓), then stretch into light streaks and zip to center.</b> The tagline lands on bar 65; a light sweep crosses "light".</div>
+  <span class="seam">cut</span>
+</div>
+
+<!-- F9 -->
+<div class="item" id="frame-09">
+  <div class="cell"><div class="st" style="background:var(--bg-lav)">
+    <div class="glow" style="left:15cqw;top:-16cqw;width:70cqw;height:70cqw"></div>
+    <div class="spiro" style="left:22cqw;top:-8cqw;width:56cqw;height:56cqw;opacity:.06"><img src="capture/assets/brand/timewarp-logo.svg" alt=""></div>
+    <div class="a" style="left:0;right:0;top:15cqw;display:flex;justify-content:center;align-items:center;gap:2cqw">
+      <img src="capture/assets/brand/timewarp-logo.svg" style="width:10.5cqw;height:10.5cqw" alt="">
+      <div class="q" style="font-size:6.4cqw">Timewarp</div>
+    </div>
+    <div class="a c" style="left:0;right:0;top:30.5cqw;font-family:Inter;font-weight:500;font-size:1.7cqw;color:var(--muted)">Available for Mac &amp; Windows</div>
+    <div class="a c" style="left:0;right:0;top:35.5cqw"><span class="urlpill" style="font-size:1.6cqw;padding:.9cqw 2.2cqw">timewarpdev.com</span></div>
+  </div></div>
+  <div class="lab"><span>09 · END CARD</span><span>frame-09 · 51.45–56.50</span></div>
+  <div class="note"><b>Logo turns in, wordmark letters rise 2 f apart; the line, then the URL pill.</b> Holds while the music fades out (54.88→56.5). No mascots, no pricing line.</div>
+  <span class="seam">end · music fade</span>
+</div>
+</div>
+
+<!-- ================= 9:16 ================= -->
+<div class="act">9:16 sibling — same plan, re-laid out (1080×1920)</div>
+<div class="grid v">
+
+<div class="item" id="v-frame-01"><div class="cell"><div class="st" style="background:#fff">
+  <div class="a q" style="left:9cqw;top:18cqw;font-size:8cqw">For 45 years,<br>a third of your<br>waking hours<br>go to work.</div>
+  <div class="ticks" style="left:5cqw;top:72cqw;width:90cqw;height:90cqw"></div>
+  <div class="port" style="left:11cqw;top:78cqw;width:78cqw;height:78cqw">
+    <div class="a" style="left:11cqw;top:14cqw;width:56cqw;height:50cqw;background:#fff;border-radius:2cqw;box-shadow:0 .8cqw 3cqw rgba(23,32,51,.12);font-family:Inter;font-size:2.4cqw;color:#5b606b;padding:3cqw;font-weight:600">Proposal_v4_FINAL.docx<div style="height:1.6cqw;background:#E6E5EA;border-radius:.6cqw;margin:2.4cqw 0 1.4cqw;width:90%"></div><div style="height:1.6cqw;background:#E6E5EA;border-radius:.6cqw;margin:1.4cqw 0;width:72%"></div><div style="height:1.6cqw;background:#E6E5EA;border-radius:.6cqw;margin:1.4cqw 0;width:84%"></div><div style="position:absolute;right:3cqw;bottom:2.4cqw">23:48</div></div>
+  </div>
+</div></div><div class="lab"><span>01 · THE WORK</span><span>0.00–6.86</span></div></div>
+
+<div class="item" id="v-frame-02"><div class="cell"><div class="st" style="background:#fff">
+  <div class="glow" style="left:-20cqw;top:30cqw;width:140cqw;height:140cqw"></div>
+  <div class="a c" style="left:0;right:0;top:46cqw;font-family:Inter;font-weight:600;font-size:3.6cqw;color:var(--pink)">Introducing</div>
+  <img class="a" src="capture/assets/brand/timewarp-logo.svg" style="left:31cqw;top:56cqw;width:38cqw;height:38cqw" alt="">
+  <div class="a q c" style="left:0;right:0;top:100cqw;font-size:14cqw">Timewarp</div>
+</div></div><div class="lab"><span>02 · INTRODUCING</span><span>6.86–10.29</span></div></div>
+
+<div class="item" id="v-frame-03"><div class="cell"><div class="st" style="background:#fff">
+  <div class="spiro" style="left:-25cqw;top:35cqw;width:150cqw;height:150cqw"><img src="capture/assets/brand/timewarp-logo.svg" alt=""></div>
+  <div class="a q c" style="left:0;right:0;top:56cqw;font-size:8.4cqw;line-height:1.15">Anything you can do<br>on a computer,<br><span style="display:inline-flex;align-items:center;gap:2cqw"><img src="capture/assets/brand/timewarp-logo.svg" style="width:8.5cqw;height:8.5cqw" alt="">Timewarp</span><br>does <span class="pu">for you.</span></div>
+</div></div><div class="lab"><span>03 · THE PROMISE</span><span>10.29–13.72</span></div></div>
+
+<div class="item" id="v-frame-04"><div class="cell"><div class="st" style="background:var(--bg-lav)">
+  <div class="win" style="left:5cqw;top:14cqw;width:90cqw;height:66cqw;font-size:2.9cqw;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:.5em;padding:.8em 1em;border-bottom:1px solid var(--line);background:var(--bg-lav);font-weight:600"><img src="capture/assets/brand/cosmo.png" style="width:1.6em" alt="">Cosmo<span class="pill ok" style="margin-left:auto">Done</span></div>
+    <div class="chat" style="font-size:.95em"><div class="ub">Find business leads for me — independent cafés in Austin.</div>
+      <div class="steps"><div class="stp"><i></i>Searching the web</div><div class="stp"><i></i>Reading 38 café sites</div><div class="stp"><i></i>Building your sheet</div></div></div>
+  </div>
+  <div class="card" style="left:4cqw;top:86cqw;width:92cqw;font-size:2.7cqw;padding:0;overflow:hidden">
+    <div class="tabs" style="font-size:.95em"><span class="tab on">leads.xlsx</span></div>
+    <table class="sh" style="font-size:.95em"><tr><th>Business</th><th>Contact</th><th>Why it fits</th></tr>
+      <tr><td>Juniper Coffee</td><td>hello@…</td><td>No online ordering</td></tr><tr><td>Bean &amp; Bloom</td><td>orders@…</td><td>Menu is a PDF</td></tr><tr><td>Cuppa Collective</td><td>hi@…</td><td>No pickup option</td></tr><tr class="new"><td>Little Ember</td><td>team@…</td><td>Phone orders only</td></tr></table>
+  </div>
+  <div class="a fc" style="left:14cqw;top:138cqw;width:72cqw;font-size:3cqw"><span class="ft x"></span><div><b>leads.xlsx</b><small>20 leads · Saved to Files</small></div></div>
+</div></div><div class="lab"><span>04 · FIND LEADS</span><span>13.72–22.29</span></div></div>
+
+<div class="item" id="v-frame-05"><div class="cell"><div class="st" style="background:var(--bg-lav)">
+  <div class="win" style="left:5cqw;top:14cqw;width:90cqw;height:70cqw;font-size:2.7cqw;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:.5em;padding:.8em 1em;border-bottom:1px solid var(--line);background:var(--bg-lav);font-weight:600"><img src="capture/assets/brand/nova.png" style="width:1.6em" alt="">Nova<span class="pill" style="margin-left:auto">Working…</span></div>
+    <div class="chat"><div class="ub">Three clients haven't paid. Chase them.</div><div class="steps"><div class="stp"><i></i>Checking Stripe</div><div class="stp"><i></i>Drafting reminders</div></div></div>
+  </div>
+  <div class="a" style="left:5cqw;top:90cqw;width:90cqw;display:flex;flex-direction:column;gap:2cqw;font-size:2.6cqw">
+    <div class="fc"><span class="ft m"></span><div><b>Quick reminder: invoice #1042</b><small>Northwind Studio · $1,800 · Overdue</small></div></div>
+    <div class="fc"><span class="ft m"></span><div><b>Quick reminder: invoice #1047</b><small>Harbor &amp; Pine · $1,200 · Overdue</small></div></div>
+    <div class="fc"><span class="ft m"></span><div><b>Quick reminder: invoice #1051</b><small>Fieldwork Co. · $950 · Overdue</small></div></div>
+  </div>
+  <div class="a btns" style="left:25cqw;top:152cqw;font-size:3.4cqw"><span class="btn">Review</span><span class="btn p">Send all</span></div>
+</div></div><div class="lab"><span>05 · CHASE INVOICES</span><span>22.29–32.58</span></div></div>
+
+<div class="item" id="v-frame-06"><div class="cell"><div class="st" style="background:var(--bg-lav)">
+  <div class="win" style="left:5cqw;top:14cqw;width:90cqw;height:150cqw;font-size:2.7cqw;flex-direction:column;opacity:.5">
+    <div style="display:flex;align-items:center;gap:.5em;padding:.8em 1em;border-bottom:1px solid var(--line);background:var(--bg-lav);font-weight:600"><img src="capture/assets/brand/orbit.png" style="width:1.6em" alt="">Orbit<span class="pill" style="margin-left:auto">Working…</span></div>
+    <div class="chat"><div class="ub">Get me an oat latte from Bean There.</div></div>
+  </div>
+  <div class="card" style="left:6cqw;top:62cqw;width:88cqw;font-size:3.1cqw;padding:1.4em">
+    <div style="display:flex;gap:.7em"><span class="lock"></span><div style="font-weight:600;line-height:1.3">Orbit wants to pay with a card from your Vault</div></div>
+    <div style="display:flex;justify-content:space-between;margin:1em 0 .4em;padding:.7em .8em;background:var(--bg-lav);border-radius:.6em"><b>VISA •• 4242</b><b>$5.40</b></div>
+    <div style="font-size:.8em;color:var(--muted);margin-bottom:1em">Bean There Coffee · Stored encrypted on this device</div>
+    <div style="display:flex;gap:.6em"><span class="btn" style="flex:1;text-align:center">Deny</span><span class="btn p" style="flex:1;text-align:center">Allow</span></div>
+  </div>
+</div></div><div class="lab"><span>06 · ORDER COFFEE</span><span>32.58–41.16</span></div></div>
+
+<div class="item" id="v-frame-07"><div class="cell"><div class="st" style="background:#fff">
+  <div class="a chipr" style="left:14cqw;top:16cqw;font-size:3cqw"><span class="ok-dot"></span>Paid · Oat latte, ready 9:40</div>
+  <div class="card" style="left:8cqw;top:30cqw;width:84cqw;font-size:3cqw;padding:1.2em">
+    <div style="display:flex;align-items:center;gap:.6em;margin-bottom:.9em"><span class="lock" style="margin-top:.35em"></span><b>Vault</b><span class="pill" style="margin-left:auto">On this device</span></div>
+    <div style="display:flex;flex-direction:column;gap:.5em"><div style="display:flex;justify-content:space-between;padding:.55em .7em;background:var(--bg-lav);border-radius:.6em"><b>VISA •• 4242</b><span style="color:var(--muted)">Card</span></div><div style="display:flex;justify-content:space-between;padding:.55em .7em;background:var(--bg-lav);border-radius:.6em"><b>Google Ads</b><span style="color:var(--muted)">Login</span></div><div style="display:flex;justify-content:space-between;padding:.55em .7em;background:var(--bg-lav);border-radius:.6em"><b>Stripe</b><span style="color:var(--muted)">Login</span></div></div>
+  </div>
+  <div class="a q c" style="left:7cqw;right:7cqw;top:104cqw;font-size:7cqw;line-height:1.15">Your cards and logins stay in an encrypted vault on your computer.</div>
+  <div class="a c" style="left:0;right:0;top:152cqw;font-family:Inter;font-weight:500;font-size:3.6cqw;color:var(--muted)">Agents ask before they pay.</div>
+</div></div><div class="lab"><span>07 · SAFE BY DESIGN</span><span>41.16–46.30</span></div></div>
+
+<div class="item" id="v-frame-08"><div class="cell"><div class="st" style="background:#fff">
+  <div class="glow" style="left:-20cqw;top:40cqw;width:140cqw;height:110cqw;opacity:.5"></div>
+  <div class="streak" style="left:5cqw;top:60cqw;width:50cqw"></div><div class="streak" style="left:45cqw;top:122cqw;width:50cqw;transform:scaleX(-1)"></div>
+  <div class="a q c" style="left:0;right:0;top:68cqw;font-size:13cqw;line-height:1.05">Work at<br>the speed<br>of <span style="color:#9a52e8">light.</span></div>
+</div></div><div class="lab"><span>08 · SPEED OF LIGHT</span><span>46.30–51.45</span></div></div>
+
+<div class="item" id="v-frame-09"><div class="cell"><div class="st" style="background:var(--bg-lav)">
+  <div class="glow" style="left:-25cqw;top:30cqw;width:150cqw;height:120cqw"></div>
+  <img class="a" src="capture/assets/brand/timewarp-logo.svg" style="left:32cqw;top:58cqw;width:36cqw;height:36cqw" alt="">
+  <div class="a q c" style="left:0;right:0;top:98cqw;font-size:13cqw">Timewarp</div>
+  <div class="a c" style="left:0;right:0;top:120cqw;font-family:Inter;font-weight:500;font-size:3.8cqw;color:var(--muted)">Available for Mac &amp; Windows</div>
+  <div class="a c" style="left:0;right:0;top:130cqw"><span class="urlpill" style="font-size:3.8cqw;padding:2.2cqw 5cqw">timewarpdev.com</span></div>
+</div></div><div class="lab"><span>09 · END CARD</span><span>51.45–56.50</span></div></div>
+</div>
+
+<div class="act">Seams & tokens</div>
+<div class="grid">
+  <div class="meta">
+    <h3>Seam map</h3>
+    <div class="seamstrip"><b>01</b><em>porthole → dot (silence)</em><b>02</b><em>dot → logo on drop 1</em><b>03</b><em>whip ↑</em><b>04</b><em>same window</em><b>05</b><em>same window</em><b>06</b><em>Allow press → release on drop 2</em><b>07</b><em>rise out ↑</em><b>08</b><em>streaks → tagline</em><b>09</b><em>fade</em></div>
+    <p style="margin-top:12px;color:var(--muted)">Direction rule: vertical — text leaves upward, UI arrives from below. Cuts land on or one frame after a beat, never before. Two silences: 5.15–6.43 and 39.44–40.73.</p>
+  </div>
+  <div class="meta">
+    <h3>Tokens</h3>
+    <div class="sw"><span><i style="background:#fff"></i>bg #FFF</span><span><i style="background:#FAF6FF"></i>lav-50</span><span><i style="background:#E9D2FF"></i>lav-200</span><span><i style="background:#D1A2FF"></i>lav-300</span><span><i style="background:#8C14FF"></i>primary</span><span><i style="background:#6A0FC4"></i>primary-ink</span><span><i style="background:#172033"></i>ink</span><span><i style="background:#626B7C"></i>muted</span></div>
+    <p><b style="font-family:'Quadrant Text';font-weight:400;font-size:17px">Quadrant Text 400</b> display · <b>Inter 500/600</b> UI · radii 20/16/10 · float shadow tinted #6A0FC4 · eases expo.out / power3.inOut / back.out(1.6).</p>
+  </div>
+  <div class="meta">
+    <h3>Bans</h3>
+    <p style="color:var(--muted)">No dark frames · no neon or glitch · no invented stats or time savings · never bold Quadrant Text · no slideshow beats (focal moves within 0.2 s) · no screensaver motion · demo data is illustrative.</p>
+  </div>
+</div>
+</body>
+</html>

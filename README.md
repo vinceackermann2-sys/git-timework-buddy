@@ -13,9 +13,9 @@ Private backend credentials remain in the existing production Supabase secret ma
 ## Desktop integration
 
 This is the **timework** source repository for the Timewarp desktop integration.
-Version **1.1.23** is available as a signed, notarized Apple Silicon Mac DMG;
-the Windows Store update has been submitted for certification. See the
-[release record](docs/release-1.1.23.md), remaining live acceptance checks in the
+Version **1.1.24** is available as a signed, notarized Apple Silicon Mac DMG;
+the Windows Store update is submitted for certification and will publish automatically
+after approval. See the [release record](docs/release-1.1.24.md), remaining live acceptance checks in the
 [production readiness review](docs/production-readiness.md), and
 [checkout/build prerequisites](docs/building.md).
 
@@ -23,11 +23,11 @@ The supplied Electron runtime, device data, credentials, backups and generated
 acceptance reports stay outside Git. GitHub Actions runs portable source and
 email checks. A manual Windows job now builds verified preview/signed artifacts
 from the hash-pinned supplied inputs; it does not publish them. The repository
-was made public for the Apple Silicon Mac build. Version 1.1.23 passed native
+was made public for the Apple Silicon Mac build. Version 1.1.24 passed native
 startup, packaged contracts, Developer ID signatures, hardened runtime, Apple
 notarization, stapling, and Gatekeeper checks. Installers and checksums are
 published in the separate public
-[downloads repository](https://github.com/vinceackermann2-sys/timewarp-releases/releases/tag/v1.1.23),
+[downloads repository](https://github.com/vinceackermann2-sys/timewarp-releases/releases/tag/v1.1.24),
 so the source can return to private visibility without breaking downloads.
 See [native distribution](docs/native-distribution.md).
 

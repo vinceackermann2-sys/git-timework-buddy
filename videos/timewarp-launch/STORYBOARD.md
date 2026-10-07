@@ -55,7 +55,7 @@ The 9:16 sibling reuses this plan; `layout_9x16` notes say how each frame re-lay
 - duration: 6.86s
 - transition_in: cut
 - poster: 4.2
-- status: outline
+- status: built
 - blueprint: kinetic-type-beats (+ Fable-style porthole flip-book)
 - scene: "For 45 years, a third of your waking hours go to work." builds left while a round porthole flips through a blur of computer chores, accelerating, then everything stops dead.
 - asset_candidates: brand/timewarp-logo.svg (faint bezel motif only)
@@ -87,7 +87,7 @@ Near-white silence; the dot breathes once at the 6.431 pickup.
 - duration: 3.43s
 - transition_in: cut
 - poster: 9.4
-- status: outline
+- status: built
 - blueprint: logo-assemble-lockup
 - scene: On the drop the dot blooms into the spirograph logo with rings of light; "Introducing" then "Timewarp" lands on the full drop.
 - asset_candidates: brand/timewarp-logo.svg
@@ -109,7 +109,7 @@ rotation (≤15°/s); whole lockup pushes 1.00→1.04. Exit at 10.08: lockup sca
 - duration: 3.43s
 - transition_in: cut
 - poster: 13.2
-- status: outline
+- status: built
 - blueprint: kinetic-type-beats
 - scene: "Anything you can do on a computer, Timewarp does for you." — words pop on the beat, "for you" in purple.
 - asset_candidates: brand/timewarp-logo.svg (inline glyph)
@@ -131,7 +131,7 @@ rises out fast (power3.in, 7f) — the app window arrives from below on the cut 
 - duration: 8.574s
 - transition_in: cut
 - poster: 19.6
-- status: outline
+- status: built
 - blueprint: prompt-type-submit-generate → agent-progress-theater
 - scene: In the Timewarp app, the prompt types; Cosmo searches the web in the built-in browser, reads café sites, and fills leads.xlsx; done.
 - asset_candidates: brand/cosmo-512.png, brand/nova.png, brand/orbit.png, brand/timewarp-logo.svg, ../screenshots/scroll-000.png (UI reference)
@@ -161,7 +161,7 @@ Why it fits) with rows landing every 2f and a lilac shimmer band. 20.579 (groove
 - duration: 10.29s
 - transition_in: cut
 - poster: 28.6
-- status: outline
+- status: built
 - blueprint: agent-progress-theater
 - scene: New task with Nova: it checks Stripe, finds three overdue invoices, drafts friendly reminders in Gmail; you hit Send all.
 - asset_candidates: brand/nova-512.png, brand/nova.png, brand/cosmo.png, brand/orbit.png, brand/app-capture-tools.png (Stripe + Gmail glyph reference)
@@ -188,7 +188,7 @@ click on bar 47 (30.869); the cards slide away one by one (3f stagger) → "Sent
 - duration: 8.574s
 - transition_in: cut
 - poster: 38.6
-- status: outline
+- status: built
 - blueprint: cursor-ui-demo (cursorless approval push, Muse)
 - scene: Orbit orders a coffee in the built-in browser; checkout asks to use a card from the Vault; the camera pushes onto Allow as the music stops.
 - asset_candidates: brand/orbit-512.png, brand/orbit.png, brand/timewarp-logo.svg
@@ -213,7 +213,7 @@ your Vault" · VISA •• 4242 · Bean There Coffee · $5.40 · footnote "Store
 - duration: 5.145s
 - transition_in: cut
 - poster: 44.8
-- status: outline
+- status: built
 - blueprint: titlecard-reveal (with UI)
 - scene: On drop 2 the press releases — "Paid ✓ Oat latte, ready 9:40" — then the card tucks into the Vault and the line "Your cards and logins stay in an encrypted vault on your computer." lands.
 - asset_candidates: brand/orbit.png, brand/timewarp-logo.svg
@@ -236,7 +236,7 @@ they pay."** (confirmed true by the user 2026-10-07). Exit 45.95: whole frame ri
 - duration: 5.145s
 - transition_in: cut
 - poster: 50.0
-- status: outline
+- status: built
 - blueprint: kinetic-type-beats
 - scene: The three results flash in as chips, streak into light, and "Work at the speed of light." lands.
 - asset_candidates: brand/timewarp-logo.svg
@@ -256,7 +256,7 @@ a soft light sweep crosses the word "light" (lav-200 → white). Hold with a slo
 - duration: 5.052s
 - transition_in: cut
 - poster: 54.0
-- status: outline
+- status: built
 - blueprint: logo-assemble-lockup
 - scene: Logo + Timewarp wordmark, "Available for Mac & Windows", timewarpdev.com. (No mascots, no pricing line — user request.)
 - asset_candidates: brand/timewarp-logo.svg
