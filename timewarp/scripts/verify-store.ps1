@@ -20,6 +20,17 @@ try {
   $application = @($manifest.Package.Applications.Application)
   if ($application.Count -ne 1 -or $application[0].Id -cne $storeIdentity.applicationId -or $application[0].Executable -cne 'app\Timewarp.exe' -or $application[0].EntryPoint -ne 'Windows.FullTrustApplication') { throw 'Incorrect Store executable or application ID.' }
   if ($manifest.Package.Properties.DisplayName -cne $storeIdentity.displayName -or $manifest.Package.Properties.PublisherDisplayName -cne $storeIdentity.publisherDisplayName) { throw 'Incorrect Store display identity.' }
+  $visual = $application[0].SelectSingleNode("*[local-name()='VisualElements']")
+  if (-not $visual -or $visual.GetAttribute('BackgroundColor') -cne 'transparent' -or $visual.GetAttribute('Square44x44Logo') -cne 'assets\Square44x44Logo.png') { throw 'Store shell icons must use a transparent background and the qualified app-list assets.' }
+  if (-not $archive.GetEntry('resources.pri')) { throw 'Missing Store shell icon resource index.' }
+  foreach ($asset in Get-ChildItem -LiteralPath $env:TIMEWARP_STORE_ASSETS -File -Filter '*.png') {
+    $entry = $archive.GetEntry('assets/' + $asset.Name)
+    if (-not $entry -or $entry.Length -ne $asset.Length) { throw "Missing/incomplete Store icon: $($asset.Name)" }
+    $stream = $entry.Open()
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $digest = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','') } finally { $stream.Dispose(); $sha.Dispose() }
+    if ($digest -ne (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash) { throw "Store icon hash mismatch: $($asset.Name)" }
+  }
   $capabilities = @($manifest.Package.Capabilities.ChildNodes | Where-Object { $_.NodeType -eq 'Element' })
   if ($capabilities.Count -ne 1 -or $capabilities[0].GetAttribute('Name') -ne 'runFullTrust') { throw 'Unexpected Store capability.' }
   if ($names.ContainsKey('app/resources/app-update.yml')) { throw 'Store packages must use Store updates.' }

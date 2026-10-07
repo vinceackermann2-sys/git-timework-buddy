@@ -112,6 +112,48 @@ Deno.serve(async (request) => {
   // Quietly accept the honeypot so automated spam does not learn how it was caught.
   if (cleanLine(input.website)) return jsonResponse({ ok: true });
 
+  // The desktop's native feedback form has no image or contact-name fields.
+  // Authenticate it separately and take reporter identity from Supabase Auth.
+  if (input.kind === 'feedback') {
+    if (!supabaseUrl || !serviceRoleKey) return jsonResponse({ error: 'Report storage is not configured.' }, 503);
+    const authorization = request.headers.get('Authorization') || '';
+    if (!/^Bearer\s+\S+$/i.test(authorization)) return jsonResponse({ error: 'Sign in to send a report.' }, 401);
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data: authData, error: authError } = await admin.auth.getUser(authorization.replace(/^Bearer\s+/i, ''));
+    const user = authData?.user;
+    if (authError || !user?.id || !user.email) return jsonResponse({ error: 'Sign in to send a report.' }, 401);
+    const description = typeof input.description === 'string' ? input.description.trim() : '';
+    if (!description || description.length > 5000) return jsonResponse({ error: 'Provide a description of up to 5,000 characters.' }, 400);
+    const context = input.environment && typeof input.environment === 'object' && !Array.isArray(input.environment)
+      ? input.environment as Record<string, unknown> : {};
+    const traceId = `${new Date().toISOString().slice(0, 10).replaceAll('-', '')}_${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`;
+    const { data: ticket, error } = await admin.from('support_tickets').insert({
+      category: 'bug',
+      title: cleanLine(description.split('\n')[0], 160) || 'App feedback',
+      description,
+      reporter_name: cleanLine(user.user_metadata?.full_name || user.user_metadata?.name || user.email.split('@')[0], 100),
+      reporter_email: user.email,
+      user_id: user.id,
+      source: 'timewarp_desktop',
+      app_version: cleanLine(context.appVersion, 80) || null,
+      environment: cleanLine(context.app, 120) || 'desktop',
+      platform: cleanLine(context.platform, 120) || null,
+      diagnostics: JSON.stringify({
+        traceId,
+        route: cleanLine(input.route, 2000) || null,
+        conversationId: cleanLine(input.conversationId, 160) || null,
+        releaseChannel: cleanLine(context.releaseChannel, 80) || null,
+      }),
+    }).select('id, ticket_number').single();
+    if (error || !ticket) {
+      console.error('Desktop feedback storage failed:', error?.message || 'No ticket returned.');
+      return jsonResponse({ error: 'Your report could not be saved. Try again.' }, 502);
+    }
+    return jsonResponse({ ok: true, traceId, ticketId: ticket.id, ticketNumber: ticket.ticket_number });
+  }
+
   const requestedKind = cleanLine(input.kind, 20);
   const kind = requestedKind === 'enterprise'
     ? 'enterprise'

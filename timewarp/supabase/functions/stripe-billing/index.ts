@@ -363,33 +363,35 @@ Deno.serve(async (req) => {
       });
       if (usageError) throw new Error(`Could not load AI credit balances: ${usageError.message}`);
       const usageRow = usage as Record<string, unknown> | null;
-      const { data: cloudUsageData, error: cloudUsageError } = await admin.rpc('timewarp_cloud_credit_usage', {
-        p_user_id: user.id,
-        p_workspace_id: workspaceId,
-      });
+      const periodStart = typeof usageRow?.period_start === 'string' ? usageRow.period_start : null;
+      const personalEnergy = body.surface === 'energy' && workspaceId === null;
+      // These reads are independent once AI usage has established the billing
+      // period. Avoid adding each database round trip to the page's load time.
+      const [cloudResult, creditResult, customerResult] = await Promise.all([
+        admin.rpc('timewarp_cloud_credit_usage', {
+          p_user_id: user.id,
+          p_workspace_id: workspaceId,
+        }),
+        admin.rpc('timewarp_credit_usage_summary', {
+          p_user_id: user.id,
+          p_workspace_id: workspaceId,
+          p_period_start: periodStart,
+        }),
+        personalEnergy ? admin.from('timewarp_billing_customers').select('stripe_customer_id')
+          .eq('user_id', user.id).maybeSingle<{ stripe_customer_id: string }>() : null,
+      ]);
+      const { data: cloudUsageData, error: cloudUsageError } = cloudResult;
       if (cloudUsageError) throw new Error(`Could not load Cloud Credit balances: ${cloudUsageError.message}`);
       const cloudUsage = (cloudUsageData && typeof cloudUsageData === 'object'
         ? cloudUsageData
         : {}) as Record<string, unknown>;
-      const periodStart = typeof usageRow?.period_start === 'string' ? usageRow.period_start : null;
-      const { data: creditUsageData, error: creditUsageError } = await admin.rpc('timewarp_credit_usage_summary', {
-        p_user_id: user.id,
-        p_workspace_id: workspaceId,
-        p_period_start: periodStart,
-      });
+      const { data: creditUsageData, error: creditUsageError } = creditResult;
       if (creditUsageError) throw new Error(`Could not load purchased-credit usage: ${creditUsageError.message}`);
       const creditUsage = (creditUsageData && typeof creditUsageData === 'object'
         ? creditUsageData
         : {}) as Record<string, unknown>;
-      const personalEnergy = body.surface === 'energy' && workspaceId === null;
-      let hasPersonalCustomer = false;
-      if (personalEnergy) {
-        const { data: customer, error: customerError } = await admin
-          .from('timewarp_billing_customers').select('stripe_customer_id')
-          .eq('user_id', user.id).maybeSingle<{ stripe_customer_id: string }>();
-        if (customerError) throw new Error(`Could not load billing customer: ${customerError.message}`);
-        hasPersonalCustomer = Boolean(customer?.stripe_customer_id);
-      }
+      if (customerResult?.error) throw new Error(`Could not load billing customer: ${customerResult.error.message}`);
+      const hasPersonalCustomer = Boolean(customerResult?.data?.stripe_customer_id);
       return jsonResponse({
         plan: currentPlan,
         workspaceId,

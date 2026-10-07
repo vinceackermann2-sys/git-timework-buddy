@@ -15,11 +15,13 @@ async function verifyStore(){
   const boot=read('out/main/bootstrap.js');
   if(!boot.includes(JSON.stringify(store.appUserModelId))||!boot.includes('Timewarp Energy')||boot.includes('Timewarp Preview'))throw new Error('Store application/profile identity is incorrect.');
   const {shellPath}=require('../shared/authenticode.cjs');
-  const env={...process.env,TIMEWARP_STORE_CONFIG:configPath,TIMEWARP_STORE_PACKAGE:file,TIMEWARP_STORE_STAGE:stage};delete env.PSModulePath;
+  const assets=path.join(root,'build/store-resources/appx');
+  const verifiedIcons=await require('./store-icons.cjs').verifyStoreIcons(assets);
+  const env={...process.env,TIMEWARP_STORE_CONFIG:configPath,TIMEWARP_STORE_PACKAGE:file,TIMEWARP_STORE_STAGE:stage,TIMEWARP_STORE_ASSETS:assets};delete env.PSModulePath;
   const result=JSON.parse(cp.execFileSync(shellPath(),['-NoProfile','-NonInteractive','-File',path.join(__dirname,'verify-store.ps1')],{env,encoding:'utf8',windowsHide:true,timeout:180000}));
-  const report={verifiedAt:new Date().toISOString(),file,sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),...result};
+  const report={verifiedAt:new Date().toISOString(),file,sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),verifiedIcons,...result};
   fs.mkdirSync(path.join(root,'reports'),{recursive:true});fs.writeFileSync(path.join(root,'reports/store-package.json'),JSON.stringify(report,null,2));
-  console.log('Verified Store identity, version, disabled external updates and '+result.verifiedPayloadFiles+' payload hashes.');
+  console.log('Verified Store identity, version, transparent shell branding, '+verifiedIcons+' icons, disabled external updates and '+result.verifiedPayloadFiles+' payload hashes.');
   return report;
 }
 module.exports={verifyStore};

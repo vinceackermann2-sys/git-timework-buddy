@@ -19,7 +19,7 @@ function json(res, status, body, origin) {
   res.writeHead(status, headers); res.end(JSON.stringify(body));
 }
 function createBridge(auth, cloud, port = 7788, services={}) {
-  const {chatgpt,integrations,mascots}=services;
+  const {chatgpt,integrations,mascots,submitFeedback}=services;
   const aiFunding=chatgpt&&(services.aiFunding||require('./ai-funding.cjs').createAiFunding({cloud,chatgpt,...auth.userId?{userId:()=>auth.userId()}:{}}));
   const server = http.createServer(async (req, res) => {
     const origin = req.headers.origin;
@@ -91,7 +91,13 @@ function createBridge(auth, cloud, port = 7788, services={}) {
         const runRpc=async(rpc,inputOverride)=>{
         const singleUrl=new URL(url);singleUrl.pathname='/api/product/trpc/'+rpc;
         let result;
-        if (rpc === "product.organizations.list") result = { organizations: (await auth.accountSession()).organizations };
+        if (rpc === "product.feedback.submit") {
+          if(req.method!=='POST')throw Object.assign(Error('Method not allowed.'),{status:405});
+          if(!submitFeedback)throw Object.assign(Error('Report submission is unavailable.'),{status:503});
+          const input=inputOverride===undefined?await readInput(req,singleUrl):decodeInput(inputOverride);
+          result=await submitFeedback(input);
+        }
+        else if (rpc === "product.organizations.list") result = { organizations: (await auth.accountSession()).organizations };
         else if (rpc === "product.usage.energy") { const balance = await accountBalance(cloud); result = usage(balance, balance.plan && balance.plan !== "free" ? await billingStatus(cloud).catch(() => null) : null); }
         else if (rpc === "product.usage.chatgpt") result = aiFunding&&(await aiFunding.current()).subscriptionAllowed?chatgpt.usage():{ plans: [] };
         else if (rpc === "product.chatgpt.connection") result = aiFunding&&(await aiFunding.current()).subscriptionAllowed?chatgpt.connection():{ status:'disconnected',account:null };

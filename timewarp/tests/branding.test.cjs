@@ -20,15 +20,18 @@ test('rebranding covers escaped UI copy and prompts while preserving runtime pro
 test('stock appearance upgrades without changing a custom theme, scheme, radiance or texture', () => {
   const old = { scheme: 'dark', accent: hexToAccent('#82B1F0'), radiance: 0.7, texture: { type: 'dots', step: 8 } };
   const migrated = migrateAppearance(old);
-  assert.deepEqual(migrated, { ...old, accent: defaultAccent });
+  assert.deepEqual(migrated, { ...old, accent: hexToAccent('#B7D6FF') });
   assert.deepEqual(old.accent, hexToAccent('#82B1F0'));
   const custom = { ...old, accent: hexToAccent('#E8B5F4') };
   assert.equal(migrateAppearance(custom), custom);
+  const previousDefault = { ...old, accent: hexToAccent('#B7D6FF') };
+  assert.equal(migrateAppearance(previousDefault), previousDefault);
   assert.equal(migrateAppearance(migrated), migrated);
 });
 
-test('all twelve preset values round trip through the native HSL accent schema', () => {
-  assert.equal(presets.length, 12);
+test('all thirteen preset values round trip through the native HSL accent schema', () => {
+  assert.equal(presets.length, 13);
+  assert.deepEqual(defaultAccent, hexToAccent('#E9D2FF'));
   assert.equal(new Set(presets.map(preset => preset.hex)).size, presets.length);
   for (const { hex } of presets) {
     const { hue, saturation, lightness, tint } = hexToAccent(hex);

@@ -14,6 +14,11 @@ function schema(name){
 }
 schema('k8');
 schema('Gwe').parse(require('../shared/models.cjs').models());
+for(const model of require('../shared/codex-models.json').models.filter(model=>model.visibility==='list')){
+  const choices={id:model.slug,displayName:model.display_name,description:model.description,inputModalities:model.input_modalities,supportedReasoningEfforts:model.supported_reasoning_levels.map(option=>({reasoningEffort:option.effort,description:option.description})),defaultReasoningEffort:model.default_reasoning_level,featured:model.priority===1,serviceTiers:[{value:null,label:'Standard',description:'Uses Codex allowance'}],defaultServiceTier:null};
+  schema('Gwe').parse([choices]);
+  for(const effort of choices.supportedReasoningEfforts)schema('ir').parse({name:model.slug,reasoningEffort:effort.reasoningEffort,serviceTier:null});
+}
 const appearance=require('../shared/appearance.cjs');
 for(const preset of appearance.presets)schema('zd').shape.appearance.parse({scheme:'light',accent:appearance.hexToAccent(preset.hex),radiance:.2,texture:{type:'dots',step:2}});
 schema('zd').shape.appearance.parse({scheme:'dark',accent:appearance.defaultAccent,radiance:.2,texture:{type:'dots',step:2}});
@@ -28,4 +33,4 @@ for(const model of ['gpt-5.6-sol','gpt-5.6-luna','openai/account-approved-model'
   schema('pf').parse({entries,olderCursor:null,newerCursor:null});
   assert.equal(snapshot.conversation.modelSettings.name,model);
 }
-console.log('Original desktop schemas accept cloud-restored chat messages, model settings, and all twelve Timewarp color presets.');
+console.log(`Original desktop schemas accept cloud-restored chat messages, model settings, and all ${appearance.presets.length} Timewarp color presets.`);

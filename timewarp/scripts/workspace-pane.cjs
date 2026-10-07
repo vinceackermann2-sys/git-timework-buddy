@@ -36,8 +36,14 @@ function patchWorkspacePane(source) {
     const fileStart = component.indexOf('i||(y&&g?', start);
     if (fileStart < 0) throw new Error('Workspace pane contract changed: file viewer');
     const fileContent = component.slice(fileStart, end);
-    const content = `children:window.newco?.browserView?g&&h.jsx(HMn,{browserOwnerId:t,mode:v,assistantIcon:s,showAssistant:!!r,toolContent:v==="assistant"?r:v==="files"?(${fileContent}):null}):v==="assistant"?r:(${fileContent})`;
-    return component.slice(0, start) + content + component.slice(end);
+    const headerStart = component.indexOf('a&&(v==="files"');
+    const headerEnd = component.indexOf(',h.jsx("div",{className:"min-h-0 flex-1 overflow-hidden"', headerStart);
+    if (headerStart < 0 || headerEnd < 0) throw new Error('Workspace pane contract changed: file toolbar');
+    const fileHeader = component.slice(headerStart, headerEnd);
+    const content = `children:window.newco?.browserView?g&&h.jsx(HMn,{browserOwnerId:t,mode:v,assistantIcon:s,showAssistant:!!r,toolContent:v==="assistant"?r:v==="files"?h.jsxs(h.Fragment,{children:[${fileHeader},(${fileContent})]}):null}):v==="assistant"?r:(${fileContent})`;
+    // File controls belong inside Files. Keeping them above the browser shifts
+    // its chrome lower in the pane and shrinks the page whenever Files opens.
+    return component.slice(0, headerStart) + '!window.newco?.browserView&&(' + fileHeader + ')' + component.slice(headerEnd, start) + content + component.slice(end);
   });
   source = replaceComponent(source, 'HMn', () => '({browserOwnerId:t,...props})=>{const e=M0();return e&&h.jsx($Mn,{local:e,browserOwnerId:t,...props})}');
   source = replaceComponent(source, '$Mn', component => {

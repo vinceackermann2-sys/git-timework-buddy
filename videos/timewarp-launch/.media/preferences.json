@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "preferences": {
+    "storyboard": {
+      "value": "yes",
+      "confirmed_in": [
+        "timewarp-launch"
+      ],
+      "updated_at": "2026-10-07T09:43:24.085Z"
+    },
+    "flow": {
+      "value": "automation",
+      "confirmed_in": [
+        "timewarp-launch"
+      ],
+      "updated_at": "2026-10-07T09:43:24.185Z"
+    },
+    "language": {
+      "value": "en",
+      "confirmed_in": [
+        "timewarp-launch"
+      ],
+      "updated_at": "2026-10-07T09:43:24.278Z"
+    }
+  },
+  "sightings": {}
+}

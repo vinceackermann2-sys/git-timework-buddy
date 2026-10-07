@@ -57,7 +57,7 @@ window.timewarpMountBilling = host => {
     node.setAttribute('role', 'progressbar'); node.setAttribute('aria-label', label); node.setAttribute('aria-valuemin', '0'); node.setAttribute('aria-valuemax', '100'); node.setAttribute('aria-valuenow', String(Math.round(percent))); node.setAttribute('aria-valuetext', number(used) + ' of ' + number(allowance) + ' used');
     const fill = el('div', 'tw-meter-fill'); fill.style.width = percent + '%'; node.append(fill); return node;
   };
-  let providerTimer = null, billingTimer = null, pendingKey = null, currentPlan = null, loading = null, providerLoading = null, billingData = null;
+  let providerTimer = null, billingTimer = null, pendingKey = null, currentPlan = null, loading = null, providerLoading = null, billingData = null, reconciling = null;
   const selections = new Map();
   const stopTimers = () => { clearTimeout(providerTimer); clearTimeout(billingTimer); };
   const refreshOnFocus = () => {
@@ -129,18 +129,23 @@ window.timewarpMountBilling = host => {
     } else if (response.updated) { await load(); notify('Monthly plan updated. Your usage refreshes after Stripe confirms the change.'); scheduleRefresh(); }
     else throw new Error('Stripe did not return a checkout or confirmed plan update.');
   }
-  function scheduleRefresh() { clearTimeout(billingTimer); billingTimer = setTimeout(() => void load().catch(error => notify(error.message, true)), 10000); }
+  function scheduleRefresh(delay = 10000) { clearTimeout(billingTimer); billingTimer = setTimeout(() => void load().catch(error => notify(error.message, true)), delay); }
   function load() {
     if (loading) return loading;
     content.setAttribute('aria-busy', 'true'); loading = loadBilling().finally(() => { loading = null; content.setAttribute('aria-busy', 'false'); }); return loading;
   }
-  async function reconcile() {
-    if (!pendingKey) { const state = await window.timewarp.request('state'); if (state.user?.id) pendingKey = 'timewarp-checkout:' + state.user.id; }
+  function reconcile() {
+    if (reconciling) return reconciling;
+    reconciling = syncCheckout().finally(() => { reconciling = null; }); return reconciling;
+  }
+  async function syncCheckout() {
     if (!pendingKey) return;
-    let pending; try { pending = JSON.parse(localStorage.getItem(pendingKey) || 'null'); } catch { localStorage.removeItem(pendingKey); return; }
+    const saved = localStorage.getItem(pendingKey);
+    let pending; try { pending = JSON.parse(saved || 'null'); } catch { localStorage.removeItem(pendingKey); return; }
     if (!pending) return;
     if (Date.now() - pending.createdAt > 24 * 60 * 60 * 1000) { localStorage.removeItem(pendingKey); return; }
-    const result = await request({ action: 'sync-checkout', sessionId: pending.id }); if (!result.pending) localStorage.removeItem(pendingKey);
+    const result = await request({ action: 'sync-checkout', sessionId: pending.id });
+    if (!result.pending) { if (localStorage.getItem(pendingKey) === saved) localStorage.removeItem(pendingKey); return true; }
   }
   function renderUsage() {
     const overview = content.querySelector('.tw-overview');
@@ -171,9 +176,12 @@ window.timewarpMountBilling = host => {
     select.addEventListener('change', () => selections.set(key, select.value)); wrapper.append(select); return { wrapper, select };
   }
   async function loadBilling() {
-    await reconcile(); const data = await request({ action: 'status' }); if (!host.isConnected) return;
+    // Display verified balances without waiting for Stripe checkout reconciliation.
+    const [data, state] = await Promise.all([request({ action: 'status' }), pendingKey ? null : window.timewarp.request('state')]); if (!host.isConnected) return;
+    if (state?.user?.id) pendingKey = 'timewarp-checkout:' + state.user.id;
     if (!Array.isArray(data.plans) || !data.plans.length || data.plans.some(plan => !Number.isFinite(plan.monthlyUsd) || !Number.isFinite(plan.monthlyCredits)) || !Number.isFinite(data.includedCredits?.balance) || !Number.isFinite(data.purchasedCredits?.balance)) throw new Error('Billing data is temporarily unavailable. Refresh to retry.');
-    if (currentPlan && currentPlan !== data.plan) { await window.timewarp.request('refreshAiFunding').catch(() => {}); void loadProvider().catch(providerError); }
+    void reconcile().then(synced => { if (synced && host.isConnected) scheduleRefresh(0); }).catch(error => { if (host.isConnected) notify(error.message, true); });
+    if (currentPlan && currentPlan !== data.plan) void window.timewarp.request('refreshAiFunding').catch(() => {}).then(loadProvider).catch(providerError);
     currentPlan = data.plan; billingData = data; content.replaceChildren(); notify();
     const plan = data.plans.find(item => item.id === data.plan);
     const packs = (data.credits?.packs || []).filter(pack => Number.isFinite(pack.credits) && Number.isFinite(pack.usd) && pack.credits > 0 && pack.usd >= 0);
@@ -229,7 +237,9 @@ window.timewarpMountBilling = host => {
       }, 'primary'); purchaseRow.append(picker.wrapper, buy); extra.append(purchaseRow);
     } else extra.append(el('p', 'tw-muted', 'Credit packs are temporarily unavailable. Refresh to retry.')); content.append(extra);
     const activity = el('details', 'tw-activity'); activity.append(el('summary', '', 'Recent activity'));
-    const activityBody = el('div', 'tw-panel tw-activity-body'); activityBody.append(el('p', 'tw-muted tw-empty', 'Loading credit activity…')); activity.append(activityBody); content.append(activity); void loadActivity(activityBody);
+    const activityBody = el('div', 'tw-panel tw-activity-body'); activityBody.append(el('p', 'tw-muted tw-empty', 'Loading credit activity…')); activity.append(activityBody); content.append(activity);
+    let activityStarted = false;
+    activity.addEventListener('toggle', () => { if (activity.open && !activityStarted) { activityStarted = true; void loadActivity(activityBody); } });
     clearTimeout(billingTimer); if (pendingKey && localStorage.getItem(pendingKey)) scheduleRefresh();
   }
   async function loadActivity(body) {

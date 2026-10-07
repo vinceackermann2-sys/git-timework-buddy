@@ -21,12 +21,18 @@ if (process.versions.electron) {
       stage('loaded');
       const evaluate = async code => {stage(code.slice(0,300));try{return await window.webContents.executeJavaScript(code)}catch(error){throw Error(code+'\n'+error.message)}};
       const pause = () => new Promise(resolve => setTimeout(resolve, 100));
+      const capture = async name => {
+        await evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
+        await new Promise(resolve => setTimeout(resolve, 300));
+        await window.webContents.capturePage().then(image => fs.writeFileSync(path.join(reports, name), image.toPNG()));
+      };
       const click = async selector => { assert.ok(await evaluate(`!!document.querySelector(${JSON.stringify(selector)})`), selector); await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`); await pause(); };
       const search = async value => {
         await evaluate(`(()=>{const input=document.querySelector('[aria-label="Search or enter a URL"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}))})()`);
         await pause();
         await evaluate(`document.querySelector('[aria-label="Search or enter a URL"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))`); await pause();
       };
+      const chromeBounds = () => evaluate(`(()=>{const bounds=['[data-browser-tab-strip-viewport]','.timewarp-browser-toolbar'].map(selector=>document.querySelector(selector)).concat(document.querySelector('.timewarp-browser-toolbar').parentElement.lastElementChild).map(element=>{const {x,y,width,height}=element.getBoundingClientRect();return {x,y,width,height}});const tab=document.querySelector('[data-browser-tab-key="'+workspaceCheck.browser.selectedTabId+'"]');const {width,height}=tab.getBoundingClientRect();return [...bounds,{width,height}]})()`);
       await pause();
       assert.equal(await evaluate('!!document.querySelector("[data-workspace-home]")'), true);
       assert.equal(await evaluate('document.querySelectorAll(".fixture-header").length'), 0);
@@ -34,8 +40,11 @@ if (process.versions.electron) {
       assert.equal(await evaluate('workspaceCheck.calls.some(call=>call.action==="show")'), false);
       assert.equal(await evaluate('Array.from(document.querySelectorAll(".timewarp-workspace-tool-copy strong")).map(item=>item.textContent).join(",")'), 'Agent,Files');
       assert.equal(await evaluate('document.querySelectorAll(".timewarp-workspace-site").length'), 0);
+      const homeBounds = await chromeBounds();
       await click('.timewarp-workspace-tool-card');
+      assert.deepEqual(await chromeBounds(), homeBounds, 'Opening Agent preserves tab strip and toolbar geometry');
       assert.equal(await evaluate('!!document.querySelector("#agent-content")'), true);
+      await capture('workspace-agent.png');
       assert.equal(await evaluate('!!document.querySelector("[data-browser-chrome-target=address]")'), true);
       const agentTab = await evaluate('workspaceCheck.browser.selectedTabId');
       await click('[aria-label="Add browser tab"]');
@@ -45,9 +54,12 @@ if (process.versions.electron) {
       assert.equal(await evaluate('!!document.querySelector("#agent-content")'), true);
       await click('[aria-label="Back to browser home"]');
       await click('.timewarp-workspace-tool-card:last-child');
+      assert.deepEqual(await chromeBounds(), homeBounds, 'Opening Files preserves tab strip and toolbar geometry');
       assert.equal(await evaluate('!!document.querySelector("#files-content")'), true);
       await click('#open-test-file');
+      assert.deepEqual(await chromeBounds(), homeBounds, 'Opening a file preserves tab strip and toolbar geometry');
       assert.equal(await evaluate('document.querySelector("#file-preview").textContent'), '/workspace/notes.md');
+      await capture('workspace-files.png');
       await click('[aria-label="Back to browser home"]');
       await search('timewarp browser layout');
       assert.equal(await evaluate('workspaceCheck.browser.tabs.find(tab=>tab.id===workspaceCheck.browser.selectedTabId).url'), 'https://www.google.com/search?q=timewarp%20browser%20layout');
@@ -100,6 +112,12 @@ if (process.versions.electron) {
         assert.ok(cards.tools.every(height=>height>=150));assert.ok(cards.favicon>=64);assert.ok(Math.abs(cards.center-cards.pane)<2);
         const colors=await evaluate('(()=>{const button=document.querySelector(".timewarp-workspace-tool-card"),style=getComputedStyle(button);return{background:style.backgroundColor,foreground:style.color,themeBackground:style.getPropertyValue("--color-background"),themeForeground:style.getPropertyValue("--color-foreground")}})()');
         layouts.push({ width, height, dark, ...layout,colors });
+        const bounds = await chromeBounds();
+        for (const tool of ['.timewarp-workspace-tool-card:first-child', '.timewarp-workspace-tool-card:last-child']) {
+          await click(tool);
+          assert.deepEqual(await chromeBounds(), bounds, `Tool navigation preserves pane geometry at ${width}px`);
+          await click('[aria-label="Back to browser home"]');
+        }
         await evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
         await new Promise(resolve=>setTimeout(resolve,300));
         await window.webContents.capturePage().then(image => fs.writeFileSync(path.join(reports, `workspace-${width}-${dark ? 'dark' : 'light'}.png`), image.toPNG()));
@@ -110,7 +128,7 @@ if (process.versions.electron) {
       assert.equal(await evaluate('!!document.querySelector("#files-content")'), true);
       assert.deepEqual(errors, []);
       fs.rmSync(path.join(reports,'workspace-error.txt'),{force:true});
-      fs.writeFileSync(path.join(reports, 'workspace-ui.json'), JSON.stringify({ verifiedAt: new Date().toISOString(), nativeBrowser: 'isolated API fixture', checks: ['default tab without Chat or Workspace heading', 'Agent and Files with persistent toolbar', 'file opening', 'multiple tabs and tool restoration', 'URL and search navigation', 'back/forward/refresh', 'native page visibility', 'recent visits and reopen', 'four distinct recommended websites', 'large native favicons with error fallback', 'centered large tool cards', 'profile isolation', 'history persistence', 'last tab returns home', 'tools without a browser profile', 'light/dark/narrow layout'], layouts }, null, 2));
+      fs.writeFileSync(path.join(reports, 'workspace-ui.json'), JSON.stringify({ verifiedAt: new Date().toISOString(), nativeBrowser: 'isolated API fixture', checks: ['default tab without Chat or Workspace heading', 'Agent and Files with persistent toolbar', 'stable tab, toolbar and page geometry across tools and file previews', 'file opening', 'multiple tabs and tool restoration', 'URL and search navigation', 'back/forward/refresh', 'native page visibility', 'recent visits and reopen', 'four distinct recommended websites', 'large native favicons with error fallback', 'centered large tool cards', 'profile isolation', 'history persistence', 'last tab returns home', 'tools without a browser profile', 'light/dark/narrow layout'], layouts }, null, 2));
       console.log('Verified unified Workspace UI, tabs, tools, search, browser actions, profile isolation and light/dark/narrow layouts.');
     } catch (error) { fs.writeFileSync(path.join(reports,'workspace-error.txt'),error.stack+'\n'+errors.join('\n'));console.error(error.stack); if(errors.length)console.error(errors.join('\n')); exitCode = 1; }
     finally { stage('exiting '+exitCode); app.exit(exitCode); }
@@ -127,7 +145,6 @@ if (process.versions.electron) {
     const extract = names => names.map(name => { const node = declarations.find(item => item.id.name === name); assert.ok(node, name); return 'const ' + ui.slice(node.start, node.end) + ';'; }).join('\n');
     const dependencyRoot = path.resolve(__dirname,'..');
     const resolve = name => require.resolve(name, { paths: [dependencyRoot] });
-    const renderer = path.join(root, 'build/app/out/renderer');
     const entry = `import * as b from ${JSON.stringify(resolve('react'))};
       import * as h from ${JSON.stringify(resolve('react/jsx-runtime'))};
       import {createRoot} from ${JSON.stringify(resolve('react-dom/client'))};
@@ -166,7 +183,13 @@ if (process.versions.electron) {
       localStorage.clear();createRoot(document.getElementById('preview')).render(h.jsx(Preview,{}));`;
     fs.mkdirSync(reports, { recursive: true });
     require(resolve('esbuild')).buildSync({ stdin: { contents: entry, resolveDir: dependencyRoot, loader: 'js' }, bundle: true, platform: 'browser', format: 'iife', outfile: path.join(reports, 'workspace-preview.js'), define: { 'process.env.NODE_ENV': '"production"' } });
-    const styles = ['assets/index-CgqM7Ghz.css','assets/mermaid-GHXKKRXX-Cl4CJFD3.css','timewarp-appearance.css','timewarp-controls.css'].map(file => `<link rel="stylesheet" href="${pathToFileURL(path.join(renderer,file)).href}">`).join('');
+    // Keep the verification independent of a concurrent staged rebuild, which
+    // replaces build/app while this renderer is running.
+    const styles = ['index-CgqM7Ghz.css','mermaid-GHXKKRXX-Cl4CJFD3.css'].map(file => {
+      const snapshot = path.join(reports, 'workspace-' + file);
+      fs.writeFileSync(snapshot, asar.extractFile(path.resolve(root, '../energy-testv1/build/app.asar.pristine'), path.join('out','renderer','assets',file)));
+      return `<link rel="stylesheet" href="${pathToFileURL(snapshot).href}">`;
+    }).concat(['appearance.css','controls.css'].map(file => `<link rel="stylesheet" href="${pathToFileURL(path.join(root,'desktop',file)).href}">`)).join('');
     fs.writeFileSync(path.join(reports, 'workspace-preview.html'), `<!doctype html><html><head><meta charset="utf-8">${styles}<link rel="stylesheet" href="${pathToFileURL(path.join(root,'desktop/workspace.css')).href}"><style>html,body,#preview{height:100%;margin:0}button{font:inherit}.fixture-header-row{display:flex;height:42px;align-items:center;justify-content:space-between;padding:0 12px}.fixture-header-actions{display:flex;align-items:center;gap:8px}.fixture-button{display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:6px;background:transparent;padding:4px;cursor:pointer;color:inherit}.fixture-button:hover{background:var(--color-accent)}.fixture-icon{width:28px;height:28px;flex-shrink:0}.fixture-icon svg{width:15px;height:15px}input{min-width:0;width:100%;color:inherit;background:transparent}input:focus{outline:1px solid var(--color-ring)}.fixture-tool-content{padding:24px;display:flex;flex-direction:column;gap:16px}body{background:var(--color-background);color:var(--color-foreground)}</style><title>Workspace verification preview</title></head><body><div id="preview"></div><script>window.addEventListener('error',event=>console.error(event.error?.stack||event.message));</script><script src="./workspace-preview.js"></script></body></html>`);
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
     const started = Date.now();

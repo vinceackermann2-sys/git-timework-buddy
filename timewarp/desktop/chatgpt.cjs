@@ -65,8 +65,15 @@ function createChatgpt({storage,userId,onConnected=()=>{},onLoginError=()=>{},no
   async function models(){
     const who=owner(),epoch=generation;await refresh();assertOwner(who,epoch);
     if(!canUse())throw fail(401,'Connect your ChatGPT / Codex account in Billing to supply AI usage.');
-    const result=await rpc('model/list',{limit:100,includeHidden:false});assertOwner(who,epoch);
-    const choices=(result.data||[]).filter(item=>!item.hidden).map(item=>({id:item.model||item.id,displayName:item.displayName||item.model||item.id,description:item.description||'Uses your Codex allowance',inputModalities:item.inputModalities||['text'],supportedReasoningEfforts:item.supportedReasoningEfforts||[{reasoningEffort:'low',description:'Fast'}],defaultReasoningEffort:item.defaultReasoningEffort||'low',featured:item.isDefault===true,serviceTiers:[{value:null,label:'Standard',description:'Uses your ChatGPT / Codex allowance'}],defaultServiceTier:null}));
+    const entries=[],seen=new Set(),cursors=new Set();let cursor;
+    do{
+      const result=await rpc('model/list',{limit:100,includeHidden:false,...cursor?{cursor}:{}});assertOwner(who,epoch);
+      for(const item of result.data||[]){const id=item.model||item.id;if(!item.hidden&&id&&!seen.has(id)){seen.add(id);entries.push(item);}}
+      cursor=result.nextCursor;
+      if(cursor&&cursors.has(cursor))throw fail(502,'Codex returned an invalid model catalog page. Retry in Billing.');
+      if(cursor)cursors.add(cursor);
+    }while(cursor);
+    const choices=entries.map(item=>({id:item.model||item.id,displayName:item.displayName||item.model||item.id,description:item.description||'Uses your Codex allowance',inputModalities:item.inputModalities||['text','image'],supportedReasoningEfforts:item.supportedReasoningEfforts?.length?item.supportedReasoningEfforts:[{reasoningEffort:item.defaultReasoningEffort||'low',description:'Default'}],defaultReasoningEffort:item.defaultReasoningEffort||item.supportedReasoningEfforts?.[0]?.reasoningEffort||'low',featured:item.isDefault===true,serviceTiers:[{value:null,label:'Standard',description:'Uses your ChatGPT / Codex allowance'}],defaultServiceTier:null}));
     if(!choices.length)throw fail(503,'Codex did not return available models. Retry in Billing.');
     if(metadata.lastConnectionError?.stage==='codex_account'){metadata.lastConnectionError=null;persist();}return choices;
   }

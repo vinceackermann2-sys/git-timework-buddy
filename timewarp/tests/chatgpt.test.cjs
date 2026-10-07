@@ -8,6 +8,7 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(saved=null){
   let metadata=saved,owner='timewarp-owner',plan='free',account=null,completed='completed',loginError=null,connected=0,started=0;
   const calls=[],threads=new Map(),client=new EventEmitter();
+  let modelPage=null;
   client.start=async()=>{};
   client.request=async(method,params)=>{
     calls.push({method,params:structuredClone(params)});
@@ -16,7 +17,7 @@ function fixture(saved=null){
     if(method==='account/login/start')return {type:'chatgpt',loginId:'login-1',authUrl:'https://auth.openai.com/oauth/authorize?client_id=codex'};
     if(method==='account/login/cancel')return {};
     if(method==='account/rateLimits/read')return {rateLimits:{primary:{usedPercent:10}},rateLimitsByLimitId:{codex:{primary:{usedPercent:25,windowDurationMins:300,resetsAt:1801750000},secondary:{usedPercent:50,windowDurationMins:10080,resetsAt:1801900000}}}};
-    if(method==='model/list')return {data:[{id:'model-codex',model:'gpt-codex',displayName:'Codex',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'low',description:'Fast'}],defaultReasoningEffort:'low'},{id:'hidden',model:'hidden',hidden:true}]};
+    if(method==='model/list')return modelPage?modelPage(params):{data:[{id:'model-codex',model:'gpt-codex',displayName:'Codex',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'low',description:'Fast'}],defaultReasoningEffort:'low'},{id:'hidden',model:'hidden',hidden:true}]};
     if(['thread/start','thread/resume','thread/fork'].includes(method)){const id=method==='thread/resume'?params.threadId:'thread-'+(++started);threads.set(id,params);return {thread:{id,modelProvider:params.modelProvider}};}
     if(method==='turn/start'){
       const turn={id:'turn-'+calls.length,status:completed,...completed!=='completed'?{error:{message:'Subscription limit reached'}}:{}};
@@ -32,8 +33,30 @@ function fixture(saved=null){
   const funding=createAiFunding({userId:()=>owner,chatgpt:service,cloud:async()=>Response.json({plan,included:0,purchased:10})});
   bindCodexFunding({client,chatgpt:service,funding,userId:()=>owner});
   async function login(){await service.startBrowserLogin();account={type:'chatgpt',email:'owner@example.test',planType:'plus'};client.emit('notification',{method:'account/login/completed',params:{loginId:'login-1',success:!loginError,error:loginError}});await tick();await tick();}
-  return {service,client,funding,calls,threads,login,get metadata(){return metadata;},get connected(){return connected;},set owner(value){owner=value;},set plan(value){plan=value;},set account(value){account=value;},set completed(value){completed=value;},set loginError(value){loginError=value;}};
+  return {service,client,funding,calls,threads,login,get metadata(){return metadata;},get connected(){return connected;},set owner(value){owner=value;},set plan(value){plan=value;},set account(value){account=value;},set completed(value){completed=value;},set loginError(value){loginError=value;},set modelPage(value){modelPage=value;}};
 }
+
+test('Codex catalog includes later pages once, preserves capabilities and hides internal models',async t=>{
+  const f=fixture();t.after(()=>f.service.stop());await f.login();
+  const sol={id:'sol',model:'gpt-6.1-sol',displayName:'GPT-6.1-Sol',isDefault:true,supportedReasoningEfforts:[{reasoningEffort:'ultra',description:'Deepest'}],defaultReasoningEffort:'ultra'};
+  f.modelPage=params=>params.cursor?{data:[sol,{id:'luna',model:'gpt-6-luna',inputModalities:['text'],defaultReasoningEffort:'medium'},{id:'internal',hidden:true}],nextCursor:null}:{data:[sol],nextCursor:'page-2'};
+  const choices=await f.service.models();assert.deepEqual(choices.map(x=>x.id),['gpt-6.1-sol','gpt-6-luna']);
+  assert.deepEqual(choices[0].supportedReasoningEfforts,sol.supportedReasoningEfforts);assert.equal(choices[0].featured,true);
+  assert.deepEqual(choices[0].inputModalities,['text','image']);assert.deepEqual(choices[1].inputModalities,['text']);
+  assert.deepEqual(choices[1].supportedReasoningEfforts,[{reasoningEffort:'medium',description:'Default'}]);
+  assert.deepEqual(f.calls.filter(c=>c.method==='model/list').map(c=>c.params),[{limit:100,includeHidden:false},{limit:100,includeHidden:false,cursor:'page-2'}]);
+});
+
+test('a repeated Codex catalog cursor fails instead of looping',async t=>{
+  const f=fixture();t.after(()=>f.service.stop());await f.login();f.modelPage=()=>({data:[],nextCursor:'same-page'});
+  await assert.rejects(f.service.models(),/invalid model catalog page/);assert.equal(f.calls.filter(c=>c.method==='model/list').length,2);
+});
+
+test('catalog pages cannot leak across a Timewarp owner change',async t=>{
+  const f=fixture();t.after(()=>f.service.stop());await f.login();
+  f.modelPage=params=>{if(params.cursor)f.owner='different-owner';return {data:[{model:'gpt-6.1-sol'}],nextCursor:params.cursor?null:'next'};};
+  await assert.rejects(f.service.models(),/account changed/);
+});
 test('uses built-in Codex browser login, keeps Timewarp authentication separate and stores no tokens',async t=>{
   const f=fixture();t.after(()=>f.service.stop());await f.login();
   assert.deepEqual(f.calls.find(c=>c.method==='account/login/start').params,{type:'chatgpt',useHostedLoginSuccessPage:true,appBrand:'chatgpt'});

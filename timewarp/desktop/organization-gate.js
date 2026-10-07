@@ -3,20 +3,37 @@
 // screen covers the app until the user names (and optionally pictures) a new
 // organization, or joins one they were invited to.
 (() => {
+  if(window.timewarpOrganizationGateMounted)return;window.timewarpOrganizationGateMounted=true;
   const request=(action,input={})=>window.timewarp.request(action,input).catch(error=>{throw new Error(error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));});
   const el=(tag,text,classes)=>{const node=document.createElement(tag);if(text)node.textContent=text;if(classes)node.className=classes;return node;};
-  let shown=false,confirmed=false,checking=null;
+  let shown=false,confirmed=false,checking=null,loading=null;
+  function loadingView(){
+    if(loading)return loading;
+    loading=el('dialog',null,'timewarp-org-gate timewarp-setup-dialog');
+    const card=el('section',null,'timewarp-org-gate-card');loading.append(card);
+    card.append(el('h1','Getting your workspace ready'),el('p','Checking your organization…','timewarp-org-gate-lead'));
+    card.setAttribute('aria-live','polite');loading.setAttribute('aria-label','Workspace setup');
+    loading.addEventListener('cancel',event=>event.preventDefault());document.body.append(loading);loading.showModal();
+    return loading;
+  }
+  function clearLoading(){loading?.close();loading?.remove();loading=null;}
   async function check(){
     if(shown||confirmed||checking)return;
     checking=(async()=>{
-      const state=await request('state');if(!state.user)return;
+      const state=await request('state');if(!state.user||state.passwordRecovery)return;
+      loadingView();
       const status=await request('organizationStatus');
-      if(status.active)confirmed=true;else show(status.invitations||[]);
-    })().catch(()=>{}).finally(()=>{checking=null;});
+      clearLoading();
+      if(status.active){confirmed=true;window.timewarpReadyOrganization=status.active;window.dispatchEvent(new CustomEvent('timewarp:organization-ready',{detail:status.active}));}else show(status.invitations||[]);
+    })().catch(failure=>{
+      const card=loadingView().firstElementChild;card.replaceChildren(el('h1','Couldn’t load your workspace'),el('p',failure.message||'Check your connection and try again.','timewarp-org-gate-lead'));
+      card.append(action('Try again',()=>{clearLoading();void check();}),action('Sign out',()=>request('signOut').then(()=>location.reload()).catch(error=>{card.querySelector('p').textContent=error.message;})));
+    }).finally(()=>{checking=null;});
   }
+  function action(text,run){const node=el('button',text,'timewarp-org-gate-secondary');node.type='button';node.onclick=run;return node;}
   function show(invitations){
     shown=true;
-    const overlay=el('div',null,'timewarp-org-gate');overlay.setAttribute('role','dialog');overlay.setAttribute('aria-modal','true');overlay.setAttribute('aria-labelledby','timewarp-org-gate-title');
+    const overlay=el('dialog',null,'timewarp-org-gate timewarp-setup-dialog');overlay.setAttribute('aria-labelledby','timewarp-org-gate-title');overlay.addEventListener('cancel',event=>event.preventDefault());
     const shell=el('div',null,'timewarp-org-gate-shell');overlay.append(shell);
     const card=el('section',null,'timewarp-org-gate-card');shell.append(card);
     const title=el('h1','Create your organization');title.id='timewarp-org-gate-title';
@@ -45,7 +62,7 @@
     const submit=el('button','Create organization','timewarp-org-gate-primary');submit.type='submit';
     form.append(pictureRow,label,error,submit);paint();
     const setBusy=value=>{busy=value;for(const control of overlay.querySelectorAll('button,input'))control.disabled=value;};
-    const finish=()=>{location.hash='#/customize/organization';location.reload();};
+    const finish=()=>{if(preview)URL.revokeObjectURL(preview);location.hash='#/';location.reload();};
     form.onsubmit=async event=>{
       event.preventDefault();if(busy)return;const value=name.value.trim();if(!value){name.focus();return;}
       setBusy(true);error.textContent='';
@@ -68,7 +85,7 @@
     }
     const signOut=el('button','Sign out','timewarp-org-gate-link');signOut.type='button';signOut.onclick=async()=>{setBusy(true);try{await request('signOut');}finally{location.reload();}};
     card.append(signOut);
-    document.body.append(overlay);name.focus();
+    document.body.append(overlay);overlay.showModal();name.focus();
   }
   const start=()=>{void check();window.addEventListener('hashchange',()=>void check());window.addEventListener('focus',()=>void check());};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();

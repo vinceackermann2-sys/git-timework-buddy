@@ -1,20 +1,22 @@
 "use strict";
-// The upstream picker offers fixed Lite/Auto/Pro modes that map to models
-// Timewarp does not serve. Show only the live catalog for the current plan:
-// Sol and Luna on Timewarp credits, or the connected Codex catalog on Free.
-function replaceOnce(text, from, to, name) {
-  if (text.split(from).length !== 2) throw new Error(`Bundle contract changed: ${name}`);
-  return text.replace(from, to);
+const acorn = require('acorn');
+const { createModelPicker } = require('../desktop/model-picker.cjs');
+function patchReasoningSchema(source) {
+  const before = '["none","minimal","low","medium","high","xhigh","max"]';
+  if (source.split(before).length !== 2) throw new Error('Native reasoning schema contract changed.');
+  return source.replace(before, '["none","minimal","low","medium","high","xhigh","max","ultra"]');
 }
 function patchModelPicker(source) {
-  // A chat saved with a model outside this plan's catalog runs on the model
-  // codex-funding routes it to (same id, unprefixed Codex id, else featured).
-  // Display that model instead of the stale id.
-  source = replaceOnce(source, 'l=i.find(T=>T.id===r.name)', 'l=i.find(T=>T.id===r.name)||i.find(T=>T.id===r.name.replace(/^openai\\//,""))||i.find(T=>T.featured)||i[0]', 'picker resolves the routed model');
-  source = replaceOnce(source, 'd=m$.find(T=>T.id===r.name),f=!d', 'd=void 0,f=!0', 'picker has no upstream modes');
-  source = replaceOnce(source, 'children:g?h.jsx(acn,{', 'children:!0?h.jsx(acn,{', 'picker always lists the catalog');
-  source = replaceOnce(source, 'modelId:r.name,models:i', 'modelId:l?.id??r.name,models:i', 'picker selects the routed model');
-  source = replaceOnce(source, 'h.jsx("div",{className:"-mx-1 my-1 h-px bg-border"}),h.jsx(BCe,{checked:!0,disabled:n,onCheckedChange:i})', 'null', 'no switch back to upstream modes');
-  return replaceOnce(source, '_=d?.label??ucn(l?.displayName??r.name,c)', '_=ucn(l?.displayName??(/-sol$/.test(r.name)?"Sol":/-luna$/.test(r.name)?"Luna":r.name.replace(/^openai\\//,"")),c)', 'picker label while the catalog loads');
+  const ast = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+  const matches = ast.body.filter(node => node.type === 'VariableDeclaration')
+    .flatMap(node => node.declarations).filter(node => node.id.name === 'zCe');
+  if (matches.length !== 1 || !source.slice(matches[0].start, matches[0].end).includes('le.product.models.list.useQuery()')) throw new Error('Native model picker contract changed.');
+  const component = `(${createModelPicker.toString()})({React:b,jsx:h,Popover:tc,Trigger:Lu,Content:nc,Button:ne,ChevronDown:Na,ChevronRight:j2,Check:Dn,useModels:()=>le.product.models.list.useQuery()})`;
+  const composer = ast.body.filter(node => node.type === 'VariableDeclaration').flatMap(node => node.declarations).filter(node => node.id.name === 'nyn');
+  if (composer.length !== 1) throw new Error('Native composer model trigger contract changed.');
+  const trigger = `({label,modelLabel,effortLabel,custom,className,...props})=>h.jsxs(ne,{type:"button",variant:"ghost",size:"sm",...props,title:label,"aria-label":"Model and thinking: "+label,className:"timewarp-model-trigger"+(className?" "+className:""),children:[h.jsx("span",{className:"timewarp-model-name",children:modelLabel}),h.jsx("span",{className:"timewarp-model-effort",children:effortLabel}),h.jsx(Na,{"aria-hidden":true})]})`;
+  const edits = [{node:matches[0].init,value:component},{node:composer[0].init,value:trigger}].sort((a,b)=>b.node.start-a.node.start);
+  for(const edit of edits) source = source.slice(0,edit.node.start)+edit.value+source.slice(edit.node.end);
+  return source;
 }
-module.exports = { patchModelPicker };
+module.exports = { patchModelPicker, patchReasoningSchema };

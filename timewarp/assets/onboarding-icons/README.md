@@ -1,0 +1,1 @@
+Brand glyphs from Simple Icons (CC0): https://github.com/simple-icons/simple-icons. Version 14.0.0 except Microsoft Edge (11.0.0) and Cursor (16.0.0). Browser.svg is a generic fallback. Brand names and trademarks belong to their owners.

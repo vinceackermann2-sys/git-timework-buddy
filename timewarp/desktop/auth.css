@@ -12,7 +12,7 @@
 .timewarp-auth-shell input[type=checkbox] { accent-color:var(--color-ring,#547daf); margin-top:3px; }
 .timewarp-auth-shell button { min-height:44px; border:1px solid var(--color-border,#d4d4d8); border-radius:8px; background:var(--color-background,#fff); color:inherit; font:inherit; font-size:14px; font-weight:500; cursor:pointer; }
 .timewarp-auth-shell button:hover:not(:disabled) { background:var(--color-accent,#eaf2ff); }
-.timewarp-auth-shell button[type=submit] { width:100%; padding:10px 16px; border-color:transparent; background:var(--color-primary,var(--theme-accent,#B7D6FF)); color:var(--color-primary-foreground,#172033); }
+.timewarp-auth-shell button[type=submit] { width:100%; padding:10px 16px; border-color:transparent; background:var(--color-primary,var(--theme-accent,#E9D2FF)); color:var(--color-primary-foreground,#172033); }
 .timewarp-auth-shell button[type=submit]:hover:not(:disabled) { filter:brightness(.96); }
 .timewarp-auth-shell :is(button,input,a):focus-visible { outline:2px solid var(--color-ring,#547daf); outline-offset:3px; }
 .timewarp-auth-google { display:flex; width:100%; align-items:center; justify-content:center; gap:12px; padding:10px 16px; }

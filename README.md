@@ -34,10 +34,28 @@ See [native distribution](docs/native-distribution.md).
 Run **launch.cmd** in this folder. The single desktop app keeps the original
 Energy interface with Timewarp's name, logo and Windows icon.
 
-The default accent is Ice blue (`#B7D6FF`). Settings → Colors offers twelve
-named pastel presets, including Soft lime, Warm cream and Pink lilac, with
-color swatches and hex values. Changes save locally. The original blue upgrades
-to Ice blue on startup; custom accents and the light/dark setting are preserved.
+After sign-in and organization selection, incomplete accounts enter one fullscreen
+mascot-led chat setup: name the agent, choose your preferred name, connect local browser
+profiles and knowledge, choose light/dark and an accent with the app’s named color tiles, then select a plan.
+Individual offers Free, Pro and Max; Enterprise offers Free and Ultra, matching
+the website. The mascot stays beside the conversation as setup progresses.
+Previously completed accounts bypass setup; progress is encrypted locally per
+Timewarp owner. Native **Redo Onboarding** clears that owner's saved draft.
+Browser sessions use the native profile importer. Local Codex/ChatGPT and Claude
+memory and skills use the native setup importer; Cursor rules and skills are
+supported from ~/.cursor or a selected project's .cursor folder. Online ChatGPT
+memories are not available through this local importer. Paid selections finish
+only after billing confirms the plan; Free does not require a purchase.
+
+`npm run verify:onboarding` exercises the production UI with isolated fixtures.
+`npm run preview:onboarding` serves the same UI at http://127.0.0.1:4176 with
+sample sign-in, profiles and plans, without accessing real accounts or files.
+
+The default accent for new users is Pale lilac (`#E9D2FF`), taken from the logo.
+Settings → Colors offers thirteen named pastel presets, including Ice blue,
+Soft lime, Warm cream and Pink lilac, with color swatches and hex values.
+Changes save locally. Existing saved accents and the light/dark setting are
+preserved. The original upstream blue still upgrades to Ice blue on startup.
 Brand assets are saved in `timewarp/assets` and packaged into the desktop app.
 The in-app `timewarp-logo.svg` and desktop icons have transparent backgrounds
 behind the same purple-and-white artwork. `app-icon.svg` is

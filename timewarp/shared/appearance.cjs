@@ -1,6 +1,7 @@
 "use strict";
 
 const presets = [
+  { name: "Pale lilac", hex: "#E9D2FF" },
   { name: "Ice blue", hex: "#B7D6FF" },
   { name: "Soft lime", hex: "#D8F3B0" },
   { name: "Warm cream", hex: "#FFE0A3" },
@@ -30,9 +31,11 @@ function hexToAccent(hex) {
 
 const defaultAccent = hexToAccent(presets[0].hex);
 const stockAccent = hexToAccent("#82B1F0");
+// Keep the existing stock-theme migration separate from the new-user default.
+const legacyAccent = hexToAccent("#B7D6FF");
 function migrateAppearance(appearance) {
   if (!appearance?.accent || !Object.keys(stockAccent).every(key => Math.abs(appearance.accent[key] - stockAccent[key]) < 1e-9)) return appearance;
-  return { ...appearance, accent: { ...defaultAccent } };
+  return { ...appearance, accent: { ...legacyAccent } };
 }
 
 module.exports = { presets, defaultAccent, hexToAccent, migrateAppearance };

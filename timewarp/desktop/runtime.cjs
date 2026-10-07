@@ -1,5 +1,5 @@
 "use strict";
-const {app,BrowserWindow,ipcMain,safeStorage,shell}=require('electron');
+const {app,BrowserWindow,ipcMain,safeStorage,shell,dialog}=require('electron');
 const {createBridge}=require('./bridge.cjs');
 const {createAuth}=require('./auth.cjs');
 const {sessionStorage}=require('./session-storage.cjs');
@@ -25,7 +25,7 @@ function focusApp(){for(const window of BrowserWindow.getAllWindows())if(!window
 async function selectModel(choices){
   if(!nativeRuntime)return;
   choices=choices||await modelChoices();const preferences=await nativeRuntime.settings.get();
-  const selected=choices.find(model=>model.id===preferences.modelSettings.name)||choices[0];
+  const selected=choices.find(model=>model.id===preferences.modelSettings.name)||choices.find(model=>model.id===preferences.modelSettings.name.replace(/^openai\//,''))||choices.find(model=>model.featured)||choices[0];
   if(!selected)return;
   const effort=selected.supportedReasoningEfforts.some(item=>item.reasoningEffort===preferences.modelSettings.reasoningEffort)?preferences.modelSettings.reasoningEffort:selected.defaultReasoningEffort;
   if(preferences.modelSettings.name!==selected.id||preferences.modelSettings.serviceTier!==null||preferences.modelSettings.reasoningEffort!==effort)await nativeRuntime.settings.update({modelSettings:{name:selected.id,reasoningEffort:effort,serviceTier:null}});
@@ -100,10 +100,18 @@ async function syncNativeAccount(reload=false){
     await historySync?.sync();
     await assignMascots();
     if(nativeRuntime)void registerTools().catch(()=>console.error('[timewarp] Connected-app tools are pending; refresh Tools to retry.'));
-    if(reload)for(const window of BrowserWindow.getAllWindows())if(!window.isDestroyed()&&window.webContents.getURL().startsWith('app://app/'))await window.loadURL(auth.user()?'app://app/#/':'app://app/#/login');
   }catch{console.error('[timewarp] Desktop account refresh failed; use Account to retry.');}
+  // Authentication already changed. Always render that state, even if an
+  // organization/history refresh failed; setup offers a visible retry.
+  if(reload)for(const window of BrowserWindow.getAllWindows())if(!window.isDestroyed()&&window.webContents.getURL().startsWith('app://app/'))await window.loadURL(auth.user()?'app://app/#/':'app://app/#/login');
 }
 const auth=createAuth({config,storage:sessionStorage(profile,safeStorage),onChange:async({changedUser})=>{if(changedUser){chatgpt.stop();integrations.invalidate();await closeConnectorBrowsers();}return syncNativeAccount(changedUser);}});
+const onboardingStorage=protectedStore(path.join(profile,'onboarding.bin'),safeStorage);
+const onboarding=require('./onboarding-service.cjs').createOnboardingService({storage:onboardingStorage,userId:()=>auth.userId(),native:()=>{if(!nativeRuntime)throw Error('Your workspace is starting. Try again in a moment.');return nativeRuntime;},browsers:()=>{if(!browserManager)throw Error('The local browser is starting. Try again in a moment.');return browserManager.profiles;},cloud:cloudJson,
+  updateProfile:async name=>{await accountRpc('product.profile.update',{name});await auth.refreshUser();},
+  rememberName:(name,agent)=>require('./setup-imports.cjs').rememberName(nativeRuntime.entities.getPaths().memoriesRoot,name,agent),
+  openPayment:url=>shell.openExternal(url),chooseCursorRoot:async()=>{const result=await dialog.showOpenDialog({title:'Choose your Cursor project or .cursor folder',properties:['openDirectory']});if(result.canceled)return null;const selected=result.filePaths[0],root=path.basename(selected)==='.cursor'?selected:path.join(selected,'.cursor');const stat=await require('node:fs/promises').stat(root).catch(()=>null);if(!stat?.isDirectory())throw Error('This folder has no .cursor directory. Choose a Cursor project with rules or skills.');return require('node:fs/promises').realpath(root);}});
+function getCursorImportRoot(){return onboarding.cursorRoot()||path.join(require('node:os').homedir(),'.cursor');}
 const aiFunding=require('./ai-funding.cjs').createAiFunding({cloud,chatgpt,userId:()=>auth.userId()});
 const ready=app.whenReady().then(async()=>{if(process.platform==='darwin')app.dock?.setIcon(path.join(__dirname,'../assets/app-icon.png'));await auth.init();if(auth.hasPendingFlow())await ensureCallback().catch(()=>{});});
 ready.catch(()=>console.error('[timewarp] Secure account storage is unavailable.'));
@@ -127,18 +135,21 @@ async function cloudJson(route,input,method='POST'){
   const response=await cloud(route,input,method),value=await response.json().catch(()=>({}));if(!response.ok)throw Object.assign(new Error(typeof value.error==='string'?value.error:value.error?.message||'Cloud request failed.'),{status:response.status});return value;
 }
 const accountRpc=(rpc,input={})=>cloudJson('/native/rpc',{rpc,input});
+const sendFeedback=require('./reporting.cjs').createReporting({config,auth});
+async function submitFeedback(input){await ready;return sendFeedback(input);}
 async function accountSession(){
   await ready;await auth.accessToken();const user=await auth.refreshUser();
   const account=await cloudJson('/account',{});
   return {user:{...user,givenName:user.name,familyName:'',image:account.image},session:{token:auth.capability(),expiresAt:new Date(auth.expiresAt()*1000).toISOString(),activeOrganizationId:account.activeOrganization?.id??null},activeOrganization:account.activeOrganization,organizations:account.organizations};
 }
 const bridgeAuth={...auth,accountSession,async authorize(token){await ready;return auth.authorize(token);},async verifyOtp(email,code){await ready;return auth.verifyOtp(email,code);},async sendOtp(email){await ready;await ensureCallback();return auth.sendOtp(email);}};
-const server=createBridge(bridgeAuth,cloud,7788,{chatgpt,aiFunding,integrations,mascots});
+const server=createBridge(bridgeAuth,cloud,7788,{chatgpt,aiFunding,integrations,mascots,submitFeedback});
 const bridgeReady=new Promise((resolve,reject)=>{server.once('error',error=>reject(new Error(error.code==='EADDRINUSE'?'The local account bridge is already in use. Close other Timewarp windows and reopen this app.':'The local account bridge could not start. Reopen Timewarp.')));server.listen(7788,'127.0.0.1',resolve);});
 bridgeReady.catch(()=>console.error('[timewarp] Device bridge could not start.'));
 app.on('browser-window-created',(_event,window)=>{window.webContents.once('destroyed',()=>{for(const [ownerId,entry]of connectorBrowsers)if(entry.sender===window.webContents)void closeConnectorBrowser(ownerId).catch(()=>{});});window.webContents.on('did-finish-load',()=>{if(window.webContents.getURL().startsWith('app://app/')){if(process.platform==='win32'&&!window.isVisible())window.show();window.emit('resize');window.webContents.invalidate();console.log('[timewarp] Original desktop interface loaded; cloud services connected through the device bridge.');}});});
 async function attachNativeRuntime(binding){
   nativeRuntime=binding;await ready;
+  require('./onboarding.cjs').bindOnboardingSettings({settings:binding.settings,storage:onboardingStorage,userId:()=>auth.userId()});
   const preferences=await binding.settings.get(),appearance=require('../shared/appearance.cjs').migrateAppearance(preferences.appearance);
   if(appearance!==preferences.appearance)await binding.settings.update({appearance});
   await selectModel().catch(()=>console.error('[timewarp] Connected ChatGPT models are temporarily unavailable.'));
@@ -155,6 +166,10 @@ ipcMain.handle('timewarp:request',async(event,action,input={})=>{
   switch(action){
     case 'state':return {user:auth.user(),passwordRecovery:auth.passwordRecovery(),version:'0.1.0',privacy:'Vaults and payment details stay on this device.'};
     case 'historyStatus':return historyStatus;
+    case 'browserAgent':{
+      if(!browserManager||event.sender!==browserManager.surfaceHost.overlayView?.webContents||!nativeRuntime?.resolveBrowserAgent)return null;
+      return require('./browser-cursor.cjs').resolveCursorAgent({readSnapshot:()=>browserManager.surfaceHost.getSnapshot(),resolveAgent:input=>nativeRuntime.resolveBrowserAgent(input),getUserId:()=>auth.userId()},input);
+    }
     case 'chatgptDetails':{const funding=await aiFunding.current();if(!funding.subscriptionAllowed)await chatgpt.refresh();return {...chatgpt.details(),funding,login:chatgpt.currentBrowserLogin()};}
     case 'verifyChatgpt':await aiFunding.requireFree();return chatgpt.verifyAccess();
     case 'connectChatgpt':{await auth.accessToken();await aiFunding.requireFree();const result=await chatgpt.startBrowserLogin(input);await shell.openExternal(result.authUrl);return {status:result.status};}
@@ -178,6 +193,9 @@ ipcMain.handle('timewarp:request',async(event,action,input={})=>{
     case 'openLink':{const link=new URL(input.url);if(link.protocol!=='https:'||link.username||link.password||/^(?:localhost|127\.|10\.|192\.168\.|\[|.*\.local$)/i.test(link.hostname))throw new Error('Only public HTTPS links can be opened.');await shell.openExternal(link.href);return {opened:true};}
     // Accounts without an organization must create (or join) one before using the app.
     case 'organizationStatus':{const account=await cloudJson('/account',{});return {active:account.activeOrganization?{id:account.activeOrganization.id,name:account.activeOrganization.name}:null,invitations:account.activeOrganization?[]:await accountRpc('product.organizations.invitations.pending')};}
+    case 'onboardingState':return onboarding.read();
+    case 'onboardingDetect':return onboarding.detect();
+    case 'onboardingAction':return onboarding.run(input.action,input);
     case 'organizationPictureUpload':return accountRpc('product.images.beginUpload');
     case 'createOrganization':return accountRpc('product.organizations.create',{name:String(input.name||''),...input.imageId?{logo:String(input.imageId)}:{}});
     case 'joinOrganization':return accountRpc('product.organizations.invitations.accept',{invitationId:String(input.invitationId||'')});
@@ -197,4 +215,4 @@ require('./updates.cjs').configureUpdates({app,autoUpdater,release,
     if(Notification.isSupported()){const notification=new Notification({title:'Timewarp update ready',body:'Click to restart and install the verified update.'});notification.on('click',prompt);notification.show();}
     else prompt();
   }});
-module.exports={bindNativeAccount,attachNativeRuntime,getNativeRuntime:()=>nativeRuntime,flushHistory:()=>historySync?.sync(),chatgpt,availableModels,createIntegrations,bindCodexClient,bindToolRuntime,bindBrowserManager,integrations,mascot:mascots.mascot,inspectTools:async()=>{await registerTools();return toolRuntime.client.request('mcpServerStatus/list',{cursor:null,limit:1000,detail:'full'});}};
+module.exports={getCursorImportRoot,submitFeedback,bindNativeAccount,attachNativeRuntime,getNativeRuntime:()=>nativeRuntime,flushHistory:()=>historySync?.sync(),chatgpt,availableModels,createIntegrations,bindCodexClient,bindToolRuntime,bindBrowserManager,integrations,mascot:mascots.mascot,inspectTools:async()=>{await registerTools();return toolRuntime.client.request('mcpServerStatus/list',{cursor:null,limit:1000,detail:'full'});}};

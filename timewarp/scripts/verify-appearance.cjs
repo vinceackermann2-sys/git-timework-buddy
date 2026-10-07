@@ -15,7 +15,8 @@ if (process.versions.electron) {
       await window.loadFile(path.join(reports, 'appearance-preview.html'));
       const evaluate = code => window.webContents.executeJavaScript(code);
       await new Promise(resolve => setTimeout(resolve, 350));
-      assert.equal(await evaluate("document.querySelectorAll('.timewarp-preset').length"), 12);
+      assert.equal(await evaluate("document.querySelectorAll('.timewarp-preset').length"), presets.length);
+      assert.equal(await evaluate("document.querySelector('.timewarp-preset[aria-pressed=true] .timewarp-preset-hex').textContent"), '#E9D2FF');
       assert.equal(await evaluate("document.querySelector('[aria-label=\"Backdrop dots\"]')"), null);
       assert.equal(await evaluate("document.getElementById('chrome-check').childElementCount"), 0);
       assert.equal(await evaluate("getComputedStyle(document.querySelector('.theme-editor')).overflowX"), 'hidden');
@@ -49,7 +50,7 @@ if (process.versions.electron) {
         fs.writeFileSync(path.join(reports, `appearance-${scheme}.png`), (await window.webContents.capturePage()).toPNG());
       }
       fs.writeFileSync(path.join(reports, 'appearance-verification.json'), JSON.stringify({ verifiedAt: new Date().toISOString(), checks }, null, 2));
-      console.log('Verified 12 native presets in light and dark mode, smooth backdrops and previews with saved dots at maximum strength, removed chrome and dots control, retained settings, no horizontal overflow, and button contrast >= 4.5:1.');
+      console.log(`Verified ${presets.length} native presets in light and dark mode, smooth backdrops and previews with saved dots at maximum strength, removed chrome and dots control, retained settings, no horizontal overflow, and button contrast >= 4.5:1.`);
       app.exit(0);
     } catch (error) { console.error(error); app.exit(1); }
   });
@@ -79,7 +80,7 @@ if (process.versions.electron) {
     ${picker}
     function Preview(){const[value,setValue]=b.useState({scheme:'light',accent:${JSON.stringify(defaultAccent)},radiance:.2,texture:{type:'dots',step:16}});
       window.timewarpAppearanceCheck={get:()=>value,setScheme:scheme=>setValue(previous=>({...previous,scheme}))};
-      return h.jsx(iqe,{appearance:value,disabled:false,saveAppearance:async next=>next,children:h.jsxs('main',{style:{display:'grid',gridTemplateColumns:'1fr 340px',gap:'64px',padding:'48px',alignItems:'center',minHeight:'100vh'},children:[h.jsxs('section',{children:[h.jsx('img',{src:${JSON.stringify(pathToFileURL(path.join(renderer,'timewarp-logo.svg')).href)},alt:'Timewarp',style:{width:'80px',height:'80px',marginBottom:'24px'}}),h.jsx('h1',{style:{fontSize:'36px',fontWeight:600,marginBottom:'16px'},children:'Make Timewarp yours.'}),h.jsx('p',{style:{fontSize:'16px',color:'var(--color-muted-foreground)',marginBottom:'32px'},children:'A little color for your everyday work. Choose from twelve soft pastel themes.'}),h.jsx('button',{id:'primary-sample',className:'bg-primary text-primary-foreground',style:{padding:'12px 24px',borderRadius:'10px',fontWeight:500},children:'Start a new task'}),h.jsx('p',{className:'text-primary',style:{marginTop:'24px'},children:'Ice blue · Soft lime · Warm cream · Pink lilac'}),h.jsx('div',{id:'theme-swatch',children:h.jsx(xcn,{appearance:value,resolvedScheme:value.scheme})}),h.jsxs('div',{id:'chrome-check',children:[h.jsx(Pit,{}),h.jsx(kcn,{}),h.jsx(HCe,{versionLabel:'Version 0.8.20 (beta)'}),h.jsx(zoe,{})]})]}),h.jsx(gCe,{value,resolvedScheme:value.scheme,disabled:false,onPreview:setValue,onCommit:setValue})]})});}
+      return h.jsx(iqe,{appearance:value,disabled:false,saveAppearance:async next=>next,children:h.jsxs('main',{style:{display:'grid',gridTemplateColumns:'1fr 340px',gap:'64px',padding:'48px',alignItems:'center',minHeight:'100vh'},children:[h.jsxs('section',{children:[h.jsx('img',{src:${JSON.stringify(pathToFileURL(path.join(renderer,'timewarp-logo.svg')).href)},alt:'Timewarp',style:{width:'80px',height:'80px',marginBottom:'24px'}}),h.jsx('h1',{style:{fontSize:'36px',fontWeight:600,marginBottom:'16px'},children:'Make Timewarp yours.'}),h.jsx('p',{style:{fontSize:'16px',color:'var(--color-muted-foreground)',marginBottom:'32px'},children:'A little color for your everyday work. Choose from ${presets.length} soft pastel themes.'}),h.jsx('button',{id:'primary-sample',className:'bg-primary text-primary-foreground',style:{padding:'12px 24px',borderRadius:'10px',fontWeight:500},children:'Start a new task'}),h.jsx('p',{className:'text-primary',style:{marginTop:'24px'},children:'Pale lilac · Ice blue · Soft lime · Warm cream'}),h.jsx('div',{id:'theme-swatch',children:h.jsx(xcn,{appearance:value,resolvedScheme:value.scheme})}),h.jsxs('div',{id:'chrome-check',children:[h.jsx(Pit,{}),h.jsx(kcn,{}),h.jsx(HCe,{versionLabel:'Version 0.8.20 (beta)'}),h.jsx(zoe,{})]})]}),h.jsx(gCe,{value,resolvedScheme:value.scheme,disabled:false,onPreview:setValue,onCommit:setValue})]})});}
     createRoot(document.getElementById('preview')).render(h.jsx(Preview,{}));`;
   fs.mkdirSync(reports, { recursive: true });
   require(resolve('esbuild')).buildSync({ stdin: { contents: entry, resolveDir: dependencyRoot, loader: 'js' }, bundle: true, platform: 'browser', format: 'iife', outfile: path.join(reports, 'appearance-preview.js'), define: { 'process.env.NODE_ENV': '"production"' } });

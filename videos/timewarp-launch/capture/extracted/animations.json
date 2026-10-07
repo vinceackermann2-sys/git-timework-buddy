@@ -1,0 +1,140 @@
+{
+  "summary": {
+    "webAnimations": 3,
+    "cssDeclarations": 41,
+    "scrollTargets": 10,
+    "cdpAnimations": 90,
+    "canvases": 0
+  },
+  "namedAnimations": [
+    "turn",
+    "blink"
+  ],
+  "scrollTriggeredElements": 10,
+  "representativeAnimations": [
+    {
+      "type": "CSSAnimation",
+      "playState": "running",
+      "animationName": "turn",
+      "targetSelector": "img.hero-mark",
+      "targetRect": {
+        "x": 521.1192626953125,
+        "y": 46.11928939819336,
+        "width": 877.761474609375,
+        "height": 877.761474609375,
+        "top": 46.11928939819336,
+        "right": 1398.8807373046875,
+        "bottom": 923.8807640075684,
+        "left": 521.1192626953125
+      },
+      "keyframes": [
+        {
+          "offset": 0,
+          "easing": "linear",
+          "composite": "replace",
+          "transform": "none",
+          "computedOffset": 0
+        },
+        {
+          "offset": 1,
+          "easing": "linear",
+          "composite": "auto",
+          "transform": "rotate(360deg)",
+          "computedOffset": 1
+        }
+      ],
+      "timing": {
+        "duration": 120000,
+        "delay": 0,
+        "iterations": null,
+        "easing": "linear",
+        "direction": "normal"
+      }
+    },
+    {
+      "type": "CSSAnimation",
+      "playState": "running",
+      "animationName": "blink",
+      "targetSelector": "span.caret",
+      "targetRect": {
+        "x": 1214.375,
+        "y": 746.765625,
+        "width": 1.5,
+        "height": 16.5,
+        "top": 746.765625,
+        "right": 1215.875,
+        "bottom": 763.265625,
+        "left": 1214.375
+      },
+      "keyframes": [
+        {
+          "offset": 0,
+          "easing": "steps(1)",
+          "composite": "replace",
+          "opacity": "1",
+          "computedOffset": 0
+        },
+        {
+          "offset": 0.5,
+          "easing": "steps(1)",
+          "composite": "auto",
+          "opacity": "0",
+          "computedOffset": 0.5
+        },
+        {
+          "offset": 1,
+          "easing": "steps(1)",
+          "composite": "replace",
+          "opacity": "1",
+          "computedOffset": 1
+        }
+      ],
+      "timing": {
+        "duration": 1000,
+        "delay": 0,
+        "iterations": null,
+        "easing": "linear",
+        "direction": "normal"
+      }
+    },
+    {
+      "type": "CSSAnimation",
+      "playState": "running",
+      "animationName": "spin",
+      "targetSelector": "li.active",
+      "targetRect": {
+        "x": 781.453125,
+        "y": 2425.828125,
+        "width": 357.078125,
+        "height": 37.75,
+        "top": 2425.828125,
+        "right": 1138.53125,
+        "bottom": 2463.578125,
+        "left": 781.453125
+      },
+      "keyframes": [
+        {
+          "offset": 0,
+          "easing": "linear",
+          "composite": "replace",
+          "transform": "none",
+          "computedOffset": 0
+        },
+        {
+          "offset": 1,
+          "easing": "linear",
+          "composite": "auto",
+          "transform": "rotate(360deg)",
+          "computedOffset": 1
+        }
+      ],
+      "timing": {
+        "duration": 800,
+        "delay": 0,
+        "iterations": null,
+        "easing": "linear",
+        "direction": "normal"
+      }
+    }
+  ]
+}

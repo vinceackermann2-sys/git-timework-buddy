@@ -1,0 +1,7 @@
+{
+  "source": "https://github.com/openai/codex/blob/rust-v0.160.1/codex-rs/models-manager/models.json",
+  "version": "0.160.1",
+  "sha256": "fd219bd9f061278275f528939f82f54d2eb97df4b25c23b022adbe48813d920b",
+  "license": "Apache-2.0",
+  "reason": "Compatibility catalog for the supplied Codex app-server build reporting version 0.0.0. Versioned app-server builds continue normal remote catalog discovery."
+}

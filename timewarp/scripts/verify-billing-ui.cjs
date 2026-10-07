@@ -21,6 +21,8 @@ if (process.versions.electron) {
           const allowance = { free: 0, pro: 100, max: 250, ultra: 500 }[plan];
           assert.equal(result.active, '25'); assert.ok(!result.usage.includes('extra credits'));
           if (plan !== 'free') { assert.equal(result.progress, '40'); assert.equal(result.percent,'40%'); } else { assert.equal(result.percent,'—'); assert.ok(result.usage.includes('no monthly credit allowance')); }
+          assert.equal(await evaluate("window.billingFixture.calls.some(x=>x.input.route==='/billing/history')"), false);
+          await evaluate("document.querySelector('.tw-activity').open=true");
           await waitFor("document.querySelectorAll('.tw-table tbody tr').length===2");
           checks.push({ scheme, plan, ...result });
         }

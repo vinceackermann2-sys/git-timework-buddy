@@ -30,22 +30,23 @@ The promise is a lighter working day, with more attention available for client s
 
 ## The requested criteria
 
-The red thread is one list of five chores for one illustrative Lumen Co. proposal. In "The problem" the consultant does four of them and ChatGPT does one, while the clock runs to 21:48. In "How Timewarp works" an agent ticks off the same five, and the consultant reviews and approves. "The result" shows the day that frees up. Every section uses the same pattern: label, Quadrant Text headline and one visual. The brand matches the app and logo: purple `#8C14FF` and its logo tints, ink `#172033`, the app's composer, and the Orbit, Nova and Cosmo mascots.
+Promise: **work at the speed of light. Anything you can do on a computer, Timewarp can do for you.** Page order: hero with an in-app browser demo, ChatGPT vs Timewarp comparison, four "Give it the task" cards, the AI teammates agent profile, a download band, and pricing. The persona is carried by the Lumen Co. client jobs throughout rather than by a label. The design uses a warm off-white base, black pill buttons, highlighted headline phrases and only the logo's light lilac tints.
 
 | Criterion | Audience interpretation | Where it appears on the page |
 | --- | --- | --- |
-| Avatar | Independent marketing consultant with client deliverables and an existing AI habit | Hero pill, the Lumen Co. proposal example |
-| TAM | One-person service businesses with recurring deliverables | CTA "Start with one task you do every week" |
-| Awareness (solution-aware) | Already uses ChatGPT; doesn't know Timewarp | "ChatGPT writes the text. You still do the work." |
-| Saturation (stage 4) | Many AI promises; show the mechanism and concrete output, no statistics | App replica, agent checklist; no numbers or testimonials |
-| Problem / symptom | Assembling between tools; work running into the evening | Chore list tagged "You", clock running to 21:48 |
-| Failed solution | Chat AI writes only one of the five chores | The single "ChatGPT" row in the problem list |
-| Unique mechanism / differentiation | The agent works in the browser, files and apps and completes all five chores | Step 2: the same chores ticked off by Cosmo |
-| Sacrifice | Give a brief; review and approve | Steps 1 and 3 |
-| Dream scenario | Strategy and evenings back | "Done by six. The evening is yours." day comparison with Nova |
-| Likelihood | Works best for repeated tasks with accessible inputs and a person who can judge a draft | CTA fit list |
+| Avatar | Independent marketing consultant with client deliverables and an existing ChatGPT habit | Lumen Co. client jobs: competitor research, proposal, client report, follow-up email |
+| TAM | One-person service businesses whose work happens on a computer | "Anything you can do on a computer, Timewarp can do for you." |
+| Awareness (solution-aware) | Already uses ChatGPT | The comparison opens on a ChatGPT-style window |
+| Saturation (stage 4) | Lead with a visible mechanism, not claims or statistics | Hero: an agent searches, reads three sites and builds a sheet in the built-in browser |
+| Problem / symptom | Thread sprawl and copy-paste; text without finished work | ChatGPT side: "Proposal v4 FINAL" thread list, text answer, a Copy button pressed repeatedly |
+| Failed solution | Chat AI gives more threads and more text, but the user still does the work | "More threads. More text. You still find, paste, format and send." |
+| Unique mechanism | Agents that use the computer (browser, files, apps); several run at once | Hero demo; "Uses your computer" card; three agents with progress bars |
+| Differentiation | Agents do the work and hand back finished files | Timewarp side of the comparison: proposal.docx, report.pdf, competitors.xlsx |
+| Dream scenario | A team of AI teammates keeps work moving; no more fire extinguishing | "Start moving with AI teammates. No more fire extinguishing."; Cosmo profile |
+| Sacrifice | Describe the outcome, approve logins, review the work | The four cards |
+| Likelihood | Low-risk start: free with an existing ChatGPT plan; the person stays in control | Highlighted Free plan; "Stay in control" and "Review the work" cards |
 
-No testimonial, quantified time saving, guaranteed success rate, exclusive capability, free unlimited AI, or offline inference claim is made. The day comparison is labelled illustrative.
+Pricing matches `README.md`: Free $0 (eligible ChatGPT plan), Pro $20 / 100 credits, Max $50 / 250, Ultra $100 / 500 (shown under Enterprise). No testimonial, quantified time saving, or guaranteed success rate is claimed. Competitor names and prices in the demo are illustrative.
 
 ## Validation to do after launch
 

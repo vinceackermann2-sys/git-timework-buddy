@@ -1,0 +1,87 @@
+[a] Skip to content
+[span] Timewarp
+[span] Download for Windows
+[p] For independent marketing consultants
+[h1] Be the strategist again.
+[p] Timewarp is an AI agent that works in your browser, files and apps, and hands you the finished proposal, report or research.
+[span] Download for Windows
+[button] Also for macOS
+[div] + New Task
+[p] Agents
+[div] Cosmo
+[div] Nova
+[div] Orbit
+[p] Time to carpe the diem
+[span] Write the Lumen Co. proposal from Tuesday’s call notes and draft the follow-up email.
+[p] Write the Lumen Co. proposal from Tuesday’s call notes and draft the follow-up email.
+[span] Browser
+[span] Files
+[span] Email
+[p] The problem
+[h2] ChatGPT writes the text.
+[h2] You still do the work.
+[li] Find the call notes
+[span] You
+[li] Research the client’s website
+[span] You
+[li] Write the proposal
+[span] ChatGPT
+[li] Paste and format it in your template
+[span] You
+[li] Write the follow-up email
+[span] You
+[span] 21:48
+[span] and still at it
+[p] How Timewarp works
+[h2] Tell it the task.
+[h2] It does all of it.
+[h3] You give the brief
+[div] Write the Lumen Co. proposal from Tuesday’s call notes and draft the follow-up email.
+[h3] Timewarp does the work
+[b] Cosmo
+[span] Done
+[li] Find the call notes
+[li] Research the client’s website
+[li] Write the proposal
+[li] Format it in your template
+[li] Draft the follow-up email
+[h3] You check it and send
+[b] Lumen Co. proposal
+[small] Saved to your files
+[b] Follow-up email
+[small] Draft, ready to send
+[span] Approve
+[p] Runs on your computer. Your files and agent memory stay with you.
+[p] The result
+[h2] Done by six.
+[h2] The evening is yours.
+[p] Without Timewarp
+[i] Client call
+[i] Assembling the proposal
+[i] Still at it
+[p] With Timewarp
+[i] Client call
+[i] Review
+[i] Strategy and new clients
+[i] Your evening
+[span] 09:00
+[span] 12:00
+[span] 15:00
+[span] 18:00
+[span] 21:00
+[p] An illustrative day. Results vary by task.
+[h2] Time to carpe the diem.
+[p] Start with one task you do every week.
+[li] The task repeats
+[li] Its inputs are in files, sites or apps
+[li] You can judge a good draft
+[span] Download for Windows
+[button] Also for macOS
+[span] Available for Windows & macOS. Mac: Apple Silicon, macOS 12+.
+[p] · Free plan with your ChatGPT account · AI can make mistakes, so you review
+[span] Timewarp
+[span] Timewarp
+[h2] Choose your platform.
+[button] Windows
+[button] macOS
+[span] Edit with

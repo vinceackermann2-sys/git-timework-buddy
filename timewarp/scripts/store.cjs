@@ -11,11 +11,7 @@ async function storePackage(){
   const run=(name,args=[])=>cp.execFileSync(process.execPath,[path.join(__dirname,name),...args],{env,stdio:'inherit',windowsHide:true});
   run('build.cjs',['--stage','--store']);run('verify-build.cjs',['--staged']);run('audit-runtime.cjs');
   const output=path.join(root,'build/store'),assets=path.join(root,'build/store-resources/appx');
-  fs.mkdirSync(assets,{recursive:true});
-  const sharp=require('sharp');
-  for(const [name,width,height]of [['StoreLogo.png',50,50],['Square44x44Logo.png',44,44],['Square150x150Logo.png',150,150],['Wide310x150Logo.png',310,150]]){
-    await sharp(path.join(root,'assets/app-icon.png')).resize(width,height,{fit:'contain',background:{r:0,g:0,b:0,alpha:0}}).png().toFile(path.join(assets,name));
-  }
+  await require('./store-icons.cjs').buildStoreIcons(path.join(root,'assets/app-icon.png'),assets);
   // The Store signs this container after certification. No new listing, install,
   // self-signed certificate, external updater, upload or publication occurs here.
   const {build,Platform,Arch}=require('electron-builder');
@@ -29,7 +25,7 @@ async function storePackage(){
       extraMetadata:{name:'timewarp-desktop',version:store.version,description:'Timewarp desktop with a local agent harness',author:'Timewarp'},
       win:{target:'appx',icon:path.join(root,'assets/app-icon.ico'),signExecutable:false},
       appx:{identityName:store.identityName,publisher:store.publisher,publisherDisplayName:store.publisherDisplayName,applicationId:store.applicationId,
-        displayName:store.displayName,artifactName:'Timewarp-Store-${version}-${arch}.msix',setBuildNumber:false,addAutoLaunchExtension:false,electronUpdaterAware:false,
+        displayName:store.displayName,backgroundColor:'transparent',artifactName:'Timewarp-Store-${version}-${arch}.msix',setBuildNumber:false,addAutoLaunchExtension:false,electronUpdaterAware:false,
         languages:['en-US'],capabilities:['runFullTrust'],minVersion:store.minimumWindowsVersion,maxVersionTested:'10.0.26100.0'}
     }});
   }finally{for(const[key,value]of Object.entries(signingEnv)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}

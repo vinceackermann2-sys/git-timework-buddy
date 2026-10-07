@@ -1,0 +1,298 @@
+{
+  "typography": [
+    {
+      "role": "display",
+      "fontFamily": "Quadrant Text",
+      "fontSize": "82px",
+      "fontWeight": "400",
+      "lineHeight": "85.28px",
+      "letterSpacing": "-0.82px",
+      "color": "#172033",
+      "sampleText": "Be the strategist again."
+    },
+    {
+      "role": "heading",
+      "fontFamily": "Quadrant Text",
+      "fontSize": "54px",
+      "fontWeight": "400",
+      "lineHeight": "59.4px",
+      "letterSpacing": "-0.54px",
+      "color": "#172033",
+      "sampleText": "ChatGPT writes the text.You still do the work."
+    },
+    {
+      "role": "body",
+      "fontFamily": "Quadrant Text",
+      "fontSize": "36px",
+      "fontWeight": "400",
+      "lineHeight": "54px",
+      "letterSpacing": "normal",
+      "color": "#172033",
+      "sampleText": "Time to carpe the diem"
+    },
+    {
+      "role": "link",
+      "fontFamily": "SF Pro",
+      "fontSize": "18px",
+      "fontWeight": "600",
+      "lineHeight": "27px",
+      "letterSpacing": "-0.36px",
+      "color": "#172033",
+      "sampleText": "Timewarp"
+    },
+    {
+      "role": "heading-3",
+      "fontFamily": "SF Pro",
+      "fontSize": "17px",
+      "fontWeight": "600",
+      "lineHeight": "25.5px",
+      "letterSpacing": "-0.17px",
+      "color": "#172033",
+      "sampleText": "You give the brief"
+    },
+    {
+      "role": "label",
+      "fontFamily": "SF Pro",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "lineHeight": "24px",
+      "letterSpacing": "normal",
+      "color": "#FFFFFF",
+      "sampleText": "Download for Windows"
+    },
+    {
+      "role": "body-small",
+      "fontFamily": "SF Pro",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "lineHeight": "19.5px",
+      "letterSpacing": "normal",
+      "color": "#626B7C",
+      "sampleText": "An illustrative day. Results vary by task."
+    }
+  ],
+  "spacing": {
+    "observed": [
+      2,
+      4,
+      6,
+      8,
+      9,
+      10,
+      12,
+      14,
+      16,
+      22,
+      26,
+      28,
+      32,
+      40,
+      150
+    ],
+    "baseUnit": 4
+  },
+  "radius": [
+    "10px",
+    "12px"
+  ],
+  "shadows": [
+    {
+      "value": "rgba(140, 20, 255, 0.55) 0px 8px 20px -8px",
+      "count": 2
+    },
+    {
+      "value": "rgba(23, 32, 51, 0.04) 0px 1px 2px 0px, rgba(106, 15, 196, 0.28) 0px 24px 48px -24px",
+      "count": 2
+    },
+    {
+      "value": "rgba(23, 32, 51, 0.06) 0px 1px 2px 0px",
+      "count": 1
+    },
+    {
+      "value": "rgba(106, 15, 196, 0.3) 0px 12px 30px -16px",
+      "count": 1
+    },
+    {
+      "value": "rgba(0, 0, 0, 0.88) 0px 0px 0px 1px, rgba(0, 0, 0, 0.04) 0px 1px 0px 0px, rgba(0, 0, 0, 0.08) 0px 2px 2px -1px, rgba(0, 0, 0, 0.08) 0px 4px 4px -2px, rgba(0, 0, 0, 0.08) 0px 8px 8px -4px, rgba(0, 0, 0, 0.08) 0px 16px 16px -8px",
+      "count": 1
+    }
+  ],
+  "buttons": [
+    {
+      "label": "Download for Windows",
+      "background": "#8C14FF",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#FFFFFF",
+      "padding": "0px 15px",
+      "borderRadius": "10px",
+      "border": "0px none rgb(255, 255, 255)",
+      "boxShadow": "none",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "height": "38px"
+    },
+    {
+      "label": "Download for Windows",
+      "background": "#8C14FF",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#FFFFFF",
+      "padding": "0px 26px",
+      "borderRadius": "12px",
+      "border": "0px none rgb(255, 255, 255)",
+      "boxShadow": "rgba(140, 20, 255, 0.55) 0px 8px 20px -8px",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "height": "50px"
+    },
+    {
+      "label": "Also for macOS",
+      "background": "transparent",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#626B7C",
+      "padding": "0px",
+      "borderRadius": "0px",
+      "border": "0px none rgb(98, 107, 124)",
+      "boxShadow": "none",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "height": "21px"
+    },
+    {
+      "label": "Time to carpe the diem.\n        Start wi",
+      "background": "transparent",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#172033",
+      "padding": "150px 0px 40px",
+      "borderRadius": "0px",
+      "border": "0px none rgb(23, 32, 51)",
+      "boxShadow": "none",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "height": "723.391px"
+    },
+    {
+      "label": "button",
+      "background": "transparent",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#C5C1B9",
+      "padding": "0px",
+      "borderRadius": "0px 6px 6px 0px",
+      "border": "0px none rgb(197, 193, 185)",
+      "boxShadow": "none",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "height": "24px"
+    }
+  ],
+  "cards": [
+    {
+      "label": "card",
+      "background": "#FFFFFF",
+      "backgroundImage": "",
+      "backdropFilter": "",
+      "color": "#172033",
+      "padding": "14px",
+      "borderRadius": "22px",
+      "border": "1px solid rgb(235, 230, 243)",
+      "boxShadow": "rgba(23, 32, 51, 0.04) 0px 1px 2px 0px, rgba(106, 15, 196, 0.28) 0px 24px 48px -24px",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "height": "401.5px"
+    }
+  ],
+  "nav": {
+    "label": "navigation",
+    "background": "#FFFFFF",
+    "backgroundImage": "",
+    "backdropFilter": "blur(12px)",
+    "color": "#172033",
+    "padding": "0px",
+    "borderRadius": "0px",
+    "border": "",
+    "boxShadow": "none",
+    "fontSize": "16px",
+    "fontWeight": "400",
+    "height": "65px"
+  },
+  "chips": [
+    {
+      "label": "For independent marketin",
+      "background": "#F4EAFF",
+      "color": "#6A0FC4",
+      "padding": "6px 14px",
+      "borderRadius": "999px",
+      "border": "0px none rgb(106, 15, 196)",
+      "boxShadow": "none",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "height": "33px"
+    },
+    {
+      "label": "Browser",
+      "background": "transparent",
+      "color": "#626B7C",
+      "padding": "0px",
+      "borderRadius": "0px",
+      "border": "0px none rgb(98, 107, 124)",
+      "boxShadow": "none",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "height": "19.5px"
+    },
+    {
+      "label": "You",
+      "background": "#F1F0F5",
+      "color": "#5B6170",
+      "padding": "4px 11px",
+      "borderRadius": "999px",
+      "border": "0px none rgb(91, 97, 112)",
+      "boxShadow": "none",
+      "fontSize": "12.5px",
+      "fontWeight": "600",
+      "height": "26.75px"
+    },
+    {
+      "label": "1",
+      "background": "#8C14FF",
+      "color": "#FFFFFF",
+      "padding": "0px",
+      "borderRadius": "50%",
+      "border": "0px none rgb(255, 255, 255)",
+      "boxShadow": "none",
+      "fontSize": "14px",
+      "fontWeight": "700",
+      "height": "30px"
+    }
+  ],
+  "statCells": [],
+  "tabs": [],
+  "backgrounds": [
+    {
+      "value": "linear-gradient(rgba(0, 0, 0, 0), rgb(209, 162, 255))",
+      "area": 2354771
+    },
+    {
+      "value": "radial-gradient(60% 50% at 50% 100%, rgb(244, 234, 255), rgba(0, 0, 0, 0) 70%)",
+      "area": 1793790
+    },
+    {
+      "value": "linear-gradient(rgb(242, 233, 255), rgb(235, 224, 253))",
+      "area": 394800
+    }
+  ],
+  "glass": [
+    {
+      "backdropFilter": "blur(12px)",
+      "background": "rgba(255, 255, 255, 0.82)",
+      "border": "",
+      "borderRadius": "0px",
+      "boxShadow": "",
+      "area": 124800
+    }
+  ]
+}

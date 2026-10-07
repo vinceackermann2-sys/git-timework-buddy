@@ -1,5 +1,5 @@
 :root {
-  --theme-accent: #B7D6FF;
+  --theme-accent: #E9D2FF;
   --color-primary: var(--theme-accent);
   --color-primary-foreground: #172033;
   --timewarp-accent-ink: oklch(from var(--theme-accent) .43 .095 h);
