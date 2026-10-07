@@ -1,5 +1,13 @@
 # Native distribution status
 
+Update, 7 October 2026: **Mac 1.1.23 is published** with accepted Apple
+notarization, stapling, Gatekeeper, and anonymous-download checksum verification.
+Windows 1.1.23.0 is submitted for certification in submission 10. Current
+artifacts and evidence are recorded in the [1.1.23 release record](release-1.1.23.md).
+Mac downloads use the independent public
+[downloads repository](https://github.com/vinceackermann2-sys/timewarp-releases/releases/tag/v1.1.23).
+The remaining sections retain the 6 October build and submission history.
+
 Checked 6 October 2026. Partner Center shows submission 8 as **Live**. Submission
 9 is a saved artwork update draft with transparent logos and images captured
 from the actual Timewarp app. No new product was registered. The Mac candidate

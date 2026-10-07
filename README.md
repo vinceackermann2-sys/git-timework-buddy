@@ -13,18 +13,23 @@ Private backend credentials remain in the existing production Supabase secret ma
 ## Desktop integration
 
 This is the **timework** source repository for the Timewarp desktop integration.
-The current build is **not ready for a public production release**. See the
-[production readiness review](docs/production-readiness.md) and
+Version **1.1.23** is available as a signed, notarized Apple Silicon Mac DMG;
+the Windows Store update has been submitted for certification. See the
+[release record](docs/release-1.1.23.md), remaining live acceptance checks in the
+[production readiness review](docs/production-readiness.md), and
 [checkout/build prerequisites](docs/building.md).
 
 The supplied Electron runtime, device data, credentials, backups and generated
 acceptance reports stay outside Git. GitHub Actions runs portable source and
 email checks. A manual Windows job now builds verified preview/signed artifacts
 from the hash-pinned supplied inputs; it does not publish them. The repository
-is public, and the Apple Silicon Mac workflow has built a candidate DMG with
-verified native startup, packaged contracts, Developer ID signatures and
-hardened runtime. Apple notarization, stapling and Gatekeeper acceptance remain
-pending; see [native distribution](docs/native-distribution.md).
+was made public for the Apple Silicon Mac build. Version 1.1.23 passed native
+startup, packaged contracts, Developer ID signatures, hardened runtime, Apple
+notarization, stapling, and Gatekeeper checks. Installers and checksums are
+published in the separate public
+[downloads repository](https://github.com/vinceackermann2-sys/timewarp-releases/releases/tag/v1.1.23),
+so the source can return to private visibility without breaking downloads.
+See [native distribution](docs/native-distribution.md).
 
 Run **launch.cmd** in this folder. The single desktop app keeps the original
 Energy interface with Timewarp's name, logo and Windows icon.

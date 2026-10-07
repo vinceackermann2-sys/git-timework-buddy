@@ -1,5 +1,11 @@
 # Production readiness review
 
+Update, 7 October 2026: Mac 1.1.23 passed Apple notarization, stapling,
+Gatekeeper, and final hosted-artifact checks and is published. Windows 1.1.23.0
+is in certification. See the [current release record](release-1.1.23.md).
+The live service, existing-profile upgrade, and operational checks below remain
+separate from signing and distribution acceptance.
+
 Reviewed 6 October 2026. Windows Store distribution is live; Mac notarization
 and full live acceptance remain incomplete.
 An unsigned Windows preview installer and an MSIX update are built and verified

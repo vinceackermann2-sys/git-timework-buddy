@@ -59,7 +59,7 @@ for (const [nav,platform,otherPlatform] of [[windows,'windows','mac'],[mac,'mac'
   page.actions.forEach(action => { assert.equal(action.href,officialURLs[platform]); assert.equal(action.events.click,undefined); });
   page.alts[0].events.click();
   assert.equal(page.location.href,officialURLs[otherPlatform]);
-  assert.equal(page.elements['.availability-note'].textContent,'Available for Windows & macOS');
+  assert.equal(page.elements['.availability-note'].textContent,'Available for Windows & macOS. Mac: Apple Silicon, macOS 12+.');
 }
 for (const invalid of ['javascript:alert(1)','http://downloads.example.test/setup.exe','not-a-url',null]) {
   const page = render(windows,{windows:invalid});

@@ -35,7 +35,7 @@
     options.forEach(option => option.setAttribute('aria-pressed', String(option.dataset.platform === platform)));
     const url = downloadURL(platform);
     title.textContent = url ? 'Timewarp for ' + platformName(platform) + '.' : platformName(platform) + ' download coming soon.';
-    message.textContent = url ? 'Your installer is ready.' : 'The official download link isn’t live yet. Check back soon.';
+    message.textContent = url ? (platform === 'mac' ? 'For Apple Silicon Macs running macOS 12 or later.' : 'Your installer is ready.') : 'The official download link isn’t live yet. Check back soon.';
     link.hidden = !url;
     if (url) { link.href = url; link.textContent = 'Download for ' + platformName(platform); } else link.removeAttribute('href');
   }
@@ -82,6 +82,6 @@
   const note = document.querySelector('.availability-note');
   if (note) {
     const live = ['windows', 'mac'].filter(downloadURL);
-    note.textContent = live.length ? 'Available for ' + live.map(platformName).join(' & ') : 'Download links coming soon';
+    note.textContent = live.length ? 'Available for ' + live.map(platformName).join(' & ') + (live.includes('mac') ? '. Mac: Apple Silicon, macOS 12+.' : '') : 'Download links coming soon';
   }
 })();
