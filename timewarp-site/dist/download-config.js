@@ -1,5 +1,5 @@
-/* Add the official installer URLs here when they are ready. */
+/* Official distribution links. macOS is enabled after signed release acceptance. */
 window.TIMEWARP_DOWNLOADS = Object.freeze({
-  windows: null,
+  windows: 'https://apps.microsoft.com/detail/9N6WRN6GN0KR',
   mac: null
 });
