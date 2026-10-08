@@ -50,7 +50,13 @@ function createBridge(auth, cloud, port = 7788, services={}) {
       if (!await auth.authorize(token)) return fail(401, "Sign in to Timewarp.");
       if (p === "/api/account/session" && req.method === "GET") return json(res, 200, await auth.accountSession(), origin);
       if (p === "/api/funding/current" && req.method === "GET") {const state=aiFunding?await aiFunding.current():funding(await accountBalance(cloud));return json(res,200,{canFundUsage:state.canFundUsage,timewarpCredits:state.timewarpCredits},origin);}
-      if (p === "/api/auth/token" || p === "/api/auth/electron/token") return json(res, 200, { token: await auth.accessToken() }, origin);
+      // Native clients cache this credential for calls back to this local
+      // bridge. A cloud JWT expires/rotates independently and must never be
+      // handed out as the device credential, or chats fail after token refresh.
+      if (p === "/api/auth/token" || p === "/api/auth/electron/token") {
+        await auth.accessToken();
+        return json(res, 200, { token: auth.capability() }, origin);
+      }
       if (p === "/api/auth/sign-out") { await auth.signOut(); return json(res, 200, { success: true }, origin); }
       if (p === "/api/prompts/resolve") return fail(404, "Using bundled prompts.");
       if (p === "/connect/accounts" && req.method === "POST") { const input=await body(req);return json(res, 200, integrations?await integrations.legacyAccounts(input.agentId):{ connections: [] }, origin); }
@@ -77,7 +83,12 @@ function createBridge(auth, cloud, port = 7788, services={}) {
       }
       if (p.startsWith("/v1/")) {
         if (req.method !== "GET" && req.method !== "POST") return fail(405, "Method not allowed.");
-        const input = req.method === "GET" ? undefined : assertCloudSafe(await body(req));
+        const input = req.method === "GET" ? undefined : await body(req);
+        // Native client telemetry is not model input. Drop it on-device before
+        // validation: millisecond timestamps can coincidentally pass Luhn.
+        // Do not exempt numbers in prompts or tool results from the privacy guard.
+        if (p === '/v1/responses' && input && typeof input === 'object') delete input.client_metadata;
+        if (input !== undefined) assertCloudSafe(input);
         let upstream;
         if(aiFunding&&(await aiFunding.current()).source==='chatgpt'){
           if(p==='/v1/responses'&&req.method==='POST')return fail(409,'Subscription requests use the native Codex provider. Reopen this chat to refresh its provider.');

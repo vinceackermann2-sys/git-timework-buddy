@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.106.2';
-import { reserveAgentAi } from './agentAiReservation.ts';
+import { reserveAgentAi, responseOutputLimit } from './agentAiReservation.ts';
 import { azureFoundryBase, azureSolKeys, azureSolModel, azureLunaKeys, azureLunaModel } from './azureAgentAi.ts';
 import { assertCloudSafe } from './privacy.ts';
 import { nativeStream } from './nativeResponses.ts';
@@ -19,12 +19,13 @@ async function modelCall(userId: string, model: string, payload: any) {
   const keys = keysFor(model);
   if (!keys.length) throw fail(503, 'The cloud AI provider is not configured.');
   assertCloudSafe(payload);
-  const reservation = await reserveAgentAi(admin, userId, `openai/${model}`, payload);
+  const request={...payload,model,store:false,stream:false,max_output_tokens:responseOutputLimit(payload)};
+  const reservation = await reserveAgentAi(admin, userId, `openai/${model}`, request);
   let upstream: Response;
   try {
     upstream = await fetch(`${azureFoundryBase()}/responses`, {
       method: 'POST', headers: { 'api-key': keys[0], 'content-type': 'application/json' },
-      body: JSON.stringify({ ...payload, model, store: false, stream: false, max_output_tokens: 16_384 }),
+      body: JSON.stringify(request),
       signal: AbortSignal.timeout(65_000), redirect: 'error',
     });
   } catch {
@@ -39,7 +40,7 @@ async function modelCall(userId: string, model: string, payload: any) {
   if (!output.usage || !Number.isFinite(output.usage.input_tokens) || !Number.isFinite(output.usage.output_tokens)) {
     await reservation.finish('uncertain'); throw fail(502, 'The AI provider did not return usage information.');
   }
-  await reservation.finish('settled', output.usage.input_tokens, output.usage.output_tokens);
+  await reservation.finish('settled', output.usage.input_tokens, output.usage.output_tokens, output.usage.input_tokens_details);
   assertCloudSafe(output.output);
   return output;
 }
@@ -75,7 +76,11 @@ Deno.serve(async(req:Request)=>{
     }
     const bytes=await req.arrayBuffer();if(bytes.byteLength>2*1024*1024)throw fail(413,'Request is too large.');
     let body:any;try{body=JSON.parse(new TextDecoder().decode(bytes));}catch{throw fail(400,'Invalid JSON.');}
-    if(!body||typeof body!=='object'||Array.isArray(body))throw fail(400,'Invalid request object.');assertCloudSafe(body);
+    if(!body||typeof body!=='object'||Array.isArray(body))throw fail(400,'Invalid request object.');
+    // Older desktop clients can still send native telemetry. It is never model
+    // input; discard it before scanning the retained request for secrets.
+    if(route==='/v1/responses')delete body.client_metadata;
+    assertCloudSafe(body);
     if(['/document','/workspace','/memory','/enqueue','/cancel','/internal/worker'].includes(route))throw fail(410,'Files, memory and task execution are local.');
     if(route==='/account')return response(await nativeAccountSnapshot(admin,user,token));
     if(route==='/history')return response(await nativeHistory(admin,user,body));
@@ -101,7 +106,10 @@ Deno.serve(async(req:Request)=>{
       // Execution belongs to the desktop. Forward its client-executed tools,
       // excluding inherited upstream hosted search/image tools.
       const tools=body.tools?.filter((t:any)=>['function','custom','namespace','tool_search'].includes(t.type));
-      const payload={input:body.input,instructions:body.instructions,tools,reasoning:body.reasoning,text:body.text,parallel_tool_calls:false};
+        const payload={input:body.input,instructions:body.instructions,tools,reasoning:body.reasoning,text:body.text,
+          parallel_tool_calls:body.parallel_tool_calls===true,
+          ...(body.max_output_tokens!==undefined?{max_output_tokens:body.max_output_tokens}:{}),
+          ...(typeof body.prompt_cache_key==='string'&&body.prompt_cache_key.length<=256?{prompt_cache_key:body.prompt_cache_key}:{})};
       if(body.stream)return await nativeStream(admin,user.id,modelFor(body.model),payload,cors);return response(await modelCall(user.id,modelFor(body.model),payload));
     }
     throw fail(404,'This endpoint is unavailable.');

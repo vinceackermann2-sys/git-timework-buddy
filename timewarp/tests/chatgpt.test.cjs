@@ -47,9 +47,36 @@ test('Codex catalog includes later pages once, preserves capabilities and hides 
   assert.deepEqual(f.calls.filter(c=>c.method==='model/list').map(c=>c.params),[{limit:100,includeHidden:false},{limit:100,includeHidden:false,cursor:'page-2'}]);
 });
 
+test('background memory uses a supported low-effort Luna and backs off on a terminal error',async t=>{
+  const f=fixture();t.after(()=>f.service.stop());f.plan='pro';
+  const created=await f.client.request('thread/start',{agentRole:'energy-memory-writer',model:'timewarp/background',config:{model_reasoning_effort:'high'}});
+  const thread=f.threads.get(created.thread.id);assert.equal(thread.model,'openai/gpt-5.6-luna');assert.equal(thread.config.model_reasoning_effort,'low');
+  await f.client.request('turn/start',{threadId:created.thread.id,model:'energy/lite',effort:'high',input:[]});
+  const turn=f.calls.filter(c=>c.method==='turn/start').at(-1).params;assert.equal(turn.model,'openai/gpt-5.6-luna');assert.equal(turn.effort,'low');
+  f.client.emit('notification',{method:'error',params:{threadId:created.thread.id,willRetry:false}});
+  await assert.rejects(f.client.request('turn/start',{threadId:created.thread.id,input:[]}),error=>error.status===429);
+  await f.client.request('thread/start',{agentRole:'energy-task',model:'openai/gpt-5.6-sol'});
+});
+
 test('a repeated Codex catalog cursor fails instead of looping',async t=>{
   const f=fixture();t.after(()=>f.service.stop());await f.login();f.modelPage=()=>({data:[],nextCursor:'same-page'});
   await assert.rejects(f.service.models(),/invalid model catalog page/);assert.equal(f.calls.filter(c=>c.method==='model/list').length,2);
+});
+
+test('account catalog speed ids and defaults survive discovery and actual requests',async t=>{
+  const f=fixture();t.after(()=>f.service.stop());await f.login();
+  f.modelPage=()=>({data:[{model:'gpt-codex',defaultReasoningEffort:'high',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],serviceTiers:[{id:'priority',name:'Fast',description:'Higher usage'},{id:'ultrafast',name:'Ultrafast',description:'Highest speed'}],defaultServiceTier:'priority'}]});
+  const [model]=await f.service.models();
+  assert.deepEqual(model.serviceTiers.map(tier=>tier.value),[null,'priority','ultrafast']);assert.equal(model.defaultServiceTier,'priority');
+  const created=await f.client.request('thread/start',{model:'gpt-codex',serviceTier:'ultrafast',config:{model_reasoning_effort:'high'}});
+  assert.equal(f.threads.get(created.thread.id).serviceTier,'ultrafast');
+  await f.client.request('turn/start',{threadId:created.thread.id,model:'gpt-codex',effort:'high',serviceTier:'priority',input:[]});
+  assert.equal(f.calls.filter(c=>c.method==='turn/start').at(-1).params.serviceTier,'priority');
+  f.modelPage=()=>({data:[{model:'gpt-codex',defaultReasoningEffort:'low'}]});
+  await f.client.request('turn/start',{threadId:created.thread.id,model:'gpt-codex',effort:'ultra',serviceTier:'priority',input:[]});
+  const turn=f.calls.filter(c=>c.method==='turn/start').at(-1).params;assert.equal(turn.effort,'low');assert.equal(turn.serviceTier,null);
+  f.plan='pro';await f.client.request('turn/start',{threadId:created.thread.id,model:'gpt-codex',effort:'ultra',serviceTier:'ultrafast',input:[]});
+  const paid=f.calls.filter(c=>c.method==='turn/start').at(-1).params;assert.equal(paid.model,'openai/gpt-5.6-sol');assert.equal(paid.effort,'low');assert.equal(paid.serviceTier,null);
 });
 
 test('catalog pages cannot leak across a Timewarp owner change',async t=>{

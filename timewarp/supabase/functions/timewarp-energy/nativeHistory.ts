@@ -12,14 +12,24 @@ export function historySnapshot(userId:string,input:any){
     if(e.kind!=='message'||!authors.has(e.authorId)||!Array.isArray(e.parts)||!e.parts.length||e.parts.some((p:any)=>p.type!=='text'||typeof p.text!=='string'||p.text.length>100000))throw fail(400,'Only chat messages can be synchronized.');
     return{id:identifier(e.id),kind:'message',authorId:e.authorId,createdAt:date(e.createdAt),parts:e.parts.map((p:any)=>({type:'text',text:p.text})),suggestedReplies:[],replyToMessageId:null,forwardedFromMessageId:null};
   });
-  const snapshot={conversation:{id:identifier(c.id),createdByEntityId:userId,kind:'dm',title:typeof c.title==='string'?c.title.slice(0,200):null,createdAt:date(c.createdAt),updatedAt:date(c.updatedAt),lastActivityAt:date(c.lastActivityAt),archived:!!c.archived,read:!!c.read,modelSettings:{name:String(c.modelSettings?.name||'gpt-5.6-sol').slice(0,100),reasoningEffort:['low','medium','high'].includes(c.modelSettings?.reasoningEffort)?c.modelSettings.reasoningEffort:'low',serviceTier:null}},agents,entries};
+  const snapshot={conversation:{id:identifier(c.id),createdByEntityId:userId,kind:'dm',title:typeof c.title==='string'?c.title.slice(0,200):null,createdAt:date(c.createdAt),updatedAt:date(c.updatedAt),lastActivityAt:date(c.lastActivityAt),archived:!!c.archived,read:!!c.read,modelSettings:{name:String(c.modelSettings?.name||'gpt-5.6-sol').slice(0,100),reasoningEffort:typeof c.modelSettings?.reasoningEffort==='string'&&/^[a-z][a-z0-9_-]{0,99}$/.test(c.modelSettings.reasoningEffort)?c.modelSettings.reasoningEffort:'low',serviceTier:typeof c.modelSettings?.serviceTier==='string'&&/^[a-z][a-z0-9_-]{0,99}$/.test(c.modelSettings.serviceTier)?c.modelSettings.serviceTier:null}},agents,entries};
   assertCloudSafe(snapshot);if(JSON.stringify(snapshot).length>900000)throw fail(413,'Chat history is too large.');return snapshot;
 }
 export async function nativeHistory(admin:any,user:any,input:any){
   if(input.operation==='list'||!input.operation){
     const offset=input.offset===undefined?0:Number(input.offset);if(!Number.isSafeInteger(offset)||offset<0)throw fail(400,'Invalid history offset.');
+    if(input.metadataOnly===true){
+      const rows=checked(await admin.from('timewarp_energy_desktop_history').select('id,updated_at').eq('user_id',user.id).order('id',{ascending:true}).range(offset,offset+99))||[];
+      return{protocol:2,manifest:rows.map((row:any)=>({id:row.id,version:row.updated_at})),nextOffset:rows.length===100?offset+100:null};
+    }
     const chats=checked(await admin.from('timewarp_energy_desktop_history').select('conversation,agents,entries').eq('user_id',user.id).order('id',{ascending:true}).range(offset,offset+99))||[];
     return{chats,nextOffset:chats.length===100?offset+100:null};
+  }
+  if(input.operation==='get'){
+    if(!Array.isArray(input.ids)||!input.ids.length||input.ids.length>100)throw fail(400,'Invalid history identifiers.');
+    const ids=[...new Set(input.ids.map(identifier))];
+    const rows=checked(await admin.from('timewarp_energy_desktop_history').select('conversation,agents,entries,updated_at').eq('user_id',user.id).in('id',ids))||[];
+    return{protocol:2,chats:rows.map(({updated_at,...chat}:any)=>({...chat,version:updated_at}))};
   }
   if(input.operation!=='save')throw fail(400,'Invalid history action.');
   const snapshot=historySnapshot(user.id,input.snapshot);

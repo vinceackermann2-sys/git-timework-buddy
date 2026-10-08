@@ -1,0 +1,21 @@
+.timewarp-task-activity { flex: 0 0 auto; margin: 8px 24px; max-height: min(32vh, 260px); overflow: auto; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-background); color: var(--color-foreground); font-size: 13px; }
+.timewarp-activity-toggle { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 9px; width: 100%; min-height: 42px; padding: 9px 12px; background: var(--color-background); border: 0; color: inherit; cursor: pointer; text-align: left; }
+.timewarp-activity-branch { color: var(--timewarp-accent-ink); font-size: 20px; }
+.timewarp-activity-title { font-weight: 600; }
+.timewarp-activity-summary { margin-left: auto; color: var(--color-muted-foreground); font-size: 12px; }
+.timewarp-activity-workers { padding: 0 8px 8px; }
+.timewarp-activity-worker { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 54px; padding: 9px 8px; text-align: left; background: transparent; color: inherit; border: 0; border-radius: 8px; cursor: pointer; }
+.timewarp-activity-worker:hover { background: var(--color-accent); }
+.timewarp-worker-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--color-muted-foreground); }
+[data-status=running] > .timewarp-worker-dot { background: var(--timewarp-accent-ink); box-shadow: 0 0 0 3px var(--color-accent); }
+[data-status=failed] > .timewarp-worker-dot { background: var(--color-destructive, #b42318); }
+[data-status=paused] > .timewarp-worker-dot { background: #ad6c16; }
+.timewarp-worker-copy { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.timewarp-worker-copy strong { font-weight: 500; }
+.timewarp-worker-copy > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--color-muted-foreground); font-size: 12px; }
+.timewarp-worker-status { flex-shrink: 0; color: var(--color-muted-foreground); font-size: 11px; }
+.timewarp-activity-note { margin: 6px 8px 0; color: var(--color-muted-foreground); font-size: 11px; line-height: 1.5; }
+.timewarp-run-limit { margin: 6px 8px; padding: 8px 10px; border-left: 2px solid var(--color-destructive, #b42318); color: var(--color-foreground); font-size: 12px; line-height: 1.5; }
+.timewarp-task-activity button:focus-visible { outline: 2px solid var(--color-ring); outline-offset: -2px; }
+.timewarp-activity-open { gap: 6px; }
+@media(max-width: 520px) { .timewarp-task-activity { margin: 6px 10px; } .timewarp-activity-worker { gap: 7px; } .timewarp-worker-status { max-width: 72px; white-space: normal; } }

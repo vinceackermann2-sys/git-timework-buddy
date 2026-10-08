@@ -64,12 +64,10 @@ export async function accountProduct(admin:any,user:any,token:string,rpc:string,
     return await Promise.all(invites.map(async(v:any)=>{const org=checked(await admin.from('timewarp_workspaces').select('id,name').eq('id',v.workspace_id).single());return{id:v.id,email:v.email,status:'pending',expiresAt:v.expires_at,organization:{...org,logo:null},inviter:{name:null,email:v.invited_by_email}};}));
   }
   if(rpc==='product.organizations.invitations.accept'){
-    const invite=checked(await admin.from('timewarp_workspace_invites').select('*').eq('id',id(input.invitationId)).eq('email',user.email.toLowerCase()).eq('status','pending').gt('expires_at',new Date().toISOString()).maybeSingle());if(!invite)throw fail(404,'Invitation not found or expired.');
-    // The existing acceptance service validates the workspace limit and invited email.
-    // Its token is never exposed; rotate only this user's selected invitation.
-    const tokenValue=crypto.randomUUID()+crypto.randomUUID();const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(tokenValue))),n=>n.toString(16).padStart(2,'0')).join('');
-    checked(await admin.from('timewarp_workspace_invites').update({token_hash:digest}).eq('id',invite.id).eq('email',user.email.toLowerCase()).eq('status','pending'));
-    await productionService(token,'timewarp-workspaces',{action:'acceptInvite',token:tokenValue});await saveActive(admin,user,invite.workspace_id);return null;
+    // Both in-app and emailed acceptance consume the same invitation atomically.
+    // A failed join must leave the emailed link valid for a later retry.
+    const joined=await productionService(token,'timewarp-workspaces',{action:'acceptInvite',invitationId:id(input.invitationId)});
+    await saveActive(admin,user,id(joined.workspace.id));return null;
   }
   if(!workspaceId){
     if(rpc==='product.organizations.members'||rpc==='product.organizations.invitations.list')return[];

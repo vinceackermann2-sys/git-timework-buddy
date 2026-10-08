@@ -17,3 +17,13 @@ test('account relay rejects sensitive input before cloud transport',async t=>{
   let calls=0;const{url,headers}=await bridge(t,async()=>{calls++;return Response.json(null);});
   assert.equal((await fetch(url+'product.profile.update',{method:'POST',headers,body:JSON.stringify({name:'4111 1111 1111 1111'})})).status,400);assert.equal(calls,0);
 });
+
+test('hosted MCP listing succeeds without cloud access so local MCP cards can render',async t=>{
+  let calls=0;const{url,headers}=await bridge(t,async()=>{calls++;throw Error('Unexpected cloud access');});
+  const response=await fetch(url+'product.integrations.mcps.list',{headers});
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{result:{data:{json:{items:[]}}}});
+  const anonymous=await fetch(url+'product.integrations.mcps.list');
+  assert.equal(anonymous.status,401);
+  assert.equal(calls,0);
+});

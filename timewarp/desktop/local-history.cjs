@@ -13,8 +13,10 @@ async function snapshotOf(store,userId,id){
   return assertCloudSafe({conversation,agents,entries});
 }
 function createLocalHistory({store,workspace,settings,userId,cloud,onError=()=>{},onStatus=()=>{},intervalMs=30000}){
-  let owner=null,stopped=false,running=null,restoring=false;const dirty=new Set(),hashes=new Map(),remoteHashes=new Map();
+  let owner=null,stopped=false,running=null,restoring=false;const dirty=new Set(),hashes=new Map(),remoteHashes=new Map(),remoteVersions=new Map(),sentEntries=new Map();
   const digest=value=>crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const rememberEntries=(id,entries)=>{let known=sentEntries.get(id);if(!known)sentEntries.set(id,known=new Map());for(const entry of entries)known.set(entry.id,digest(entry));};
+  const reset=()=>{hashes.clear();remoteHashes.clear();remoteVersions.clear();sentEntries.clear();dirty.clear();};
   const unsubscribe=store.conversations.subscribe(change=>{if(!restoring&&owner)dirty.add(change.conversation.id);});
   async function restore(chat,account){
     const c=chat.conversation;if(c.createdByEntityId!==account)throw Error('History ownership mismatch.');
@@ -29,21 +31,33 @@ function createLocalHistory({store,workspace,settings,userId,cloud,onError=()=>{
   async function sync(){
     if(stopped)return;if(running)return running;
     running=(async()=>{
-      const account=userId();if(!account){owner=null;hashes.clear();remoteHashes.clear();dirty.clear();return;}
+      const account=userId();if(!account){owner=null;reset();return;}
       if((await settings.get()).privacy?.mode==='private'){onStatus({state:'paused'});return;}
-      const first=owner!==account;if(first){hashes.clear();remoteHashes.clear();dirty.clear();}
-      // Download every page on each pass, so new chats on another device arrive
-      // without signing out. Pending local edits are uploaded before a pull.
+      const first=owner!==account;if(first)reset();
+      // Ask for small revision manifests. Old servers ignore metadataOnly and
+      // return the original list shape, so desktop/cloud upgrades are independent.
       if(!first)await upload(account);
       let offset=0;do{
-        const result=await cloud('/history',{operation:'list',offset});if(userId()!==account)return;
-        for(const chat of result.chats){const id=chat.conversation.id,hash=digest(chat);if(remoteHashes.get(id)===hash||dirty.has(id))continue;
+        const result=await cloud('/history',{operation:'list',offset,metadataOnly:true});if(userId()!==account||stopped)return;
+        let chats=result.chats;
+        if(result.protocol===2){
+          if(!Array.isArray(result.manifest))throw Error('Invalid history manifest.');
+          const ids=result.manifest.filter(row=>!dirty.has(row.id)&&remoteVersions.get(row.id)!==row.version).map(row=>row.id);
+          chats=ids.length?(await cloud('/history',{operation:'get',ids})).chats:[];
+          if(userId()!==account||stopped)return;
+        }
+        if(!Array.isArray(chats))throw Error('Invalid history response.');
+        for(const remote of chats){const {version,...chat}=remote;const id=chat.conversation.id,hash=digest(chat);if(dirty.has(id))continue;
+          if(remoteHashes.get(id)===hash){if(version)remoteVersions.set(id,version);continue;}
           const existed=!!store.conversations.get(id);
           restoring=true;try{await restore(chat,account);}finally{restoring=false;}
           remoteHashes.set(id,hash);
+          if(version)remoteVersions.set(id,version);
+          rememberEntries(id,chat.entries);
           // A restored chat must not be immediately echoed with device-generated
           // timestamps. Keep unsent local history on the first pass, however.
-          if(!existed||!first){const snapshot=await snapshotOf(store,account,id);if(snapshot)hashes.set(id,digest(snapshot));}
+          const snapshot=await snapshotOf(store,account,id);
+          if(snapshot){const localHash=digest(snapshot);if(!existed||!first||localHash===hash)hashes.set(id,localHash);}
         }
         if(result.nextOffset!==null&&result.nextOffset!==undefined&&(!Number.isSafeInteger(result.nextOffset)||result.nextOffset<=offset))throw Error('Invalid history cursor.');
         offset=result.nextOffset;
@@ -63,9 +77,10 @@ function createLocalHistory({store,workspace,settings,userId,cloud,onError=()=>{
       let failed=false;
       for(const id of [...dirty]){try{if(userId()!==account)return;const value=await snapshotOf(store,account,id);if(!value){dirty.delete(id);continue;}const hash=digest(value);if(hashes.get(id)===hash){dirty.delete(id);continue;}
         let entries=[],size=JSON.stringify({...value,entries:[]}).length;
-        const send=async()=>{if(userId()!==account)throw Error('The active account changed.');await cloud('/history',{operation:'save',snapshot:{...value,entries}});entries=[];size=JSON.stringify({...value,entries:[]}).length;};
-        for(const entry of value.entries){const length=JSON.stringify(entry).length+1;if(entries.length&&(entries.length>=1000||size+length>750000))await send();entries.push(entry);size+=length;}
-        if(entries.length||!value.entries.length)await send();
+        const send=async()=>{if(userId()!==account||stopped)throw Error('The active account changed.');await cloud('/history',{operation:'save',snapshot:{...value,entries}});if(userId()!==account||stopped)throw Error('The active account changed.');rememberEntries(id,entries);entries=[];size=JSON.stringify({...value,entries:[]}).length;};
+        for(const entry of value.entries){if(sentEntries.get(id)?.get(entry.id)===digest(entry))continue;const length=JSON.stringify(entry).length+1;if(entries.length&&(entries.length>=1000||size+length>750000))await send();entries.push(entry);size+=length;}
+        // Metadata-only updates still persist, without reuploading old messages.
+        await send();
         if(userId()!==account)return;hashes.set(id,hash);dirty.delete(id);const latest=await snapshotOf(store,account,id);if(latest&&digest(latest)!==hash)dirty.add(id);
       }catch(error){failed=true;onStatus({state:'error',message:error.message});onError(error);}}
       return failed;

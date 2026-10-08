@@ -13,6 +13,23 @@ test('local card storage removes verification codes without changing non-card cr
   assert.equal(stored.number, '4111111111111111'); assert.equal(stored.cvc, undefined);
   assert.equal(sanitizeCard({ kind: 'password' }, 'pass'), 'pass');
 });
+
+test('response telemetry is discarded before cloud transport without exempting sensitive model input', async t => {
+  let forwarded;
+  const server=createBridge({authorize:async()=>true},async(_route,input)=>{forwarded=input;return Response.json({});},0);
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();server.close();});
+  // This real-shaped timestamp passes Luhn and used to block guardian reviews.
+  const telemetry={'x-codex-turn-metadata':JSON.stringify({turn_started_at_unix_ms:1791463223381})};
+  let stamp=1791463223381;while(!require('../shared/privacy.cjs').luhn(String(stamp)))stamp++;
+  telemetry['x-codex-turn-metadata']=JSON.stringify({turn_started_at_unix_ms:stamp});
+  assert.throws(()=>assertCloudSafe({client_metadata:telemetry}),/device/);
+  const send=input=>fetch(`http://127.0.0.1:${server.address().port}/v1/responses`,{method:'POST',body:JSON.stringify(input)});
+  assert.equal((await send({input:'Read the visible page',client_metadata:telemetry,prompt_cache_key:'stable'})).status,200);
+  assert.deepEqual(forwarded,{input:'Read the visible page',prompt_cache_key:'stable'});
+  forwarded=null;
+  assert.equal((await send({input:'4111 1111 1111 1111',client_metadata:telemetry})).status,400);
+  assert.equal(forwarded,null);
+});
 test('loopback bridge blocks unauthenticated requests, hostile origins, rebinding, and card exfiltration', async t => {
   let cloudCalls = 0;
   const auth = { authorize: async token => token === 'test-capability', accountSession: async () => ({ user: { id: 'test' } }) };

@@ -1,4 +1,4 @@
-import { reserveAgentAi } from './agentAiReservation.ts';
+import { reserveAgentAi, responseOutputLimit } from './agentAiReservation.ts';
 import { azureFoundryBase, azureSolKeys, azureLunaKeys, azureLunaModel } from './azureAgentAi.ts';
 import { assertCloudSafe } from './privacy.ts';
 
@@ -8,10 +8,11 @@ export async function nativeStream(admin: any, userId: string, model: string, pa
   assertCloudSafe(payload);
   const keys = model === azureLunaModel() ? azureLunaKeys() : azureSolKeys();
   if (!keys.length) throw Object.assign(new Error('The cloud AI provider is not configured.'), { status: 503 });
-  const reservation = await reserveAgentAi(admin, userId, `openai/${model}`, payload);
+  const request={...payload,model,store:false,stream:true,max_output_tokens:responseOutputLimit(payload)};
+  const reservation = await reserveAgentAi(admin, userId, `openai/${model}`, request);
   let upstream: Response;
   try {
-    upstream = await fetch(`${azureFoundryBase()}/responses`, { method: 'POST', headers: { 'api-key': keys[0], 'content-type': 'application/json' }, body: JSON.stringify({ ...payload, model, store: false, stream: true, max_output_tokens: 16384 }), signal: AbortSignal.timeout(120000), redirect: 'error' });
+    upstream = await fetch(`${azureFoundryBase()}/responses`, { method: 'POST', headers: { 'api-key': keys[0], 'content-type': 'application/json' }, body: JSON.stringify(request), signal: AbortSignal.timeout(120000), redirect: 'error' });
   } catch {
     await reservation.finish('uncertain');
     throw Object.assign(new Error('The AI connection timed out. Usage reconciliation is pending.'), { status: 504 });
@@ -38,11 +39,11 @@ export async function nativeStream(admin: any, userId: string, model: string, pa
         }
         if (chunk.done) break;
       }
-      if (usage && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)) await reservation.finish('settled', usage.input_tokens, usage.output_tokens);
+      if (usage && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)) await reservation.finish('settled', usage.input_tokens, usage.output_tokens, usage.input_tokens_details);
       else await reservation.finish('uncertain');
     } catch {
       const known = usage && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens);
-      await reservation.finish(known ? 'settled' : 'uncertain', known ? usage.input_tokens : 0, known ? usage.output_tokens : 0)
+      await reservation.finish(known ? 'settled' : 'uncertain', known ? usage.input_tokens : 0, known ? usage.output_tokens : 0, known ? usage.input_tokens_details : undefined)
         .catch(() => console.error('[timewarp] Stream settlement requires operator recovery.', { reservationId: reservation.id }));
     }
     finally { reader.releaseLock(); }
