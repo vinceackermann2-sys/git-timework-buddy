@@ -11,13 +11,11 @@ test('the versioned OpenAI compatibility catalog contains all eight standard mod
   for(const model of models){assert.ok(model.model_messages.instructions_template.length>100);assert.ok(model.supported_reasoning_levels.some(option=>option.effort===model.default_reasoning_level));}
 });
 
-test('only the unversioned vendor runtime gets a native catalog override, outside ASAR', t => {
+test('versioned and unversioned runtimes both retain account-scoped discovery', t => {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'timewarp-catalog-test-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const options={home:path.join(root,'private-codex-home'),packageRoot:root};
   const metadata=path.join(root,'codex-package.json');fs.writeFileSync(metadata,JSON.stringify({version:'0.0.0'}));
-  const config=nativeCatalogConfig(options);assert.equal(config.length,1);assert.equal(config[0][0],'model_catalog_json');
-  assert.ok(config[0][1].startsWith(options.home+path.sep));
-  assert.deepEqual(fs.readFileSync(config[0][1]),fs.readFileSync(path.join(__dirname,'../shared/codex-models.json')));
-  const at=fs.statSync(config[0][1]).mtimeMs;nativeCatalogConfig(options);assert.equal(fs.statSync(config[0][1]).mtimeMs,at);
+  assert.deepEqual(nativeCatalogConfig(options),[]);
+  assert.equal(fs.existsSync(options.home),false);
   fs.writeFileSync(metadata,JSON.stringify({version:'0.160.1'}));assert.deepEqual(nativeCatalogConfig(options),[]);
 });

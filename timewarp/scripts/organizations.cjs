@@ -28,6 +28,10 @@ function patchOrganizations(source) {
     'Add a separate workspace with its own members, billing, and usage.',
     'Add another organization you can invite people to. Chats and AI credits stay personal.',
     "create organization description");
+  source = replaceOnce(source,
+    ' gives access to shared credits.',
+    ' adds them to this organization. Chats and AI credits stay personal.',
+    "organization member description");
   return replaceOnce(source,
     '. Joining gives you access to its members and shared credits.',
     '. Joining adds you to its members. Your chats and AI credits stay personal.',

@@ -1,6 +1,8 @@
 // Standard model-token cost basis in USD, checked against published Sol/Luna
-// pricing on 2026-10-05. Cached inputs use the standard rate; cache discounts
-// are not promised. Long-context premiums apply before the credit markup.
+// pricing checked on 2026-10-07. For GPT-5.6, cache reads cost 0.1x and
+// cache writes 1.25x ordinary input. Each input token belongs to one category.
+// https://developers.openai.com/api/docs/guides/prompt-caching
+// Long-context premiums apply before the credit markup.
 
 export interface ModelRate {
   inputUsdPerMillion: number;
@@ -32,12 +34,19 @@ export const computeCostUsd = (
   gatewayModel: string,
   promptTokens: number,
   responseTokens: number,
+  details?: { cached_tokens?: number; cache_write_tokens?: number },
 ): number => {
   const rate = rateForModel(gatewayModel);
   const prompt = Math.max(0, Math.round(promptTokens || 0));
   const response = Math.max(0, Math.round(responseTokens || 0));
   const longContext=/gpt-(?:5\.6-(?:sol|luna)|luna)$/.test(gatewayModel)&&prompt>272000;
-  return (prompt / 1_000_000) * rate.inputUsdPerMillion * (longContext?2:1)
+  const cached = details?.cached_tokens ?? 0, written = details?.cache_write_tokens ?? 0;
+  if (![cached, written].every(value => Number.isSafeInteger(value) && value >= 0) || cached + written > prompt) {
+    throw new Error('Invalid provider cache-token accounting. Usage needs reconciliation.');
+  }
+  const cachePriced = /gpt-(?:5\.6-(?:sol|luna)|luna)$/.test(gatewayModel);
+  const weighted = cachePriced ? prompt - cached - written + cached * 0.1 + written * 1.25 : prompt;
+  return (weighted / 1_000_000) * rate.inputUsdPerMillion * (longContext?2:1)
     + (response / 1_000_000) * rate.outputUsdPerMillion * (longContext?1.5:1);
 };
 

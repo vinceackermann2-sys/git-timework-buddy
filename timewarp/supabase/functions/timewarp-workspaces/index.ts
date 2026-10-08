@@ -35,8 +35,7 @@ const normalizeRole = (value: unknown): 'owner' | 'admin' | 'lead' => {
 
 const isManagerRole = (role?: string | null) => role === 'owner' || role === 'admin';
 
-const TEAM_WORKSPACE_LIMIT = 3;
-const WORKSPACE_LIMIT_MESSAGE = 'You can have one personal workspace and up to 3 team workspaces.';
+const WORKSPACE_LIMIT_MESSAGE = 'You can be in up to 3 organizations.';
 const WORKSPACE_INVITE_DAYS = 14;
 const TIMEWARP_SITE_URL = (Deno.env.get('TIMEWARP_SITE_URL') || Deno.env.get('SITE_URL') || 'https://timewarpdev.com').replace(/\/+$/, '');
 const TIMEWARP_EMAIL_FROM = Deno.env.get('TIMEWARP_EMAIL_FROM') || 'Timewarp <noreply@agents.timewarpdev.com>';
@@ -213,11 +212,11 @@ const loadWorkspaceDetails = async (admin: any, userId: string, workspaceId: str
     .order('created_at', { ascending: true });
   if (membersError) throw membersError;
 
-  const { data: invites, error: invitesError } = await admin
+  const { data: invites, error: invitesError } = isManagerRole(member.role) ? await admin
     .from('timewarp_workspace_invites')
     .select('id, workspace_id, email, role, invited_by, invited_by_email, status, email_sent, email_error, email_message_id, last_email_sent_at, expires_at, accepted_by, accepted_at, created_at, updated_at')
     .eq('workspace_id', workspaceId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false }) : { data: [], error: null };
   if (invitesError) throw invitesError;
 
   return {
@@ -228,46 +227,32 @@ const loadWorkspaceDetails = async (admin: any, userId: string, workspaceId: str
   };
 };
 
-// Owner-affecting member changes go through a Postgres function that locks the
-// workspace's owner rows, so two simultaneous demote/remove/leave calls can't
-// both pass the "last owner" check. Returns 'fallback' when the migration that
-// creates the function hasn't been applied yet.
+// Authorization and last-owner protection are checked together under a
+// workspace lock. An unavailable guard must never permit separate writes.
 const guardedMemberUpdate = async (
   admin: any,
+  actorUserId: string,
   workspaceId: string,
   memberId: string,
   action: 'remove' | 'set_role',
   newRole?: string,
-): Promise<'ok' | 'last_owner' | 'not_found' | 'invalid' | 'fallback'> => {
-  const { data, error } = await admin.rpc('timewarp_update_member_guarded', {
+): Promise<'ok' | 'last_owner' | 'not_found' | 'invalid' | 'forbidden'> => {
+  const { data, error } = await admin.rpc('timewarp_change_member_guarded', {
+    p_actor_user_id: actorUserId,
     p_workspace_id: workspaceId,
     p_member_id: memberId,
     p_action: action,
     p_new_role: newRole ?? null,
   });
   if (error) {
-    const missingFunction = String(error.code || '') === 'PGRST202'
-      || /timewarp_update_member_guarded/i.test(String(error.message || ''));
-    if (missingFunction) {
-      console.warn('[timewarp-workspaces] timewarp_update_member_guarded missing; using non-atomic fallback. Apply the multiuser hardening migration.');
-      return 'fallback';
+    if (String(error.code || '') === 'PGRST202') {
+      throw Object.assign(new Error('Organization security is temporarily unavailable. Try again later.'), { status: 503 });
     }
     throw error;
   }
   const result = cleanText(data);
-  return (['ok', 'last_owner', 'not_found', 'invalid'].includes(result) ? result : 'invalid') as
-    'ok' | 'last_owner' | 'not_found' | 'invalid';
-};
-
-const countActiveOwners = async (admin: any, workspaceId: string) => {
-  const { count, error } = await admin
-    .from('timewarp_workspace_members')
-    .select('id', { count: 'exact', head: true })
-    .eq('workspace_id', workspaceId)
-    .eq('role', 'owner')
-    .eq('status', 'active');
-  if (error) throw error;
-  return count || 0;
+  return (['ok', 'last_owner', 'not_found', 'invalid', 'forbidden'].includes(result) ? result : 'invalid') as
+    'ok' | 'last_owner' | 'not_found' | 'invalid' | 'forbidden';
 };
 
 const inviteExpiry = () => new Date(Date.now() + WORKSPACE_INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -354,44 +339,25 @@ const enqueueWorkspaceInviteEmail = async (admin: any, options: {
   return { messageId, inviteUrl };
 };
 
-const countActiveTeamWorkspaces = async (admin: any, userId: string) => {
-  const { count, error } = await admin
-    .from('timewarp_workspace_members')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
-    .eq('status', 'active');
-  if (error) throw error;
-  return count || 0;
-};
-
-const acceptInviteRow = async (admin: any, invite: any, user: any) => {
-  const email = normalizeEmail(user.email || invite.email);
-  const name = cleanText(user.user_metadata?.name || user.user_metadata?.full_name || email.split('@')[0], 'Member');
-  const role = normalizeRole(invite.role);
-  const now = new Date().toISOString();
-
-  const { error: memberError } = await admin
-    .from('timewarp_workspace_members')
-    .upsert({
-      workspace_id: invite.workspace_id,
-      user_id: user.id,
-      email,
-      name,
-      role,
-      status: 'active',
-      joined_at: now,
-    }, { onConflict: 'workspace_id,user_id' });
-  if (memberError) throw memberError;
-
-  const { error: inviteError } = await admin
-    .from('timewarp_workspace_invites')
-    .update({
-      status: 'accepted',
-      accepted_by: user.id,
-      accepted_at: now,
-    })
-    .eq('id', invite.id);
-  if (inviteError) throw inviteError;
+const acceptInviteRow = async (admin: any, user: any, selector: { invitationId?: string; tokenHash?: string }) => {
+  const { data, error } = await admin.rpc('timewarp_accept_workspace_invite', {
+    p_user_id: user.id,
+    p_invite_id: selector.invitationId || null,
+    p_token_hash: selector.tokenHash || null,
+  });
+  if (error) {
+    if (String(error.code || '') === 'PGRST202') {
+      throw Object.assign(new Error('Organization security is temporarily unavailable. Try again later.'), { status: 503 });
+    }
+    throw error;
+  }
+  if (data?.status === 'unconfirmed') {
+    throw Object.assign(new Error('Confirm your email before joining an organization.'), { status: 403 });
+  }
+  if (data?.status !== 'ok') {
+    throw Object.assign(new Error('Invitation not found or expired.'), { status: 404 });
+  }
+  return data.workspace_id as string;
 };
 
 Deno.serve(async (req) => {
@@ -946,28 +912,13 @@ Deno.serve(async (req) => {
 
     if (action === 'acceptInvite') {
       const token = cleanText(body.token);
-      if (!token) return jsonResponse({ error: 'Invite token is required.' }, 400);
-      const tokenHash = await hashInviteToken(token);
-      const { data: invite, error } = await admin
-        .from('timewarp_workspace_invites')
-        .select('id, workspace_id, email, role, status, expires_at')
-        .eq('token_hash', tokenHash)
-        .eq('status', 'pending')
-        .gt('expires_at', new Date().toISOString())
-        .maybeSingle();
-      if (error) throw error;
-      if (!invite) return jsonResponse({ error: 'Invite not found or expired.' }, 404);
-      if (normalizeEmail(invite.email) !== normalizeEmail(user.email)) {
-        return jsonResponse({ error: 'This invite belongs to another email address.' }, 403);
+      const invitationId = cleanText(body.invitationId);
+      if ((!token && !invitationId) || (token && invitationId) || (invitationId && !isUuid(invitationId))) {
+        return jsonResponse({ error: 'Provide an invitation token or valid invitationId.' }, 400);
       }
-
-      const existingMembership = await loadMembership(admin, user.id, invite.workspace_id);
-      if (!existingMembership && await countActiveTeamWorkspaces(admin, user.id) >= TEAM_WORKSPACE_LIMIT) {
-        return jsonResponse({ error: WORKSPACE_LIMIT_MESSAGE }, 409);
-      }
-
-      await acceptInviteRow(admin, invite, user);
-      const details = await loadWorkspaceDetails(admin, user.id, invite.workspace_id);
+      const workspaceId = await acceptInviteRow(admin, user, invitationId
+        ? { invitationId } : { tokenHash: await hashInviteToken(token) });
+      const details = await loadWorkspaceDetails(admin, user.id, workspaceId);
       return jsonResponse({ ok: true, ...details });
     }
 
@@ -981,16 +932,19 @@ Deno.serve(async (req) => {
         .gt('expires_at', new Date().toISOString());
       if (error) throw error;
 
-      const activeCount = await countActiveTeamWorkspaces(admin, user.id);
-      const availableSlots = Math.max(0, TEAM_WORKSPACE_LIMIT - activeCount);
-      const acceptedInvites = asArray(invites).slice(0, availableSlots);
-      for (const invite of acceptedInvites) {
-        await acceptInviteRow(admin, invite, user);
+      let acceptedCount = 0;
+      for (const invite of asArray(invites)) {
+        try {
+          await acceptInviteRow(admin, user, { invitationId: invite.id });
+          acceptedCount++;
+        } catch (error) {
+          if (!isWorkspaceLimitError(error) && asRecord(error).status !== 404) throw error;
+        }
       }
 
       return jsonResponse({
-        acceptedCount: acceptedInvites.length,
-        skippedCount: Math.max(0, asArray(invites).length - acceptedInvites.length),
+        acceptedCount,
+        skippedCount: asArray(invites).length - acceptedCount,
       });
     }
 
@@ -1041,7 +995,7 @@ Deno.serve(async (req) => {
       if (target.role === 'owner' && manager.member.role !== 'owner') {
         return jsonResponse({ error: 'Only owners can change owner roles.' }, 403);
       }
-      const guarded = await guardedMemberUpdate(admin, workspaceId, memberId, 'set_role', role);
+      const guarded = await guardedMemberUpdate(admin, user.id, workspaceId, memberId, 'set_role', role);
       if (guarded === 'last_owner') {
         return jsonResponse({ error: 'A workspace needs at least one owner.' }, 409);
       }
@@ -1051,16 +1005,7 @@ Deno.serve(async (req) => {
       if (guarded === 'invalid') {
         return jsonResponse({ error: 'Invalid role change.' }, 400);
       }
-      if (guarded === 'fallback') {
-        if (target.role === 'owner' && role !== 'owner' && (await countActiveOwners(admin, workspaceId)) <= 1) {
-          return jsonResponse({ error: 'A workspace needs at least one owner.' }, 409);
-        }
-        const { error: updateError } = await admin
-          .from('timewarp_workspace_members')
-          .update({ role })
-          .eq('id', memberId);
-        if (updateError) throw updateError;
-      }
+      if (guarded === 'forbidden') return jsonResponse({ error: 'Owner or admin access required.' }, 403);
 
       const details = await loadWorkspaceDetails(admin, user.id, workspaceId);
       return jsonResponse({ ok: true, ...details });
@@ -1087,23 +1032,15 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: 'Only owners can remove another owner.' }, 403);
       }
 
-      const guarded = await guardedMemberUpdate(admin, workspaceId, memberId, 'remove');
+      const guarded = await guardedMemberUpdate(admin, user.id, workspaceId, memberId, 'remove');
       if (guarded === 'last_owner') {
         return jsonResponse({ error: 'A workspace needs at least one owner.' }, 409);
       }
       if (guarded === 'not_found') {
         return jsonResponse({ error: 'Member not found.' }, 404);
       }
-      if (guarded === 'fallback' || guarded === 'invalid') {
-        if (target.role === 'owner' && (await countActiveOwners(admin, workspaceId)) <= 1) {
-          return jsonResponse({ error: 'A workspace needs at least one owner.' }, 409);
-        }
-        const { error: updateError } = await admin
-          .from('timewarp_workspace_members')
-          .update({ status: 'removed' })
-          .eq('id', memberId);
-        if (updateError) throw updateError;
-      }
+      if (guarded === 'forbidden') return jsonResponse({ error: 'Owner or admin access required.' }, 403);
+      if (guarded === 'invalid') return jsonResponse({ error: 'Invalid member change.' }, 400);
 
       const details = await loadWorkspaceDetails(admin, user.id, workspaceId);
       return jsonResponse({ ok: true, ...details });
@@ -1116,23 +1053,15 @@ Deno.serve(async (req) => {
       const member = await loadMembership(admin, user.id, workspaceId);
       if (!member) return jsonResponse({ error: 'Workspace membership required.' }, 403);
 
-      const guarded = await guardedMemberUpdate(admin, workspaceId, member.id, 'remove');
+      const guarded = await guardedMemberUpdate(admin, user.id, workspaceId, member.id, 'remove');
       if (guarded === 'last_owner') {
         return jsonResponse({ error: 'Transfer ownership before leaving this workspace.' }, 409);
       }
       if (guarded === 'not_found') {
         return jsonResponse({ error: 'Workspace membership required.' }, 403);
       }
-      if (guarded === 'fallback' || guarded === 'invalid') {
-        if (member.role === 'owner' && (await countActiveOwners(admin, workspaceId)) <= 1) {
-          return jsonResponse({ error: 'Transfer ownership before leaving this workspace.' }, 409);
-        }
-        const { error: updateError } = await admin
-          .from('timewarp_workspace_members')
-          .update({ status: 'removed' })
-          .eq('id', member.id);
-        if (updateError) throw updateError;
-      }
+      if (guarded === 'forbidden') return jsonResponse({ error: 'Workspace membership required.' }, 403);
+      if (guarded === 'invalid') return jsonResponse({ error: 'Invalid member change.' }, 400);
 
       return jsonResponse({ ok: true });
     }
@@ -1164,6 +1093,6 @@ Deno.serve(async (req) => {
     }
     const message = error instanceof Error ? error.message : 'Workspace request failed.';
     console.error('[timewarp-workspaces] request failed:', error);
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse({ error: message }, Number(asRecord(error).status) || 500);
   }
 });

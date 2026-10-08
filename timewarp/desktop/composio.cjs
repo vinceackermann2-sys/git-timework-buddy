@@ -4,7 +4,8 @@ const { body } = require('./bridge-body.cjs');
 const { assertCloudSafe } = require('../shared/privacy.cjs');
 const fail = (status, message) => Object.assign(Error(message), { status });
 const integrationId = slug => 'composio-' + String(slug).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-const accountView = account => ({ id: account.connectionId, authStatus: account.active || account.status === 'ACTIVE' ? 'ready' : 'reauthorization_required',
+const accountIsActive = account => account.active === true || (account.active == null && account.status === 'ACTIVE');
+const accountView = account => ({ id: account.connectionId, authStatus: accountIsActive(account) ? 'ready' : 'reauthorization_required',
   avatarUrl: account.icon || null, displayName: account.email || account.label || account.connectionId, organization: null });
 const grant = (app, account) => ({ kind: 'integration', integrationId: integrationId(app.toolkitSlug), accountId: account.connectionId, owner: 'user' });
 
@@ -54,7 +55,7 @@ function createComposio({ cloud, userId, storage, getAgent, listAgents=async()=>
     for (const [key, item] of pending) {
       if (item.expires < Date.now() || item.owner !== account) { pending.delete(key); continue; }
       const app = apps.find(app => integrationId(app.toolkitSlug) === item.integrationId);
-      const connection = app?.accounts?.find(connection => connection.connectionId === key && connection.active);
+      const connection = app?.accounts?.find(connection => connection.connectionId === key && accountIsActive(connection));
       if (!connection) continue;
       if (item.agentId) {
         await ownedAgent(item.agentId); init();
@@ -113,14 +114,14 @@ function createComposio({ cloud, userId, storage, getAgent, listAgents=async()=>
       if (!Array.isArray(items) || items.length > 100) throw fail(400, 'Invalid connected-app access.');
       const apps = await catalog();
       for (const item of items) if (item.kind !== 'integration' || item.owner !== 'user' ||
-        !apps.some(app => integrationId(app.toolkitSlug) === item.integrationId && app.accounts.some(connection => connection.connectionId === item.accountId && connection.active))) throw fail(403, 'Choose an active connected account that you own.');
+        !apps.some(app => integrationId(app.toolkitSlug) === item.integrationId && app.accounts.some(connection => connection.connectionId === item.accountId && accountIsActive(connection)))) throw fail(403, 'Choose an active connected account that you own.');
     }
     init(); database[account] ||= {}; database[account][agentId] = items; save(); await onChanged();
   }
   async function connections(agentId) {
     await ownedAgent(agentId);
     const apps = await catalog();
-    return apps.flatMap(app => (app.accounts || []).filter(account => account.active && allowed(app, account, agentId)).map(account => ({
+    return apps.flatMap(app => (app.accounts || []).filter(account => accountIsActive(account) && allowed(app, account, agentId)).map(account => ({
       connectionId: account.connectionId, toolkit: app.toolkitSlug, app: app.name, label: account.email || account.label,
     })));
   }
@@ -173,7 +174,7 @@ function createComposio({ cloud, userId, storage, getAgent, listAgents=async()=>
           else if (input.params.name === 'composio_search_tools') result = await searchTools(args);
           else if (input.params.name === 'composio_execute') result = await execute(args);
           else throw fail(404, 'Unknown Composio tool.');
-          return reply({ result: { content: [{ type: 'text', text: JSON.stringify(result) }] } });
+          return reply({ result: { ...(result?.successful === false || result?.success === false || result?.isError === true ? { isError: true } : {}), content: [{ type: 'text', text: JSON.stringify(result) }] } });
         } catch (error) { return reply({ result: { isError: true, content: [{ type: 'text', text: error.message }] } }); }
       }
       return reply({ error: { code: -32601, message: 'Method not found.' } });

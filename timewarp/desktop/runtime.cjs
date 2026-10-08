@@ -18,6 +18,12 @@ if(process.platform==='win32'){const count=Number(process.env.GIT_CONFIG_COUNT||
 let nativeAccount=null,oauthServer=null,callbackOpening=null,providersPromise=null,nativeRuntime=null,historySync=null,historyStatus={state:'starting'};
 let toolRuntime=null,toolsOpening=null,integrationAgents=null,toolsRegistered=false;
 let browserManager=null;
+let executionGuard=null,executionNotice=null;
+function executionChanged(){
+  if(executionNotice)return;
+  executionNotice=setTimeout(()=>{executionNotice=null;for(const window of BrowserWindow.getAllWindows())if(!window.isDestroyed()&&window.webContents.getURL().startsWith('app://app/'))window.webContents.send('timewarp:executionChanged');},200);
+  executionNotice.unref?.();
+}
 const connectorBrowsers=new Map();
 const mcpToken=crypto.randomBytes(32).toString('base64url');
 process.env.TIMEWARP_COMPOSIO_TOKEN=mcpToken;
@@ -25,10 +31,8 @@ function focusApp(){for(const window of BrowserWindow.getAllWindows())if(!window
 async function selectModel(choices){
   if(!nativeRuntime)return;
   choices=choices||await modelChoices();const preferences=await nativeRuntime.settings.get();
-  const selected=choices.find(model=>model.id===preferences.modelSettings.name)||choices.find(model=>model.id===preferences.modelSettings.name.replace(/^openai\//,''))||choices.find(model=>model.featured)||choices[0];
-  if(!selected)return;
-  const effort=selected.supportedReasoningEfforts.some(item=>item.reasoningEffort===preferences.modelSettings.reasoningEffort)?preferences.modelSettings.reasoningEffort:selected.defaultReasoningEffort;
-  if(preferences.modelSettings.name!==selected.id||preferences.modelSettings.serviceTier!==null||preferences.modelSettings.reasoningEffort!==effort)await nativeRuntime.settings.update({modelSettings:{name:selected.id,reasoningEffort:effort,serviceTier:null}});
+  const selected=require('../shared/model-capabilities.cjs').resolveModelSettings(choices,preferences.modelSettings);
+  if(selected&&Object.keys(selected).some(key=>selected[key]!==preferences.modelSettings[key]))await nativeRuntime.settings.update({modelSettings:selected});
 }
 const chatgpt=require('./chatgpt.cjs').createChatgpt({storage:protectedStore(path.join(profile,'codex-connection.bin'),safeStorage),userId:()=>auth.userId(),onConnected:async()=>{await selectModel();for(const window of BrowserWindow.getAllWindows())if(!window.isDestroyed()&&window.webContents.getURL().startsWith('app://app/'))await window.loadURL('app://app/#/customize/billing');focusApp();},onLoginError:async()=>{for(const window of BrowserWindow.getAllWindows())if(!window.isDestroyed()&&window.webContents.getURL().startsWith('app://app/')&&auth.userId())await window.loadURL('app://app/#/customize/billing');focusApp();}});
 const disconnectCodex=chatgpt.disconnect;
@@ -79,7 +83,7 @@ async function openConnectorBrowser(sender,url,serverName){
     return {ownerId};
   }catch(error){await closeConnectorBrowser(ownerId).catch(()=>{});throw error;}
 }
-function bindCodexClient(client){return require('./codex-funding.cjs').bindCodexFunding({client,chatgpt,funding:aiFunding,userId:()=>auth.userId()});}
+function bindCodexClient(client){executionGuard?.stop();executionGuard=require('./execution-guard.cjs').bindExecutionGuard(client,{userId:()=>auth.userId(),onChange:executionChanged});return require('./codex-funding.cjs').bindCodexFunding({client,chatgpt,funding:aiFunding,userId:()=>auth.userId()});}
 async function registerTools(force=false){
   if(!toolRuntime||!auth.userId())return;
   if(toolsRegistered&&!force)return;
@@ -166,6 +170,11 @@ ipcMain.handle('timewarp:request',async(event,action,input={})=>{
   switch(action){
     case 'state':return {user:auth.user(),passwordRecovery:auth.passwordRecovery(),version:'0.1.0',privacy:'Vaults and payment details stay on this device.'};
     case 'historyStatus':return historyStatus;
+    case 'executionStatus':{
+      const account=auth.userId(),value=nativeRuntime?.entities.conversations.get(input.conversationId);
+      if(!account||!value||value.conversation.createdByEntityId!==account||!value.members.some(member=>member.entityId===account))throw new Error('This chat is unavailable for this account.');
+      return executionGuard?.snapshot(value.members.flatMap(member=>member.codexThreadId?[member.codexThreadId]:[]))||[];
+    }
     case 'browserAgent':{
       if(!browserManager||event.sender!==browserManager.surfaceHost.overlayView?.webContents||!nativeRuntime?.resolveBrowserAgent)return null;
       return require('./browser-cursor.cjs').resolveCursorAgent({readSnapshot:()=>browserManager.surfaceHost.getSnapshot(),resolveAgent:input=>nativeRuntime.resolveBrowserAgent(input),getUserId:()=>auth.userId()},input);
@@ -203,7 +212,7 @@ ipcMain.handle('timewarp:request',async(event,action,input={})=>{
     default:throw new Error('Unknown action.');
   }
 });
-app.on('before-quit',()=>{chatgpt.stop();historySync?.stop();server.close();oauthServer?.close();});
+app.on('before-quit',()=>{executionGuard?.stop();clearTimeout(executionNotice);chatgpt.stop();historySync?.stop();server.close();oauthServer?.close();});
 const {autoUpdater}=require('electron-updater');
 let release;
 try { release=JSON.parse(require('node:fs').readFileSync(path.join(__dirname,'../release.json'),'utf8')); } catch { release={enabled:false}; }

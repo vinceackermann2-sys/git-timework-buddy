@@ -6,6 +6,8 @@
 .timewarp-model-trigger:hover, .timewarp-model-trigger[aria-expanded=true] { background: var(--color-accent); }
 .timewarp-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .timewarp-model-effort { color: var(--color-muted-foreground); white-space: nowrap; }
+.timewarp-model-speed { color: var(--color-muted-foreground); white-space: nowrap; font-size: 11px; }
+.timewarp-model-speed::before { content: '·'; margin-right: 5px; }
 .timewarp-model-trigger svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--color-muted-foreground); }
 .timewarp-picker-panel {
   width: 320px; max-width: calc(100vw - 24px); padding: 0; overflow: hidden;
@@ -25,14 +27,30 @@
 .timewarp-thinking-reset { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; background: transparent; border: 0; border-radius: 5px; color: var(--color-muted-foreground); cursor: pointer; }
 .timewarp-thinking-reset:hover:not(:disabled) { background: var(--color-accent); color: var(--color-foreground); }
 .timewarp-thinking-reset:disabled { opacity: .4; cursor: default; }
-.timewarp-thinking-slider { position: relative; height: 30px; border-radius: 999px; background: linear-gradient(to right, var(--color-primary) var(--tw-progress), color-mix(in srgb, var(--color-muted-foreground) 18%, var(--color-background)) var(--tw-progress)); }
-.timewarp-thinking-slider input { position: relative; z-index: 1; display: block; appearance: none; width: 100%; height: 30px; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; }
+.timewarp-thinking-slider { position: relative; height: 30px; border-radius: 999px; background: color-mix(in srgb, var(--color-muted-foreground) 18%, var(--color-background)); }
+.timewarp-thinking-track { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; }
+.timewarp-thinking-fill, .timewarp-thinking-thumb { position: absolute; inset: 0 17px; pointer-events: none; transform: translateX(var(--tw-progress)); transition: transform 240ms cubic-bezier(.22, 1, .36, 1); }
+.timewarp-thinking-fill::before { content: ''; position: absolute; right: 100%; height: 100%; width: calc(100% + 17px); border-radius: 999px; background: var(--color-primary); }
+.timewarp-thinking-thumb { z-index: 1; }
+.timewarp-thinking-thumb::after { content: ''; position: absolute; left: 0; top: -2px; transform: translateX(-50%); width: 34px; height: 34px; border: 1px solid #00000018; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px #00000026; }
+.timewarp-thinking-slider[data-dragging=true] .timewarp-thinking-thumb, .timewarp-thinking-slider[data-dragging=true] .timewarp-thinking-fill { transition: none; }
+.timewarp-thinking-slider input { position: relative; z-index: 2; display: block; appearance: none; width: 100%; height: 30px; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: grab; touch-action: none; }
+.timewarp-thinking-slider input:active { cursor: grabbing; }
 .timewarp-thinking-slider input::-webkit-slider-runnable-track { height: 30px; background: transparent; border-radius: 999px; }
-.timewarp-thinking-slider input::-webkit-slider-thumb { appearance: none; width: 34px; height: 34px; margin-top: -2px; border: 1px solid #00000018; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px #00000026; }
+.timewarp-thinking-slider input::-webkit-slider-thumb { appearance: none; width: 34px; height: 34px; margin-top: -2px; background: transparent; }
 .timewarp-thinking-slider input:disabled { cursor: default; opacity: .5; }
 .timewarp-thinking-dots { position: absolute; inset: 0 17px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
 .timewarp-thinking-dots span { width: 5px; height: 5px; border-radius: 50%; background: color-mix(in srgb, var(--color-muted-foreground) 50%, transparent); }
 .timewarp-thinking-dots span[data-filled=true] { background: color-mix(in srgb, var(--color-primary-foreground) 40%, transparent); }
+.timewarp-thinking-endpoints { display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px; color: var(--color-muted-foreground); }
+.timewarp-speed { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.timewarp-speed-label { font-size: 12px; margin-bottom: 8px; }
+.timewarp-speed-options { display: flex; flex-wrap: wrap; gap: 4px; }
+.timewarp-speed-options button { flex: 1; padding: 6px 9px; border: 1px solid var(--color-border); border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+.timewarp-speed-options button[aria-pressed=true] { border-color: var(--color-primary); background: var(--color-primary); color: var(--color-primary-foreground); }
+.timewarp-speed-options button:disabled { opacity: .5; cursor: default; }
+.timewarp-speed-description { margin: 8px 0 0; min-height: 16px; color: var(--color-muted-foreground); font-size: 11px; line-height: 16px; }
+@media (prefers-reduced-motion: reduce) { .timewarp-thinking-thumb, .timewarp-thinking-fill { transition: none; } }
 .timewarp-model-list-title { padding: 12px 12px 7px; color: var(--color-muted-foreground); font-size: 13px; }
 .timewarp-model-list-heading { display: flex; flex-direction: column; gap: 2px; padding: 7px 12px 10px; }
 .timewarp-model-list-heading span + span { color: var(--color-muted-foreground); font-size: 12px; }

@@ -11,6 +11,8 @@ const { patchOrganizations } = require("./organizations.cjs");
 const { patchModelPicker, patchReasoningSchema } = require("./model-picker.cjs");
 const { patchWorkspacePane } = require("./workspace-pane.cjs");
 const { patchBrowserCursor, patchBrowserCursorActivity } = require("./browser-cursor.cjs");
+const { patchHarnessPath, patchBrowserInstructions, patchHarnessPolicy } = require("./harness.cjs");
+const { patchTaskActivity } = require("./task-activity.cjs");
 const { patchLegacyOnboarding,patchOnboardingPrompts,patchCursorImports } = require("./onboarding.cjs");
 const root = path.resolve(__dirname, "..");
 const energy = path.resolve(root, "../energy-testv1");
@@ -84,6 +86,9 @@ async function build() {
   let main = fs.readFileSync(mainFile, "utf8");
   main = patchReasoningSchema(main);
   main = patchBrowserCursorActivity(main);
+  main = patchHarnessPath(main);
+  main = patchBrowserInstructions(main);
+  main = patchHarnessPolicy(main);
   // Stop the inherited service resetting the Timewarp feed and update policy.
   for(const method of ['start','configure','useFeed']) main=replaceMethodBody(main,'BRe',method,'{}');
   for(const method of ['checkCurrentFeed','requestInstall']) main=replaceMethodBody(main,'BRe',method,'{return Promise.resolve({ok:false,error:"Timewarp updates use the verified release feed.",data:this.state})}');
@@ -98,7 +103,7 @@ async function build() {
   main = replaceOnce(main, 'async function pp(t,e,n,r){return Lp+', 'async function pp(t,e,n,r){e=require("./timewarp/shared/vault.cjs").sanitizeCard(r,e);return Lp+', "card persistence");
   main = replaceOnce(main, 'm=new Jre(t,{browserBaseUrl:t,deviceId:u},B.net.fetch,p),f=', 'm=require("./timewarp/desktop/runtime.cjs").bindNativeAccount(new Jre(t,{browserBaseUrl:t,deviceId:u},B.net.fetch,p)),f=', "desktop account session");
   main = replaceOnce(main,'f=new tSe(l.codexHome,B.safeStorage,m);await f.prepare();','f=null;','replace legacy ChatGPT credential handoff');
-  main = replaceOnce(main,'P=new S9(R);return','P=require("./timewarp/desktop/runtime.cjs").bindCodexClient(new S9(R));return','Codex subscription provider and built-in login');
+  main = replaceOnce(main,'P=new S9(R);return','P=require("./timewarp/desktop/runtime.cjs").bindCodexClient(require("./timewarp/desktop/harness-instructions.cjs").bindHarnessClient(new S9(R)));return','Codex subscription provider and built-in login');
   main = replaceOnce(main,'GK=t=>[["model_provider",So]','GK=t=>[["model_provider","openai"],...require("./timewarp/shared/codex-catalog.cjs").nativeCatalogConfig(t)','native Codex model catalog default');
   main = replaceOnce(main,'if(r.method==="thread/context/read"){const s=this.getAgentRole','if(r.method==="thread/context/read"){if(require("./timewarp/desktop/runtime.cjs").chatgpt.isVerificationThread(r.params.threadId)){this.client.respond(r.id,{context:{}});return}const s=this.getAgentRole','minimal context for the read-only Codex connection test');
   main = main.replaceAll('allows_optional_chatgpt_auth`,!0','allows_optional_chatgpt_auth`,!1');
@@ -156,6 +161,7 @@ async function build() {
     let source = rebrandJavaScript(fs.readFileSync(targetFile, "utf8"));
     if (file === (macBuild ? inputs.lock.rendererIndex : "index-C6BbfH_v.js")) source = patchReasoningSchema(patchSmoothBackdrop(patchRendererPalette(patchAppearanceDefaults(rebrandAssistantLogo(source, fs.readFileSync(brandSource, "utf8"))))));
     if (file === (macBuild ? inputs.lock.rendererUi : "mermaid-GHXKKRXX-YWFhvrpV.js")) {
+      source=patchTaskActivity(source);
       source=patchAgentCreation(patchConnectorRouting(source));
       source=patchLegacyOnboarding(source);
       source=replaceFunctionBody(source,'const r=ja(),s=M0(),i={open:t,onOpenChange:e,conversationId:n}', '{return h.jsx(_4e,{open:t,onOpenChange:e,conversationId:n,diagnostics:null})}');
@@ -169,10 +175,9 @@ async function build() {
       source = patchBrowserCursor(source);
       source = patchOrganizations(patchSidebarAccount(patchSmoothThemePicker(patchAppChrome(source))));
       for(const [index,url]of oldMascots.entries())source=source.replaceAll(url,'http://127.0.0.1:7788/mascots/'+['orbit','nova'][index]+'.png');
-      source=replaceOnce(source,'a=i==="account"||i==="local"&&e,o=', 'a=(i==="account"||i==="local"&&e)&&/^product\\.(?:organizations\\.|profile\\.update$|images\\.beginUpload$|usage\\.(?:energy|chatgpt)$|chatgpt\\.(?:connection|disconnect)$|integrations\\.(?:list|beginConnect|completeConnect|connectWithCredential|disconnect|remove|getAccess|setAccess)$|feedback\\.submit$|surveys\\.list$)/.test(r.path),o=', "cloud account routes only");
+      source=replaceOnce(source,'a=i==="account"||i==="local"&&e,o=', 'a=(i==="account"||i==="local"&&e)&&/^product\\.(?:organizations\\.|profile\\.update$|images\\.beginUpload$|usage\\.(?:energy|chatgpt)$|chatgpt\\.(?:connection|disconnect)$|integrations\\.(?:list|beginConnect|completeConnect|connectWithCredential|disconnect|remove|getAccess|setAccess|mcps\\.list)$|feedback\\.submit$|surveys\\.list$)/.test(r.path),o=', "cloud account routes only");
       source=replaceFunctionBody(source,'const t=ku(),{retrySession:e,session:n}=bn(),r=_p(),s=le.useUtils(),i=!!n?.activeOrganization,a=le.product.billing.overview', '{return h.jsx("div",{className:"min-h-0 flex-1 overflow-auto bg-background",ref:node=>{if(node)window.timewarpMountBilling?.(node)}})}');
       source=replaceOnce(source,'nU=async(t,e)=>{const n=await e();if(!n)throw new Error("Picture uploads are unavailable.");const r=new FormData;if(r.set("file",t),!(await fetch(n.uploadUrl,{method:"POST",body:r})).ok)', 'nU=async(t,e)=>{const n=await e();if(!n)throw new Error("Picture uploads are unavailable.");if(t.size>5242880||!["image/png","image/jpeg","image/webp"].includes(t.type))throw new Error("Choose a PNG, JPEG or WebP picture smaller than 5 MB.");if(!(await fetch(n.uploadUrl,{method:"PUT",headers:{"content-type":t.type},body:t})).ok)', 'signed profile picture upload');
-      source=replaceOnce(source,'["Inviting people to ",n.name," gives access to shared credits.",v&&', '["Manage "+n.name+" members. Chats and AI credits stay personal.",v&&', 'organization introduction');
       source=replaceOnce(source,'title:"Connect your browser",subtitle:"Use your signed-in websites",action:"Connect"', 'title:"Browser profiles",subtitle:"Manage profiles on this device",action:"Manage"', 'local browser suggestion');
       source=replaceOnce(source,'return e?h.jsxs(Jte,{children:[k.length>0?h.jsx(s1t,', 'return e?h.jsxs(Jte,{children:[h.jsx("p",{className:"px-4 text-sm text-muted-foreground",children:"Browser profiles, cookies, passwords and browser actions stay on this device. The local harness uses the cloud model."}),k.length>0?h.jsx(s1t,', 'local browser data boundary');
       source=source.replace('Disables background conversation, workspace, and debug-trace uploads from this device. Browser profiles and tabs are still shared with cloud tasks. Diagnostic error reports are still sent.', 'Pauses cloud chat-history synchronization. Your model requests still use the cloud. Files, memory, browser profiles, cookies and the vault stay on this device.');
@@ -198,6 +203,8 @@ async function build() {
   fs.copyFileSync(path.join(root,"desktop/onboarding-ui.js"),path.join(renderer,"timewarp-onboarding.js"));
   fs.copyFileSync(path.join(root,"desktop/onboarding.css"),path.join(renderer,"timewarp-onboarding.css"));
   const htmlFile = path.join(renderer, "index.html");
+  fs.copyFileSync(path.join(root,'desktop/task-activity.css'),path.join(renderer,'timewarp-task-activity.css'));
+  fs.writeFileSync(htmlFile,fs.readFileSync(htmlFile,'utf8').replace('</head>','<link rel="stylesheet" href="./timewarp-task-activity.css"></head>'));
   fs.writeFileSync(htmlFile, fs.readFileSync(htmlFile,"utf8").replace("</head>", '<link rel="stylesheet" href="./timewarp-onboarding.css"><script src="./timewarp-onboarding.js" defer></script></head>'));
   fs.writeFileSync(htmlFile, fs.readFileSync(htmlFile, "utf8").replace("</head>", '<link rel="stylesheet" href="./timewarp-model-picker.css"></head>'));
   fs.writeFileSync(htmlFile, fs.readFileSync(htmlFile, "utf8").replace("</head>", '<link rel="stylesheet" href="./timewarp-workspace.css"></head>'));
@@ -208,7 +215,7 @@ async function build() {
   const visit = (directory) => { for (const entry of fs.readdirSync(directory, { withFileTypes: true })) { const file = path.join(directory, entry.name); if (entry.isDirectory()) visit(file); else if (entry.name === "index.js" && file.includes(`${path.sep}preload${path.sep}`)) preloads.push(file); } };
   visit(path.join(tree, "out"));
   if (!preloads.length) throw new Error("Desktop preload not found.");
-  for (const file of preloads) fs.appendFileSync(file, '\nrequire("electron").contextBridge.exposeInMainWorld("timewarp",{request:(action,input)=>require("electron").ipcRenderer.invoke("timewarp:request",action,input)});\n');
+  for (const file of preloads) fs.appendFileSync(file, '\nrequire("electron").contextBridge.exposeInMainWorld("timewarp",{request:(action,input)=>require("electron").ipcRenderer.invoke("timewarp:request",action,input),onExecutionChanged:callback=>{const ipc=require("electron").ipcRenderer,listener=()=>callback();ipc.on("timewarp:executionChanged",listener);return()=>ipc.removeListener("timewarp:executionChanged",listener)}});\n');
   // File-backed app resources and PE integrity remain verifiable after packing.
   const stagedAsar = path.join(root, macBuild ? 'build/timewarp-mac-app.asar' : "build/timewarp-app.asar");
   const stagedExe = path.join(root, "build/Timewarp.exe");

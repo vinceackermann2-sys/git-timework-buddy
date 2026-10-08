@@ -22,7 +22,8 @@ if (!process.versions.electron) {
     assert.ok(fs.existsSync(launcher), 'The packaged harness browser launcher is present.');
     const skill = fs.readFileSync(path.join(resources, 'packages/codex-marketplaces/defaults/plugins/energy-defaults/skills/browser-use/SKILL.md'), 'utf8');
     assert.match(skill, /browser \[--profile <id>\] <command>/, 'The browser-use skill is packaged for agents.');
-    fs.copyFileSync(launcher, path.join(directory, path.basename(launcher)));
+    const launcherDirectory = require('../desktop/harness-path.cjs').prepareHarnessPath(path.join(resources,'openai-codex'),path.join(directory,'harness-home'));
+    fs.writeFileSync(path.join(directory,'launcher.json'),JSON.stringify({launcherDirectory}));
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
     const logPath = path.join(directory, 'acceptance.log'), log = fs.openSync(logPath, 'w');
     const child = cp.spawn(require('electron'), [__filename, '--fixture', directory], {
@@ -105,7 +106,9 @@ if (!process.versions.electron) {
           sessionKey: connection.sessionKey, tabId: connection.tabId, ...options
         }), trace, () => {}, async () => ownerId, async () => null);
       gateway = await Gke({ browser: { run: runner } });
-      const env = { ...process.env, ...gateway.browser.env, PATH: directory + path.delimiter + (process.env.PATH || ''), CODEX_THREAD_ID: threadId, CODEX_TURN_ID: turnId };
+      const { launcherDirectory } = JSON.parse(fs.readFileSync(path.join(directory,'launcher.json'),'utf8'));
+      const env = { ...process.env, ...gateway.browser.env, PATH: launcherDirectory + path.delimiter + (process.env.PATH || ''), CODEX_THREAD_ID: threadId, CODEX_TURN_ID: turnId };
+      pass('launcherUsesPreparedHarnessPath',process.platform!=='win32'||launcherDirectory.startsWith(path.join(directory,'harness-home')+path.sep));
       const command = argv => new Promise((resolve, reject) => {
         const child = cp.spawn(process.platform === 'win32' ? 'browser.exe' : 'browser', argv, {
           cwd: directory, env: { ...env, CODEX_TOOL_CALL_ID: crypto.randomUUID() },
@@ -128,10 +131,15 @@ if (!process.versions.electron) {
       await run(['--profile', profileId, 'tab', originalTab.id]);
       await run(['wait', '--text', 'Browser ready']);
       pass('harnessReadsAppBrowser', (await run(['get', 'title'])) === 'Native browser check');
-      pass('harnessSnapshotsPage', (await run(['snapshot', '-i'])).includes('Verify browser'));
+      const snapshot=await run(['snapshot','-i']);
+      pass('harnessSnapshotsPage', snapshot.includes('Verify browser'));
       await run(['fill', 'input', 'Browser works']);
       pass('harnessTypesInPage', (await run(['get', 'value', 'input'])) === 'Browser works');
-      await run(['click', 'button']);
+      if(process.platform==='win32'){
+        const ref=snapshot.match(/button "Verify browser" \[ref=(e\d+)\]/)?.[1];assert.ok(ref,'The live browser snapshot supplies the button ref.');
+        await new Promise((resolve,reject)=>cp.execFile('powershell.exe',['-NoProfile','-Command',`browser click '@${ref}'`],{cwd:directory,env:{...env,CODEX_TOOL_CALL_ID:crypto.randomUUID()},windowsHide:true},error=>error?reject(error):resolve()));
+        pass('powerShellQuotedBrowserRefWorks',true);
+      }else await run(['click', 'button']);
       pass('harnessClicksInPage', (await run(['get', 'text', 'h1'])) === 'Clicked');
       const page = manager.runtimes.requireTab(ownerId, originalTab.id).session.getPage(originalTab.id);
       pass('appAndHarnessShareSamePage', await page.webContents.executeJavaScript('document.querySelector("h1").textContent === "Clicked"'));
