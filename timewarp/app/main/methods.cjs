@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { createFiles } = require("./files.cjs");
+const { importPasswords } = require("./vault-import.cjs");
 const MAX_ATTACHMENT = 100 * 1024 * 1024;
 const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
 const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notifications", "memory"]);
@@ -30,12 +31,28 @@ function fillSignIn(username, password) {
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Agent ownership is checked on every call by agents.get().
   const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
   return {
     "app.info": async () => ({ version, platform: process.platform, codex: client.status }),
+    // A support file with versions, states and recent app log lines; no chats,
+    // files, account details or secrets.
+    "diagnostics.export": async () => {
+      const target = await dialog.showSaveDialog({ title: "Save diagnostics", defaultPath: `timewarp-diagnostics-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (target.canceled || !target.filePath) return { saved: false };
+      fs.writeFileSync(target.filePath, JSON.stringify(await diagnostics(), null, 2));
+      return { saved: true, path: target.filePath };
+    },
+    "onboarding.restart": () => onboarding.restart(),
+    "vault.importPasswords": async () => {
+      signedIn();
+      const chosen = await dialog.showOpenDialog({ title: "Import passwords", properties: ["openFile"], filters: [{ name: "Passwords export (CSV)", extensions: ["csv"] }] });
+      if (chosen.canceled || !chosen.filePaths[0]) return { cancelled: true };
+      if (fs.statSync(chosen.filePaths[0]).size > 5 * 1024 * 1024) throw fail(413, "That file is too large to import.");
+      return importPasswords({ vault, text: fs.readFileSync(chosen.filePaths[0], "utf8") });
+    },
     "account.get": () => services.account(),
     "account.signOut": () => services.auth.signOut(),
     "history.status": () => historyStatus(),
@@ -215,6 +232,13 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     },
     "skills.setEnabled": async ({ path: file, enabled }) => { signedIn(); await client.request("skills/config/write", { path: text(file, 4000), enabled: !!enabled }); return { enabled: !!enabled }; },
     "skills.remove": async ({ name }) => { signedIn(); const result = knowledge.removeSkill(name); await client.request("skills/list", { forceReload: true }).catch(() => {}); return result; },
+    "skills.read": async ({ path: file }) => {
+      signedIn();
+      const listed = await client.request("skills/list", {});
+      const known = (listed.data || []).flatMap(entry => entry.skills || []).some(skill => skill.path === file);
+      if (!known || path.basename(String(file)) !== "SKILL.md") throw fail(404, "That skill isn't available.");
+      return { text: fs.readFileSync(file, "utf8").slice(0, 200000) };
+    },
     "skills.openFolder": async () => { signedIn(); fs.mkdirSync(knowledge.skillsRoot, { recursive: true }); const error = await shell.openPath(knowledge.skillsRoot); if (error) throw fail(500, error); return { opened: true }; },
     // MCP servers the user adds, and instructions every agent follows.
     "mcp.list": () => { signedIn(); return mcp.list(); },

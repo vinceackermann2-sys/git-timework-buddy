@@ -98,6 +98,7 @@ export function SharedInstructions() {
       <textarea className="tw-input tw-notes" style={{ minHeight: 120 }} value={text} maxLength={20000} disabled={saved === null} onChange={event => setText(event.target.value)} aria-label="Instructions for every agent" placeholder="For example: Answer in British English. Ask before sending email on my behalf." />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button type="button" className="tw-btn primary" disabled={saved === null || text === saved} onClick={() => call("instructions.save", { text }).then(value => { setSaved(value.text); setText(value.text); toast("Instructions saved."); }).catch(error => toast(error, "error"))}>Save</button>
+        {saved ? <button type="button" className="tw-btn" onClick={() => { if (window.confirm("Clear the instructions for every agent?")) call("instructions.save", { text: "" }).then(value => { setSaved(value.text); setText(value.text); toast("Instructions cleared."); }).catch(error => toast(error, "error")); }}>Clear</button> : null}
         <span className="tw-hint">Each agent's own instructions apply on top. New chats use the latest version.</span>
       </div>
     </div>

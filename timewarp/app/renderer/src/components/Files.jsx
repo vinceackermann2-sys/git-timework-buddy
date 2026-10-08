@@ -1,7 +1,7 @@
-import React, { Suspense, lazy, useEffect, useState } from "react";
+import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ExternalLink, File, FileText, Folder, FolderOpen, Image, Search, Sheet } from "lucide-react";
 import hljs from "highlight.js/lib/common";
-import { call } from "../api.js";
+import { call, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { useToast } from "./common.jsx";
 
@@ -45,6 +45,15 @@ export function Files({ agent }) {
   const [file, setFile] = useState(null);
   const toast = useToast();
   useEffect(() => { setListing(null); call("files.list", { agentId: agent.id, path: dir }).then(setListing).catch(error => toast(error, "error")); }, [agent.id, dir]);
+  // Files the agent creates or changes show up without reopening the folder.
+  const refresh = useRef(null);
+  useEvent("conversation.event", ({ method, params }) => {
+    const changed = method === "turn/completed" || (method === "item/completed" && ["fileChange", "commandExecution"].includes(params?.item?.type));
+    if (!changed) return;
+    clearTimeout(refresh.current);
+    refresh.current = setTimeout(() => call("files.list", { agentId: agent.id, path: dir }).then(setListing).catch(() => {}), 400);
+  });
+  useEffect(() => () => clearTimeout(refresh.current), []);
   useEffect(() => {
     if (!query.trim()) { setResults(null); return; }
     const timer = setTimeout(() => call("files.search", { agentId: agent.id, query }).then(setResults).catch(() => {}), 200);

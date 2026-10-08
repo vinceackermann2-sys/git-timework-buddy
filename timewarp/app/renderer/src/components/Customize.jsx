@@ -55,6 +55,12 @@ function General({ account, settings, onSetting, onAccount }) {
         <span className="tw-hint">Chat history: {history?.state === "synced" ? "synced " + new Date(history.lastSyncedAt).toLocaleTimeString() : history?.state === "paused" ? "paused by Privacy Mode" : history?.state === "error" ? "pending (" + history.message + ")" : history?.state || "…"}</span>
       </div>
       {window.tw.platform === "win32" ? <Sandbox /> : null}
+      <div className="tw-card">
+        <div className="tw-setting">
+          <div><strong>Setup</strong><span className="tw-hint">Go through the welcome steps again: your agent's name, your name, knowledge, theme and plan.</span></div>
+          <button type="button" className="tw-btn" onClick={() => { if (window.confirm("Run setup again? Your agents, chats and settings stay as they are.")) call("onboarding.restart").then(() => { location.hash = "#/"; location.reload(); }).catch(error => toast(error, "error")); }}>Run setup again</button>
+        </div>
+      </div>
     </section>
   );
 }
@@ -291,6 +297,12 @@ function About() {
         <textarea className="tw-textarea" value={text} onChange={event => setText(event.target.value)} placeholder="Tell us what happened or what could be better." />
         <span className="tw-hint">Your report, app version and platform are sent to Timewarp support.</span>
         <div><button type="button" className="tw-btn primary" disabled={busy || !text.trim()} onClick={() => { setBusy(true); call("feedback.submit", { description: text, category: "general" }).then(() => { setText(""); toast("Thanks, your feedback was sent."); }).catch(error => toast(error, "error")).finally(() => setBusy(false)); }}>Send</button></div>
+      </div>
+      <div className="tw-card">
+        <div className="tw-setting">
+          <div><strong>Diagnostics</strong><span className="tw-hint">Save a file with versions, app states and recent app messages to share with support. It contains no chats, files or account details.</span></div>
+          <button type="button" className="tw-btn" onClick={() => call("diagnostics.export").then(result => { if (result.saved) toast("Diagnostics saved."); }).catch(error => toast(error, "error"))}>Save diagnostics…</button>
+        </div>
       </div>
     </section>
   );

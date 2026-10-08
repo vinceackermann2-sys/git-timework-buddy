@@ -49,6 +49,8 @@ function createOnboarding({ profile, store, services, agents, knowledge, browser
     async done() { return userId() ? (await settings.get()).onboarding.done : true; },
     // Marks setup finished for an account that doesn't need it (preview builds).
     async skip() { if (userId()) await settings.update({ onboarding: { done: true, conversationId: null } }); },
+    // Starts setup over for this account (its saved answers are cleared).
+    async restart() { if (!userId()) throw new Error("Sign in to Timewarp."); await settings.update({ onboarding: { done: false, conversationId: null } }); return { restarted: true }; },
   };
 }
 

@@ -96,9 +96,16 @@ function createVault({ store, cipher, userId }) {
     available: () => cipher.available(),
     list() { owner(); return rows().filter(mine).map(view); },
     get(id) { const entry = row(id); if (!mine(entry)) throw fail(404, "That vault item no longer exists."); return view(entry); },
-    create(input, { agentId = null } = {}) {
+    // With `dedupe` (a set of "origin\nusername" keys), an existing sign-in is
+    // left alone and null is returned.
+    create(input, { agentId = null, dedupe = null } = {}) {
       ready();
       const value = fields(input), id = crypto.randomUUID(), at = new Date().toISOString();
+      if (dedupe && value.kind === "password") {
+        const key = value.origin + "\n" + (value.username || "");
+        if (dedupe.has(key)) return null;
+        dedupe.add(key);
+      }
       store.db.prepare("insert into vault_entries(id, kind, label, origin, username, metadata, secret, created_by_agent, created_at, updated_at) values (?,?,?,?,?,?,?,?,?,?)")
         .run(id, value.kind, value.label, value.origin, value.username, JSON.stringify(value.metadata), cipher.encrypt(JSON.stringify(value.secret)), agentId, at, at);
       return view(row(id));

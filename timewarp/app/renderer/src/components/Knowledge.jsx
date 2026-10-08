@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { FolderOpen, RefreshCw } from "lucide-react";
 import { call } from "../api.js";
 import { Switch, useToast } from "./common.jsx";
+import { Markdown } from "../markdown.jsx";
 
 const SOURCES = { "codex-chatgpt": "ChatGPT / Codex", "claude-code": "Claude", cursor: "Cursor" };
 
@@ -110,13 +111,17 @@ export function Skills() {
     setState(current => ({ ...current, skills: current.skills.map(item => item.path === skill.path ? { ...item, enabled } : item) }));
     call("skills.setEnabled", { path: skill.path, enabled }).catch(error => { toast(error, "error"); void load(); });
   };
+  const [viewing, setViewing] = useState(null);
+  const view = skill => viewing?.path === skill.path ? setViewing(null) : call("skills.read", { path: skill.path }).then(value => setViewing({ path: skill.path, text: value.text })).catch(error => toast(error, "error"));
   const own = state?.skills.filter(skill => skill.scope !== "system") || [];
   const builtIn = state?.skills.filter(skill => skill.scope === "system") || [];
   const row = skill => (
-    <div key={skill.path} className="tw-rows-item">
+    <div key={skill.path} className="tw-rows-item" style={{ flexWrap: "wrap" }}>
       <div style={{ flex: 1, minWidth: 0 }}><strong>{skill.title}</strong><span className="tw-hint tw-clamp">{skill.description}</span></div>
+      <button type="button" className="tw-btn" onClick={() => view(skill)}>{viewing?.path === skill.path ? "Hide" : "View"}</button>
       {skill.removable ? <button type="button" className="tw-btn" onClick={() => { if (window.confirm(`Remove the ${skill.title} skill from Timewarp?`)) call("skills.remove", { name: skill.name }).then(() => load(true)).catch(error => toast(error, "error")); }}>Remove</button> : null}
       <Switch label={"Use " + skill.title} checked={skill.enabled} onChange={value => setEnabled(skill, value)} />
+      {viewing?.path === skill.path ? <div className="tw-skill-text"><Markdown text={viewing.text.replace(/^---\n[\s\S]*?\n---\n/, "")} /></div> : null}
     </div>
   );
   return (

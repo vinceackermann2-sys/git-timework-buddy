@@ -117,7 +117,12 @@ export function Vault({ agents, onEditAgent }) {
           </div>
         </div>
       ))}
-      {editing ? null : <div><button type="button" className="tw-btn primary" disabled={state && !state.available} onClick={() => setEditing("new")}>Add item</button></div>}
+      {editing ? null : (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" className="tw-btn primary" disabled={state && !state.available} onClick={() => setEditing("new")}>Add item</button>
+          <button type="button" className="tw-btn" disabled={state && !state.available} title="Import a passwords file (CSV) exported from your browser or password manager" onClick={() => call("vault.importPasswords").then(result => { if (result.cancelled) return; toast(`Imported ${result.imported} sign-in${result.imported === 1 ? "" : "s"}${result.duplicates ? `, ${result.duplicates} already saved` : ""}${result.skipped ? `, ${result.skipped} skipped` : ""}. Delete the exported file now; it isn't encrypted.`); void load(); }).catch(error => toast(error, "error"))}>Import passwords…</button>
+        </div>
+      )}
       <div className="tw-card">
         <h3>Agent access</h3>
         <span className="tw-hint">Agents without access can't list or use vault items.</span>

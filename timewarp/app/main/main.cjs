@@ -6,6 +6,20 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
+// Recent app log lines for the diagnostics file. The app logs its own state
+// messages only; chat content, files and secrets are never logged.
+const recentLog = [];
+for (const level of ["error", "warn"]) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    let line;
+    try { line = args.map(value => value instanceof Error ? value.message : typeof value === "string" ? value : JSON.stringify(value)).join(" "); } catch { line = String(args[0]); }
+    recentLog.push(`${new Date().toISOString()} ${level} ${line.slice(0, 500)}`);
+    if (recentLog.length > 300) recentLog.shift();
+    original(...args);
+  };
+}
+
 const appRoot = path.resolve(__dirname, "..");
 const build = (() => { try { return JSON.parse(fs.readFileSync(path.join(appRoot, "build.json"), "utf8")); } catch { return {}; } })();
 const VERSION = build.version || app.getVersion();
@@ -253,6 +267,26 @@ async function boot() {
     if (fixture && !process.env.TIMEWARP_FIXTURE_ONBOARDING) await onboarding.skip();
   }
 
+  async function diagnostics() {
+    let codexVersion = null;
+    try { codexVersion = JSON.parse(fs.readFileSync(path.join(vendor, "codex-package.json"), "utf8")).version || null; } catch {}
+    const owner = userId();
+    const sandbox = process.platform === "win32" ? await client.request("windowsSandbox/readiness", {}).catch(error => ({ error: error.message })) : null;
+    const servers = owner ? await mcp.list().catch(() => []) : [];
+    return {
+      createdAt: new Date().toISOString(),
+      app: { version: VERSION, profile: build.profile || null, appId: build.appId || null, releaseUpdates: !!build.release?.enabled, packaged: app.isPackaged },
+      runtime: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node, codex: codexVersion },
+      system: { platform: process.platform, arch: process.arch, release: require("node:os").release(), memoryGb: Math.round(require("node:os").totalmem() / 1e9) },
+      state: {
+        signedIn: !!owner, codex: client.status, history: historyStatus.state, sandbox: sandbox?.status || sandbox?.error || null,
+        agents: owner ? store.agents.list(owner).length : 0, conversations: owner ? store.conversations.list(owner).length : 0,
+        automations: owner ? store.automations.list(owner).length : 0,
+        mcpServers: servers.map(server => ({ transport: server.transport, enabled: server.enabled, tools: server.tools, failed: !!server.error })),
+      },
+      log: recentLog.slice(-200),
+    };
+  }
   const defaultAppearance = () => ({ scheme: "system", accent: defaultAccent, radiance: 0.5, texture: { type: "dots", step: 0 } });
   // Browser profile import arrives with the profile importer.
   const browserImport = { profileManager: { detect: async () => ({ profiles: [], errors: [] }) }, importProfiles: async () => { throw new Error("Browser profile import isn't available yet."); } };
@@ -260,9 +294,10 @@ async function boot() {
 
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
+  if (fixture) methods["debug.diagnostics"] = () => diagnostics();
   const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service });
   const trusted = event => event.senderFrame && event.senderFrame === event.sender.mainFrame && event.senderFrame.url.startsWith("app://app/");
   ipcMain.handle("tw:call", async (event, method, input) => {
