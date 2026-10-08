@@ -2,7 +2,7 @@
 const fail=(status,message)=>Object.assign(Error(message),{status});
 // Preserve the native tools, approvals, history and streaming. Change only the
 // provider. A selected Codex account never falls back to paid inference.
-function bindCodexFunding({client,chatgpt,funding,userId,cloudProvider='energy-llm-proxy',backgroundRole='energy-memory-writer'}){
+function bindCodexFunding({client,chatgpt,funding,userId,cloudProvider='timewarp',backgroundRole='timewarp-memory-writer'}){
   chatgpt.bindClient(client);
   const raw=client.request.bind(client),threads=new Map(),backgroundBackoff=new Map();
   const owner=()=>{const who=userId();if(!who)throw fail(401,'Sign in to Timewarp.');return who;};

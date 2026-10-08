@@ -158,7 +158,7 @@ async function boot() {
     executionNotice.unref?.();
   };
   const guard = require("../../desktop/execution-guard.cjs").bindExecutionGuard(client, { userId: () => userId(), onChange: executionChanged });
-  require("../../desktop/codex-funding.cjs").bindCodexFunding({ client, chatgpt: services.chatgpt, funding: services.funding, userId: () => userId(), cloudProvider: "timewarp", backgroundRole: "timewarp-memory-writer" });
+  require("../../desktop/codex-funding.cjs").bindCodexFunding({ client, chatgpt: services.chatgpt, funding: services.funding, userId: () => userId() });
 
   async function modelChoices() {
     await services.ready;

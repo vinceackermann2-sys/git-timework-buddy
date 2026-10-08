@@ -31,7 +31,7 @@ function fixture(saved=null){
   };
   const service=createChatgpt({storage:{load:()=>metadata,save:value=>{metadata=structuredClone(value);}},userId:()=>owner,onConnected:()=>{connected++;}});
   const funding=createAiFunding({userId:()=>owner,chatgpt:service,cloud:async()=>Response.json({plan,included:0,purchased:10})});
-  bindCodexFunding({client,chatgpt:service,funding,userId:()=>owner});
+  bindCodexFunding({client,chatgpt:service,funding,userId:()=>owner,cloudProvider:'energy-llm-proxy',backgroundRole:'energy-memory-writer'});
   async function login(){await service.startBrowserLogin();account={type:'chatgpt',email:'owner@example.test',planType:'plus'};client.emit('notification',{method:'account/login/completed',params:{loginId:'login-1',success:!loginError,error:loginError}});await tick();await tick();}
   return {service,client,funding,calls,threads,login,get metadata(){return metadata;},get connected(){return connected;},set owner(value){owner=value;},set plan(value){plan=value;},set account(value){account=value;},set completed(value){completed=value;},set loginError(value){loginError=value;},set modelPage(value){modelPage=value;}};
 }

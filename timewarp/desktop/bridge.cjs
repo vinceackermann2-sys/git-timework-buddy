@@ -2,7 +2,8 @@
 const http = require("node:http");
 const { Readable } = require("node:stream");
 const { assertCloudSafe } = require("../shared/privacy.cjs");
-const { accountBalance, billingStatus, funding, usage } = require("./account-compat.cjs");
+const { accountBalance, billingStatus, funding } = require("./account-compat.cjs");
+const { usage } = require("./inherited-usage.cjs");
 const { body, raw } = require("./bridge-body.cjs");
 // Matches the cloud's 8 MB audio limit plus multipart framing.
 const MAX_AUDIO_UPLOAD = 8 * 1024 * 1024 + 64 * 1024;

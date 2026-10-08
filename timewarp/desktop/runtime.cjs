@@ -83,7 +83,7 @@ async function openConnectorBrowser(sender,url,serverName){
     return {ownerId};
   }catch(error){await closeConnectorBrowser(ownerId).catch(()=>{});throw error;}
 }
-function bindCodexClient(client){executionGuard?.stop();executionGuard=require('./execution-guard.cjs').bindExecutionGuard(client,{userId:()=>auth.userId(),onChange:executionChanged});return require('./codex-funding.cjs').bindCodexFunding({client,chatgpt,funding:aiFunding,userId:()=>auth.userId()});}
+function bindCodexClient(client){executionGuard?.stop();executionGuard=require('./execution-guard.cjs').bindExecutionGuard(client,{userId:()=>auth.userId(),onChange:executionChanged});return require('./codex-funding.cjs').bindCodexFunding({client,chatgpt,funding:aiFunding,userId:()=>auth.userId(),cloudProvider:'energy-llm-proxy',backgroundRole:'energy-memory-writer'});}
 async function registerTools(force=false){
   if(!toolRuntime||!auth.userId())return;
   if(toolsRegistered&&!force)return;

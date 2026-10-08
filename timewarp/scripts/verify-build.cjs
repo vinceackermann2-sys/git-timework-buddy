@@ -72,7 +72,7 @@ async function verify() {
   for(const name of ['orbit','nova','cosmo'])assert.ok(asar.extractFile(archive,('out/main/timewarp/assets/mascots/'+name+'.png').split('/').join(path.sep)).length>100000);
   assert.ok(read('out/main/timewarp/desktop/runtime.cjs').includes("require('./updates.cjs').configureUpdates"));
   assert.equal(read('out/main/timewarp/desktop/updates.cjs'),fs.readFileSync(path.join(root,'desktop/updates.cjs'),'utf8'));
-  const release = require('../shared/release.cjs').validateRelease(JSON.parse(read('out/main/timewarp/release.json')));
+  const release = require('./release-config.cjs').checkRelease(JSON.parse(read('out/main/timewarp/release.json')));
   if(release.enabled){const feed=require('js-yaml').load(fs.readFileSync(path.join(native,'resources/app-update.yml'),'utf8'));assert.equal(feed.url,release.updateUrl);assert.deepEqual(feed.publisherName,release.publisherNames);}
   if(!release.enabled&&!archiveOnly)assert.ok(!fs.existsSync(path.join(native,mac?'Resources/app-update.yml':'resources/app-update.yml')),'Package never inherits an Energy update feed');
   const config = JSON.parse(read('out/main/timewarp/config.json'));

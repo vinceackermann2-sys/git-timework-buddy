@@ -19,7 +19,7 @@ const runtimeDir = path.resolve(root, "../timewarp-runtime");
 const tree = path.join(root, "build/app");
 const config = require("../config.json");
 const { verifyUpstream, copyRuntime } = require('./upstream.cjs');
-const { validateRelease } = require('../shared/release.cjs');
+const { checkRelease: validateRelease } = require('./release-config.cjs');
 const storeBuild = process.argv.includes('--store');
 const macBuild = process.argv.includes('--mac');
 const macRelease = macBuild && process.env.TIMEWARP_MAC_RELEASE === '1';

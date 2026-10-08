@@ -52,7 +52,7 @@ async function build() {
   // Release builds carry the release version and update feed; the updater
   // refuses a packaged app whose version or feed doesn't match.
   const releaseFile = process.env.TIMEWARP_RELEASE_CONFIG || path.join(root, "release.json");
-  const releaseConfig = release && fs.existsSync(releaseFile) ? require("../shared/release.cjs").validateRelease(JSON.parse(fs.readFileSync(releaseFile, "utf8"))) : { enabled: false };
+  const releaseConfig = release && fs.existsSync(releaseFile) ? require("./release-config.cjs").readRelease(releaseFile) : { enabled: false };
   const version = releaseConfig.enabled ? releaseConfig.version : require("../package.json").version;
   clean(out);
   fs.mkdirSync(out, { recursive: true });
@@ -93,6 +93,9 @@ async function build() {
     version, ...identity, release: releaseConfig, ...(fixture ? { fixture: true } : {}),
   }, null, 2));
   const sections = notices([main.metafile, renderer.metafile]);
+  // Every source file that went into the bundles, for the independence audit.
+  const inputs = [...new Set([...Object.keys(main.metafile.inputs), ...Object.keys(renderer.metafile.inputs)])].sort();
+  fs.writeFileSync(path.join(root, "build", "engine", "inputs.json"), JSON.stringify(inputs, null, 1));
   fs.writeFileSync(path.join(out, "THIRD_PARTY_NOTICES.txt"), `Timewarp desktop includes the following open-source software.\n\n${sections.join("\n\n\n")}\n`);
   const size = file => (fs.statSync(path.join(out, file)).size / 1024).toFixed(0) + " KB";
   console.log(`Timewarp ${version} built at ${out} (main ${size("main/main.cjs")}, interface ${size("renderer/app.js")}, ${sections.length} open-source notices).`);

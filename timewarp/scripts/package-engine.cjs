@@ -40,9 +40,9 @@ function codexRuntime(destination) {
 
 async function main() {
   if (process.platform !== "win32") throw new Error("Windows packaging runs on Windows.");
-  const { validateRelease } = require("../shared/release.cjs");
+  const { checkRelease } = require("./release-config.cjs");
   const releaseFile = process.env.TIMEWARP_RELEASE_CONFIG || path.join(root, "release.json");
-  const release = draft ? { enabled: false } : validateRelease(JSON.parse(fs.readFileSync(releaseFile, "utf8")));
+  const release = draft ? { enabled: false } : checkRelease(JSON.parse(fs.readFileSync(releaseFile, "utf8")));
   if (!draft && !release.enabled) throw new Error("Public installers require an enabled release configuration.");
   if (!draft && !process.env.TIMEWARP_CERT_SHA1 && !process.env.WIN_CSC_LINK && !process.env.TIMEWARP_SIGN_SCRIPT) throw new Error("Release signing credentials/service have not been configured.");
 
@@ -53,6 +53,7 @@ async function main() {
   const manifest = JSON.parse(fs.readFileSync(path.join(app, "package.json"), "utf8"));
   const buildInfo = JSON.parse(fs.readFileSync(path.join(app, "build.json"), "utf8"));
   if (buildInfo.fixture) throw new Error("Preview builds can't be packaged.");
+  cp.execFileSync(process.execPath, [path.join(__dirname, "audit-engine.cjs")], { stdio: "inherit", windowsHide: true });
 
   // 2. Stage: Electron core files, the archive, Timewarp.exe and Codex.
   clean(stage);
