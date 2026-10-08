@@ -123,6 +123,7 @@ function createFixture() {
     if (route === "/billing/history") return json({ events: [{ id: "e1", kind: "usage", description: "AI usage", credits: -3.2, createdAt: new Date(Date.now() - 3600000).toISOString() }, { id: "e2", kind: "purchase", description: "Extra credits", credits: 20, createdAt: new Date(Date.now() - 86400000).toISOString() }] });
     if (route === "/history") return json(payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
     if (route === "/native/rpc") return json(rpc(payload.rpc, payload.input || {}));
+    if (route === "/v1/transcriptions") return json({ text: `Preview dictation (${payload?.length || 0} bytes of audio).` });
     if (route === "/connectors") return json(payload?.action === "catalog" ? { apps: [] } : { ok: true });
     return json({ error: "Unavailable in preview mode." }, 404);
   }

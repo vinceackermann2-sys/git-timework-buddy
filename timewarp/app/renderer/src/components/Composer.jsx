@@ -1,7 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Check, ChevronDown, Paperclip, Square, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, LoaderCircle, Mic, Paperclip, Square, X } from "lucide-react";
 import { call } from "../api.js";
 import { Menu, useToast } from "./common.jsx";
+import { useDictation } from "../dictation.js";
 
 const EFFORT_LABELS = { minimal: "Minimal", low: "Fast", medium: "Balanced", high: "Detailed", xhigh: "Extra detailed" };
 
@@ -65,6 +66,11 @@ export function Composer({ disabled, running, models, onModel, onSend, onStop, p
     } catch (error) { toast(error, "error"); }
     finally { setSending(false); area.current?.focus(); }
   }
+  const dictation = useDictation({
+    onText: spoken => { setText(current => (current.trim() ? current.replace(/\s*$/, " ") : "") + spoken); area.current?.focus(); },
+    onError: error => toast(error, "error"),
+  });
+  const clock = seconds => Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
   async function attach() {
     try { const files = await call("attachments.choose"); if (files.length) setImages(current => [...new Set([...current, ...files])].slice(0, 8)); }
     catch (error) { toast(error, "error"); }
@@ -82,6 +88,17 @@ export function Composer({ disabled, running, models, onModel, onSend, onStop, p
           onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
         <div className="tw-composer-row">
           <button type="button" className="tw-icon-button" title="Attach images" aria-label="Attach images" onClick={attach} disabled={disabled}><Paperclip size={16} /></button>
+          {dictation.status === "recording" ? (
+            <span className="tw-dictation" role="status">
+              <i aria-hidden="true" />{clock(dictation.seconds)}
+              <button type="button" className="tw-icon-button" title="Discard recording" aria-label="Discard recording" onClick={dictation.cancel}><X size={15} /></button>
+              <button type="button" className="tw-icon-button" title="Finish and transcribe" aria-label="Finish and transcribe" onClick={dictation.stop}><Check size={15} /></button>
+            </span>
+          ) : dictation.status === "transcribing" ? (
+            <span className="tw-dictation" role="status"><LoaderCircle size={14} className="tw-spin" /> Transcribing…</span>
+          ) : (
+            <button type="button" className="tw-icon-button" title="Dictate" aria-label="Dictate" onClick={() => void dictation.start()} disabled={disabled}><Mic size={16} /></button>
+          )}
           <ModelPicker models={models} onSelect={onModel} />
           <span className="grow" />
           {running

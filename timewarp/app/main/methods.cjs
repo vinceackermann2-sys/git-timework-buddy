@@ -189,6 +189,21 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "automations.remove": ({ id }) => automations.remove(id),
     "automations.run": ({ id }) => automations.runNow(id),
     "automations.runs": ({ id }) => automations.runs(id),
+    // Voice input. Audio is sent once for transcription and not stored.
+    "dictation.transcribe": async ({ audio, mimeType }) => {
+      signedIn();
+      const bytes = audio instanceof ArrayBuffer ? Buffer.from(audio) : ArrayBuffer.isView(audio) ? Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength) : null;
+      if (!bytes?.length) throw fail(400, "Nothing was recorded.");
+      if (bytes.length > 8 * 1024 * 1024) throw fail(413, "Recording is too long. Keep voice input under about 15 minutes.");
+      const type = /^audio\/(?:webm|ogg|mp4|wav)/.test(String(mimeType)) ? String(mimeType).split(";")[0] : "audio/webm";
+      const form = new FormData();
+      form.append("file", new Blob([bytes], { type }), "dictation." + type.split("/")[1]);
+      const encoded = new Response(form);
+      const response = await services.cloud("/v1/transcriptions", Buffer.from(await encoded.arrayBuffer()), "POST", encoded.headers.get("content-type"));
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok) throw fail(response.status, response.status === 402 ? "Voice input needs available credits. Add credits in Billing." : value.error?.message || (typeof value.error === "string" ? value.error : "Transcription failed. Try again."));
+      return { text: String(value.text || "").trim() };
+    },
     "onboarding.status": async () => ({ done: await onboarding.done() }),
 
     "feedback.submit": input => services.submitFeedback(input),

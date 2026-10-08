@@ -56,7 +56,7 @@ Core
 - ◐ Chat: streaming replies, reasoning, plans, commands, file changes, tool calls, web search, images, sub-agents
 - ◐ Approvals, interrupt, retry, steer
 - ◐ Model picker (Sol and Luna, or the connected Codex catalog) and reasoning effort
-- ◐ Attachments and dictation
+- ◐ Attachments (images) and dictation (recorded in the app, transcribed by Timewarp's service); macOS needs the microphone usage description when packaged
 - ☑ Cloud chat history sync and restore, Privacy Mode
 - ☑ Import of existing local data
 
