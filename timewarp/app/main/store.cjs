@@ -67,6 +67,14 @@ function openStore(file) {
     "alter table conversations add column tools_version integer not null default 0",
     "alter table conversations add column previous_thread_ids text",
   ]);
+  // Each automation run is recorded with the chat turn it started.
+  migrate(3, [
+    `create table automation_runs(
+      id text primary key, automation_id text not null references automations(id) on delete cascade,
+      conversation_id text, turn_id text, trigger text not null, status text not null, error text,
+      started_at text not null, finished_at text)`,
+    "create index automation_runs_automation on automation_runs(automation_id, started_at)",
+  ]);
   return createStore(db);
 }
 
@@ -214,6 +222,59 @@ function createStore(db) {
     all() { return Object.fromEntries(all("select key, value from settings").map(row => [row.key, parse(row.value)])); },
   };
 
+  const automationOf = row => row && {
+    id: row.id, ownerId: row.owner_id, agentId: row.agent_id, conversationId: row.conversation_id,
+    name: row.name, instructions: row.instructions, schedule: parse(row.schedule) || {}, enabled: !!row.enabled,
+    lastRunAt: row.last_run_at, nextRunAt: row.next_run_at, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+  const runOf = row => row && {
+    id: row.id, automationId: row.automation_id, conversationId: row.conversation_id, turnId: row.turn_id,
+    trigger: row.trigger, status: row.status, error: row.error, startedAt: row.started_at, finishedAt: row.finished_at,
+  };
+  const automations = {
+    get: id => automationOf(one("select * from automations where id = ? and deleted_at is null", id)),
+    list: ownerId => all("select * from automations where owner_id = ? and deleted_at is null order by created_at", ownerId).map(automationOf),
+    due: (ownerId, at) => all("select * from automations where owner_id = ? and deleted_at is null and enabled = 1 and next_run_at is not null and next_run_at <= ? order by next_run_at", ownerId, at).map(automationOf),
+    create(input) {
+      const at = now(), id = input.id || crypto.randomUUID();
+      run(`insert into automations(id, owner_id, agent_id, conversation_id, name, instructions, schedule, enabled, last_run_at, next_run_at, created_at, updated_at)
+        values (?,?,?,?,?,?,?,?,?,?,?,?)`, id, input.ownerId, input.agentId, input.conversationId || null, input.name, input.instructions,
+      JSON.stringify(input.schedule || {}), input.enabled === false ? 0 : 1, input.lastRunAt || null, input.nextRunAt || null, input.createdAt || at, at);
+      changed("automation", id);
+      return automations.get(id);
+    },
+    update(id, patch) {
+      const current = automations.get(id);
+      if (!current) throw Object.assign(new Error("Automation not found."), { status: 404 });
+      const next = { ...current, ...patch };
+      run(`update automations set agent_id = ?, conversation_id = ?, name = ?, instructions = ?, schedule = ?, enabled = ?, last_run_at = ?, next_run_at = ?, updated_at = ? where id = ?`,
+        next.agentId, next.conversationId, next.name, next.instructions, JSON.stringify(next.schedule || {}), next.enabled ? 1 : 0, next.lastRunAt, next.nextRunAt, now(), id);
+      changed("automation", id);
+      return automations.get(id);
+    },
+    remove(id) { run("update automations set deleted_at = ?, enabled = 0 where id = ?", now(), id); changed("automation", id, { removed: true }); },
+    runs: {
+      list: (automationId, limit = 30) => all("select * from automation_runs where automation_id = ? order by started_at desc limit ?", automationId, limit).map(runOf),
+      byTurn: turnId => runOf(one("select * from automation_runs where turn_id = ? order by started_at desc limit 1", turnId)),
+      create(input) {
+        const id = input.id || crypto.randomUUID();
+        run(`insert into automation_runs(id, automation_id, conversation_id, turn_id, trigger, status, error, started_at, finished_at) values (?,?,?,?,?,?,?,?,?)`,
+          id, input.automationId, input.conversationId || null, input.turnId || null, input.trigger, input.status, input.error || null, input.startedAt || now(), input.finishedAt || null);
+        run(`delete from automation_runs where automation_id = ? and id not in (select id from automation_runs where automation_id = ? order by started_at desc limit 100)`, input.automationId, input.automationId);
+        changed("automation", input.automationId, { run: id });
+        return runOf(one("select * from automation_runs where id = ?", id));
+      },
+      update(id, patch) {
+        const current = runOf(one("select * from automation_runs where id = ?", id));
+        if (!current) return null;
+        const next = { ...current, ...patch };
+        run("update automation_runs set turn_id = ?, status = ?, error = ?, finished_at = ? where id = ?", next.turnId, next.status, next.error, next.finishedAt, id);
+        changed("automation", current.automationId, { run: id });
+        return runOf(one("select * from automation_runs where id = ?", id));
+      },
+    },
+  };
+
   const browserProfiles = {
     list: () => all("select * from browser_profiles where deleted_at is null order by is_default desc, created_at").map(row => ({ id: row.id, label: row.label, source: parse(row.source) || { type: "timewarp" }, isDefault: !!row.is_default, createdAt: row.created_at })),
     create({ id = crypto.randomUUID(), label, source = { type: "timewarp" }, isDefault = false }) {
@@ -240,7 +301,7 @@ function createStore(db) {
   };
 
   return {
-    db, events, transaction, agents, conversations, messages, settings, browserProfiles, recentSites,
+    db, events, transaction, agents, conversations, messages, settings, automations, browserProfiles, recentSites,
     on: (name, fn) => events.on(name, fn), off: (name, fn) => events.off(name, fn),
     close: () => db.close(),
   };

@@ -8,7 +8,7 @@ const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notificat
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Agent ownership is checked on every call by agents.get().
   const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
@@ -183,6 +183,12 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "skills.setEnabled": async ({ path: file, enabled }) => { signedIn(); await client.request("skills/config/write", { path: text(file, 4000), enabled: !!enabled }); return { enabled: !!enabled }; },
     "skills.remove": async ({ name }) => { signedIn(); const result = knowledge.removeSkill(name); await client.request("skills/list", { forceReload: true }).catch(() => {}); return result; },
     "skills.openFolder": async () => { signedIn(); fs.mkdirSync(knowledge.skillsRoot, { recursive: true }); const error = await shell.openPath(knowledge.skillsRoot); if (error) throw fail(500, error); return { opened: true }; },
+    "automations.list": () => automations.list(),
+    "automations.create": input => automations.create(input),
+    "automations.update": ({ id, ...patch }) => automations.update(id, patch),
+    "automations.remove": ({ id }) => automations.remove(id),
+    "automations.run": ({ id }) => automations.runNow(id),
+    "automations.runs": ({ id }) => automations.runs(id),
     "onboarding.status": async () => ({ done: await onboarding.done() }),
 
     "feedback.submit": input => services.submitFeedback(input),

@@ -18,7 +18,9 @@ function legacyProfile(root) {
   db.exec(`create table agents(id text primary key, displayName text not null, avatarUrl text, avatarType text, organizationId text, ownerUserId text not null, mainConversationId text, repositoryPath text not null, starredAt text, sidebarSortKey text, createdAt text not null, updatedAt text not null, deletedAt text);
     create table conversations(id text primary key, title text, sourceMessageId text, createdAt text not null, updatedAt text not null, createdByEntityId text, summary text, lastActivityAt text not null default '', modelSettings text, kind text not null default 'dm');
     create table conversation_members(conversationId text not null, entityId text not null, codexThreadId text, archivedAt text, read integer not null default 1, browserProfileId text, runtimeTargetId text, lastSyncedEntrySequence integer not null default 0, primary key(conversationId, entityId));
-    create table conversation_entries(internalId integer primary key, id text not null unique, searchText text not null default '', conversationId text not null, sequence integer not null, createdAt text not null, kind text not null, authorId text, parts text, suggestedReplies text, replyToMessageId text, forwardedFromMessageId text, codexTurnId text, deliveryStatus text);`);
+    create table conversation_entries(internalId integer primary key, id text not null unique, searchText text not null default '', conversationId text not null, sequence integer not null, createdAt text not null, kind text not null, authorId text, parts text, suggestedReplies text, replyToMessageId text, forwardedFromMessageId text, codexTurnId text, deliveryStatus text);
+    create table automations(id text primary key, agentId text not null, conversationId text not null, name text not null, instructions text not null, triggers text not null, enabled integer not null, version integer not null, createdAt text not null, updatedAt text not null, deletedAt text);`);
+  db.prepare("insert into automations values (?,?,?,?,?,?,?,?,?,?,?)").run("auto-1", "agent-1", "chat-1", "Daily digest", "Summarize the news.", "[]", 1, 1, "2026-01-04T00:00:00.000Z", "2026-01-04T00:00:00.000Z", null);
   db.prepare("insert into agents values (?,?,?,?,?,?,?,?,?,?,?,?,?)").run("agent-1", "Orbit", "http://127.0.0.1:7788/mascots/orbit.png", "native", null, "user-1", null, path.join(runtime, "agents", "orbit-agent-1"), null, null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", null);
   db.prepare("insert into conversations values (?,?,?,?,?,?,?,?,?,?)").run("chat-1", "Trip plan", null, "2026-01-02T00:00:00.000Z", "2026-01-02T00:00:00.000Z", "user-1", null, "2026-01-03T00:00:00.000Z", JSON.stringify({ name: "openai/gpt-5.6-sol" }), "dm");
   db.prepare("insert into conversation_members(conversationId, entityId, codexThreadId, archivedAt, read) values (?,?,?,?,?)").run("chat-1", "user-1", null, null, 0);
@@ -38,7 +40,9 @@ test("a 1.x profile imports agents, chats, messages and settings once, leaving t
   const before = fs.readFileSync(path.join(runtime, "entities.sqlite"));
   const store = openStore(path.join(root, "timewarp.sqlite"));
   t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
-  assert.deepEqual(importLegacyProfile({ store, runtimeDir: runtime }), { agents: 1, conversations: 1, messages: 2, settings: 2 });
+  assert.deepEqual(importLegacyProfile({ store, runtimeDir: runtime }), { agents: 1, conversations: 1, messages: 2, automations: 1, settings: 2 });
+  const automation = store.automations.get("auto-1");
+  assert.deepEqual([automation.ownerId, automation.conversationId, automation.instructions, automation.enabled], ["user-1", "chat-1", "Summarize the news.", false], "Automations come over paused");
   const agent = store.agents.get("agent-1");
   assert.equal(agent.name, "Orbit");
   assert.equal(agent.workspace, path.join(runtime, "agents", "orbit-agent-1"));

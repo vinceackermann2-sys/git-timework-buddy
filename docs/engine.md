@@ -71,7 +71,7 @@ Capabilities
 - ☑ Memory: notes in `memories/user.md`, imports from ChatGPT / Codex, Claude and Cursor, on/off
 - ☑ Skills: Codex skills list, enable/disable, import, previously connected skill folders
 - ◐ Connected apps (Composio) and custom MCP servers
-- ☐ Automations
+- ☑ Automations: schedules (daily, weekdays, weekly, monthly, hourly, interval, once), run now, run history, one chat per automation
 - ◐ Settings: appearance and colors, notifications, privacy, preferences
 - ◐ Feedback and bug reports
 

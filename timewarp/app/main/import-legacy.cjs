@@ -62,6 +62,20 @@ function importLegacyProfile({ store, runtimeDir, log = () => {} }) {
           result.messages++;
         }
       });
+      // Automations come over paused with a daily schedule; their owners
+      // confirm the schedule before turning them back on.
+      if (tables.has("automations")) store.transaction(() => {
+        for (const row of legacy.prepare("select * from automations where deletedAt is null").all()) {
+          const conversation = store.conversations.get(row.conversationId);
+          if (store.automations.get(row.id) || !conversation || !store.agents.get(row.agentId)) continue;
+          store.automations.create({
+            id: row.id, ownerId: conversation.ownerId, agentId: row.agentId, conversationId: row.conversationId,
+            name: String(row.name || "Automation").slice(0, 80), instructions: row.instructions, schedule: { kind: "daily", time: "09:00" },
+            enabled: false, createdAt: row.createdAt,
+          });
+          result.automations = (result.automations || 0) + 1;
+        }
+      });
     } finally { legacy.close(); }
   }
   const settingsFile = path.join(runtimeDir, "settings.json");
