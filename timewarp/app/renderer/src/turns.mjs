@@ -115,15 +115,21 @@ export function running(items) {
 // Restored chats can have messages without a Codex transcript on this device.
 export function turnsFromMessages(messages, ownerId) {
   return messages.map(message => ({
-    id: "message-" + message.id, status: "completed", error: null,
+    id: "message-" + message.id, status: message.status === "failed" ? "failed" : "completed", error: message.status === "failed" ? { message: "This message wasn't sent." } : null,
     items: [message.authorId === ownerId
       ? { type: "userMessage", id: message.id, clientId: message.id, content: [{ type: "text", text: message.text }] }
       : { type: "agentMessage", id: message.id, text: message.text }],
   }));
 }
 
+// The message part that lists attached files (see ATTACHED in harness.cjs).
+export const ATTACHED = "[Attached files, saved in your workspace]";
 export function userText(item) {
-  return (item.content || []).filter(part => part.type === "text").map(part => part.text).join("\n");
+  return (item.content || []).filter(part => part.type === "text" && !part.text.startsWith(ATTACHED)).map(part => part.text).join("\n");
+}
+export function userFiles(item) {
+  const part = (item.content || []).find(part => part.type === "text" && part.text.startsWith(ATTACHED));
+  return part ? part.text.split("\n").slice(1).map(line => line.replace(/^- /, "")).filter(Boolean) : [];
 }
 export function userImages(item) {
   return (item.content || []).filter(part => part.type === "localImage" || part.type === "image").map(part => part.path || part.url);

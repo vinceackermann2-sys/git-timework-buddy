@@ -4,6 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { createFiles } = require("./files.cjs");
+const MAX_ATTACHMENT = 100 * 1024 * 1024;
+const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
 const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notifications", "memory"]);
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
@@ -96,10 +98,19 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "conversations.markRead": ({ id }) => { signedIn(); return harness.conversations.markRead(id); },
     "conversations.history": ({ id }) => { signedIn(); return harness.history(id); },
     "conversations.status": ({ id }) => { signedIn(); return harness.conversations.status(id); },
-    "conversations.send": ({ id, text: message, images = [], clientId }) => {
+    "conversations.send": ({ id, text: message, images = [], files = [], clientId, retryOf }) => {
       signedIn();
-      const files = (Array.isArray(images) ? images : []).filter(file => typeof file === "string" && path.isAbsolute(file) && fs.existsSync(file));
-      return harness.send(id, { text: text(message, 200000), images: files, clientId: typeof clientId === "string" ? clientId : undefined });
+      const existing = list => (Array.isArray(list) ? list : []).filter(file => typeof file === "string" && path.isAbsolute(file) && fs.existsSync(file) && fs.statSync(file).isFile()).slice(0, 10);
+      const attached = existing(files);
+      if (attached.some(file => fs.statSync(file).size > MAX_ATTACHMENT)) throw fail(413, "Attach files smaller than 100 MB.");
+      return harness.send(id, { text: text(message, 200000), images: existing(images).filter(file => IMAGE.test(file)), files: attached, clientId: typeof clientId === "string" ? clientId : undefined, retryOf: typeof retryOf === "string" ? retryOf : undefined });
+    },
+    "conversations.warm": ({ id }) => { signedIn(); return harness.warm(id); },
+    "conversations.setModel": async ({ id, name, reasoningEffort }) => {
+      signedIn();
+      const choice = (await modelChoices()).find(item => item.id === name);
+      if (!choice) throw fail(400, "This model is not available on your plan.");
+      return harness.setModel(id, { name, reasoningEffort: reasoningEffort || choice.defaultReasoningEffort || null });
     },
     "conversations.interrupt": ({ id }) => { signedIn(); return harness.interrupt(id); },
     "approvals.respond": ({ id, response }) => { signedIn(); return harness.respond(id, response); },
@@ -107,8 +118,8 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
 
     "attachments.choose": async () => {
       signedIn();
-      const result = await dialog.showOpenDialog({ title: "Attach images", properties: ["openFile", "multiSelections"], filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }] });
-      return result.canceled ? [] : result.filePaths;
+      const result = await dialog.showOpenDialog({ title: "Attach files", properties: ["openFile", "multiSelections"] });
+      return result.canceled ? [] : result.filePaths.map(file => ({ path: file, image: IMAGE.test(file), size: fs.statSync(file).size }));
     },
 
     "integrations.list": input => { signedIn(); return services.integrations.list(input); },

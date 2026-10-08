@@ -17,7 +17,7 @@ function createHistoryAdapter({ store, createAgent, settings }) {
       { entityId: conversation.ownerId, archivedAt: conversation.archivedAt, read: conversation.read },
       { entityId: conversation.agentId, archivedAt: null, read: true },
     ],
-    entries: store.messages.list(conversation.id).map(entryOf),
+    entries: store.messages.list(conversation.id).filter(message => message.status !== "replaced").map(entryOf),
   };
   const agentOf = agent => agent && { id: agent.id, ownerUserId: agent.ownerId, displayName: agent.name, deletedAt: agent.archivedAt };
   const conversations = {

@@ -4,6 +4,7 @@ import { call } from "../api.js";
 import { Menu, useToast } from "./common.jsx";
 import { useDictation } from "../dictation.js";
 
+const MAX_ATTACHMENT = 100 * 1024 * 1024;
 const EFFORT_LABELS = { minimal: "Minimal", low: "Fast", medium: "Balanced", high: "Detailed", xhigh: "Extra detailed" };
 
 export function ModelPicker({ models, onSelect }) {
@@ -43,7 +44,7 @@ export function ModelPicker({ models, onSelect }) {
 
 export function Composer({ disabled, running, models, onModel, onSend, onStop, placeholder, autoFocusKey }) {
   const [text, setText] = useState("");
-  const [images, setImages] = useState([]);
+  const [attachments, setAttachments] = useState([]);
   const [sending, setSending] = useState(false);
   const area = useRef(null);
   const toast = useToast();
@@ -54,15 +55,15 @@ export function Composer({ disabled, running, models, onModel, onSend, onStop, p
     node.style.height = Math.min(240, node.scrollHeight) + "px";
   }, [text]);
   useEffect(() => { area.current?.focus(); }, [autoFocusKey]);
-  const canSend = !disabled && !sending && !running && (text.trim() || images.length);
+  const canSend = !disabled && !sending && !running && (text.trim() || attachments.length);
   async function send() {
     if (!canSend) return;
-    const message = { text: text.trim(), images };
+    const message = { text: text.trim(), images: attachments.filter(file => file.image).map(file => file.path), files: attachments.filter(file => !file.image).map(file => file.path) };
     setSending(true);
     try {
       await onSend(message);
       setText("");
-      setImages([]);
+      setAttachments([]);
     } catch (error) { toast(error, "error"); }
     finally { setSending(false); area.current?.focus(); }
   }
@@ -72,22 +73,27 @@ export function Composer({ disabled, running, models, onModel, onSend, onStop, p
   });
   const clock = seconds => Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
   async function attach() {
-    try { const files = await call("attachments.choose"); if (files.length) setImages(current => [...new Set([...current, ...files])].slice(0, 8)); }
+    try {
+      const chosen = await call("attachments.choose");
+      if (chosen.some(file => file.size > MAX_ATTACHMENT)) toast("Files over 100 MB can't be attached.", "error");
+      const usable = chosen.filter(file => file.size <= MAX_ATTACHMENT);
+      if (usable.length) setAttachments(current => [...current, ...usable.filter(file => !current.some(item => item.path === file.path))].slice(0, 10));
+    }
     catch (error) { toast(error, "error"); }
   }
   return (
     <div className="tw-composer">
       <div className="tw-composer-box">
-        {images.length ? (
+        {attachments.length ? (
           <div className="tw-attachments">
-            {images.map(file => <span key={file} className="tw-chip" title={file}><span>{file.split(/[\\/]/).pop()}</span><button type="button" aria-label="Remove attachment" onClick={() => setImages(current => current.filter(item => item !== file))}><X size={12} /></button></span>)}
+            {attachments.map(file => <span key={file.path} className="tw-chip" title={file.path}><span>{file.path.split(/[\\/]/).pop()}</span><button type="button" aria-label="Remove attachment" onClick={() => setAttachments(current => current.filter(item => item.path !== file.path))}><X size={12} /></button></span>)}
           </div>
         ) : null}
         <textarea ref={area} rows={1} value={text} placeholder={placeholder} disabled={disabled} aria-label="Message"
           onChange={event => setText(event.target.value)}
           onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
         <div className="tw-composer-row">
-          <button type="button" className="tw-icon-button" title="Attach images" aria-label="Attach images" onClick={attach} disabled={disabled}><Paperclip size={16} /></button>
+          <button type="button" className="tw-icon-button" title="Attach files" aria-label="Attach files" onClick={attach} disabled={disabled}><Paperclip size={16} /></button>
           {dictation.status === "recording" ? (
             <span className="tw-dictation" role="status">
               <i aria-hidden="true" />{clock(dictation.seconds)}

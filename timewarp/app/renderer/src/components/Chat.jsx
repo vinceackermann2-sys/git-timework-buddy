@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, FolderOpen, PanelRight } from "lucide-react";
+import { Archive, FileText, FolderOpen, PanelRight, RotateCcw } from "lucide-react";
 import { call, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
-import { applyEvent, blocksOf, turnsFromMessages, userImages, userText } from "../turns.mjs";
+import { ATTACHED, applyEvent, blocksOf, turnsFromMessages, userFiles, userImages, userText } from "../turns.mjs";
 import { ActivityGroup, PlanCard } from "./Activity.jsx";
 import { ApprovalCard } from "./Approval.jsx";
 import { Composer } from "./Composer.jsx";
 import { Avatar, useToast } from "./common.jsx";
+
+const baseName = file => String(file).split(/[\\/]/).pop();
 
 function Title({ conversation, onRename }) {
   const [editing, setEditing] = useState(false);
@@ -19,17 +21,23 @@ function Title({ conversation, onRename }) {
   return <button type="button" title="Rename" onClick={() => setEditing(true)}>{conversation.title || "New conversation"}</button>;
 }
 
-function UserMessage({ item, failed }) {
-  const images = userImages(item);
+function UserMessage({ item, failed, onRetry }) {
+  const images = userImages(item), files = userFiles(item);
   return (
-    <div style={{ display: "grid", justifyItems: "end" }}>
-      {images.length ? <div className="tw-user-images">{images.map(file => <span key={file} className="tw-chip" title={file}><span>{String(file).split(/[\\/]/).pop()}</span></span>)}</div> : null}
+    <div style={{ display: "grid", justifyItems: "end", gap: 4 }}>
+      {images.length || files.length ? (
+        <div className="tw-user-images">
+          {images.map(file => <span key={file} className="tw-chip" title={file}><span>{baseName(file)}</span></span>)}
+          {files.map(file => <span key={file} className="tw-chip" title={file}><FileText size={12} /><span>{baseName(file)}</span></span>)}
+        </div>
+      ) : null}
       {userText(item) ? <div className={"tw-user-message" + (failed ? " failed" : "")}>{userText(item)}</div> : null}
+      {failed && onRetry ? <button type="button" className="tw-btn tw-retry" onClick={() => onRetry(item)}><RotateCcw size={13} /> Retry</button> : null}
     </div>
   );
 }
 
-function Turn({ turn, agent }) {
+function Turn({ turn, agent, onRetry }) {
   const blocks = blocksOf(turn);
   const live = turn.status === "inProgress";
   const groups = [];
@@ -40,10 +48,11 @@ function Turn({ turn, agent }) {
   }
   const lastAgent = [...blocks].reverse().find(block => block.kind === "agent");
   const replied = blocks.some(block => block.kind === "agent" && block.item.text);
+  const failed = turn.status === "failed" && !replied;
   const showSide = groups.some(group => group.kind === "agent-side") || live || turn.error || turn.plan;
   return (
     <>
-      {groups.filter(group => group.kind === "user").map(group => <UserMessage key={group.key} item={group.item} failed={turn.status === "failed" && !replied} />)}
+      {groups.filter(group => group.kind === "user").map(group => <UserMessage key={group.key} item={group.item} failed={failed} onRetry={failed && onRetry ? item => onRetry(turn, item) : null} />)}
       {showSide ? (
         <div className="tw-agent-message">
           <Avatar agent={agent} />
@@ -62,12 +71,14 @@ function Turn({ turn, agent }) {
   );
 }
 
-export function Chat({ conversation, agent, account, models, onModel, onChanged, paneOpen, onTogglePane }) {
+export function Chat({ conversation, agent, account, models, onChanged, paneOpen, onTogglePane }) {
   const [turns, setTurns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [approvals, setApprovals] = useState([]);
   const [notice, setNotice] = useState(null);
+  // Each chat keeps its own model; new chats start with the default.
+  const [model, setModel] = useState(conversation.modelSettings?.name ? conversation.modelSettings : null);
   const scroller = useRef(null);
   const pinned = useRef(true);
   const toast = useToast();
@@ -80,12 +91,18 @@ export function Chat({ conversation, agent, account, models, onModel, onChanged,
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setTurns([]); setApprovals([]); setNotice(null); pinned.current = true;
+    setModel(conversation.modelSettings?.name ? conversation.modelSettings : null);
     Promise.all([call("conversations.history", { id }), call("conversations.status", { id })]).then(([history, status]) => {
       if (cancelled) return;
-      setTurns(history.turns?.length ? [...turnsFromMessages(history.earlier || [], account?.user?.id), ...history.turns] : turnsFromMessages(history.messages || [], account?.user?.id));
+      const owner = account?.user?.id;
+      setTurns(history.turns?.length
+        ? [...turnsFromMessages(history.earlier || [], owner), ...history.turns, ...turnsFromMessages(history.failed || [], owner)]
+        : turnsFromMessages(history.messages || [], owner));
       if (!history.turns?.length && history.messages?.length && history.transcriptUnavailable !== undefined) setNotice("Earlier tool activity from another device isn't available here. Your messages are.");
       setRunning(!!status.running);
       setApprovals(status.approvals || []);
+      // Open the agent's session now so the first message starts right away.
+      if (!status.running) void call("conversations.warm", { id }).catch(() => {});
     }).catch(error => { if (!cancelled) toast(error, "error"); }).finally(() => { if (!cancelled) setLoading(false); });
     markRead();
     return () => { cancelled = true; };
@@ -107,13 +124,19 @@ export function Chat({ conversation, agent, account, models, onModel, onChanged,
     if (node && pinned.current) node.scrollTop = node.scrollHeight;
   }, [turns, approvals, loading]);
 
-  async function send(message) {
+  async function send(message, retryOf) {
     const clientId = crypto.randomUUID();
     pinned.current = true;
-    setTurns(current => [...current, { id: "pending-" + clientId, pending: true, status: "inProgress", items: [{ type: "userMessage", id: clientId, clientId, content: [{ type: "text", text: message.text }, ...message.images.map(path => ({ type: "localImage", path }))] }] }]);
+    const files = message.files || [];
+    const content = [
+      { type: "text", text: message.text },
+      ...(files.length ? [{ type: "text", text: [ATTACHED, ...files.map(file => "- " + baseName(file))].join("\n") }] : []),
+      ...message.images.map(path => ({ type: "localImage", path })),
+    ];
+    setTurns(current => [...current, { id: "pending-" + clientId, pending: true, status: "inProgress", items: [{ type: "userMessage", id: clientId, clientId, content }] }]);
     setRunning(true);
     try {
-      await call("conversations.send", { id, text: message.text, images: message.images, clientId });
+      await call("conversations.send", { id, text: message.text, images: message.images, files, clientId, retryOf });
       onChanged?.();
     } catch (error) {
       setRunning(false);
@@ -121,7 +144,19 @@ export function Chat({ conversation, agent, account, models, onModel, onChanged,
       throw error;
     }
   }
+  // Sends a message that didn't go through again, in place of the failed one.
+  function retry(turn, item) {
+    setTurns(current => current.filter(entry => entry !== turn));
+    void send({ text: userText(item), images: userImages(item), files: [] }, item.clientId || item.id).catch(error => toast(error, "error"));
+  }
+  async function chooseModel(choice) {
+    const previous = model;
+    setModel(choice);
+    try { setModel(await call("conversations.setModel", { id, ...choice }).then(value => value.modelSettings)); onChanged?.(); }
+    catch (error) { setModel(previous); toast(error, "error"); }
+  }
 
+  const chatModels = models ? { ...models, selected: model || models.selected } : models;
   return (
     <section className="tw-main" aria-label={conversation.title || "Conversation"}>
       <header className="tw-chat-header">
@@ -140,15 +175,15 @@ export function Chat({ conversation, agent, account, models, onModel, onChanged,
         ) : (
           <div className="tw-thread">
             {notice ? <div className="tw-hint" style={{ textAlign: "center" }}>{notice}</div> : null}
-            {turns.map(turn => <Turn key={turn.id} turn={turn} agent={agent} />)}
+            {turns.map(turn => <Turn key={turn.id} turn={turn} agent={agent} onRetry={running ? null : retry} />)}
             {approvals.map(approval => <ApprovalCard key={approval.id} approval={approval} />)}
           </div>
         )}
       </div>
       <Composer
-        autoFocusKey={id} running={running} models={models} onModel={onModel}
+        autoFocusKey={id} running={running} models={chatModels} onModel={chooseModel}
         placeholder={"Message " + (agent?.name || "your agent")} disabled={loading || !agent}
-        onSend={send}
+        onSend={message => send(message)}
         onStop={() => call("conversations.interrupt", { id }).catch(error => toast(error, "error"))}
       />
     </section>

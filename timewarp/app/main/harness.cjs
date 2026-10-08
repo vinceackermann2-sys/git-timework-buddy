@@ -19,6 +19,8 @@ function titleFrom(text) {
 }
 
 const HISTORY_MESSAGES = 60, HISTORY_CHARS = 60000;
+// Marks the part of a message that lists attached files (paths in the workspace).
+const ATTACHED = "[Attached files, saved in your workspace]";
 
 // tools: { version, specs(agent, conversation), call(conversationId, params, agent), finished(conversationId) }
 function createHarness({ store, client, userId, instructionsFor, threadConfig = () => ({}), modelSettings, tools = null, notify = () => {}, log = () => {} }) {
@@ -27,6 +29,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   const loaded = new Set(); // threads resumed or started in this Codex session
   const active = new Map(); // conversation id -> { threadId, turnId }
   const approvals = new Map(); // request id -> pending server request
+  const preparing = new Map(); // conversation id -> thread start or resume in flight
 
   const owner = () => { const value = userId(); if (!value) throw fail(401, "Sign in to Timewarp."); return value; };
   const ownedConversation = id => {
@@ -121,7 +124,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   function historyItems(conversation, exceptId) {
     const items = [];
     let size = 0;
-    for (const message of store.messages.list(conversation.id).filter(item => item.id !== exceptId && item.status !== "failed").slice(-HISTORY_MESSAGES).reverse()) {
+    for (const message of store.messages.list(conversation.id).filter(item => item.id !== exceptId && item.status !== "failed" && item.status !== "replaced").slice(-HISTORY_MESSAGES).reverse()) {
       if (size + message.text.length > HISTORY_CHARS) break;
       size += message.text.length;
       const user = message.authorId === conversation.ownerId;
@@ -158,9 +161,35 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     return threadId;
   }
 
-  function inputOf({ text = "", images = [] }) {
+  // One start or resume per conversation at a time: a chat warmed on open
+  // and a message sent right away share the same thread.
+  function threadFor(conversationId, options) {
+    if (preparing.has(conversationId)) return preparing.get(conversationId);
+    const pending = ensureThread(store.conversations.get(conversationId), options).finally(() => preparing.delete(conversationId));
+    preparing.set(conversationId, pending);
+    return pending;
+  }
+
+  // Files other than images are copied into the agent's workspace and named
+  // in the message, so the agent can open them with its tools.
+  function attach(agent, files) {
+    if (!files.length) return [];
+    const today = new Date(), day = [today.getFullYear(), today.getMonth() + 1, today.getDate()].map(part => String(part).padStart(2, "0")).join("-");
+    const folder = path.join(agent.workspace, "attachments", day);
+    fs.mkdirSync(folder, { recursive: true });
+    return files.map(file => {
+      const extension = path.extname(file), stem = path.basename(file, extension);
+      let name = path.basename(file), index = 1;
+      while (fs.existsSync(path.join(folder, name))) name = `${stem} (${++index})${extension}`;
+      fs.copyFileSync(file, path.join(folder, name));
+      return path.relative(agent.workspace, path.join(folder, name)).split(path.sep).join("/");
+    });
+  }
+
+  function inputOf({ text = "", images = [], attached = [] }) {
     const input = [];
     if (text) input.push({ type: "text", text, text_elements: [] });
+    if (attached.length) input.push({ type: "text", text: ATTACHED + "\n" + attached.map(file => "- " + file).join("\n"), text_elements: [] });
     for (const image of images) input.push({ type: "localImage", path: image });
     if (!input.length) throw fail(400, "Write a message first.");
     return input;
@@ -206,20 +235,39 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       // chat restored from the cloud) are shown ahead of the turns.
       const turnIds = new Set(turns.map(turn => turn.id));
       const firstTurn = turns[0]?.startedAt ? turns[0].startedAt * 1000 : Infinity;
-      const earlier = messages.filter(message => !turnIds.has(message.turnId) && Date.parse(message.createdAt) < firstTurn - 2000);
-      return { turns, messages, earlier, thread, ...(unavailable ? { transcriptUnavailable: unavailable } : {}) };
+      const shown = messages.filter(message => message.status !== "replaced");
+      const earlier = shown.filter(message => !turnIds.has(message.turnId) && message.status !== "failed" && Date.parse(message.createdAt) < firstTurn - 2000);
+      // Messages that never reached the agent, offered for retry after the last turn.
+      const lastTurn = turns.at(-1)?.startedAt ? turns.at(-1).startedAt * 1000 : 0;
+      const failed = shown.filter(message => message.status === "failed" && Date.parse(message.createdAt) >= lastTurn - 2000);
+      return { turns, messages: shown, earlier, failed, thread, ...(unavailable ? { transcriptUnavailable: unavailable } : {}) };
+    },
+    // Opens the chat's thread ahead of the first message so sending starts at once.
+    async warm(id) {
+      const conversation = ownedConversation(id);
+      if (active.has(id) || (conversation.codexThreadId && conversation.toolsVersion >= toolsVersion && loaded.has(conversation.codexThreadId))) return { ready: true };
+      await threadFor(id);
+      return { ready: true };
+    },
+    setModel(id, settings) {
+      ownedConversation(id);
+      return store.conversations.update(id, { modelSettings: settings }, { touch: false });
     },
     async send(id, message) {
       const conversation = ownedConversation(id);
       if (active.has(id)) throw fail(409, "Wait for the current reply or stop it first.");
-      const input = inputOf(message);
+      const attached = attach(ownedAgent(conversation.agentId), message.files || []);
+      const input = inputOf({ ...message, attached });
+      // A retried message replaces the one that failed to send.
+      const retried = message.retryOf ? store.messages.get(message.retryOf) : null;
+      if (retried?.conversationId === id && retried.status === "failed") store.messages.update(retried.id, { status: "replaced" });
       const userMessage = store.messages.append({ id: message.clientId || crypto.randomUUID(), conversationId: id, authorId: owner(), text: message.text || "" });
-      if (!conversation.title) store.conversations.update(id, { title: titleFrom(message.text) });
+      if (!conversation.title) store.conversations.update(id, { title: titleFrom(message.text || attached.map(file => path.basename(file)).join(", ")) });
       store.conversations.update(id, { read: true });
       let threadId = null;
       try {
-        threadId = await ensureThread(store.conversations.get(id), { exceptMessageId: userMessage.id });
-        const settings = modelSettings();
+        threadId = await threadFor(id, { exceptMessageId: userMessage.id });
+        const settings = conversation.modelSettings?.name ? conversation.modelSettings : modelSettings();
         active.set(id, { threadId, turnId: null });
         const result = await client.request("turn/start", {
           threadId, input, clientUserMessageId: userMessage.id,
@@ -261,4 +309,4 @@ function agentWorkspace(root, name, id) {
   return path.join(root, `${slug}-${id}`);
 }
 
-module.exports = { createHarness, agentWorkspace, titleFrom, APPROVAL_METHODS };
+module.exports = { createHarness, agentWorkspace, titleFrom, APPROVAL_METHODS, ATTACHED };

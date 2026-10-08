@@ -145,6 +145,7 @@ a { color: var(--color-primary); }
 .tw-user-message { justify-self: end; max-width: 82%; background: var(--theme-accent); color: var(--timewarp-accent-ink); padding: 10px 14px; border-radius: 16px 16px 4px 16px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tw-user-message.failed { outline: 1px solid var(--color-destructive); }
 .tw-user-images { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 6px; }
+.tw-retry { height: 28px; padding: 0 10px; font-size: 12.5px; }
 .tw-agent-message { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: start; }
 .tw-agent-body { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .tw-markdown { overflow-wrap: anywhere; }
