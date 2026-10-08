@@ -53,7 +53,10 @@ async function build() {
   // refuses a packaged app whose version or feed doesn't match.
   const releaseFile = process.env.TIMEWARP_RELEASE_CONFIG || path.join(root, "release.json");
   const releaseConfig = release && fs.existsSync(releaseFile) ? require("./release-config.cjs").readRelease(releaseFile) : { enabled: false };
-  const version = releaseConfig.enabled ? releaseConfig.version : require("../package.json").version;
+  // Mac releases take their version from mac-release.json (TIMEWARP_APP_VERSION).
+  const override = process.env.TIMEWARP_APP_VERSION;
+  if (override && !/^\d+\.\d+\.\d+$/.test(override)) throw new Error("TIMEWARP_APP_VERSION must be a stable version such as 1.2.0.");
+  const version = override || (releaseConfig.enabled ? releaseConfig.version : require("../package.json").version);
   clean(out);
   fs.mkdirSync(out, { recursive: true });
   const common = { bundle: true, logLevel: "warning", metafile: true, legalComments: "none", minify: !dev, sourcemap: dev ? "inline" : false };

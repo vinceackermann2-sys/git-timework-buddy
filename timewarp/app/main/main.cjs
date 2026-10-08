@@ -57,7 +57,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1320, height: 860, minWidth: 960, minHeight: 620, show: false, title: "Timewarp", icon: appIcon,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#17161c" : "#f7f6fb",
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default", autoHideMenuBar: true,
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default", trafficLightPosition: { x: 18, y: 18 }, autoHideMenuBar: true,
     webPreferences: { preload: path.join(appRoot, "preload", "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false, spellcheck: true },
   });
   mainWindow.once("ready-to-show", () => mainWindow.show());

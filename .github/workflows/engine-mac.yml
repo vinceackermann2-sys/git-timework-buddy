@@ -1,0 +1,96 @@
+name: Engine for macOS
+
+# Builds Timewarp for Mac from Timewarp's own source: Apple Silicon and Intel,
+# macOS 12 Monterey or later. Preview DMGs are ad hoc signed and smoke tested
+# on each runner; the signed release needs the protected Apple identity.
+on:
+  workflow_dispatch:
+    inputs:
+      signed:
+        description: Sign and notarize using the protected Apple release identity
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    if: ${{ !inputs.signed }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-14 }
+          - { arch: arm64, runner: macos-15 }
+          - { arch: x64, runner: macos-15-intel }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: timewarp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: timewarp/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run test:engine
+      - run: node scripts/package-engine-mac.cjs --draft --arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ matrix.runner != 'macos-14' }}
+        with:
+          name: timewarp-engine-macos-${{ matrix.arch }}-preview
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            timewarp/build/engine-mac-draft/*.dmg
+            timewarp/reports/engine-mac.json
+            timewarp/reports/engine-smoke-*.json
+
+  release:
+    if: ${{ inputs.signed }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-15 }
+          - { arch: x64, runner: macos-15-intel }
+    runs-on: ${{ matrix.runner }}
+    environment: desktop-release
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: timewarp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: timewarp/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run test:engine
+      - name: Configure temporary signing and notarization credentials
+        env:
+          APPLE_P12_BASE64: ${{ secrets.TIMEWARP_APPLE_P12_BASE64 }}
+          APPLE_P12_PASSWORD: ${{ secrets.TIMEWARP_APPLE_P12_PASSWORD }}
+          APPLE_ID: ${{ secrets.TIMEWARP_APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.TIMEWARP_APPLE_APP_PASSWORD }}
+        run: node scripts/configure-mac-signing.cjs
+      - run: node scripts/package-engine-mac.cjs --arch ${{ matrix.arch }}
+      - name: Remove temporary signing material
+        if: always()
+        run: node scripts/configure-mac-signing.cjs --cleanup
+      - uses: actions/upload-artifact@v4
+        with:
+          name: timewarp-engine-macos-${{ matrix.arch }}-signed
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            timewarp/build/mac-release/*.dmg
+            timewarp/reports/engine-mac.json
+            timewarp/reports/mac-notary.json
+            timewarp/reports/mac-release.json

@@ -32,11 +32,27 @@ async function remove(directory) {
     try { fs.rmSync(directory, { recursive: true, force: true }); return; } catch { await pause(500); }
   }
 }
-function killTree(pid) { try { cp.execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }); } catch {} }
+// Every running process with its parent and memory, on Windows or macOS.
+function processes() {
+  if (process.platform === "win32") {
+    const script = "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize,PrivatePageCount | ConvertTo-Json -Compress";
+    return JSON.parse(cp.execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 }));
+  }
+  return cp.execFileSync("ps", ["-A", "-o", "pid=,ppid=,rss="], { encoding: "utf8" }).trim().split("\n").map(line => line.trim().split(/\s+/).map(Number))
+    .map(([pid, ppid, rss]) => ({ ProcessId: pid, ParentProcessId: ppid, WorkingSetSize: rss * 1024, PrivatePageCount: rss * 1024 }));
+}
+function descendants(pid) {
+  const all = processes(), tree = [], queue = [pid];
+  while (queue.length) { const id = queue.shift(); for (const item of all) if (item.ParentProcessId === id) { tree.push(item.ProcessId); queue.push(item.ProcessId); } }
+  return tree;
+}
+function killTree(pid) {
+  if (process.platform === "win32") { try { cp.execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }); } catch {} return; }
+  for (const id of [pid, ...descendants(pid)]) { try { process.kill(id, "SIGKILL"); } catch {} }
+}
 // Working set and private memory of a process and all its descendants.
 function memoryOf(pid) {
-  const script = "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,WorkingSetSize,PrivatePageCount | ConvertTo-Json -Compress";
-  const all = JSON.parse(cp.execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 }));
+  const all = processes();
   const children = new Map();
   for (const item of all) { if (!children.has(item.ParentProcessId)) children.set(item.ParentProcessId, []); children.get(item.ParentProcessId).push(item); }
   const tree = [], queue = [all.find(item => item.ProcessId === pid)].filter(Boolean);
@@ -47,7 +63,7 @@ function memoryOf(pid) {
 // --- App start-up -----------------------------------------------------------
 async function startup(exe) {
   const profile = scratch(".tw-bench-profile-"), port = await freePort(), started = now();
-  const child = cp.spawn(exe, ["--remote-debugging-port=" + port], { env: { ...process.env, TIMEWARP_USER_DATA_DIR: profile }, stdio: "ignore", windowsHide: true });
+  const child = cp.spawn(exe, ["--remote-debugging-port=" + port], { env: { ...process.env, TIMEWARP_USER_DATA_DIR: profile }, stdio: "ignore", windowsHide: true, detached: process.platform !== "win32" });
   const result = { windowMs: null, signInMs: null };
   try {
     let target;
@@ -207,5 +223,10 @@ async function compare() {
   console.log(JSON.stringify({ previous: { installMb: results.previous.installMb, startup: results.previous.startup, agent: results.previous.agent }, engine: { installMb: results.engine.installMb, startup: results.engine.startup, agent: results.engine.agent } }, null, 2));
 }
 
-if (process.argv[2] === "compare") compare().catch(error => { console.error(error.message); process.exitCode = 1; });
-else console.log("Usage: node scripts/bench-engine.cjs compare [--runs 5]");
+// The packaging smoke tests reuse the start-up and agent engine checks.
+module.exports = { startup, engine };
+
+if (require.main === module) {
+  if (process.argv[2] === "compare") compare().catch(error => { console.error(error.message); process.exitCode = 1; });
+  else console.log("Usage: node scripts/bench-engine.cjs compare [--runs 5]");
+}

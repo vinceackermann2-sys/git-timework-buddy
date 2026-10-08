@@ -377,3 +377,16 @@ a { color: var(--color-primary); }
 :root[data-scheme="dark"] .hljs-title, :root[data-scheme="dark"] .hljs-section, :root[data-scheme="dark"] .hljs-name { color: #93c5fd; }
 :root[data-scheme="dark"] .hljs-built_in, :root[data-scheme="dark"] .hljs-variable, :root[data-scheme="dark"] .hljs-template-variable, :root[data-scheme="dark"] .hljs-attr { color: #67e8f9; }
 :root[data-scheme="dark"] .hljs-meta { color: #fde68a; }
+
+/* macOS: the window has no title bar. Leave room for its buttons at the top
+   left and let the top strip of each column move the window. */
+:root[data-platform="darwin"] .tw-sidebar { padding-top: 44px; }
+:root[data-platform="darwin"] .tw-brand,
+:root[data-platform="darwin"] .tw-chat-header,
+:root[data-platform="darwin"] .tw-pane-tabs,
+:root[data-platform="darwin"] .tw-customize nav h1 { -webkit-app-region: drag; }
+:root[data-platform="darwin"] .tw-brand button,
+:root[data-platform="darwin"] .tw-chat-header button, :root[data-platform="darwin"] .tw-chat-header input,
+:root[data-platform="darwin"] .tw-pane-tabs > * { -webkit-app-region: no-drag; }
+:root[data-platform="darwin"] .tw-sidebar::before { content: ""; position: fixed; top: 0; left: 0; width: 300px; height: 40px; -webkit-app-region: drag; }
+:root[data-platform="darwin"] #timewarp-auth-view::before, :root[data-platform="darwin"] .tw-splash::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: 36px; -webkit-app-region: drag; }
