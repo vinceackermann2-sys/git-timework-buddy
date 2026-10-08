@@ -46,7 +46,37 @@ function General({ account, settings, onSetting, onAccount }) {
         </div>
         <span className="tw-hint">Chat history: {history?.state === "synced" ? "synced " + new Date(history.lastSyncedAt).toLocaleTimeString() : history?.state === "paused" ? "paused by Privacy Mode" : history?.state === "error" ? "pending (" + history.message + ")" : history?.state || "…"}</span>
       </div>
+      {window.tw.platform === "win32" ? <Sandbox /> : null}
     </section>
+  );
+}
+
+// Windows needs a one-time setup before agents can run commands in a sandbox
+// without asking each time. Windows asks the user to approve it.
+function Sandbox() {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  const load = () => call("sandbox.status").then(value => setStatus(value.status)).catch(() => setStatus("unknown"));
+  useEffect(() => {
+    void load();
+    return window.tw.on("sandbox.changed", result => { setBusy(false); if (!result.success) toast(result.error || "The sandbox setup didn't finish.", "error"); void load(); });
+  }, []);
+  const ready = status === "ready";
+  return (
+    <div className="tw-card">
+      <div className="tw-setting">
+        <div>
+          <strong>Command sandbox</strong>
+          <span className="tw-hint">{ready ? "Agents run commands inside their workspace without asking each time." : "Without it, agents ask before every command. Setup creates restricted Windows accounts for agent commands; Windows asks you to approve it once."}</span>
+        </div>
+        {ready ? <span className="tw-pill ok">Ready</span> : (
+          <button type="button" className="tw-btn" disabled={busy || status === null} onClick={() => { setBusy(true); call("sandbox.setup", { mode: "elevated" }).catch(error => { setBusy(false); toast(error, "error"); }); }}>
+            {busy ? "Setting up…" : status === "updateRequired" ? "Update" : "Set up"}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -244,7 +274,7 @@ function About() {
       <h2>About</h2>
       <div className="tw-card">
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}><img src="./app-icon.svg" alt="" style={{ width: 44, height: 44 }} /><div><strong>Timewarp</strong><div className="tw-hint">Version {info?.version}</div></div></div>
-        <span className="tw-hint">Timewarp runs its agents with the OpenAI Codex app server and controls its browser with agent-browser. Third-party notices are included with the app.</span>
+        <span className="tw-hint">Timewarp runs its agents with the OpenAI Codex app server and its built-in browser on Electron. Third-party notices are included with the app.</span>
       </div>
       <div className="tw-card">
         <h3>Send feedback</h3>

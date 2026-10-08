@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Globe, Plus, RotateCw, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, FolderOpen, Globe, Plus, RotateCw, X } from "lucide-react";
 import { call, useEvent } from "../api.js";
 import { Avatar, useToast } from "./common.jsx";
+import { Files } from "./Files.jsx";
 
 const host = url => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url || ""; } };
 
@@ -28,16 +29,15 @@ function useOverlayOpen() {
   return open;
 }
 
-function Home({ conversation, agent, onOpen }) {
+function Home({ conversation, agent, onOpen, onFiles }) {
   const [recent, setRecent] = useState([]);
-  const toast = useToast();
   useEffect(() => { call("browser.recent", { conversationId: conversation.id }).then(setRecent).catch(() => {}); }, [conversation.id]);
   return (
     <div className="tw-pane-home">
       <section>
         <h2>Tools</h2>
         <div className="tw-pane-cards">
-          <button type="button" className="tw-pane-card" onClick={() => call("agents.openWorkspace", { id: agent.id }).catch(error => toast(error, "error"))}><Avatar agent={agent} /><span>Agent files</span></button>
+          <button type="button" className="tw-pane-card" onClick={onFiles}><Avatar agent={agent} /><span>Agent files</span></button>
           <button type="button" className="tw-pane-card" onClick={() => onOpen("https://duckduckgo.com/")}><Globe size={22} /><span>Search the web</span></button>
         </div>
       </section>
@@ -62,6 +62,7 @@ export function Pane({ conversation, agent, onClose }) {
   const [state, setState] = useState({ tabs: [], active: null });
   const [address, setAddress] = useState("");
   const [editing, setEditing] = useState(false);
+  const [files, setFiles] = useState(false);
   const content = useRef(null);
   const overlay = useOverlayOpen();
   const toast = useToast();
@@ -74,6 +75,7 @@ export function Pane({ conversation, agent, onClose }) {
     return () => { void call("browser.bounds", { rect: null }); };
   }, [id]);
   useEvent("browser.state", value => { if (value.conversationId === id) setState(value); });
+  useEvent("browser.agent", value => { if (value.conversationId === id) setFiles(false); });
   useEffect(() => { if (!editing) setAddress(active?.kind === "web" ? active.url : ""); }, [active?.url, active?.kind, editing]);
 
   // Keep the native page view on top of the content area.
@@ -82,40 +84,41 @@ export function Pane({ conversation, agent, onClose }) {
     if (!node) return;
     const send = () => {
       const rect = node.getBoundingClientRect();
-      void call("browser.bounds", { rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height, visible: active?.kind === "web" && !overlay } });
+      void call("browser.bounds", { rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height, visible: active?.kind === "web" && !overlay && !files } });
     };
     send();
     const observer = new ResizeObserver(send);
     observer.observe(node);
     window.addEventListener("resize", send);
     return () => { observer.disconnect(); window.removeEventListener("resize", send); };
-  }, [active?.id, active?.kind, overlay]);
+  }, [active?.id, active?.kind, overlay, files]);
 
-  const open = url => (active ? run("browser.navigate", { tabId: active.id, url }) : run("browser.newTab", { url }));
+  const open = url => { setFiles(false); return active ? run("browser.navigate", { tabId: active.id, url }) : run("browser.newTab", { url }); };
   return (
-    <aside className="tw-pane" aria-label="Browser">
+    <aside className="tw-pane" aria-label="Browser and files">
       <div className="tw-pane-tabs" role="tablist">
+        <div role="tab" aria-selected={files} className="tw-pane-tab tw-pane-files-tab" onClick={() => setFiles(true)} title="Agent files"><FolderOpen size={13} /><span>Files</span></div>
         {state.tabs.map(tab => (
-          <div key={tab.id} role="tab" aria-selected={tab.id === state.active} className="tw-pane-tab" onClick={() => run("browser.activate", { tabId: tab.id })} title={tab.url || "New tab"}>
+          <div key={tab.id} role="tab" aria-selected={!files && tab.id === state.active} className="tw-pane-tab" onClick={() => { setFiles(false); void run("browser.activate", { tabId: tab.id }); }} title={tab.url || "New tab"}>
             {tab.favicon ? <img src={tab.favicon} alt="" width="14" height="14" /> : <Globe size={13} />}
             <span>{tab.kind === "home" ? "New tab" : tab.title || host(tab.url)}</span>
             <button type="button" aria-label="Close tab" onClick={event => { event.stopPropagation(); void run("browser.close", { tabId: tab.id }); }}><X size={12} /></button>
           </div>
         ))}
-        <button type="button" className="tw-icon-button" style={{ width: 28, height: 28 }} aria-label="New tab" title="New tab" onClick={() => run("browser.newTab")}><Plus size={15} /></button>
+        <button type="button" className="tw-icon-button" style={{ width: 28, height: 28 }} aria-label="New tab" title="New tab" onClick={() => { setFiles(false); void run("browser.newTab"); }}><Plus size={15} /></button>
         <span style={{ flex: 1 }} />
         <button type="button" className="tw-icon-button" style={{ width: 28, height: 28 }} aria-label="Close browser" title="Close browser" onClick={onClose}><X size={15} /></button>
       </div>
-      <form className="tw-pane-toolbar" onSubmit={event => { event.preventDefault(); setEditing(false); if (address.trim()) void open(address.trim()); }}>
+      {files ? null : <form className="tw-pane-toolbar" onSubmit={event => { event.preventDefault(); setEditing(false); if (address.trim()) void open(address.trim()); }}>
         <button type="button" className="tw-icon-button" aria-label="Back" disabled={!active?.canGoBack} onClick={() => run("browser.back", { tabId: active.id })}><ArrowLeft size={16} /></button>
         <button type="button" className="tw-icon-button" aria-label="Forward" disabled={!active?.canGoForward} onClick={() => run("browser.forward", { tabId: active.id })}><ArrowRight size={16} /></button>
         <button type="button" className="tw-icon-button" aria-label={active?.loading ? "Stop" : "Reload"} disabled={active?.kind !== "web"} onClick={() => run(active?.loading ? "browser.stop" : "browser.reload", { tabId: active.id })}>{active?.loading ? <X size={16} /> : <RotateCw size={15} />}</button>
         <input className="tw-input tw-address" value={address} placeholder="Search or enter an address" aria-label="Address"
           onFocus={event => { setEditing(true); event.target.select(); }} onBlur={() => setEditing(false)} onChange={event => setAddress(event.target.value)} />
         {active?.agent ? <span className="tw-pane-agent" title={active.agent.action}><Avatar agent={active.agent} size="small" />{active.agent.action}</span> : null}
-      </form>
+      </form>}
       <div className="tw-pane-content" ref={content}>
-        {!active || active.kind === "home" ? <Home conversation={conversation} agent={agent} onOpen={open} /> : null}
+        {files ? <Files agent={agent} /> : !active || active.kind === "home" ? <Home conversation={conversation} agent={agent} onOpen={open} onFiles={() => setFiles(true)} /> : null}
       </div>
     </aside>
   );

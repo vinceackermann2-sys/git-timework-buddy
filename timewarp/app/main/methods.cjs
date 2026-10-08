@@ -3,12 +3,15 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+const { createFiles } = require("./files.cjs");
 const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notifications", "memory"]);
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
 
 function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAccent }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
+  // Agent ownership is checked on every call by agents.get().
+  const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
   return {
     "app.info": async () => ({ version, platform: process.platform, codex: client.status }),
     "account.get": () => services.account(),
@@ -133,6 +136,21 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "browser.profiles": () => { signedIn(); store.browserProfiles.ensureDefault(); return store.browserProfiles.list(); },
     "browser.setProfile": ({ conversationId, profileId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setProfile(conversationId, profileId); },
     "browser.recent": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.recent(conversationId); },
+
+    // Files view: read-only access inside the agent's workspace.
+    "files.list": ({ agentId, path: dir }) => files.list(agentId, dir),
+    "files.read": ({ agentId, path: file }) => files.read(agentId, file),
+    "files.search": ({ agentId, query }) => files.search(agentId, query),
+    "files.open": async ({ agentId, path: file }) => { const error = await shell.openPath(files.absolute(agentId, file)); if (error) throw fail(500, error); return { opened: true }; },
+    "files.reveal": ({ agentId, path: file }) => { shell.showItemInFolder(files.absolute(agentId, file)); return { shown: true }; },
+
+    // Codex's Windows command sandbox. Setup runs only when the user asks for it.
+    "sandbox.status": () => process.platform === "win32" ? client.request("windowsSandbox/readiness", {}) : { status: "ready" },
+    "sandbox.setup": ({ mode }) => {
+      signedIn();
+      if (process.platform !== "win32") return { started: false };
+      return client.request("windowsSandbox/setupStart", { mode: mode === "unelevated" ? "unelevated" : "elevated" });
+    },
 
     "feedback.submit": input => services.submitFeedback(input),
     "links.open": ({ url }) => services.openExternal(url),

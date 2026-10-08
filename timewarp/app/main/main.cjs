@@ -139,6 +139,7 @@ async function boot() {
     clientInfo: { name: "timewarp", title: "Timewarp", version: VERSION },
   });
   client.on("status", state => broadcast("codex.status", { status: state.status }));
+  client.on("notification", ({ method, params }) => { if (method === "windowsSandbox/setupCompleted") broadcast("sandbox.changed", params); });
   let executionNotice = null;
   const executionChanged = () => {
     if (executionNotice) return;

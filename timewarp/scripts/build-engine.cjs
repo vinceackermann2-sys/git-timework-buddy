@@ -57,11 +57,14 @@ async function build() {
     ...common, entryPoints: [path.join(root, "app/main/main.cjs")], outfile: path.join(out, "main/main.cjs"),
     platform: "node", format: "cjs", target: "node24", external: ["electron"],
   });
+  // ES modules with code splitting: document previews load only when used.
   const renderer = await esbuild.build({
-    ...common, entryPoints: [path.join(root, "app/renderer/src/main.jsx")], outfile: path.join(out, "renderer/app.js"),
-    platform: "browser", format: "iife", target: "chrome140", jsx: "automatic", loader: { ".js": "jsx" },
+    ...common, entryPoints: { app: path.join(root, "app/renderer/src/main.jsx") }, outdir: path.join(out, "renderer"),
+    splitting: true, chunkNames: "chunks/[name]-[hash]",
+    platform: "browser", format: "esm", target: "chrome140", jsx: "automatic", loader: { ".js": "jsx" },
     define: { "process.env.NODE_ENV": JSON.stringify(dev ? "development" : "production") },
   });
+  copy(path.join(path.dirname(require.resolve("pdfjs-dist/package.json")), "build/pdf.worker.min.mjs"), path.join(out, "renderer/pdf.worker.min.mjs"));
   copy(path.join(root, "app/preload/preload.cjs"), path.join(out, "preload/preload.cjs"));
   if (fixture) copy(path.join(root, "app/main/fixture.cjs"), path.join(out, "main/fixture.cjs"));
 

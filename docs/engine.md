@@ -11,7 +11,8 @@ contain, decompile or translate Energy code.
 | --- | --- |
 | Desktop shell | Electron 43 (official) with Timewarp's own main, preload and React renderer in `timewarp/app` |
 | Agent harness | OpenAI Codex app server (official `@openai/codex`, Apache-2.0) over its documented JSON-RPC protocol |
-| Agent browser control | `agent-browser` (Vercel Labs, Apache-2.0) |
+| Built-in browser and agent browser tools | Electron `WebContentsView` and its in-process debugger (`app/main/browser.cjs`, `browser-tools.cjs`) |
+| File previews | pdf.js, ExcelJS, JSZip, highlight.js, markdown-it, loaded on demand |
 | Local data | Built-in SQLite (`node:sqlite`) in the existing profile |
 | Account, billing, organizations, onboarding, connectors, chat sync, model bridge | Existing Timewarp modules in `timewarp/desktop` and `timewarp/shared` |
 | Cloud | Unchanged Supabase functions in `timewarp/supabase` |
@@ -62,7 +63,8 @@ Core
 Workspace
 - ◐ Right pane with browser tabs, files and tools
 - ◐ Built-in browser: tabs, navigation, profiles, profile import, recent sites, agent control, cursor
-- ☐ Files: tree, search, text and code, images, PDF, spreadsheets, documents
+- ☑ Files: tree, search, text and code, markdown, images, PDF, spreadsheets, CSV, Word documents
+- ◐ Windows command sandbox setup (Settings → General)
 - ☐ Vault: passwords, cards, secrets, agent access, autofill; passkeys
 
 Capabilities
