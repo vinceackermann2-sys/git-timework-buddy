@@ -84,7 +84,12 @@ function applicationMenu() {
   ]));
 }
 
+// Start-up timing, printed when TIMEWARP_TRACE_STARTUP is set.
+const traceStart = Date.now();
+const trace = label => { if (process.env.TIMEWARP_TRACE_STARTUP) console.log(`[timewarp] startup ${Date.now() - traceStart}ms ${label}`); };
+
 async function boot() {
+  trace("ready");
   protocol.handle("app", serveApp);
   applicationMenu();
   app.setAboutPanelOptions({ applicationName: "Timewarp", applicationVersion: VERSION, copyright: "Copyright © 2026 Timewarp." });
@@ -115,6 +120,7 @@ async function boot() {
   const { migrateAppearance, defaultAccent } = require("../../shared/appearance.cjs");
 
   const store = openStore(path.join(profile, "timewarp.sqlite"));
+  trace("store open");
   try { importLegacyProfile({ store, runtimeDir, log: (...args) => console.error("[timewarp]", ...args) }); }
   catch (error) { console.error("[timewarp] Previous local data could not be imported.", error.message); }
   const appearance = store.settings.get("appearance");
@@ -304,20 +310,27 @@ async function boot() {
     if (!trusted(event)) return { ok: false, error: { message: "Untrusted window.", status: 403 } };
     const handler = Object.hasOwn(methods, method) ? methods[method] : null;
     if (!handler) return { ok: false, error: { message: "Unknown action.", status: 404 } };
-    try { await services.ready; return { ok: true, value: await handler(input ?? {}, event) }; }
+    try { trace("call " + method); await services.ready; const value = await handler(input ?? {}, event); trace("answered " + method); return { ok: true, value }; }
     catch (error) { return { ok: false, error: { message: error.message || "Request failed.", status: error.status || 500 } }; }
   });
   ipcMain.handle("timewarp:request", async (event, action, input = {}) => {
     if (!trusted(event)) throw new Error("Untrusted window.");
+    trace("request " + action);
     await Promise.all([services.ready, bridgeReady.catch(() => {})]);
-    return legacy(action, input, event);
+    const value = await legacy(action, input, event);
+    trace("answered " + action);
+    return value;
   });
 
+  trace("services wired");
   markBooted();
   automations.start();
   createWindow();
+  trace("window created");
   await services.ready.catch(() => {});
+  trace("account storage ready");
   await accountReady().catch(error => console.error("[timewarp] Account startup failed:", error.message));
+  trace("account ready");
   require("../../desktop/updates.cjs").configureUpdates({
     app, autoUpdater: require("electron-updater").autoUpdater, release: build.release || { enabled: false },
     readUpdateConfig: () => require("js-yaml").load(fs.readFileSync(path.join(process.resourcesPath, "app-update.yml"), "utf8")),

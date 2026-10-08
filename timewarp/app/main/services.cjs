@@ -1,6 +1,7 @@
 "use strict";
 // Timewarp account and cloud services: sign-in, cloud calls, organizations,
 // Codex/ChatGPT connection, AI funding, connected apps and feedback.
+const fs = require("node:fs");
 const path = require("node:path");
 const { BrowserWindow, safeStorage, shell } = require("electron");
 const { createAuth } = require("../../desktop/auth.cjs");
@@ -11,6 +12,7 @@ const { assertCloudSafe } = require("../../shared/privacy.cjs");
 
 function createServices({ profile, config, onAccountChanged = async () => {}, onCodexConnected = async () => {}, mcpToken, agentsFor, fixture = null }) {
   let oauthServer = null, callbackOpening = null, providersPromise = null;
+  const providersFile = path.join(profile, "auth-providers.json");
   const appWindows = () => BrowserWindow.getAllWindows().filter(window => !window.isDestroyed() && window.webContents.getURL().startsWith("app://app/"));
   const focusApp = () => { for (const window of appWindows()) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } };
 
@@ -73,6 +75,8 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
   const sendFeedback = require("../../desktop/reporting.cjs").createReporting({ config, auth });
   // Start after every service exists: sign-in changes notify them.
   const ready = auth.init().then(async () => { if (auth.hasPendingFlow()) await ensureCallback().catch(() => {}); });
+  // Signed out: look up the sign-in methods while the window opens.
+  ready.then(() => { if (!auth.user()) void service.providers().catch(() => {}); }).catch(() => {});
   ready.catch(() => console.error("[timewarp] Secure account storage is unavailable."));
 
   async function account() {
@@ -90,15 +94,24 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
     return { opened: true };
   }
 
-  return {
+  const service = {
     auth, ready, cloud, cloudJson, accountRpc, chatgpt, funding, integrations, account, openExternal, ensureCallback, focusApp,
     submitFeedback: async input => { await ready; return sendFeedback(input); },
+    // Sign-in methods. The last known answer shows the sign-in screen at once
+    // while a fresh one loads; it holds no account data.
     providers() {
-      if (!providersPromise) providersPromise = auth.providers().catch(error => { providersPromise = null; throw error; });
-      return providersPromise;
+      if (!providersPromise) {
+        providersPromise = auth.providers().then(value => {
+          try { fs.writeFileSync(providersFile, JSON.stringify(value)); } catch {}
+          return value;
+        }).catch(error => { providersPromise = null; throw error; });
+        providersPromise.catch(() => {});
+      }
+      try { return Promise.resolve(JSON.parse(fs.readFileSync(providersFile, "utf8"))); } catch { return providersPromise; }
     },
     close() { chatgpt.stop(); oauthServer?.close(); },
   };
+  return service;
 }
 
 module.exports = { createServices };
