@@ -1,5 +1,5 @@
 {
-  "name": "timewarp-energy-bridge",
+  "name": "timewarp-desktop-integration",
   "version": "0.1.0",
   "private": true,
   "description": "Timewarp local desktop harness with cloud authentication, models, billing and chat history",

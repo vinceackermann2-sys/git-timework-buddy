@@ -33,4 +33,16 @@ function rebrandAssistantLogo(source, svg) {
   if (!asset || asset.type !== "Literal" || !String(asset.value).startsWith("data:image/svg+xml,")) throw new Error("Assistant logo asset contract changed.");
   return source.slice(0, asset.start) + JSON.stringify("data:image/svg+xml," + encodeURIComponent(svg)) + source.slice(asset.end);
 }
-module.exports = { rebrandJavaScript, rebrandAssistantLogo };
+// Timewarp leads; the upstream notice is kept verbatim because rebranding does
+// not convey a license.
+const COPYRIGHT = "Copyright © 2026 Timewarp. Portions Copyright © 2026 Energy.";
+const MAC_INSTALL_CHECK = 't(n.app,n.dialog,n.shell,process.execPath,process.platform,"0.8.20",()=>a("/Applications/Energy.app"))';
+function rebrandBootstrap(source) {
+  // Started from the DMG, upstream compares itself with /Applications/Energy.app
+  // and opens that app when it is current, launching Energy instead of
+  // Timewarp. Compare with this bundle's own name and version instead.
+  if (source.split(MAC_INSTALL_CHECK).length !== 2) throw new Error("Bundle contract changed: macOS Applications check");
+  const installed = 'require("node:path").join("/Applications",require("node:path").basename(require("node:path").resolve(process.execPath,"../../..")))';
+  return rebrandJavaScript(source.replace(MAC_INSTALL_CHECK, `t(n.app,n.dialog,n.shell,process.execPath,process.platform,n.app.getVersion(),()=>a(${installed}))`));
+}
+module.exports = { rebrandJavaScript, rebrandAssistantLogo, rebrandBootstrap, COPYRIGHT };

@@ -50,6 +50,9 @@ jobs:
           cache-dependency-path: timewarp/package-lock.json
       - run: npm ci --ignore-scripts
       - run: node scripts/prepare-mac-inputs.cjs
+        env:
+          TIMEWARP_MAC_UPSTREAM_URL: ${{ secrets.TIMEWARP_MAC_UPSTREAM_URL }}
+          TIMEWARP_MAC_UPSTREAM_TOKEN: ${{ secrets.TIMEWARP_MAC_UPSTREAM_TOKEN }}
       - run: npm run installer:mac:draft
       - run: npm run test:portable
       - run: npm audit --audit-level=moderate
@@ -81,6 +84,9 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: node scripts/prepare-mac-inputs.cjs
         if: ${{ !inputs.resume_run_id }}
+        env:
+          TIMEWARP_MAC_UPSTREAM_URL: ${{ secrets.TIMEWARP_MAC_UPSTREAM_URL }}
+          TIMEWARP_MAC_UPSTREAM_TOKEN: ${{ secrets.TIMEWARP_MAC_UPSTREAM_TOKEN }}
       - name: Validate notarization recovery inputs
         if: ${{ inputs.resume_run_id }}
         env:

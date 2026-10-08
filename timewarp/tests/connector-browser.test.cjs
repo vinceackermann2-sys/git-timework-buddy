@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {patchConnectorRouting}=require('../scripts/build.cjs');
 const {createConnectorBrowser}=require('../desktop/connector-browser.js');
 const root=path.resolve(__dirname,'..');
-const source=(async()=>{const asar=await import('@electron/asar');return asar.extractFile(path.resolve(root,'../energy-testv1/build/app.asar.pristine'),path.join('out','renderer','assets','mermaid-GHXKKRXX-YWFhvrpV.js')).toString('utf8');})();
+const source=(async()=>{const asar=await import('@electron/asar');return asar.extractFile(path.resolve(root,'../timewarp-runtime/build/app.asar.pristine'),path.join('out','renderer','assets','mermaid-GHXKKRXX-YWFhvrpV.js')).toString('utf8');})();
 function expression(bundle,name,next){const start=bundle.indexOf(name+'=');assert.ok(start>=0);const end=bundle.indexOf(','+next+'=',start);assert.ok(end>start);return '('+bundle.slice(start+name.length+1,end)+')';}
 function hookContext(platform='desktop'){
   const calls=[],errors=[];let state=0;

@@ -2,7 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { rebrandJavaScript } = require('../scripts/rebrand.cjs');
+const path = require('node:path');
+const { rebrandJavaScript, rebrandBootstrap, COPYRIGHT } = require('../scripts/rebrand.cjs');
 const { presets, defaultAccent, hexToAccent, migrateAppearance } = require('../shared/appearance.cjs');
 
 test('rebranding covers escaped UI copy and prompts while preserving runtime protocols and attribution', () => {
@@ -15,6 +16,32 @@ test('rebranding covers escaped UI copy and prompts while preserving runtime pro
   assert.equal(value.worker, 'energy-worker');
   assert.equal(value.env, 'ENERGY_DATA_DIR');
   assert.equal(value.license, 'Copyright © 2026 Energy');
+});
+
+test('Timewarp leads the copyright notice and keeps the upstream attribution verbatim', () => {
+  assert.ok(COPYRIGHT.startsWith('Copyright © 2026 Timewarp.'));
+  assert.ok(COPYRIGHT.includes('Copyright © 2026 Energy'));
+});
+
+test('a DMG launch compares with this Timewarp bundle and never opens an installed Energy app', () => {
+  const source = '"use strict";const start=()=>t(n.app,n.dialog,n.shell,process.execPath,process.platform,"0.8.20",()=>a("/Applications/Energy.app"));const fail=()=>console.error("Energy failed to start:");';
+  const patched = rebrandBootstrap(source);
+  assert.ok(!patched.includes('Energy'));
+  for (const [bundle, version] of [['Timewarp.app', '1.1.26'], ['Timewarp Preview.app', '0.1.0-draft.1']]) {
+    const calls = [];
+    vm.runInNewContext(patched + ';start()', {
+      require: name => name === 'node:path' ? path.posix : require(name),
+      process: { execPath: `/Volumes/Timewarp ${version}-arm64/${bundle}/Contents/MacOS/${bundle.slice(0, -4)}`, platform: 'darwin' },
+      n: { app: { getVersion: () => version }, dialog: {}, shell: {} },
+      a: installed => installed,
+      t: (...args) => calls.push(args),
+      console,
+    });
+    const [[, , , , , runningVersion, installedApp]] = calls;
+    assert.equal(runningVersion, version);
+    assert.equal(installedApp(), '/Applications/' + bundle);
+  }
+  assert.throws(() => rebrandBootstrap('"use strict";'), /macOS Applications check/);
 });
 
 test('stock appearance upgrades without changing a custom theme, scheme, radiance or texture', () => {

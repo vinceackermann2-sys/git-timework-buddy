@@ -24,7 +24,7 @@ import {
   type PlanId,
 } from '../_shared/plans.ts';
 import { AI_COST_MARKUP, CREDIT_PACKS, getCreditPack, USD_PER_CREDIT } from '../_shared/credits.ts';
-import { energyPlanPrice, energyCreditPackPrice, monthlyExtraCredits, MONTHLY_CREDIT_ADDONS, energySubscriptionExtras, syncEnergyMonthlyCredits } from '../_shared/energyPricing.ts';
+import { monthlyPlanPrice, creditPackPrice, monthlyExtraCredits, MONTHLY_CREDIT_ADDONS, planSubscriptionExtras, syncMonthlyPlanCredits } from '../_shared/timewarpPricing.ts';
 import { corsHeaders, getSiteUrl, getStripe, jsonResponse, type Stripe } from '../_shared/stripe.ts';
 import { subscriptionCheckout } from '../_shared/subscriptionCheckout.ts';
 
@@ -323,7 +323,7 @@ Deno.serve(async (req) => {
         if (subscriptionError) {
           throw new Error(`Could not activate the purchased plan: ${subscriptionError.message}`);
         }
-        await syncEnergyMonthlyCredits(admin,stripeSubscription,syncedPlan,user.id,purchasedWorkspaceId);
+        await syncMonthlyPlanCredits(admin,stripeSubscription,syncedPlan,user.id,purchasedWorkspaceId);
       }
 
       if (validPack) {
@@ -476,7 +476,7 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: 'Only workspace owners and admins can buy credits for it.' }, 403);
       }
       const configuredPack = getCreditPack(body.packCredits);
-      const pack = configuredPack && body.surface === 'energy' ? {...configuredPack, priceId: await energyCreditPackPrice(stripe,configuredPack)} : configuredPack;
+      const pack = configuredPack && body.surface === 'energy' ? {...configuredPack, priceId: await creditPackPrice(stripe,configuredPack)} : configuredPack;
       if (!pack) {
         return jsonResponse({ error: 'Choose a valid credit pack.' }, 400);
       }
@@ -563,7 +563,7 @@ Deno.serve(async (req) => {
       let extraCredits=0;
       try{extraCredits=monthlyExtraCredits(body.monthlyExtraCredits);}catch{return jsonResponse({error:'Choose a valid monthly credit addition.'},400);}
       if(extraCredits&&(body.surface!=='energy'||workspaceId))return jsonResponse({error:'Monthly credit additions are available on personal desktop plans.'},400);
-      const priceId = body.surface === 'energy' ? await energyPlanPrice(stripe,targetPlan,getPlanPriceId(targetPlan),extraCredits) : getPlanPriceId(targetPlan);
+      const priceId = body.surface === 'energy' ? await monthlyPlanPrice(stripe,targetPlan,getPlanPriceId(targetPlan),extraCredits) : getPlanPriceId(targetPlan);
       if (!priceId) {
         return jsonResponse({ error: `No Stripe price is configured for the ${targetPlan} plan.` }, 500);
       }
@@ -572,7 +572,7 @@ Deno.serve(async (req) => {
       // picker). An unknown pack is refused rather than silently dropped —
       // dropping it would charge less than the price the user just agreed to.
       const configuredBundle = body.packCredits ? getCreditPack(body.packCredits) : null;
-      const bundledPack = configuredBundle && body.surface === 'energy' ? {...configuredBundle, priceId: await energyCreditPackPrice(stripe,configuredBundle)} : configuredBundle;
+      const bundledPack = configuredBundle && body.surface === 'energy' ? {...configuredBundle, priceId: await creditPackPrice(stripe,configuredBundle)} : configuredBundle;
       if (body.packCredits && !bundledPack) {
         return jsonResponse({ error: 'Choose a valid credit pack.' }, 400);
       }
@@ -613,7 +613,7 @@ Deno.serve(async (req) => {
               error: 'This workspace\'s plan is paid for by another member. Ask them to change it.',
             }, 403);
           }
-          const existingExtra=body.surface==='energy'&&!workspaceId?energySubscriptionExtras(existing,existing.items.data[0]?.price.metadata?.plan||existing.metadata.plan||currentPlan):0;
+          const existingExtra=body.surface==='energy'&&!workspaceId?planSubscriptionExtras(existing,existing.items.data[0]?.price.metadata?.plan||existing.metadata.plan||currentPlan):0;
           if (currentPlan === targetPlan && existingExtra===extraCredits && !existing.cancel_at_period_end) {
             // Already on the plan: the only thing left to buy is the credits.
             if (bundledPack) {

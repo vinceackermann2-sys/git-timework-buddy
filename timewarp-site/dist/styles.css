@@ -65,7 +65,7 @@ h3{font-size:18px;font-weight:600;color:var(--ink)}
 .hero{padding:84px 0 0}
 .section{padding-top:150px}
 
-/* ---------- App replica (Energy-based Timewarp desktop) ---------- */
+/* ---------- App replica (Timewarp desktop) ---------- */
 .app{display:grid;grid-template-columns:240px 1fr;grid-template-rows:40px 1fr;background:var(--accent-side);border:1px solid #e6d6f7;border-radius:20px;box-shadow:var(--shadow);overflow:hidden;text-align:left}
 .app>*{min-width:0}
 .hero-app{grid-template-columns:1fr;width:min(1040px,calc(100% - 48px));height:640px;margin:56px auto 0}

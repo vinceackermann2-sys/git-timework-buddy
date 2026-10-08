@@ -7,7 +7,7 @@ const { choices } = require('../shared/mascots.cjs');
 
 test('same-profile browser actions publish each new activity without moving the cursor', async () => {
   const asar=await import('@electron/asar');
-  const archive=path.resolve(__dirname,'../../energy-testv1/build/app.asar.pristine');
+  const archive=path.resolve(__dirname,'../../timewarp-runtime/build/app.asar.pristine');
   const original=asar.extractFile(archive,path.join('out','main','index.js')).toString();
   const patched=patchBrowserCursorActivity(original);
   const classes=acorn.parse(patched,{ecmaVersion:'latest',sourceType:'script'}).body.filter(node=>node.type==='ClassDeclaration');
@@ -32,7 +32,7 @@ test('same-profile browser actions publish each new activity without moving the 
 
 test('the packaged cursor components pass the active identity to the compact action badge', async () => {
   const asar=await import('@electron/asar');
-  const source=asar.extractFile(path.resolve(__dirname,'../../energy-testv1/build/app.asar.pristine'),path.join('out','renderer','assets','mermaid-GHXKKRXX-YWFhvrpV.js')).toString();
+  const source=asar.extractFile(path.resolve(__dirname,'../../timewarp-runtime/build/app.asar.pristine'),path.join('out','renderer','assets','mermaid-GHXKKRXX-YWFhvrpV.js')).toString();
   const patched=patchBrowserCursor(source);
   assert.doesNotThrow(()=>acorn.parse(patched,{ecmaVersion:'latest',sourceType:'module'}));
   assert.ok(patched.includes('summary:i.summary,agent:TWAgent'));

@@ -1,4 +1,4 @@
-// Fixed monthly USD pricing for the local Energy desktop. Existing subscriptions
+// Fixed monthly USD pricing for the local Timewarp desktop. Existing subscriptions
 // keep their price until their owner explicitly chooses another plan.
 const cents:Record<string,number>={pro:2000,max:5000,ultra:10000};
 export const MONTHLY_CREDIT_ADDONS = [0,50,100,200,300,500,750,1000].map(credits=>({credits,monthlyUsd:credits*0.2}));
@@ -7,20 +7,20 @@ export function monthlyExtraCredits(value:unknown):number {
   if(typeof value!=='number'||!MONTHLY_CREDIT_ADDONS.some(addon=>addon.credits===value))throw Error('Choose a valid monthly credit addition.');
   return value;
 }
-export function energySubscriptionExtras(subscription:any,plan:string):number {
+export function planSubscriptionExtras(subscription:any,plan:string):number {
   const price=subscription.items?.data?.[0]?.price,extra=Number(price?.metadata?.energy_monthly_extra_credits||0);
   if(!extra)return 0;
   const amount=cents[plan]+extra*20;
   if(!cents[plan]||!MONTHLY_CREDIT_ADDONS.some(addon=>addon.credits===extra)||subscription.items.data[0].quantity!==1||price.currency!=='usd'||price.unit_amount!==amount||price.tax_behavior!=='inclusive'||price.recurring?.interval!=='month'||price.recurring?.interval_count!==1||price.lookup_key!=='timewarp_energy_'+plan+'_'+amount+'_monthly_extra_'+extra+'_v1')throw Error('The monthly credit subscription price needs repair.');
   return extra;
 }
-export async function syncEnergyMonthlyCredits(admin:any,subscription:any,plan:string,userId:string,workspaceId:string|null){
+export async function syncMonthlyPlanCredits(admin:any,subscription:any,plan:string,userId:string,workspaceId:string|null){
   if(workspaceId)return;
-  const extra=plan==='free'||subscription.status!=='active'?0:energySubscriptionExtras(subscription,plan);
+  const extra=plan==='free'||subscription.status!=='active'?0:planSubscriptionExtras(subscription,plan);
   const {error}=await admin.rpc('timewarp_energy_sync_monthly_credits',{p_owner_user_id:userId,p_stripe_subscription_id:subscription.id,p_extra_credits:extra,p_monthly_usd:plan==='free'?null:Number(subscription.items?.data?.[0]?.price?.unit_amount||0)/100});
   if(error)throw Error('Could not synchronize monthly plan credits: '+error.message);
 }
-export async function energyPlanPrice(stripe:any,plan:string,configuredPrice:string,extraCredits:number=0){
+export async function monthlyPlanPrice(stripe:any,plan:string,configuredPrice:string,extraCredits:number=0){
   const extra=monthlyExtraCredits(extraCredits),amount=cents[plan]+extra*20;if(!cents[plan])throw Error('Choose a paid Timewarp plan.');
   const lookup=extra?'timewarp_energy_'+plan+'_'+amount+'_monthly_extra_'+extra+'_v1':'timewarp_energy_'+plan+'_'+amount+'_monthly_v1';
   const matches=await stripe.prices.list({lookup_keys:[lookup],active:true,limit:1});
@@ -34,7 +34,7 @@ export async function energyPlanPrice(stripe:any,plan:string,configuredPrice:str
   const price=await stripe.prices.create({product:typeof product==='string'?product:product.id,currency:'usd',unit_amount:amount,recurring:{interval:'month'},tax_behavior:'inclusive',lookup_key:lookup,metadata:{energy_monthly_extra_credits:String(extra),plan}},{idempotencyKey:lookup});
   if(!valid(price))throw Error('Stripe did not return the requested monthly price.');return price.id;
 }
-export async function energyCreditPackPrice(stripe:any,pack:any){
+export async function creditPackPrice(stripe:any,pack:any){
   const original=await stripe.prices.retrieve(pack.priceId);
   const valid=(p:any)=>p.active&&p.currency==='usd'&&p.unit_amount===pack.priceCents&&!p.recurring&&p.tax_behavior==='inclusive';
   if(valid(original))return original.id;

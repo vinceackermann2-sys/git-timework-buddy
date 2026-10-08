@@ -2,6 +2,7 @@
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto'), assert = require('node:assert/strict');
 const acorn = require('acorn');
 const { presets, defaultAccent } = require('../shared/appearance.cjs');
+const { COPYRIGHT } = require('./rebrand.cjs');
 async function verify() {
   const asar = await import('@electron/asar');
   const root = path.resolve(__dirname, '..');
@@ -9,11 +10,12 @@ async function verify() {
   if (archiveOnly && !mac) throw new Error('Archive-only verification is reserved for the Mac archive; Windows requires executable integrity checks.');
   const staged = process.argv.includes('--staged') || mac;
   const supplied=process.argv.indexOf('--app-dir');
-  const native = mac ? path.join(supplied>=0?path.resolve(process.argv[supplied+1]):path.join(root,'build/mac-preview/mac-arm64/Timewarp Preview.app'),'Contents') : (staged ? path.join(root,'build/native') : path.resolve(root,'../energy-testv1/app'));
+  const native = mac ? path.join(supplied>=0?path.resolve(process.argv[supplied+1]):path.join(root,'build/mac-preview/mac-arm64/Timewarp Preview.app'),'Contents') : (staged ? path.join(root,'build/native') : path.resolve(root,'../timewarp-runtime/app'));
   const archive = archiveOnly ? path.join(root,'build/timewarp-mac-app.asar') : path.join(native,mac?'Resources/app.asar':'resources/app.asar');
   const exe = mac ? path.dirname(native) : (staged&&!fs.existsSync(path.join(native,'Timewarp.exe'))?path.join(native,'Timewarp Preview.exe'):path.join(native,'Timewarp.exe'));
   const read = name => asar.extractFile(archive, name.split('/').join(path.sep)).toString('utf8');
   assert.equal(JSON.parse(read('package.json')).productName, 'Timewarp');
+  assert.equal(JSON.parse(read('package.json')).author.name, 'Timewarp');
   const main = read('out/main/index.js');
   const updaterNode=acorn.parseExpressionAt(main,main.indexOf('class BRe'),{ecmaVersion:'latest'});
   const NativeUpdater=require('node:vm').runInNewContext('('+main.slice(updaterNode.start,updaterNode.end)+')');
@@ -31,6 +33,8 @@ async function verify() {
   assert.ok(boot.includes('Timewarp Energy') || (staged && boot.includes('Timewarp Preview')));
   assert.ok(boot.includes("require('./timewarp/desktop/runtime.cjs')"));
   assert.ok(boot.includes('requestSingleInstanceLock'));
+  assert.ok(boot.includes('n.app.getVersion(),()=>a(require("node:path").join("/Applications",'), 'A DMG launch compares with this Timewarp bundle');
+  assert.ok(!boot.includes('/Applications/Energy.app'));
   assert.throws(()=>read('out/main/timewarp/verify-packaged-auth.cjs'));
   assert.throws(()=>read('out/main/timewarp/verify-local-harness.cjs'));
   assert.throws(()=>read('out/main/timewarp/verify-services.cjs'));
@@ -58,16 +62,19 @@ async function verify() {
   assert.ok(main.includes('.availableModels()'));
   assert.ok(main.includes('accent:' + JSON.stringify(defaultAccent)));
   assert.ok(main.includes('applicationVersion:""'));
+  assert.ok(main.includes('copyright:' + JSON.stringify(COPYRIGHT)));
+  assert.ok(!main.includes('ExampleEnergy'));
   assert.ok(main.includes('texture:{type:"dots",step:0}'));
-  for (const token of acorn.tokenizer(main, { ecmaVersion: 'latest', sourceType: 'module' })) {
-    if (['string','template'].includes(token.type.label) && typeof token.value === 'string' && !/copyright|licensed under/i.test(token.value)) assert.ok(!/\bEnergy\b/.test(token.value), 'Old display brand remains: ' + token.value.slice(0,80));
+  // The existing "Timewarp Energy" profile folder is a compatibility identifier.
+  for (const source of [main, boot]) for (const token of acorn.tokenizer(source, { ecmaVersion: 'latest', sourceType: 'module' })) {
+    if (['string','template'].includes(token.type.label) && typeof token.value === 'string' && token.value !== 'Timewarp Energy' && !/copyright|licensed under/i.test(token.value)) assert.ok(!/\bEnergy\b/.test(token.value), 'Old display brand remains: ' + token.value.slice(0,80));
   }
   for(const name of ['orbit','nova','cosmo'])assert.ok(asar.extractFile(archive,('out/main/timewarp/assets/mascots/'+name+'.png').split('/').join(path.sep)).length>100000);
   assert.ok(read('out/main/timewarp/desktop/runtime.cjs').includes("require('./updates.cjs').configureUpdates"));
   assert.equal(read('out/main/timewarp/desktop/updates.cjs'),fs.readFileSync(path.join(root,'desktop/updates.cjs'),'utf8'));
   const release = require('../shared/release.cjs').validateRelease(JSON.parse(read('out/main/timewarp/release.json')));
   if(release.enabled){const feed=require('js-yaml').load(fs.readFileSync(path.join(native,'resources/app-update.yml'),'utf8'));assert.equal(feed.url,release.updateUrl);assert.deepEqual(feed.publisherName,release.publisherNames);}
-  if(staged&&!release.enabled&&!archiveOnly)assert.ok(!fs.existsSync(path.join(native,mac?'Resources/app-update.yml':'resources/app-update.yml')),'Package never inherits an Energy update feed');
+  if(!release.enabled&&!archiveOnly)assert.ok(!fs.existsSync(path.join(native,mac?'Resources/app-update.yml':'resources/app-update.yml')),'Package never inherits an Energy update feed');
   const config = JSON.parse(read('out/main/timewarp/config.json'));
   const cloudUrl=new URL(config.supabaseUrl);
   assert.equal(cloudUrl.protocol,'https:');assert.ok(!cloudUrl.username&&!cloudUrl.password&&!cloudUrl.search&&!cloudUrl.hash);
@@ -202,6 +209,7 @@ async function verify() {
       const plist=JSON.parse(require('node:child_process').execFileSync('/usr/bin/plutil',['-convert','json','-o','-',path.join(native,'Info.plist')],{encoding:'utf8'}));
       assert.equal(plist.ElectronAsarIntegrity['Resources/app.asar'].hash,wanted,'Signed Mac bundle pins its ASAR header');
       assert.deepEqual(fs.readFileSync(path.join(native,'Resources',plist.CFBundleIconFile)),fs.readFileSync(path.join(root,'assets/app-icon.icns')));
+      assert.equal(plist.NSHumanReadableCopyright,COPYRIGHT);
     }
     console.log('Verified Mac application contracts, Timewarp service routing, isolated profile and packaged native bridge'+(archiveOnly?' (archive only).':', ASAR integrity, icon and hardened fuses.'));
     return;
@@ -217,6 +225,17 @@ async function verify() {
   const position = binary.indexOf(marker);
   assert.ok(position >= 0, 'Embedded Electron integrity resource is present');
   assert.equal(binary.subarray(position + marker.length, position + marker.length + 64).toString('latin1'), wanted);
+  // Shipped packages use the official Electron executable. The in-place
+  // development executable keeps the supplied runtime's PE layout, which
+  // resedit cannot parse.
+  const { NtExecutable, NtExecutableResource, Resource } = await import('resedit');
+  const [versionInfo] = staged ? Resource.VersionInfo.fromEntries(NtExecutableResource.from(NtExecutable.from(binary, { ignoreCert: true })).entries) : [];
+  for (const language of versionInfo?.getAllLanguagesForStringValues() ?? []) {
+    const details = versionInfo.getStringValues(language);
+    assert.equal(details.CompanyName, 'Timewarp');
+    assert.equal(details.LegalCopyright, COPYRIGHT);
+    for (const [name, value] of Object.entries(details)) if (name !== 'LegalCopyright') assert.ok(!/Energy|GitHub/.test(value), 'Executable details name another publisher: ' + name);
+  }
   assert.ok(fs.readFileSync(path.join(root, 'cloud/index.ts'), 'utf8').indexOf('verifyCloud') < 0);
   assert.ok(fs.readFileSync(path.join(root, 'cloud/index.ts'), 'utf8').indexOf('verifyNative') < 0);
   console.log('Verified original local harness and memory, cloud history adapter, no cloud documents UI, account/billing/model bridge and Electron integrity.');

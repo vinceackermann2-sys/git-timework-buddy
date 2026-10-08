@@ -119,7 +119,7 @@ if(process.versions.electron){
   });
 }else{
   const acorn=require('acorn'),cp=require('node:child_process'),{pathToFileURL}=require('node:url');
-  const asar=require('@electron/asar'),archive=path.resolve(root,'../energy-testv1/app/resources/app.asar');
+  const asar=require('@electron/asar'),archive=path.resolve(root,'../timewarp-runtime/app/resources/app.asar');
   const renderer=path.join(reports,'model-picker-renderer');fs.mkdirSync(renderer,{recursive:true});
   const read=file=>asar.extractFile(archive,('out/renderer/'+file).split('/').join(path.sep)).toString();
   const source=read('assets/mermaid-GHXKKRXX-YWFhvrpV.js');

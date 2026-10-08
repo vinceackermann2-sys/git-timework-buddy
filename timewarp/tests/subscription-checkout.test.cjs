@@ -150,8 +150,8 @@ test('durable subscription checkout and billing failure recovery', async t => {
       Deno: { serve: fn => { handler = fn; }, env: { get: () => 'fixture' } }, createClient: () => admin,
       authenticateRequest: async () => ({ user: { id: options.user || owner, email: 'fixture@example.invalid' } }),
       isPlanId: plan => ['free', 'pro', 'max', 'ultra'].includes(plan), canManageBilling: () => true,
-      getPlanPriceId: plan => 'price_' + plan, energyPlanPrice: async (_stripe, plan) => 'price_' + plan,
-      monthlyExtraCredits: () => 0, energySubscriptionExtras: () => 0,
+      getPlanPriceId: plan => 'price_' + plan, monthlyPlanPrice: async (_stripe, plan) => 'price_' + plan,
+      monthlyExtraCredits: () => 0, planSubscriptionExtras: () => 0,
       getStripe: () => stripe, getSiteUrl: () => 'https://fixture.invalid', corsHeaders: {},
       jsonResponse: (data, status = 200) => Response.json(data, { status }), subscriptionCheckout: guard.subscriptionCheckout,
     });

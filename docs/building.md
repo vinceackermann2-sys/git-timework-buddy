@@ -26,9 +26,9 @@ CI does not build, sign, deploy, charge cards, or use production credentials.
 
 On Windows, supply the reviewed inputs from the existing Energy 0.8.20 distribution:
 
-- `energy-testv1/app/`: bundled tools/resources and runtime files in the inventory.
-- `energy-testv1/build/app.asar.pristine`: the original unmodified app archive.
-- `energy-testv1/upstream.exe`: the original unmodified executable.
+- `timewarp-runtime/app/`: bundled tools/resources and runtime files in the inventory.
+- `timewarp-runtime/build/app.asar.pristine`: the original unmodified app archive.
+- `timewarp-runtime/upstream.exe`: the original unmodified executable.
 
 The editable `patch.js` and `fix-asar-integrity.js` are tracked. The upstream
 binaries, generated archive, retired local server and user data are ignored.
@@ -67,7 +67,7 @@ npm run verify:build
 npm run verify:contracts
 ```
 
-The build replaces files in `energy-testv1/app` and creates local rollback
+The build replaces files in `timewarp-runtime/app` and creates local rollback
 backups. Start `launch.cmd` in the repository root after successful verification.
 
 ## Isolated installers and release signing
@@ -221,6 +221,12 @@ new migration and billing handler without credentials or live Stripe requests.
 
 Use an Apple Silicon Mac with Node 24 and Xcode command-line tools.
 The preparation helper extracts the pinned DMG with macOS file modes intact.
+It never downloads from Energy. Place the pinned DMG at
+`timewarp/build/upstream-mac.dmg`, or set `TIMEWARP_MAC_UPSTREAM_URL` to
+Timewarp's private HTTPS copy (plus `TIMEWARP_MAC_UPSTREAM_TOKEN` when that
+storage needs a bearer token, such as a private GitHub release asset API URL).
+The same names are repository secrets for the macOS workflow. The DMG SHA256 in
+`mac-upstream-lock.json` is checked before anything is extracted.
 
     cd timewarp
     npm ci --ignore-scripts

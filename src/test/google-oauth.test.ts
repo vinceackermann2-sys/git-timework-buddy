@@ -5,7 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
   beginGoogleOAuth,
   consumePendingGoogleOAuth,
-  encryptEnergyDesktopHandoff,
+  encryptDesktopHandoff,
 } from "../lib/googleOAuth";
 
 const require = createRequire(import.meta.url);
@@ -49,7 +49,7 @@ describe("branded Google desktop handoff", () => {
       nonceHash: createHash("sha256").update(flow.nonce).digest("hex"),
     };
     const assertion = "test-google-identity-assertion";
-    const code = await encryptEnergyDesktopHandoff(assertion, desktop);
+    const code = await encryptDesktopHandoff(assertion, desktop);
     expect(code).not.toContain(assertion);
     expect(decryptGoogleHandoff(code, flow)).toBe(assertion);
     expect(() => decryptGoogleHandoff(code, createGoogleFlow())).toThrow();

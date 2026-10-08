@@ -14,9 +14,20 @@ application backend dependency.
 `timewarp-energy`, SQL/bucket names containing `energy`, `surface: energy`,
 the OAuth target `energy-desktop`, local `app://energy` and the existing
 `Timewarp Energy` profile are compatibility identifiers. Renaming them would
-require data, OAuth and device-profile migrations. The upstream desktop archive
-is a build input, not a cloud server. Staged package verification rejects Energy
-server URLs in executable app code, including startup recovery code.
+require data, OAuth and device-profile migrations. Stripe lookup keys and price
+metadata such as `timewarp_energy_*` and `energy_monthly_extra_credits` are live
+catalog identifiers; renaming them would create duplicate prices. Internal
+engine identifiers (`energy://` links, `energy-git`, `ENERGY_*` variables and
+agent role names) are stored in existing chats and agent definitions and stay
+unchanged.
+
+The upstream desktop archive is a build input, not a cloud server. Staged
+package verification rejects Energy server URLs in executable app code,
+including startup recovery code. Builds never download from Energy: Windows
+inputs come from `TIMEWARP_UPSTREAM_BUNDLE_URL` and the Mac DMG from
+`TIMEWARP_MAC_UPSTREAM_URL`, both Timewarp-controlled and SHA256-pinned. The
+working app keeps no Energy update feed. Executable details, the macOS
+copyright and the About panel name Timewarp first and keep the upstream notice.
 
 The matching existing Timewarp service baseline must be versioned alongside this
 integration before creating staging. The local website repository contains the

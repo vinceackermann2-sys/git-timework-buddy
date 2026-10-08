@@ -25,7 +25,7 @@ import {
   type PlanId,
 } from '../_shared/plans.ts';
 import { getStripe, Stripe } from '../_shared/stripe.ts';
-import { syncEnergyMonthlyCredits } from '../_shared/energyPricing.ts';
+import { syncMonthlyPlanCredits } from '../_shared/timewarpPricing.ts';
 
 type AdminClient = any;
 
@@ -242,7 +242,7 @@ const applySubscription = async (
     p_plan_anchor_at: effectivePlan !== 'free' ? toIso(start) : null,
   });
   if (error) throw new Error(`Failed to store subscription for ${userId}: ${error.message}`);
-  await syncEnergyMonthlyCredits(admin,subscription,effectivePlan,userId,workspaceId);
+  await syncMonthlyPlanCredits(admin,subscription,effectivePlan,userId,workspaceId);
 
   console.log(
     `[stripe-webhook] ${workspaceId ? `workspace ${workspaceId}` : `personal ${userId}`} -> ${effectivePlan} (${subscription.status})`,

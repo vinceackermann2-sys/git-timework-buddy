@@ -29,7 +29,7 @@ test('agent terminology changes UI copy while preserving roles, routes, CSS, eve
 
 test('native create saves every selected mascot without a cloud image lookup or automatic reassignment', async () => {
   const asar = await import('@electron/asar');
-  const archive = path.resolve(__dirname, '../../energy-testv1/build/app.asar.pristine');
+  const archive = path.resolve(__dirname, '../../timewarp-runtime/build/app.asar.pristine');
   const read = file => asar.extractFile(archive, file.split('/').join(path.sep)).toString();
   const main = patchAgentAvatarResolver(read('out/main/index.js'));
   const ui = renameAgentCopy(patchAgentCreation(read('out/renderer/assets/mermaid-GHXKKRXX-YWFhvrpV.js')));

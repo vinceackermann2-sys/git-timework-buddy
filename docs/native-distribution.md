@@ -71,8 +71,9 @@ with the CSR, retained securely on the build Mac or exported as a protected
 PKCS#12 identity. Developer ID Installer is needed for a PKG installer, not
 for this DMG route.
 
-The Mac build now uses the matching upstream **0.8.20 arm64** DMG:
-[official versioned download](https://static.getenergy.com/desktop/alpha/arm64/0.8.20/arm64.dmg).
+The Mac build now uses the matching upstream **0.8.20 arm64** DMG, originally
+Energy's versioned download. Builds fetch Timewarp's copy of that exact file
+from `TIMEWARP_MAC_UPSTREAM_URL` and never contact Energy's servers.
 DMG SHA256: `bf55d5006673deb036d7e9be7455343e66fbd58a2796202ca6e3bb02b5484701`.
 The archive and 1,031 resource files are pinned in `timewarp/mac-upstream-lock.json`,
 including original unpacked modules. The website's newer 0.8.28 distribution is
