@@ -37,6 +37,7 @@ From `timewarp`:
     npm run engine:dev       # build and open (separate "Timewarp Dev" profile)
     npm run engine:preview   # signed-in sample account, scripted model, real Codex
     npm run test:engine      # engine tests, including a real Codex conversation
+    npm run engine:package:draft   # unsigned Windows installer in build/engine-installer-draft
 
 Preview mode is compiled only into `--fixture` development builds and is
 refused for release builds.
@@ -76,6 +77,6 @@ Capabilities
 - ◐ Feedback and bug reports
 
 Distribution
-- ☐ Windows installer, Microsoft Store package, macOS DMG built from this source only
+- ◐ Windows installer from this source: `npm run engine:package:draft` builds and stages an unsigned preview (verified: packaged app starts, runs its bundled Codex); `npm run engine:package` signs a public release with `release.json` and signing set up. ☐ Microsoft Store package, ☐ macOS DMG
 - ☐ Updates through the Timewarp feed
 - ☐ CI checks; `timewarp-runtime` and the patch pipeline removed

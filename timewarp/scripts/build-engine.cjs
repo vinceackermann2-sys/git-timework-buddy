@@ -49,7 +49,11 @@ function notices(metafiles) {
 
 async function build() {
   const esbuild = require("esbuild");
-  const version = require("../package.json").version;
+  // Release builds carry the release version and update feed; the updater
+  // refuses a packaged app whose version or feed doesn't match.
+  const releaseFile = process.env.TIMEWARP_RELEASE_CONFIG || path.join(root, "release.json");
+  const releaseConfig = release && fs.existsSync(releaseFile) ? require("../shared/release.cjs").validateRelease(JSON.parse(fs.readFileSync(releaseFile, "utf8"))) : { enabled: false };
+  const version = releaseConfig.enabled ? releaseConfig.version : require("../package.json").version;
   clean(out);
   fs.mkdirSync(out, { recursive: true });
   const common = { bundle: true, logLevel: "warning", metafile: true, legalComments: "none", minify: !dev, sourcemap: dev ? "inline" : false };
@@ -86,7 +90,7 @@ async function build() {
     author: { name: "Timewarp" }, license: "UNLICENSED", private: true,
   }, null, 2));
   fs.writeFileSync(path.join(out, "build.json"), JSON.stringify({
-    version, ...identity, release: { enabled: false }, ...(fixture ? { fixture: true } : {}),
+    version, ...identity, release: releaseConfig, ...(fixture ? { fixture: true } : {}),
   }, null, 2));
   const sections = notices([main.metafile, renderer.metafile]);
   fs.writeFileSync(path.join(out, "THIRD_PARTY_NOTICES.txt"), `Timewarp desktop includes the following open-source software.\n\n${sections.join("\n\n\n")}\n`);
