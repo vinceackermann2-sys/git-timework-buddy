@@ -2,15 +2,15 @@
 const fail=(status,message)=>Object.assign(Error(message),{status});
 // Preserve the native tools, approvals, history and streaming. Change only the
 // provider. A selected Codex account never falls back to paid inference.
-function bindCodexFunding({client,chatgpt,funding,userId}){
+function bindCodexFunding({client,chatgpt,funding,userId,cloudProvider='energy-llm-proxy',backgroundRole='energy-memory-writer'}){
   chatgpt.bindClient(client);
   const raw=client.request.bind(client),threads=new Map(),backgroundBackoff=new Map();
   const owner=()=>{const who=userId();if(!who)throw fail(401,'Sign in to Timewarp.');return who;};
   async function route(params,state){
     const model=params.model||params.collaborationMode?.settings?.model;
     const role=params.agentRole||threads.get(params.threadId)?.role;
-    const background=role==='energy-memory-writer'||model==='timewarp/background';
-    const provider=state.source==='chatgpt'?'openai':'energy-llm-proxy';
+    const background=role===backgroundRole||model==='timewarp/background';
+    const provider=state.source==='chatgpt'?'openai':cloudProvider;
     const choices=state.source==='chatgpt'?await chatgpt.models():require('../shared/models.cjs').models();
     const preferred=background?(choices.find(item=>/(?:^|\/)gpt-[\d.]+-luna$/.test(item.id))||choices.find(item=>item.featured)||choices[0]):null;
     const selected=require('../shared/model-capabilities.cjs').resolveModelSettings(choices,{name:preferred?.id||model,reasoningEffort:background?'low':params.effort??params.collaborationMode?.settings?.reasoning_effort??params.config?.model_reasoning_effort,serviceTier:background?null:params.serviceTier});
@@ -24,7 +24,7 @@ function bindCodexFunding({client,chatgpt,funding,userId}){
     params={...params};delete params._timewarpSubscriptionOnly;
     const previous=threads.get(params?.threadId);
     const role=params.agentRole||previous?.role;
-    if(role==='energy-memory-writer'&&(backgroundBackoff.get(who)||0)>Date.now())throw fail(429,'Background memory is cooling down after an AI error. Your chat can continue.');
+    if(role===backgroundRole&&(backgroundBackoff.get(who)||0)>Date.now())throw fail(429,'Background memory is cooling down after an AI error. Your chat can continue.');
     if(previous&&previous.owner!==who)throw fail(401,'This chat belongs to another Timewarp account.');
     if(method==='turn/start'||method==='turn/steer'){
       if(!state.canFundUsage)throw fail(402,state.source==='chatgpt'?'Reconnect your ChatGPT / Codex account in Billing.':'Connect your ChatGPT / Codex account on Free, or add Timewarp credits in Billing.');
@@ -54,7 +54,7 @@ function bindCodexFunding({client,chatgpt,funding,userId}){
   };
   client.on('notification',event=>{
     const previous=threads.get(event.params?.threadId);
-    if(previous?.role==='energy-memory-writer'&&event.method==='error'&&!event.params?.willRetry)backgroundBackoff.set(previous.owner,Date.now()+60000);
+    if(previous?.role===backgroundRole&&event.method==='error'&&!event.params?.willRetry)backgroundBackoff.set(previous.owner,Date.now()+60000);
   });
   client.on('status',state=>{if(['stopped','failed'].includes(state.status)){threads.clear();backgroundBackoff.clear();}});
   return client;
