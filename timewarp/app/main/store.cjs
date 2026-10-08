@@ -51,14 +51,22 @@ function openStore(file) {
   db.exec("pragma journal_mode = wal; pragma foreign_keys = on; pragma busy_timeout = 5000;");
   db.exec("create table if not exists meta(key text primary key, value text not null)");
   const version = Number(db.prepare("select value from meta where key = 'schema'").get()?.value || 0);
-  if (version < 1) {
+  const migrate = (target, statements) => {
+    if (version >= target) return;
     db.exec("begin");
     try {
-      for (const statement of SCHEMA) db.exec(statement);
-      db.prepare("insert or replace into meta(key, value) values ('schema', '1')").run();
+      for (const statement of statements) db.exec(statement);
+      db.prepare("insert or replace into meta(key, value) values ('schema', ?)").run(String(target));
       db.exec("commit");
     } catch (error) { db.exec("rollback"); throw error; }
-  }
+  };
+  migrate(1, SCHEMA);
+  // Threads remember which tool set they were started with; older transcripts
+  // stay readable after a chat continues in a new thread.
+  migrate(2, [
+    "alter table conversations add column tools_version integer not null default 0",
+    "alter table conversations add column previous_thread_ids text",
+  ]);
   return createStore(db);
 }
 
@@ -96,7 +104,8 @@ function createStore(db) {
   };
   const conversationOf = row => row && {
     id: row.id, ownerId: row.owner_id, agentId: row.agent_id, title: row.title,
-    codexThreadId: row.codex_thread_id, modelSettings: parse(row.model_settings),
+    codexThreadId: row.codex_thread_id, toolsVersion: row.tools_version || 0, previousThreadIds: parse(row.previous_thread_ids) || [],
+    modelSettings: parse(row.model_settings),
     archivedAt: row.archived_at, read: !!row.read, browserProfileId: row.browser_profile_id,
     createdAt: row.created_at, updatedAt: row.updated_at, lastActivityAt: row.last_activity_at,
   };
@@ -163,9 +172,10 @@ function createStore(db) {
       const current = conversations.get(id);
       if (!current) throw Object.assign(new Error("Conversation not found."), { status: 404 });
       const next = { ...current, ...patch };
-      run(`update conversations set agent_id = ?, title = ?, codex_thread_id = ?, model_settings = ?, archived_at = ?,
-        read = ?, browser_profile_id = ?, updated_at = ?, last_activity_at = ? where id = ?`,
-      next.agentId, next.title, next.codexThreadId, json(next.modelSettings), next.archivedAt, next.read ? 1 : 0,
+      run(`update conversations set agent_id = ?, title = ?, codex_thread_id = ?, tools_version = ?, previous_thread_ids = ?, model_settings = ?,
+        archived_at = ?, read = ?, browser_profile_id = ?, updated_at = ?, last_activity_at = ? where id = ?`,
+      next.agentId, next.title, next.codexThreadId, next.toolsVersion || 0, next.previousThreadIds?.length ? JSON.stringify(next.previousThreadIds) : null,
+      json(next.modelSettings), next.archivedAt, next.read ? 1 : 0,
       next.browserProfileId, touch ? now() : (patch.updatedAt || current.updatedAt), next.lastActivityAt, id);
       changed("conversation", id);
       return conversations.get(id);

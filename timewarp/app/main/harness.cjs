@@ -18,7 +18,11 @@ function titleFrom(text) {
   return line.length > TITLE_LENGTH ? line.slice(0, TITLE_LENGTH - 1).trimEnd() + "…" : line || "New conversation";
 }
 
-function createHarness({ store, client, userId, instructionsFor, threadConfig = () => ({}), modelSettings, notify = () => {}, log = () => {} }) {
+const HISTORY_MESSAGES = 60, HISTORY_CHARS = 60000;
+
+// tools: { version, specs(agent, conversation), call(conversationId, params, agent), finished(conversationId) }
+function createHarness({ store, client, userId, instructionsFor, threadConfig = () => ({}), modelSettings, tools = null, notify = () => {}, log = () => {} }) {
+  const toolsVersion = tools?.version || 0;
   const threadOwner = new Map(); // codex thread id -> root conversation id (includes sub-agent threads)
   const loaded = new Set(); // threads resumed or started in this Codex session
   const active = new Map(); // conversation id -> { threadId, turnId }
@@ -67,6 +71,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     if (root && method === "turn/completed") {
       active.delete(conversationId);
       store.conversations.update(conversationId, { read: false });
+      tools?.finished?.(conversationId);
     }
     if (root && method === "item/completed" && params.item?.type === "agentMessage" && params.item.text) {
       store.messages.append({ id: params.item.id, conversationId, authorId: conversation.agentId, text: params.item.text, turnId: params.turnId });
@@ -76,6 +81,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   });
 
   client.on("request", message => {
+    if (message.method === "item/tool/call") return void callTool(message);
     if (!APPROVAL_METHODS.has(message.method)) {
       client.respondError(message.id, "Timewarp does not support this request.", -32601);
       return;
@@ -97,12 +103,40 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     notify("approval.resolved", { id: params.requestId, conversationId: pending.conversationId });
   });
 
-  async function ensureThread(conversation) {
+  async function callTool(message) {
+    const params = message.params || {};
+    const conversationId = conversationForThread(params.threadId);
+    const conversation = conversationId && store.conversations.get(conversationId);
+    try {
+      if (!tools || !conversation || conversation.ownerId !== userId()) throw fail(404, "This tool is unavailable here.");
+      const result = await tools.call(conversationId, params, store.agents.get(conversation.agentId));
+      client.respond(message.id, result);
+    } catch (error) {
+      try { client.respond(message.id, { contentItems: [{ type: "inputText", text: error.message || "The tool failed." }], success: false }); } catch {}
+    }
+  }
+
+  // Earlier messages for a chat that continues in a new thread: restored from
+  // the cloud without a local transcript, or started before the current tools.
+  function historyItems(conversation, exceptId) {
+    const items = [];
+    let size = 0;
+    for (const message of store.messages.list(conversation.id).filter(item => item.id !== exceptId && item.status !== "failed").slice(-HISTORY_MESSAGES).reverse()) {
+      if (size + message.text.length > HISTORY_CHARS) break;
+      size += message.text.length;
+      const user = message.authorId === conversation.ownerId;
+      items.unshift({ type: "message", role: user ? "user" : "assistant", content: [{ type: user ? "input_text" : "output_text", text: message.text }] });
+    }
+    return items;
+  }
+
+  async function ensureThread(conversation, { exceptMessageId } = {}) {
     const agent = ownedAgent(conversation.agentId);
     fs.mkdirSync(agent.workspace, { recursive: true });
     const base = { cwd: agent.workspace, approvalPolicy: "on-request", sandbox: "workspace-write", developerInstructions: instructionsFor(agent, conversation), config: threadConfig(agent, conversation) };
-    if (conversation.codexThreadId && loaded.has(conversation.codexThreadId)) return conversation.codexThreadId;
-    if (conversation.codexThreadId) {
+    const current = conversation.codexThreadId && conversation.toolsVersion >= toolsVersion;
+    if (current && loaded.has(conversation.codexThreadId)) return conversation.codexThreadId;
+    if (current) {
       try {
         await client.request("thread/resume", { threadId: conversation.codexThreadId, ...base, excludeTurns: true });
         loaded.add(conversation.codexThreadId);
@@ -113,11 +147,14 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       }
     }
     const settings = modelSettings();
-    const result = await client.request("thread/start", { ...base, model: settings?.name || null, threadSource: "user" });
+    const result = await client.request("thread/start", { ...base, model: settings?.name || null, threadSource: "user", ...(tools ? { dynamicTools: tools.specs(agent, conversation) } : {}) });
     const threadId = result.thread.id;
     loaded.add(threadId);
     threadOwner.set(threadId, conversation.id);
-    store.conversations.update(conversation.id, { codexThreadId: threadId });
+    const history = historyItems(conversation, exceptMessageId);
+    if (history.length) await client.request("thread/inject_items", { threadId, items: history }).catch(error => log("Earlier messages could not be added to the new thread.", error.message));
+    const previousThreadIds = conversation.codexThreadId ? [...conversation.previousThreadIds, conversation.codexThreadId] : conversation.previousThreadIds;
+    store.conversations.update(conversation.id, { codexThreadId: threadId, toolsVersion, previousThreadIds });
     return threadId;
   }
 
@@ -155,14 +192,22 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     async history(id) {
       const conversation = ownedConversation(id);
       const messages = store.messages.list(id);
-      if (!conversation.codexThreadId) return { turns: [], messages };
-      try {
-        const result = await client.request("thread/read", { threadId: conversation.codexThreadId, includeTurns: true });
-        return { turns: result.thread?.turns || [], messages, thread: { id: result.thread?.id, model: result.thread?.model, status: result.thread?.status } };
-      } catch (error) {
-        // A restored chat may have no Codex transcript on this device.
-        return { turns: [], messages, transcriptUnavailable: error.message };
+      const threadIds = [...conversation.previousThreadIds, conversation.codexThreadId].filter(Boolean);
+      const turns = [];
+      let thread = null, unavailable = null;
+      for (const threadId of threadIds) {
+        try {
+          const result = await client.request("thread/read", { threadId, includeTurns: true });
+          turns.push(...(result.thread?.turns || []));
+          if (threadId === conversation.codexThreadId) thread = { id: result.thread?.id, model: result.thread?.model, status: result.thread?.status };
+        } catch (error) { unavailable = error.message; }
       }
+      // Messages from before the first local transcript turn (for example a
+      // chat restored from the cloud) are shown ahead of the turns.
+      const turnIds = new Set(turns.map(turn => turn.id));
+      const firstTurn = turns[0]?.startedAt ? turns[0].startedAt * 1000 : Infinity;
+      const earlier = messages.filter(message => !turnIds.has(message.turnId) && Date.parse(message.createdAt) < firstTurn - 2000);
+      return { turns, messages, earlier, thread, ...(unavailable ? { transcriptUnavailable: unavailable } : {}) };
     },
     async send(id, message) {
       const conversation = ownedConversation(id);
@@ -171,10 +216,11 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       const userMessage = store.messages.append({ id: message.clientId || crypto.randomUUID(), conversationId: id, authorId: owner(), text: message.text || "" });
       if (!conversation.title) store.conversations.update(id, { title: titleFrom(message.text) });
       store.conversations.update(id, { read: true });
-      const threadId = await ensureThread(store.conversations.get(id));
-      const settings = modelSettings();
-      active.set(id, { threadId, turnId: null });
+      let threadId = null;
       try {
+        threadId = await ensureThread(store.conversations.get(id), { exceptMessageId: userMessage.id });
+        const settings = modelSettings();
+        active.set(id, { threadId, turnId: null });
         const result = await client.request("turn/start", {
           threadId, input, clientUserMessageId: userMessage.id,
           ...settings?.name ? { model: settings.name } : {},

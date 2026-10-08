@@ -6,6 +6,10 @@ import { Sidebar } from "./components/Sidebar.jsx";
 import { Chat } from "./components/Chat.jsx";
 import { Customize, SECTIONS } from "./components/Customize.jsx";
 import { AgentDialog } from "./components/AgentDialog.jsx";
+import { Pane } from "./components/Pane.jsx";
+
+const remembered = key => { try { return localStorage.getItem(key) === "1"; } catch { return false; } };
+const remember = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch {} };
 
 function parseRoute() {
   const [, view, id] = (location.hash.replace(/^#\/?/, "") || "").match(/^([a-z]*)\/?(.*)$/) || [];
@@ -38,6 +42,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
   const [models, setModels] = useState(null);
   const [search, setSearch] = useState("");
   const [dialog, setDialog] = useState({ open: false, agent: null });
+  const [paneOpen, setPaneOpenState] = useState(() => remembered("tw.pane"));
+  const setPaneOpen = value => { setPaneOpenState(value); remember("tw.pane", value); };
   const refreshTimer = useRef(null);
 
   const loadAgents = useCallback(() => call("agents.list").then(setAgents).catch(error => toast(error, "error")), [toast]);
@@ -69,6 +75,7 @@ function Shell({ account, setAccount, settings, setSettings }) {
   });
   useEvent("history.status", state => { if (state.state === "synced") { void loadAgents(); void loadConversations(); } });
   useEvent("funding.changed", () => void loadModels());
+  useEvent("browser.agent", ({ conversationId }) => { if (route.view === "chat" && conversationId === route.id && !paneOpen) setPaneOpen(true); });
 
   async function newChat(agentId) {
     const agent = agentId || current?.agentId || opened?.agentId || agents[0]?.id;
@@ -112,13 +119,15 @@ function Shell({ account, setAccount, settings, setSettings }) {
       models={models} onModel={selectModel} agents={agents} onNewAgent={() => setDialog({ open: true, agent: null })} onEditAgent={agent => setDialog({ open: true, agent })} onArchiveAgent={archiveAgent} />;
   } else if (route.view === "chat" && opened && agentById.get(opened.agentId)) {
     main = <Chat key={opened.id} conversation={opened} agent={agentById.get(opened.agentId)} account={account} models={models} onModel={selectModel}
+      paneOpen={paneOpen} onTogglePane={() => setPaneOpen(!paneOpen)}
       onChanged={info => { if (info?.archived) { go("#/"); } void loadConversations(); }} />;
   } else {
     main = <Home agents={agents} onNewChat={newChat} />;
   }
 
+  const showPane = route.view === "chat" && paneOpen && opened && agentById.get(opened.agentId);
   return (
-    <div className="tw-app">
+    <div className="tw-app" data-pane={showPane ? "open" : undefined}>
       <Sidebar account={account} agents={agents} conversations={chatConversations} selectedId={route.id} view={route.view}
         search={search} onSearch={setSearch}
         onOpenConversation={conversation => go("#/c/" + conversation.id)} onNewChat={newChat} onOpenAgent={openAgent}
@@ -128,6 +137,7 @@ function Shell({ account, setAccount, settings, setSettings }) {
         onArchiveConversation={archiveConversation} onCustomize={section => go("#/customize/" + (section || "general"))}
         onSignOut={() => call("account.signOut").catch(error => toast(error, "error"))} />
       {main}
+      {showPane ? <Pane key={"pane-" + opened.id} conversation={opened} agent={agentById.get(opened.agentId)} onClose={() => setPaneOpen(false)} /> : null}
       <AgentDialog open={dialog.open} agent={dialog.agent} onClose={() => setDialog({ open: false, agent: null })}
         onSaved={agent => { setDialog({ open: false, agent: null }); void loadAgents().then(() => { if (!dialog.agent) void newChat(agent.id); }); }} />
     </div>

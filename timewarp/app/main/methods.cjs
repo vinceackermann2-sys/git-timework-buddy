@@ -7,7 +7,7 @@ const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notificat
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAccent }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAccent }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   return {
     "app.info": async () => ({ version, platform: process.platform, codex: client.status }),
@@ -117,6 +117,22 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       await services.auth.refreshUser();
       return services.account();
     },
+
+    // Built-in browser. Every call is scoped to a conversation of this account.
+    "browser.show": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.show(conversationId); },
+    "browser.bounds": ({ rect }) => { browser.setBounds(rect || null); return null; },
+    "browser.state": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.state(conversationId); },
+    "browser.newTab": ({ conversationId, url }) => { signedIn(); harness.conversations.get(conversationId); return browser.openTab(conversationId, { url: url || null }); },
+    "browser.navigate": ({ conversationId, tabId, url }) => { signedIn(); harness.conversations.get(conversationId); return browser.navigate(conversationId, { tabId, url }); },
+    "browser.activate": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.activate(conversationId, tabId); },
+    "browser.close": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.close(conversationId, tabId); },
+    "browser.back": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.back(conversationId, tabId); },
+    "browser.forward": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.forward(conversationId, tabId); },
+    "browser.reload": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.reload(conversationId, tabId); },
+    "browser.stop": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.stop(conversationId, tabId); },
+    "browser.profiles": () => { signedIn(); store.browserProfiles.ensureDefault(); return store.browserProfiles.list(); },
+    "browser.setProfile": ({ conversationId, profileId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setProfile(conversationId, profileId); },
+    "browser.recent": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.recent(conversationId); },
 
     "feedback.submit": input => services.submitFeedback(input),
     "links.open": ({ url }) => services.openExternal(url),

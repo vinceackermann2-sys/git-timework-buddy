@@ -60,8 +60,8 @@ Core
 - ☑ Import of existing local data
 
 Workspace
-- ☐ Right pane with browser tabs, files and tools
-- ☐ Built-in browser: tabs, navigation, profiles, profile import, recent sites, agent control, cursor
+- ◐ Right pane with browser tabs, files and tools
+- ◐ Built-in browser: tabs, navigation, profiles, profile import, recent sites, agent control, cursor
 - ☐ Files: tree, search, text and code, images, PDF, spreadsheets, documents
 - ☐ Vault: passwords, cards, secrets, agent access, autofill; passkeys
 

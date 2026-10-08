@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, FolderOpen } from "lucide-react";
+import { Archive, FolderOpen, PanelRight } from "lucide-react";
 import { call, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { applyEvent, blocksOf, turnsFromMessages, userImages, userText } from "../turns.mjs";
@@ -62,7 +62,7 @@ function Turn({ turn, agent }) {
   );
 }
 
-export function Chat({ conversation, agent, account, models, onModel, onChanged }) {
+export function Chat({ conversation, agent, account, models, onModel, onChanged, paneOpen, onTogglePane }) {
   const [turns, setTurns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -82,7 +82,7 @@ export function Chat({ conversation, agent, account, models, onModel, onChanged 
     setLoading(true); setTurns([]); setApprovals([]); setNotice(null); pinned.current = true;
     Promise.all([call("conversations.history", { id }), call("conversations.status", { id })]).then(([history, status]) => {
       if (cancelled) return;
-      setTurns(history.turns?.length ? history.turns : turnsFromMessages(history.messages || [], account?.user?.id));
+      setTurns(history.turns?.length ? [...turnsFromMessages(history.earlier || [], account?.user?.id), ...history.turns] : turnsFromMessages(history.messages || [], account?.user?.id));
       if (!history.turns?.length && history.messages?.length && history.transcriptUnavailable !== undefined) setNotice("Earlier tool activity from another device isn't available here. Your messages are.");
       setRunning(!!status.running);
       setApprovals(status.approvals || []);
@@ -126,6 +126,7 @@ export function Chat({ conversation, agent, account, models, onModel, onChanged 
     <section className="tw-main" aria-label={conversation.title || "Conversation"}>
       <header className="tw-chat-header">
         <div className="tw-chat-title"><Avatar agent={agent} size="small" /><Title conversation={conversation} onRename={title => call("conversations.rename", { id, title }).then(onChanged).catch(error => toast(error, "error"))} /></div>
+        <button type="button" className="tw-icon-button" title={paneOpen ? "Hide browser" : "Show browser"} aria-label={paneOpen ? "Hide browser" : "Show browser"} aria-pressed={!!paneOpen} onClick={onTogglePane}><PanelRight size={16} /></button>
         <button type="button" className="tw-icon-button" title="Open workspace folder" aria-label="Open workspace folder" onClick={() => call("agents.openWorkspace", { id: agent.id }).catch(error => toast(error, "error"))}><FolderOpen size={16} /></button>
         <button type="button" className="tw-icon-button" title="Archive" aria-label="Archive conversation" onClick={() => call("conversations.archive", { id }).then(() => onChanged?.({ archived: true })).catch(error => toast(error, "error"))}><Archive size={16} /></button>
       </header>

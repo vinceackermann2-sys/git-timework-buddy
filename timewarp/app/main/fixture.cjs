@@ -31,10 +31,16 @@ function scriptedResponse(body) {
   // Code mode exposes the tools through one "exec" JavaScript tool.
   const codeMode = (body.input || []).filter(item => item.type === "additional_tools").flatMap(item => item.tools || [])
     .flatMap(item => item.type === "namespace" ? item.tools || [] : [item]).some(item => item.type === "custom" && item.name === "exec");
+  if (process.env.TIMEWARP_FIXTURE_DUMP) require("node:fs").writeFileSync(process.env.TIMEWARP_FIXTURE_DUMP, JSON.stringify(body, null, 1));
   if (process.env.TIMEWARP_FIXTURE_LOG) console.error("[timewarp] fixture request", JSON.stringify({ latest, codeMode, tools: (body.tools || []).map(item => item.name || item.type), inputs: (body.input || []).map(item => item.type + ":" + (item.role || "")), outputs: outputs.length }));
   const events = [{ type: "response.created", response: { id } }];
   const command = process.platform === "win32" ? "Write-Output 'Hello from the Timewarp preview'" : "echo 'Hello from the Timewarp preview'";
-  if ((tool || codeMode) && /\brun\b/i.test(latest) && !outputs.length) {
+  const browse = /\bbrowse\b/i.test(latest), runCommand = /\brun\b/i.test(latest);
+  if (codeMode && browse && !outputs.length) {
+    const script = `const opened = await tools.timewarp_browser__open({ url: "https://example.com/" });\nconst outline = await tools.timewarp_browser__snapshot({});\ntext(String(opened) + "\\n" + String(outline).slice(0, 600));`;
+    const call = { type: "custom_tool_call", id: "ctc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "exec", input: script };
+    events.push({ type: "response.output_item.added", output_index: 0, item: { ...call, input: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
+  } else if ((tool || codeMode) && runCommand && !outputs.length) {
     const callId = "call_" + crypto.randomUUID();
     const call = codeMode
       ? { type: "custom_tool_call", id: "ctc_" + crypto.randomUUID(), call_id: callId, name: "exec", input: `const result = await tools.exec_command({ cmd: ${JSON.stringify(command)} });\ntext(typeof result === "string" ? result : JSON.stringify(result));` }
@@ -42,7 +48,7 @@ function scriptedResponse(body) {
     events.push({ type: "response.output_item.added", output_index: 0, item: codeMode ? { ...call, input: "" } : { ...call, arguments: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
   } else {
     const text = outputs.length
-      ? "The command finished. Here is what it printed:\n\n```\n" + outputText(outputs.at(-1).output).slice(0, 400) + "\n```"
+      ? (browse ? "I opened the page in the browser. Here is what it shows:\n\n```\n" : "The command finished. Here is what it printed:\n\n```\n") + outputText(outputs.at(-1).output).slice(0, 700) + "\n```"
       : `**Preview reply.** You wrote: “${latest.slice(0, 200)}”.\n\n- Streaming, markdown and code work\n- Ask me to *run* something to see a tool call\n\n\`\`\`js\nconsole.log("Timewarp");\n\`\`\``;
     events.push({ type: "response.output_item.added", output_index: 0, item: { type: "message", role: "assistant", id: message, content: [] } });
     for (const chunk of text.match(/[\s\S]{1,24}/g)) events.push({ type: "response.output_text.delta", item_id: message, output_index: 0, content_index: 0, delta: chunk });

@@ -88,7 +88,9 @@ async function boot() {
   const { vendorRoot, codexExecutable, codexEnv } = require("./codex-paths.cjs");
   const { createServices } = require("./services.cjs");
   const { createHistoryAdapter } = require("./history-adapter.cjs");
-  const { appendInstructions } = require("../../desktop/harness-instructions.cjs");
+  const { engineInstructions } = require("./instructions.cjs");
+  const { createBrowser } = require("./browser.cjs");
+  const { createBrowserTools } = require("./browser-tools.cjs");
   const { resolveModelSettings } = require("../../shared/model-capabilities.cjs");
   const { migrateAppearance, defaultAccent } = require("../../shared/appearance.cjs");
 
@@ -169,11 +171,25 @@ async function boot() {
     if (account?.name) lines.push(`The user's name is ${account.name}.`);
     const memory = path.join(runtimeDir, "entities", "memories", "user.md");
     if (fs.existsSync(memory)) lines.push(`Durable notes about the user are in ${memory}. Read them when they would help, and keep them accurate.`);
-    return appendInstructions(lines.join("\n"));
+    return lines.join("\n") + "\n\n" + engineInstructions();
   }
 
+  const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast });
+  const browserTools = createBrowserTools({ browser, onActivity: (conversationId, action) => broadcast("browser.agent", { conversationId, action }) });
+  // Raise when the tool set changes: chats then continue in a new thread.
+  const TOOLS_VERSION = 1;
+  const tools = {
+    version: TOOLS_VERSION,
+    specs: () => browserTools.specs(),
+    call: (conversationId, params, agent) => {
+      if (params.namespace === "timewarp_browser") return browserTools.call(conversationId, params, agent);
+      return Promise.reject(Object.assign(new Error("This tool is not available in Timewarp."), { status: 404 }));
+    },
+    finished: conversationId => browserTools.finished(conversationId),
+  };
+
   harness = createHarness({
-    store, client, userId: () => userId(), instructionsFor,
+    store, client, userId: () => userId(), instructionsFor, tools,
     modelSettings: () => store.settings.get("modelSettings"),
     notify: broadcast,
     log: (...args) => console.error("[timewarp]", ...args),
@@ -207,9 +223,10 @@ async function boot() {
   }
 
   const methods = require("./methods.cjs").createMethods({
-    app, dialog, shell, store, services, agents, harness, client, guard, version: VERSION, profile, runtimeDir,
+    app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
     modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAccent,
   });
+  if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, registerTools, historyStatus: () => historyStatus });
   const trusted = event => event.senderFrame && event.senderFrame === event.sender.mainFrame && event.senderFrame.url.startsWith("app://app/");
   ipcMain.handle("tw:call", async (event, method, input) => {
@@ -237,7 +254,7 @@ async function boot() {
         .then(result => { if (result.response === 0) install(); }).catch(() => {});
     },
   });
-  app.on("before-quit", () => { clearTimeout(executionNotice); guard.stop?.(); history?.stop(); services.close(); bridge.close(); void client.stop(); store.close(); });
+  app.on("before-quit", () => { browser.destroy(); clearTimeout(executionNotice); guard.stop?.(); history?.stop(); services.close(); bridge.close(); void client.stop(); store.close(); });
 }
 
 if (!app.requestSingleInstanceLock()) app.exit(0);
