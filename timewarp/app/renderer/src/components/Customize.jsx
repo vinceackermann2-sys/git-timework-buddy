@@ -96,7 +96,7 @@ function Models({ models, onModel }) {
       <h2>Models</h2>
       <div className="tw-card">
         <div className="tw-setting"><div><strong>Default model</strong><span className="tw-hint">New messages use this model and reasoning level.</span></div><ModelPicker models={models} onSelect={onModel} /></div>
-        {funding ? <span className="tw-hint">{funding.source === "chatgpt" ? "AI usage comes from your connected ChatGPT / Codex plan." : `AI usage spends Timewarp credits on the ${funding.plan} plan.`}</span> : null}
+        {funding ? <span className="tw-hint">{funding.source === "chatgpt" ? "AI usage comes from your connected ChatGPT / Codex plan." : `AI usage spends Timewarp credits on the ${String(funding.plan || "").replace(/^./, letter => letter.toUpperCase())} plan.`}</span> : null}
       </div>
     </section>
   );

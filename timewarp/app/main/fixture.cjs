@@ -60,6 +60,20 @@ function scriptedResponse(body) {
   return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
+// Same shape as the billing service's status response, with sample values.
+function billingStatus() {
+  const plans = [["free", "Free", 0, 0], ["pro", "Pro", 20, 100], ["max", "Max", 50, 250], ["ultra", "Ultra", 100, 500]]
+    .map(([id, name, monthlyUsd, monthlyCredits]) => ({ id, name, monthlyUsd, monthlyCredits, available: true }));
+  return {
+    plan: "pro", workspaceId: null, role: "owner", canManage: true, isPersonal: true, subscriptionStatus: "active", cancelAtPeriodEnd: false,
+    currentPeriodEnd: new Date(Date.now() + 20 * 86400000).toISOString(), hasSubscription: true,
+    monthlyCreditAddons: [0, 50, 100, 200].map(credits => ({ credits, monthlyUsd: credits * 0.2 })), monthlyExtraCredits: 0, monthlyUsd: 20, canOpenPortal: false,
+    includedCredits: { allowance: 100, balance: 72 }, purchasedCredits: { balance: 20 }, credits: { balance: 92 },
+    usage: { plan: "pro", periodStart: new Date(Date.now() - 10 * 86400000).toISOString() }, plans,
+    creditPacks: [{ id: "pack-50", credits: 50, priceUsd: 15 }, { id: "pack-100", credits: 100, priceUsd: 30 }],
+  };
+}
+
 function createFixture() {
   let signedIn = true, onChange = async () => {};
   const members = [{ id: "member-1", userId: USER.id, email: USER.email, name: USER.name, image: null, roles: ["owner"], createdAt: "2026-01-01T00:00:00.000Z" }];
@@ -98,9 +112,9 @@ function createFixture() {
     if (route === "/v1/responses") return scriptedResponse(payload || {});
     if (route === "/v1/models") return json({ object: "list", data: [{ id: "openai/gpt-5.6-sol", object: "model" }, { id: "openai/gpt-5.6-luna", object: "model" }] });
     if (route === "/account") return json({ image: null, activeOrganization: { ...ORGANIZATION }, organizations: [{ ...ORGANIZATION }] });
-    if (route === "/billing") return json({ plan: "pro", included: 100, purchased: 20, monthlyIncluded: 100, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
-    if (route === "/billing/service") return json({ plan: "pro", status: "active", monthlyCredits: 100, periodEnd: new Date(Date.now() + 20 * 86400000).toISOString() });
-    if (route === "/billing/history") return json({ items: [] });
+    if (route === "/billing") return json({ plan: "pro", included: 72, purchased: 20, monthlyIncluded: 100, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
+    if (route === "/billing/service") return json(billingStatus());
+    if (route === "/billing/history") return json({ events: [{ id: "e1", kind: "usage", description: "AI usage", credits: -3.2, createdAt: new Date(Date.now() - 3600000).toISOString() }, { id: "e2", kind: "purchase", description: "Extra credits", credits: 20, createdAt: new Date(Date.now() - 86400000).toISOString() }] });
     if (route === "/history") return json(payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
     if (route === "/native/rpc") return json(rpc(payload.rpc, payload.input || {}));
     if (route === "/connectors") return json(payload?.action === "catalog" ? { apps: [] } : { ok: true });

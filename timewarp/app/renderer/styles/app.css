@@ -244,7 +244,7 @@ a { color: var(--color-primary); }
 .tw-card { border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-card); padding: 16px 18px; display: grid; gap: 12px; }
 .tw-card h3 { margin: 0; font-size: 14.5px; }
 .tw-setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.tw-setting > div { display: grid; gap: 2px; }
+.tw-setting > div:not(.tw-segmented) { display: grid; gap: 2px; }
 .tw-segmented { display: inline-flex; padding: 3px; border-radius: 10px; background: var(--color-muted); gap: 2px; }
 .tw-segmented button { border: none; background: transparent; padding: 5px 12px; border-radius: 8px; cursor: pointer; }
 .tw-segmented button[aria-pressed="true"] { background: var(--color-card); box-shadow: var(--shadow); }

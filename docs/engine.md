@@ -29,24 +29,35 @@ timewarp/app/
   renderer/   React interface, bundled with esbuild
 ```
 
+## Development
+
+From `timewarp`:
+
+    npm run engine:dev       # build and open (separate "Timewarp Dev" profile)
+    npm run engine:preview   # signed-in sample account, scripted model, real Codex
+    npm run test:engine      # engine tests, including a real Codex conversation
+
+Preview mode is compiled only into `--fixture` development builds and is
+refused for release builds.
+
 ## Parity checklist
 
 Status: ☐ not started · ◐ in progress · ☑ done and verified
 
 Core
-- ☐ Window, single instance, app protocol, icons, profile, About panel
-- ☐ Sign-in, sign-up, email code, password recovery, Google sign-in
-- ☐ Organization gate (create, join, switch, picture)
+- ☑ Window, single instance, app protocol, icons, profile, About panel
+- ◐ Sign-in, sign-up, email code, password recovery, Google sign-in
+- ◐ Organization gate (create, join, switch, picture)
 - ☐ Onboarding (agent name, preferred name, browser profiles, knowledge import, theme, plan)
-- ☐ Billing, plans, credits, Codex/ChatGPT connection
-- ☐ Agents: create (Orbit, Nova, Cosmo or picture), rename, instructions, star, reorder, archive
-- ☐ Conversations: new, list, search, rename, archive, read state
-- ☐ Chat: streaming replies, reasoning, plans, commands, file changes, tool calls, web search, images, sub-agents
-- ☐ Approvals, interrupt, retry, steer
-- ☐ Model picker (Sol and Luna, or the connected Codex catalog) and reasoning effort
-- ☐ Attachments and dictation
-- ☐ Cloud chat history sync and restore, Privacy Mode
-- ☐ Import of existing local data
+- ◐ Billing, plans, credits, Codex/ChatGPT connection
+- ◐ Agents: create (Orbit, Nova, Cosmo or picture), rename, instructions, star, reorder, archive
+- ☑ Conversations: new, list, search, rename, archive, read state
+- ◐ Chat: streaming replies, reasoning, plans, commands, file changes, tool calls, web search, images, sub-agents
+- ◐ Approvals, interrupt, retry, steer
+- ◐ Model picker (Sol and Luna, or the connected Codex catalog) and reasoning effort
+- ◐ Attachments and dictation
+- ☑ Cloud chat history sync and restore, Privacy Mode
+- ☑ Import of existing local data
 
 Workspace
 - ☐ Right pane with browser tabs, files and tools
@@ -57,10 +68,10 @@ Workspace
 Capabilities
 - ☐ Memory and instructions
 - ☐ Skills
-- ☐ Connected apps (Composio) and custom MCP servers
+- ◐ Connected apps (Composio) and custom MCP servers
 - ☐ Automations
-- ☐ Settings: appearance and colors, notifications, privacy, preferences
-- ☐ Feedback and bug reports
+- ◐ Settings: appearance and colors, notifications, privacy, preferences
+- ◐ Feedback and bug reports
 
 Distribution
 - ☐ Windows installer, Microsoft Store package, macOS DMG built from this source only
