@@ -13,9 +13,14 @@ const dev = process.argv.includes("--dev");
 const release = process.argv.includes("--release");
 const launch = process.argv.includes("--launch");
 const fixture = process.argv.includes("--fixture");
-if (dev && release) throw new Error("Choose either --dev or --release.");
-if (fixture && release) throw new Error("Preview mode cannot enter a release build.");
-const identity = release ? { profile: "Timewarp Energy", appId: "com.timewarp.desktop" }
+// Microsoft Store builds use the Store package identity (TIMEWARP_APP_ID) and
+// leave updates to the Store.
+const store = process.argv.includes("--store");
+if ([dev, release, store].filter(Boolean).length > 1) throw new Error("Choose one of --dev, --release or --store.");
+if (fixture && (release || store)) throw new Error("Preview mode cannot enter a release build.");
+if (store && !process.env.TIMEWARP_APP_ID) throw new Error("Store builds need the Store app identity (TIMEWARP_APP_ID).");
+const identity = store ? { profile: "Timewarp Energy", appId: process.env.TIMEWARP_APP_ID }
+  : release ? { profile: "Timewarp Energy", appId: "com.timewarp.desktop" }
   : dev ? { profile: "Timewarp Dev", appId: "com.timewarp.desktop.dev" } : { profile: "Timewarp Preview", appId: "com.timewarp.desktop.preview" };
 
 function clean(directory) {

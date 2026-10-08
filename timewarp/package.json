@@ -54,7 +54,8 @@
     "engine:bench": "node scripts/bench-engine.cjs compare",
     "engine:package:mac:draft": "node scripts/package-engine-mac.cjs --draft",
     "engine:package:mac": "node scripts/package-engine-mac.cjs",
-    "engine:smoke": "node scripts/smoke-engine.cjs"
+    "engine:smoke": "node scripts/smoke-engine.cjs",
+    "engine:package:store": "node scripts/package-engine.cjs --store"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.8",

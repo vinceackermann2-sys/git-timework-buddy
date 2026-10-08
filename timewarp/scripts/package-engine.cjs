@@ -14,6 +14,8 @@ const crypto = require("node:crypto");
 
 const root = path.resolve(__dirname, "..");
 const draft = process.argv.includes("--draft");
+// --store: an unsigned MSIX for Microsoft to sign after certification (store.json).
+const storeBuild = process.argv.includes("--store");
 const stageOnly = process.argv.includes("--stage");
 const stage = path.join(root, "build", "engine", "stage");
 const COPYRIGHT = "Copyright © 2026 Timewarp.";
@@ -38,17 +40,65 @@ function codexRuntime(destination) {
   return manifest.version;
 }
 
+// Microsoft Store: an unsigned MSIX with the existing package identity, built
+// from the staged app into its own folder. Microsoft signs it after
+// certification; nothing is uploaded here.
+async function storePackage(store) {
+  const output = path.join(root, "build", "engine-store"), resources = path.join(root, "build", "engine-store-resources");
+  clean(output); clean(resources);
+  await require("./store-icons.cjs").buildStoreIcons(path.join(root, "assets/app-icon.png"), path.join(resources, "appx"));
+  const saved = {};
+  for (const key of ["CSC_LINK", "CSC_KEY_PASSWORD", "WIN_CSC_LINK", "WIN_CSC_KEY_PASSWORD", "CSC_IDENTITY_AUTO_DISCOVERY"]) { saved[key] = process.env[key]; delete process.env[key]; }
+  process.env.CSC_IDENTITY_AUTO_DISCOVERY = "false";
+  try {
+    const { build, Platform, Arch } = require("electron-builder");
+    await build({
+      projectDir: root, prepackaged: stage, publish: "never", targets: Platform.WINDOWS.createTarget(["appx"], Arch.x64), config: {
+        appId: store.appUserModelId, productName: "Timewarp", executableName: "Timewarp", electronVersion: require("electron/package.json").version,
+        forceCodeSigning: false, npmRebuild: false, publish: null, directories: { output, buildResources: resources },
+        extraMetadata: { name: "timewarp-desktop", version: store.version, description: "Timewarp", author: "Timewarp" },
+        win: { target: "appx", icon: path.join(root, "assets/app-icon.ico"), signExecutable: false },
+        appx: {
+          identityName: store.identityName, publisher: store.publisher, publisherDisplayName: store.publisherDisplayName, applicationId: store.applicationId,
+          displayName: store.displayName, backgroundColor: "transparent", artifactName: "Timewarp-Store-${version}-${arch}.msix", setBuildNumber: false,
+          addAutoLaunchExtension: false, electronUpdaterAware: false, languages: ["en-US"], capabilities: ["runFullTrust"],
+          minVersion: store.minimumWindowsVersion, maxVersionTested: "10.0.26100.0",
+        },
+      },
+    });
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+  // The package carries the existing Store identity and a newer version.
+  const msix = path.join(output, `Timewarp-Store-${store.version}-x64.msix`);
+  if (!fs.existsSync(msix)) throw new Error("The Store package wasn't created.");
+  const unpacked = path.join(output, "manifest-check");
+  fs.mkdirSync(unpacked, { recursive: true });
+  cp.execFileSync(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe"), ["-xf", msix, "-C", unpacked, "AppxManifest.xml"], { windowsHide: true });
+  const manifest = fs.readFileSync(path.join(unpacked, "AppxManifest.xml"), "utf8");
+  fs.rmSync(unpacked, { recursive: true, force: true });
+  const identity = /<Identity\b[^>]*>/.exec(manifest)?.[0] || "";
+  for (const [name, value] of [["Name", store.identityName], ["Publisher", store.publisher], ["Version", store.packageVersion]]) {
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!new RegExp(`\\b${name}=["']${escaped}["']`).test(identity)) throw new Error(`The Store package ${name} isn't ${value}.`);
+  }
+  if (!new RegExp(`<Application\\b[^>]*Id="${store.applicationId}"[^>]*Executable="app\\\\Timewarp\\.exe"`).test(manifest)) throw new Error("The Store package doesn't start Timewarp.exe.");
+  console.log(`Unsigned Store package for Microsoft certification: ${msix} (version ${store.packageVersion}).`);
+}
+
 async function main() {
   if (process.platform !== "win32") throw new Error("Windows packaging runs on Windows.");
   const { checkRelease } = require("./release-config.cjs");
   const releaseFile = process.env.TIMEWARP_RELEASE_CONFIG || path.join(root, "release.json");
-  const release = draft ? { enabled: false } : checkRelease(JSON.parse(fs.readFileSync(releaseFile, "utf8")));
-  if (!draft && !release.enabled) throw new Error("Public installers require an enabled release configuration.");
-  if (!draft && !process.env.TIMEWARP_CERT_SHA1 && !process.env.WIN_CSC_LINK && !process.env.TIMEWARP_SIGN_SCRIPT) throw new Error("Release signing credentials/service have not been configured.");
+  if (storeBuild && draft) throw new Error("Choose --draft or --store.");
+  const store = storeBuild ? require("../shared/store.cjs").validateStore(JSON.parse(fs.readFileSync(process.env.TIMEWARP_STORE_CONFIG || path.join(root, "store.json"), "utf8"))) : null;
+  const release = draft || store ? { enabled: false } : checkRelease(JSON.parse(fs.readFileSync(releaseFile, "utf8")));
+  if (!draft && !store && !release.enabled) throw new Error("Public installers require an enabled release configuration.");
+  if (!draft && !store && !process.env.TIMEWARP_CERT_SHA1 && !process.env.WIN_CSC_LINK && !process.env.TIMEWARP_SIGN_SCRIPT) throw new Error("Release signing credentials/service have not been configured.");
 
   // 1. The app itself.
-  const env = { ...process.env, ...(draft ? {} : { TIMEWARP_RELEASE_CONFIG: releaseFile }) };
-  cp.execFileSync(process.execPath, [path.join(__dirname, "build-engine.cjs"), ...(draft ? [] : ["--release"])], { env, stdio: "inherit", windowsHide: true });
+  const env = { ...process.env, ...(draft || store ? {} : { TIMEWARP_RELEASE_CONFIG: releaseFile }), ...(store ? { TIMEWARP_APP_ID: store.appUserModelId, TIMEWARP_APP_VERSION: store.version } : {}) };
+  cp.execFileSync(process.execPath, [path.join(__dirname, "build-engine.cjs"), ...(draft ? [] : store ? ["--store"] : ["--release"])], { env, stdio: "inherit", windowsHide: true });
   const app = path.join(root, "build", "engine", "app");
   const manifest = JSON.parse(fs.readFileSync(path.join(app, "package.json"), "utf8"));
   const buildInfo = JSON.parse(fs.readFileSync(path.join(app, "build.json"), "utf8"));
@@ -77,6 +127,7 @@ async function main() {
   fs.writeFileSync(path.join(root, "reports", "engine-package.json"), JSON.stringify(report, null, 2));
   console.log(`Timewarp ${manifest.version} staged at ${stage} (profile "${buildInfo.profile}", Codex ${codexVersion}).`);
   if (stageOnly) return;
+  if (store) return storePackage(store);
 
   // 3. Installer.
   const { signFile, requireSignature } = require("./signing.cjs");
