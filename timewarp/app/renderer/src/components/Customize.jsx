@@ -1,15 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, Building2, CreditCard, Info, Palette, Plug, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Bot, Brain, Building2, CreditCard, Info, Palette, Plug, SlidersHorizontal, Sparkles, WandSparkles } from "lucide-react";
 import { presets, hexToAccent } from "../../../../shared/appearance.cjs";
 import { call, initials } from "../api.js";
 import { Avatar, Segmented, Switch, useToast } from "./common.jsx";
 import { ModelPicker } from "./Composer.jsx";
+import { Memory, Skills } from "./Knowledge.jsx";
 
 export const SECTIONS = [
   { id: "general", label: "General", icon: SlidersHorizontal },
   { id: "colors", label: "Colors", icon: Palette },
   { id: "models", label: "Models", icon: Sparkles },
   { id: "agents", label: "Agents", icon: Bot },
+  { id: "memory", label: "Memory", icon: Brain },
+  { id: "skills", label: "Skills", icon: WandSparkles },
   { id: "apps", label: "Connected apps", icon: Plug },
   { id: "billing", label: "Billing", icon: CreditCard },
   { id: "organization", label: "Organization", icon: Building2 },
@@ -288,7 +291,7 @@ function About() {
 
 export function Customize({ section, onSection, ...props }) {
   const content = {
-    general: <General {...props} />, colors: <Colors {...props} />, models: <Models {...props} />, agents: <Agents {...props} />,
+    general: <General {...props} />, colors: <Colors {...props} />, models: <Models {...props} />, agents: <Agents {...props} />, memory: <Memory {...props} />, skills: <Skills />,
     apps: <Apps />, billing: <Billing />, organization: <Organization {...props} />, about: <About />,
   }[section] || <General {...props} />;
   return (

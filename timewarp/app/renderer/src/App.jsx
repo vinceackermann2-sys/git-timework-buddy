@@ -144,6 +144,13 @@ function Shell({ account, setAccount, settings, setSettings }) {
   );
 }
 
+// First-run setup, drawn by Timewarp's onboarding screen (screens/onboarding.js).
+function Onboarding() {
+  const host = useRef(null);
+  useEffect(() => { if (host.current) window.timewarpMountOnboarding?.(host.current); }, []);
+  return <main ref={host} className="timewarp-onboarding-root" />;
+}
+
 export function App() {
   const [state, setState] = useState({ loading: true, signedIn: false });
   const [account, setAccount] = useState(null);
@@ -155,12 +162,14 @@ export function App() {
     const status = await request("state").catch(() => ({ user: null }));
     if (!status.user || status.passwordRecovery) { setAccount(null); setState({ loading: false, signedIn: false }); return; }
     setAccount(await call("account.get").catch(() => ({ user: status.user })));
-    setState({ loading: false, signedIn: true });
+    const setup = await call("onboarding.status").catch(() => ({ done: true }));
+    setState({ loading: false, signedIn: true, onboarding: !setup.done });
   }, []);
   useEffect(() => { void load(); }, [load]);
   useEvent("account.changed", () => { void load().then(() => { if (location.hash === "#/") window.dispatchEvent(new HashChangeEvent("hashchange")); else location.hash = "#/"; }); });
 
   if (state.loading) return <div className="tw-splash"><img src="./timewarp-logo.svg" alt="Timewarp" /></div>;
   if (!state.signedIn) return <main id="timewarp-auth-view" className="relative flex h-full w-full items-center justify-center bg-background px-6 py-12 text-foreground" />;
+  if (state.onboarding) return <Onboarding />;
   return <ToastProvider><Shell account={account} setAccount={setAccount} settings={settings || {}} setSettings={setSettings} /></ToastProvider>;
 }

@@ -91,6 +91,8 @@ async function boot() {
   const { engineInstructions } = require("./instructions.cjs");
   const { createBrowser } = require("./browser.cjs");
   const { createBrowserTools } = require("./browser-tools.cjs");
+  const { createKnowledge } = require("./knowledge.cjs");
+  const { createOnboarding } = require("./onboarding.cjs");
   const { resolveModelSettings } = require("../../shared/model-capabilities.cjs");
   const { migrateAppearance, defaultAccent } = require("../../shared/appearance.cjs");
 
@@ -127,6 +129,11 @@ async function boot() {
 
   const codexHome = path.join(runtimeDir, "codex");
   fs.mkdirSync(codexHome, { recursive: true });
+  let onboarding = null;
+  const knowledge = createKnowledge({
+    runtimeDir, codexHome, cursorRoot: () => onboarding?.service.cursorRoot(),
+    ...(fixture ? { home: fixture.sampleHome(path.join(profile, "preview-home")), env: {} } : {}),
+  });
   fs.mkdirSync(path.join(runtimeDir, "codex-app-server-cwd"), { recursive: true });
   const vendor = vendorRoot();
   const client = new CodexClient({
@@ -170,9 +177,7 @@ async function boot() {
       `Your workspace folder is ${agent.workspace}. Keep files you create for the user there unless they ask otherwise.`,
     ];
     if (account?.name) lines.push(`The user's name is ${account.name}.`);
-    const memory = path.join(runtimeDir, "entities", "memories", "user.md");
-    if (fs.existsSync(memory)) lines.push(`Durable notes about the user are in ${memory}. Read them when they would help, and keep them accurate.`);
-    return lines.join("\n") + "\n\n" + engineInstructions();
+    return lines.join("\n") + "\n\n" + knowledge.instructions(store.settings.get("memory")?.mode) + "\n\n" + engineInstructions();
   }
 
   const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast });
@@ -206,6 +211,11 @@ async function boot() {
     await client.request("config/mcpServer/reload", undefined);
     toolsRegistered = true;
   }
+  // Skill folders the previous app kept connected stay available.
+  async function connectLegacySkills() {
+    const extraRoots = knowledge.legacySkillRoots();
+    if (extraRoots.length) await client.request("skills/extraRoots/set", { extraRoots });
+  }
 
   async function accountReady() {
     const account = userId();
@@ -221,14 +231,21 @@ async function boot() {
     agents.assignMascots();
     await selectModel().catch(() => console.error("[timewarp] The default model could not be updated."));
     void registerTools().catch(() => console.error("[timewarp] Connected-app tools are pending; refresh Tools to retry."));
+    void connectLegacySkills().catch(() => console.error("[timewarp] Previously connected skill folders are unavailable."));
+    if (fixture && !process.env.TIMEWARP_FIXTURE_ONBOARDING) await onboarding.skip();
   }
+
+  const defaultAppearance = () => ({ scheme: "system", accent: defaultAccent, radiance: 0.5, texture: { type: "dots", step: 0 } });
+  // Browser profile import arrives with the profile importer.
+  const browserImport = { profileManager: { detect: async () => ({ profiles: [], errors: [] }) }, importProfiles: async () => { throw new Error("Browser profile import isn't available yet."); } };
+  onboarding = createOnboarding({ profile, store, services, agents, knowledge, browserImport, dialog, shell, defaultAppearance });
 
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAccent,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
-  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, registerTools, historyStatus: () => historyStatus });
+  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service });
   const trusted = event => event.senderFrame && event.senderFrame === event.sender.mainFrame && event.senderFrame.url.startsWith("app://app/");
   ipcMain.handle("tw:call", async (event, method, input) => {
     if (!trusted(event)) return { ok: false, error: { message: "Untrusted window.", status: 403 } };

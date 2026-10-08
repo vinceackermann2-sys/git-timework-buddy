@@ -8,7 +8,7 @@ const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notificat
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAccent }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Agent ownership is checked on every call by agents.get().
   const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
@@ -22,11 +22,11 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "settings.get": () => {
       const all = store.settings.all();
       return {
-        appearance: all.appearance || { scheme: "system", accent: defaultAccent, radiance: 0.5, texture: { type: "dots", step: 0 } },
+        appearance: all.appearance || defaultAppearance(),
         privacy: all.privacy || { mode: "standard" },
         preferences: all.preferences || {},
         notifications: all.notifications || { replies: true },
-        memory: all.memory || { mode: "standard" },
+        memory: all.memory || { mode: "enabled" },
         modelSettings: all.modelSettings || null,
       };
     },
@@ -151,6 +151,39 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       if (process.platform !== "win32") return { started: false };
       return client.request("windowsSandbox/setupStart", { mode: mode === "unelevated" ? "unelevated" : "elevated" });
     },
+
+    // Memory, knowledge imported from other assistants, and skills.
+    "memory.get": () => { signedIn(); return knowledge.read(); },
+    "memory.save": ({ notes }) => { signedIn(); return knowledge.saveNotes(notes); },
+    "memory.removeImport": ({ path: file }) => { signedIn(); return knowledge.removeImport(file); },
+    "memory.openFolder": async () => { signedIn(); fs.mkdirSync(knowledge.memoriesRoot, { recursive: true }); const error = await shell.openPath(knowledge.memoriesRoot); if (error) throw fail(500, error); return { opened: true }; },
+    "knowledge.detect": () => { signedIn(); return knowledge.detect(); },
+    "knowledge.import": async ({ items }) => {
+      signedIn();
+      const result = knowledge.importItems(items);
+      if (result.imported.skills) await client.request("skills/list", { forceReload: true }).catch(() => {});
+      return result;
+    },
+    "skills.list": async ({ reload = false } = {}) => {
+      signedIn();
+      const result = await client.request("skills/list", { forceReload: !!reload });
+      const seen = new Set(), skills = [], errors = [];
+      for (const entry of result.data || []) {
+        errors.push(...(entry.errors || []).map(error => error.message));
+        for (const skill of entry.skills || []) {
+          if (seen.has(skill.path)) continue;
+          seen.add(skill.path);
+          const local = path.resolve(skill.path).startsWith(path.resolve(knowledge.skillsRoot) + path.sep) && !/[\\/]\.system[\\/]/.test(skill.path);
+          skills.push({ name: skill.name, title: skill.interface?.displayName || skill.name, description: skill.interface?.shortDescription || skill.shortDescription || skill.description || "", scope: skill.scope, enabled: skill.enabled !== false, path: skill.path, removable: local });
+        }
+      }
+      skills.sort((a, b) => (a.scope === "system") - (b.scope === "system") || a.title.localeCompare(b.title));
+      return { skills, errors: [...new Set(errors)] };
+    },
+    "skills.setEnabled": async ({ path: file, enabled }) => { signedIn(); await client.request("skills/config/write", { path: text(file, 4000), enabled: !!enabled }); return { enabled: !!enabled }; },
+    "skills.remove": async ({ name }) => { signedIn(); const result = knowledge.removeSkill(name); await client.request("skills/list", { forceReload: true }).catch(() => {}); return result; },
+    "skills.openFolder": async () => { signedIn(); fs.mkdirSync(knowledge.skillsRoot, { recursive: true }); const error = await shell.openPath(knowledge.skillsRoot); if (error) throw fail(500, error); return { opened: true }; },
+    "onboarding.status": async () => ({ done: await onboarding.done() }),
 
     "feedback.submit": input => services.submitFeedback(input),
     "links.open": ({ url }) => services.openExternal(url),

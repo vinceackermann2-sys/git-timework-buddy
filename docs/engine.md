@@ -49,7 +49,7 @@ Core
 - ☑ Window, single instance, app protocol, icons, profile, About panel
 - ◐ Sign-in, sign-up, email code, password recovery, Google sign-in
 - ◐ Organization gate (create, join, switch, picture)
-- ☐ Onboarding (agent name, preferred name, browser profiles, knowledge import, theme, plan)
+- ◐ Onboarding (agent name, preferred name, knowledge import, theme, plan; browser profile import pending)
 - ◐ Billing, plans, credits, Codex/ChatGPT connection
 - ◐ Agents: create (Orbit, Nova, Cosmo or picture), rename, instructions, star, reorder, archive
 - ☑ Conversations: new, list, search, rename, archive, read state
@@ -68,8 +68,8 @@ Workspace
 - ☐ Vault: passwords, cards, secrets, agent access, autofill; passkeys
 
 Capabilities
-- ☐ Memory and instructions
-- ☐ Skills
+- ☑ Memory: notes in `memories/user.md`, imports from ChatGPT / Codex, Claude and Cursor, on/off
+- ☑ Skills: Codex skills list, enable/disable, import, previously connected skill folders
 - ◐ Connected apps (Composio) and custom MCP servers
 - ☐ Automations
 - ◐ Settings: appearance and colors, notifications, privacy, preferences

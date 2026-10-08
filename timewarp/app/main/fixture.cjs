@@ -126,7 +126,18 @@ function createFixture() {
     if (route === "/connectors") return json(payload?.action === "catalog" ? { apps: [] } : { ok: true });
     return json({ error: "Unavailable in preview mode." }, 404);
   }
-  return { auth, cloud, user: USER };
+  // Sample files from other assistants, so previews never read the real home folder.
+  function sampleHome(directory) {
+    const fs = require("node:fs"), path = require("node:path");
+    const write = (file, text) => { const target = path.join(directory, file); fs.mkdirSync(path.dirname(target), { recursive: true }); if (!fs.existsSync(target)) fs.writeFileSync(target, text); };
+    write(".claude/CLAUDE.md", "# Preferences\n- Keep replies short.\n- Use metric units.\n");
+    write(".claude/projects/launch/memory/notes.md", "The launch is planned for spring.\n");
+    write(".claude/skills/summarize/SKILL.md", "---\nname: summarize\ndescription: Summarize long documents into five bullet points.\n---\n\nRead the document and return five bullets.\n");
+    write(".codex/AGENTS.md", "Prefer TypeScript for new scripts.\n");
+    write(".codex/skills/release-notes/SKILL.md", "---\nname: release-notes\ndescription: Draft release notes from a list of changes.\n---\n\nGroup changes by area.\n");
+    return directory;
+  }
+  return { auth, cloud, user: USER, sampleHome };
 }
 
 module.exports = { createFixture, scriptedResponse };
