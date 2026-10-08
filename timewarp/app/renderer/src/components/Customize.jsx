@@ -8,6 +8,7 @@ import { Memory, Skills } from "./Knowledge.jsx";
 import { Automations } from "./Automations.jsx";
 import { McpServers, SharedInstructions } from "./Mcp.jsx";
 import { Vault } from "./Vault.jsx";
+import { AppAccess } from "./AppAccess.jsx";
 
 export const SECTIONS = [
   { id: "general", label: "General", icon: SlidersHorizontal },
@@ -168,7 +169,7 @@ function Agents({ agents, onNewAgent, onEditAgent, onArchiveAgent }) {
   );
 }
 
-function Apps() {
+function Apps({ agents = [] }) {
   const [items, setItems] = useState(null);
   const [error, setError] = useState("");
   const toast = useToast();
@@ -195,6 +196,7 @@ function Apps() {
       {items === null && !error ? <p className="tw-hint">Loading apps…</p> : null}
       {connected.length ? <div className="tw-card"><h3>Connected</h3><div className="tw-rows">{connected.map(row)}</div></div> : null}
       {available.length ? <div className="tw-card"><h3>Available</h3><div className="tw-rows">{available.slice(0, 80).map(row)}</div></div> : null}
+      <AppAccess agents={agents} connected={connected} />
       <McpServers />
     </section>
   );
@@ -311,7 +313,7 @@ function About() {
 export function Customize({ section, onSection, ...props }) {
   const content = {
     general: <General {...props} />, colors: <Colors {...props} />, models: <Models {...props} />, agents: <Agents {...props} />, memory: <Memory {...props} />, skills: <Skills />, automations: <Automations {...props} />, vault: <Vault {...props} />,
-    apps: <Apps />, billing: <Billing />, organization: <Organization {...props} />, about: <About />,
+    apps: <Apps {...props} />, billing: <Billing />, organization: <Organization {...props} />, about: <About />,
   }[section] || <General {...props} />;
   return (
     <div className="tw-main">

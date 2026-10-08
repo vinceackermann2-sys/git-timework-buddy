@@ -132,7 +132,13 @@ function createFixture() {
     if (route === "/history") return json(payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
     if (route === "/native/rpc") return json(rpc(payload.rpc, payload.input || {}));
     if (route === "/v1/transcriptions") return json({ text: `Preview dictation (${payload?.length || 0} bytes of audio).` });
-    if (route === "/connectors") return json(payload?.action === "catalog" ? { apps: [] } : { ok: true });
+    if (route === "/connectors") {
+      if (payload?.action === "list-apps") return json({ apps: [
+        { toolkitSlug: "gmail", name: "Gmail", description: "Read and send email.", logo: null, accounts: [{ connectionId: "conn-gmail-1", label: "Preview inbox", email: "inbox@preview.invalid", status: "ACTIVE" }] },
+        { toolkitSlug: "slack", name: "Slack", description: "Read and post messages.", logo: null, accounts: [] },
+      ] });
+      return json(payload?.action === "catalog" ? { apps: [] } : { ok: true });
+    }
     return json({ error: "Unavailable in preview mode." }, 404);
   }
   // Sample files from other assistants, so previews never read the real home folder.
