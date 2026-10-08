@@ -8,7 +8,7 @@ const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notificat
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Agent ownership is checked on every call by agents.get().
   const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
@@ -183,6 +183,21 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "skills.setEnabled": async ({ path: file, enabled }) => { signedIn(); await client.request("skills/config/write", { path: text(file, 4000), enabled: !!enabled }); return { enabled: !!enabled }; },
     "skills.remove": async ({ name }) => { signedIn(); const result = knowledge.removeSkill(name); await client.request("skills/list", { forceReload: true }).catch(() => {}); return result; },
     "skills.openFolder": async () => { signedIn(); fs.mkdirSync(knowledge.skillsRoot, { recursive: true }); const error = await shell.openPath(knowledge.skillsRoot); if (error) throw fail(500, error); return { opened: true }; },
+    // MCP servers the user adds, and instructions every agent follows.
+    "mcp.list": () => { signedIn(); return mcp.list(); },
+    "mcp.add": input => { signedIn(); return mcp.add(input); },
+    "mcp.setEnabled": ({ name, enabled }) => { signedIn(); return mcp.setEnabled(name, enabled); },
+    "mcp.remove": ({ name }) => { signedIn(); return mcp.remove(name); },
+    "mcp.signIn": ({ name }) => { signedIn(); return mcp.signIn(name); },
+    "instructions.get": () => { signedIn(); try { return { text: fs.readFileSync(path.join(codexHome, "AGENTS.md"), "utf8") }; } catch { return { text: "" }; } },
+    "instructions.save": ({ text: value }) => {
+      signedIn();
+      if (typeof value !== "string" || value.length > 20000) throw fail(400, "Instructions must be text under 20,000 characters.");
+      const file = path.join(codexHome, "AGENTS.md"), temporary = file + "." + process.pid + ".tmp";
+      fs.writeFileSync(temporary, value.trim() ? value.trim() + "\n" : "");
+      fs.renameSync(temporary, file);
+      return { text: fs.readFileSync(file, "utf8") };
+    },
     "automations.list": () => automations.list(),
     "automations.create": input => automations.create(input),
     "automations.update": ({ id, ...patch }) => automations.update(id, patch),

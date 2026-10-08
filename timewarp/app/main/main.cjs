@@ -94,6 +94,7 @@ async function boot() {
   const { createKnowledge } = require("./knowledge.cjs");
   const { createOnboarding } = require("./onboarding.cjs");
   const { createAutomations } = require("./automations.cjs");
+  const { createMcp } = require("./mcp.cjs");
   const { resolveModelSettings } = require("../../shared/model-capabilities.cjs");
   const { migrateAppearance, defaultAccent } = require("../../shared/appearance.cjs");
 
@@ -204,6 +205,8 @@ async function boot() {
   });
   automations = createAutomations({ store, harness, userId: () => userId(), notify: broadcast, log: (...args) => console.error("[timewarp]", ...args) });
 
+  const mcp = createMcp({ client, openExternal: url => services.openExternal(url), notify: broadcast });
+
   const bridge = createModelBridge({ token: bridgeToken, cloud: services.cloud, funding: services.funding, chatgpt: services.chatgpt, integrations: services.integrations, mascots: require("../../desktop/mascots.cjs") });
   const bridgeReady = bridge.listen();
   bridgeReady.catch(error => console.error("[timewarp]", error.message));
@@ -245,7 +248,7 @@ async function boot() {
 
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service });

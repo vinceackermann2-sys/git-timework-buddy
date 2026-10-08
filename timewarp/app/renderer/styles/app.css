@@ -273,7 +273,7 @@ a { color: var(--color-primary); }
 .tw-notes { min-height: 180px; resize: vertical; font: 13.5px/1.5 var(--font-sans); }
 
 .tw-schedule { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-.tw-automation-editor .tw-segmented { justify-self: start; }
+.tw-automation-editor .tw-segmented, .tw-import .tw-segmented { justify-self: start; }
 
 /* Memory and skills import */
 .tw-import { display: grid; gap: 12px; padding-top: 4px; }

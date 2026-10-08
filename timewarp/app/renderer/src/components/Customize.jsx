@@ -6,6 +6,7 @@ import { Avatar, Segmented, Switch, useToast } from "./common.jsx";
 import { ModelPicker } from "./Composer.jsx";
 import { Memory, Skills } from "./Knowledge.jsx";
 import { Automations } from "./Automations.jsx";
+import { McpServers, SharedInstructions } from "./Mcp.jsx";
 
 export const SECTIONS = [
   { id: "general", label: "General", icon: SlidersHorizontal },
@@ -154,6 +155,7 @@ function Agents({ agents, onNewAgent, onEditAgent, onArchiveAgent }) {
         </div>
         <div><button type="button" className="tw-btn primary" onClick={onNewAgent}>New agent</button></div>
       </div>
+      <SharedInstructions />
     </section>
   );
 }
@@ -185,6 +187,7 @@ function Apps() {
       {items === null && !error ? <p className="tw-hint">Loading apps…</p> : null}
       {connected.length ? <div className="tw-card"><h3>Connected</h3><div className="tw-rows">{connected.map(row)}</div></div> : null}
       {available.length ? <div className="tw-card"><h3>Available</h3><div className="tw-rows">{available.slice(0, 80).map(row)}</div></div> : null}
+      <McpServers />
     </section>
   );
 }
