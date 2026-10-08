@@ -8,7 +8,27 @@ const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notificat
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome }) {
+// Runs in the page (isolated world): fills the visible password field and the
+// username field before it. Returns whether a password field was found.
+function fillSignIn(username, password) {
+  const visible = element => !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length) && !element.disabled && !element.readOnly;
+  const set = (element, value) => {
+    element.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  const inputs = [...document.querySelectorAll("input")].filter(visible);
+  const secret = inputs.find(element => element.type === "password");
+  const named = inputs.find(element => element.autocomplete === "username" || element.type === "email");
+  const before = secret ? inputs.slice(0, inputs.indexOf(secret)).reverse().find(element => ["text", "email", "tel", ""].includes(element.type)) : null;
+  const user = named || before || (!secret ? inputs.find(element => ["text", "email"].includes(element.type)) : null);
+  if (user && username) set(user, username);
+  if (secret) set(secret, password);
+  return !!(secret || (user && username));
+}
+
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Agent ownership is checked on every call by agents.get().
   const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
@@ -197,6 +217,41 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       fs.writeFileSync(temporary, value.trim() ? value.trim() + "\n" : "");
       fs.renameSync(temporary, file);
       return { text: fs.readFileSync(file, "utf8") };
+    },
+    // Vault. Values leave the main process only when the user copies or shows
+    // one, or fills a sign-in into the page they are looking at.
+    "vault.list": () => { signedIn(); return { available: vault.available(), items: vault.list() }; },
+    "vault.create": input => { signedIn(); return vault.create(input); },
+    "vault.update": ({ id, ...input }) => { signedIn(); return vault.update(id, input); },
+    "vault.remove": ({ id }) => { signedIn(); return vault.remove(id); },
+    "vault.reveal": ({ id, field }) => {
+      signedIn();
+      const item = vault.secret(id);
+      if (!["password", "number", "cvc", "value"].includes(field) || item[field] === undefined) throw fail(400, "Nothing to show.");
+      return { value: item[field] };
+    },
+    "vault.copy": ({ id, field }) => {
+      signedIn();
+      const item = vault.secret(id), value = item[field];
+      if (!["password", "username", "number", "cvc", "value"].includes(field) || !value) throw fail(400, "Nothing to copy.");
+      clipboard.writeText(value);
+      // Clear the clipboard after a minute unless something else was copied.
+      setTimeout(() => { if (clipboard.readText() === value) clipboard.clear(); }, 60000).unref?.();
+      return { copied: true };
+    },
+    "vault.signInsForPage": ({ conversationId, tabId }) => {
+      signedIn(); harness.conversations.get(conversationId);
+      const url = browser.webContents(conversationId, tabId).contents.getURL();
+      return vault.signInsFor(url);
+    },
+    "vault.fillPage": async ({ conversationId, tabId, id }) => {
+      signedIn(); harness.conversations.get(conversationId);
+      const { contents } = browser.webContents(conversationId, tabId);
+      const item = vault.secret(id);
+      if (item.kind !== "password" || !vault.signInsFor(contents.getURL()).some(entry => entry.id === id)) throw fail(403, "This sign-in isn't saved for this site.");
+      const filled = await contents.executeJavaScriptInIsolatedWorld(1007, [{ code: `(${fillSignIn})(${JSON.stringify(item.username || "")}, ${JSON.stringify(item.password)})` }], true);
+      if (!filled) throw fail(404, "Timewarp couldn't find a sign-in form on this page.");
+      return { filled: true };
     },
     "automations.list": () => automations.list(),
     "automations.create": input => automations.create(input),

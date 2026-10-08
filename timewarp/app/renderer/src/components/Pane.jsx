@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, FolderOpen, Globe, Plus, RotateCw, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, FolderOpen, Globe, KeyRound, Plus, RotateCw, X } from "lucide-react";
 import { call, useEvent } from "../api.js";
-import { Avatar, useToast } from "./common.jsx";
+import { Avatar, Menu, useToast } from "./common.jsx";
 import { Files } from "./Files.jsx";
 
 const host = url => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url || ""; } };
@@ -77,6 +77,13 @@ export function Pane({ conversation, agent, onClose }) {
   useEvent("browser.state", value => { if (value.conversationId === id) setState(value); });
   useEvent("browser.agent", value => { if (value.conversationId === id) setFiles(false); });
   useEffect(() => { if (!editing) setAddress(active?.kind === "web" ? active.url : ""); }, [active?.url, active?.kind, editing]);
+  // Saved sign-ins for the page, offered from the address bar.
+  const [signIns, setSignIns] = useState([]);
+  useEffect(() => {
+    if (active?.kind !== "web" || active.loading) { setSignIns([]); return; }
+    call("vault.signInsForPage", { conversationId: id, tabId: active.id }).then(setSignIns).catch(() => setSignIns([]));
+  }, [id, active?.id, active?.url, active?.kind, active?.loading]);
+  const fill = item => call("vault.fillPage", { conversationId: id, tabId: active.id, id: item.id }).then(() => toast("Sign-in filled.")).catch(error => toast(error, "error"));
 
   // Keep the native page view on top of the content area.
   useLayoutEffect(() => {
@@ -115,6 +122,12 @@ export function Pane({ conversation, agent, onClose }) {
         <button type="button" className="tw-icon-button" aria-label={active?.loading ? "Stop" : "Reload"} disabled={active?.kind !== "web"} onClick={() => run(active?.loading ? "browser.stop" : "browser.reload", { tabId: active.id })}>{active?.loading ? <X size={16} /> : <RotateCw size={15} />}</button>
         <input className="tw-input tw-address" value={address} placeholder="Search or enter an address" aria-label="Address"
           onFocus={event => { setEditing(true); event.target.select(); }} onBlur={() => setEditing(false)} onChange={event => setAddress(event.target.value)} />
+        {signIns.length ? (
+          <Menu align="right" width={260} trigger={({ toggle }) => <button type="button" className="tw-icon-button" title="Fill a saved sign-in" aria-label="Fill a saved sign-in" onClick={() => signIns.length === 1 ? void fill(signIns[0]) : toggle()}><KeyRound size={15} /></button>}>
+            <div className="tw-menu-label">Fill a saved sign-in</div>
+            {signIns.map(item => <button key={item.id} type="button" className="tw-menu-item" data-close onClick={() => void fill(item)}><KeyRound size={14} />{item.username || item.label}</button>)}
+          </Menu>
+        ) : null}
         {active?.agent ? <span className="tw-pane-agent" title={active.agent.action}><Avatar agent={active.agent} size="small" />{active.agent.action}</span> : null}
       </form>}
       <div className="tw-pane-content" ref={content}>

@@ -275,6 +275,10 @@ a { color: var(--color-primary); }
 .tw-schedule { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 .tw-automation-editor .tw-segmented, .tw-import .tw-segmented { justify-self: start; }
 
+.tw-secret { display: inline-flex; align-items: center; gap: 2px; }
+.tw-secret code { font: 12.5px var(--font-mono); color: var(--color-muted-foreground); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 4px; }
+.tw-vault-icon { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--color-muted); color: var(--color-muted-foreground); flex: none; }
+
 /* Memory and skills import */
 .tw-import { display: grid; gap: 12px; padding-top: 4px; }
 .tw-import-group { border: 1px solid var(--color-border); border-radius: 12px; padding: 8px 12px 10px; margin: 0; display: grid; gap: 4px; max-height: 260px; overflow-y: auto; }

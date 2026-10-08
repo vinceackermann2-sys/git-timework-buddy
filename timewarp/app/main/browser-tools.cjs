@@ -41,8 +41,21 @@ function toolSpecs() {
   }];
 }
 
+// Matches a filled vault value in page output, including card numbers the
+// page reformats with spaces or dashes.
+function patternFor(secret) {
+  const value = String(secret);
+  if (/^\d{12,19}$/.test(value)) return value.split("").join("[\\s-]?");
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function createBrowserTools({ browser, onActivity = () => {} }) {
   const refs = new WeakMap(); // webContents -> Map(ref -> backendNodeId)
+  const filled = new WeakMap(); // webContents -> RegExp of vault values typed into it
+  const redact = (contents, value) => {
+    const pattern = filled.get(contents);
+    return pattern ? String(value).replace(pattern, "[filled from vault]") : String(value);
+  };
   async function cdp(contents, method, params = {}) {
     if (!contents.debugger.isAttached()) {
       try { contents.debugger.attach("1.3"); } catch (error) { throw fail(409, "The page can't be controlled right now: " + error.message); }
@@ -76,7 +89,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
     };
     visit(nodes.find(node => !node.parentId) || nodes[0], 0);
     refs.set(contents, map);
-    return lines.join("\n") + (size > MAX_SNAPSHOT ? "\n… (page outline truncated; scroll or read for more)" : "");
+    return redact(contents, lines.join("\n") + (size > MAX_SNAPSHOT ? "\n… (page outline truncated; scroll or read for more)" : ""));
   }
   function nodeFor(contents, id) {
     const node = refs.get(contents)?.get(String(id || "").replace(/^@?\[?ref=?/, "").replace(/\]$/, ""));
@@ -104,7 +117,11 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
   const text = value => ({ contentItems: [{ type: "inputText", text: String(value) }], success: true });
   async function pageText(contents) {
     const result = await contents.executeJavaScript(`(() => ({ title: document.title, url: location.href, text: (document.body?.innerText || "").slice(0, ${MAX_TEXT}) }))()`, true);
-    return `${result.title}\n${result.url}\n\n${result.text}`;
+    return redact(contents, `${result.title}\n${result.url}\n\n${result.text}`);
+  }
+  async function focusAndClear(contents, node) {
+    const { object } = await cdp(contents, "DOM.resolveNode", { backendNodeId: node });
+    await cdp(contents, "Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){this.scrollIntoView({block:'center'});this.focus();if('value' in this){this.value='';this.dispatchEvent(new Event('input',{bubbles:true}));}else if(this.isContentEditable){this.textContent='';}}" });
   }
 
   return {
@@ -136,8 +153,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         case "type": {
           const { tab: item, contents } = target(); const node = nodeFor(contents, input.ref);
           note(item.id, "Typing");
-          const { object } = await cdp(contents, "DOM.resolveNode", { backendNodeId: node });
-          await cdp(contents, "Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){this.scrollIntoView({block:'center'});this.focus();if('value' in this){this.value='';this.dispatchEvent(new Event('input',{bubbles:true}));}else if(this.isContentEditable){this.textContent='';}}" });
+          await focusAndClear(contents, node);
           await cdp(contents, "Input.insertText", { text: String(input.text ?? "") });
           if (input.submit) await key(contents, "Enter");
           await settle(contents, input.submit ? 800 : 200);
@@ -171,7 +187,25 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
       }
     },
     finished(conversationId) { for (const item of browser.state(conversationId).tabs) if (item.agent) browser.markAgent(conversationId, item.id, null); },
+    // For vault tools: the page a field is on, and typing a value the model
+    // never sees. Later page output hides the value.
+    pageUrl(conversationId, tabId) { return browser.webContents(conversationId, tabId).contents.getURL(); },
+    async fillSecret(conversationId, { ref: id, tab: tabId, value, agent }) {
+      const { tab: item, contents } = browser.webContents(conversationId, tabId);
+      const node = nodeFor(contents, id);
+      browser.markAgent(conversationId, item.id, { name: agent?.name, avatarUrl: agent?.avatarUrl, action: "Filling from the vault" });
+      onActivity(conversationId, "Filling from the vault");
+      await focusAndClear(contents, node);
+      await cdp(contents, "Input.insertText", { text: String(value) });
+      // Short values (a security code) would hide ordinary page text too.
+      if (String(value).length >= 6) {
+        const previous = filled.get(contents)?.source;
+        filled.set(contents, new RegExp((previous ? previous + "|" : "") + patternFor(value), "g"));
+      }
+      await settle(contents, 150);
+      return contents.getURL();
+    },
   };
 }
 
-module.exports = { createBrowserTools, toolSpecs };
+module.exports = { createBrowserTools, toolSpecs, patternFor };

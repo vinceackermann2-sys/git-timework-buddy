@@ -32,3 +32,11 @@ test("agent browser tools use a non-reserved namespace with strict schemas", () 
   assert.deepEqual(names, ["open", "tabs", "snapshot", "click", "type", "press", "scroll", "read", "screenshot", "back", "forward", "wait", "close_tab"]);
   for (const tool of namespace.tools) assert.equal(tool.inputSchema.additionalProperties, false, tool.name);
 });
+
+test("values filled from the vault are hidden from page output, even when reformatted", () => {
+  const { patternFor } = require("../app/main/browser-tools.cjs");
+  const hide = (text, value) => text.replace(new RegExp(patternFor(value), "g"), "[filled from vault]");
+  assert.equal(hide("Card: 4242 4242 4242 4242 ok", "4242424242424242"), "Card: [filled from vault] ok");
+  assert.equal(hide("Card: 4242-4242-4242-4242", "4242424242424242"), "Card: [filled from vault]");
+  assert.equal(hide('value="p@ss.(word)+"', "p@ss.(word)+"), 'value="[filled from vault]"');
+});

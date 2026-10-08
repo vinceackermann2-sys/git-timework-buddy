@@ -1,6 +1,6 @@
 "use strict";
 // Timewarp desktop main process.
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme, net, protocol, session, shell, dialog } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, net, protocol, session, shell, dialog, safeStorage, clipboard } = require("electron");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -95,6 +95,8 @@ async function boot() {
   const { createOnboarding } = require("./onboarding.cjs");
   const { createAutomations } = require("./automations.cjs");
   const { createMcp } = require("./mcp.cjs");
+  const { createVault, safeStorageCipher } = require("./vault.cjs");
+  const { createVaultTools } = require("./vault-tools.cjs");
   const { resolveModelSettings } = require("../../shared/model-capabilities.cjs");
   const { migrateAppearance, defaultAccent } = require("../../shared/appearance.cjs");
 
@@ -185,12 +187,22 @@ async function boot() {
   const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast });
   const browserTools = createBrowserTools({ browser, onActivity: (conversationId, action) => broadcast("browser.agent", { conversationId, action }) });
   // Raise when the tool set changes: chats then continue in a new thread.
-  const TOOLS_VERSION = 1;
+  const vault = createVault({ store, cipher: safeStorageCipher(safeStorage), userId: () => userId() });
+  const vaultTools = createVaultTools({
+    vault, browserTools,
+    ask: async (message, detail) => {
+      focusApp();
+      const result = await dialog.showMessageBox(mainWindow, { type: "question", title: "Timewarp vault", message, detail, buttons: ["Allow", "Don't allow"], defaultId: 1, cancelId: 1, noLink: true });
+      return result.response === 0;
+    },
+  });
+  const TOOLS_VERSION = 2;
   const tools = {
     version: TOOLS_VERSION,
-    specs: () => browserTools.specs(),
+    specs: () => [...browserTools.specs(), ...vaultTools.specs()],
     call: (conversationId, params, agent) => {
       if (params.namespace === "timewarp_browser") return browserTools.call(conversationId, params, agent);
+      if (params.namespace === "timewarp_vault") return vaultTools.call(conversationId, params, agent);
       return Promise.reject(Object.assign(new Error("This tool is not available in Timewarp."), { status: 404 }));
     },
     finished: conversationId => browserTools.finished(conversationId),
@@ -248,7 +260,7 @@ async function boot() {
 
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service });

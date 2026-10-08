@@ -65,7 +65,7 @@ Workspace
 - ◐ Built-in browser: tabs, navigation, profiles, profile import, recent sites, agent control, cursor
 - ☑ Files: tree, search, text and code, markdown, images, PDF, spreadsheets, CSV, Word documents
 - ◐ Windows command sandbox setup (Settings → General)
-- ☐ Vault: passwords, cards, secrets, agent access, autofill; passkeys
+- ◐ Vault: ☑ sign-ins, cards and secrets (OS-encrypted, per account), agent access, agent fill tools that never reveal values, permission prompts for cards and secrets, fill from the address bar; ☐ passkeys, ☐ import of 1.x vault items (format unknown; none on the reference profile)
 
 Capabilities
 - ☑ Memory: notes in `memories/user.md`, imports from ChatGPT / Codex, Claude and Cursor, on/off
