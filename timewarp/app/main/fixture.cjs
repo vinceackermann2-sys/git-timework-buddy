@@ -25,7 +25,10 @@ function textOf(input) {
 function scriptedResponse(body) {
   const id = "resp_" + crypto.randomUUID(), message = "msg_" + crypto.randomUUID();
   const usage = { input_tokens: 40, input_tokens_details: { cached_tokens: 0 }, output_tokens: 30, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 70 };
-  const outputs = (body.input || []).filter(item => item.type === "function_call_output" || item.type === "custom_tool_call_output");
+  // Tool results of the current turn only: those after the latest user message.
+  const inputs = body.input || [];
+  const lastUser = inputs.findLastIndex(item => item.type === "message" && item.role === "user");
+  const outputs = inputs.slice(lastUser + 1).filter(item => item.type === "function_call_output" || item.type === "custom_tool_call_output");
   const latest = textOf(body.input).split("\n").filter(Boolean).at(-1) || "";
   const tool = (body.tools || []).find(item => item.type === "function" && item.name === "exec_command");
   // Code mode exposes the tools through one "exec" JavaScript tool.
@@ -37,7 +40,12 @@ function scriptedResponse(body) {
   const command = process.platform === "win32" ? "Write-Output 'Hello from the Timewarp preview'" : "echo 'Hello from the Timewarp preview'";
   const browse = /\bbrowse\b/i.test(latest), runCommand = /\brun\b/i.test(latest);
   if (codeMode && browse && !outputs.length) {
-    const script = `const opened = await tools.timewarp_browser__open({ url: "https://example.com/" });\nconst outline = await tools.timewarp_browser__snapshot({});\ntext(String(opened) + "\\n" + String(outline).slice(0, 600));`;
+    // "browse and click <url>" also clicks the first control on the page.
+    const url = /https?:\/\/\S+/.exec(latest)?.[0] || "https://example.com/";
+    const click = /\bclick\b/i.test(latest)
+      ? `\nconst ref = (String(outline).match(/\\[ref=(e\\d+)\\]/) || [])[1];\nconst clicked = ref ? await tools.timewarp_browser__click({ ref }) : "Nothing to click.";\ntext(String(clicked));`
+      : "";
+    const script = `const opened = await tools.timewarp_browser__open({ url: ${JSON.stringify(url)} });\nconst outline = await tools.timewarp_browser__snapshot({});\ntext(String(opened) + "\\n" + String(outline).slice(0, 600));${click}`;
     const call = { type: "custom_tool_call", id: "ctc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "exec", input: script };
     events.push({ type: "response.output_item.added", output_index: 0, item: { ...call, input: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
   } else if ((tool || codeMode) && runCommand && !outputs.length) {

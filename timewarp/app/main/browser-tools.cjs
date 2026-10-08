@@ -14,6 +14,7 @@ const KEYS = {
 };
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const READ_ONLY = new Set(["tabs", "snapshot", "read", "screenshot", "wait"]);
 
 const ref = { type: "string", description: "Element reference from the latest snapshot, for example e12." };
 const tab = { type: "string", description: "Optional tab id from the tabs tool. Defaults to the active tab." };
@@ -39,6 +40,40 @@ function toolSpecs() {
     description: "Timewarp's built-in browser, visible to the user beside the chat. Use it for web research, signed-in websites and forms. Take a snapshot before clicking or typing, and read back the result after each action.",
     tools: TOOLS.map(([name, description, properties, required]) => ({ type: "function", name, description, inputSchema: { type: "object", properties, required, additionalProperties: false } })),
   }];
+}
+
+// The agent's cursor, drawn in the page (in an isolated world and a closed
+// shadow root, so the page can't restyle or read it) where the agent acts.
+function cursorScript(x, y, label) {
+  return `(() => {
+  const ID = "__timewarp_agent_cursor";
+  let host = document.getElementById(ID), parts = host && host.__timewarp;
+  if (!parts) {
+    host = document.createElement("div");
+    host.id = ID;
+    host.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;";
+    const root = host.attachShadow({ mode: "closed" });
+    const box = document.createElement("div");
+    box.style.cssText = "position:fixed;left:0;top:0;transition:transform .35s cubic-bezier(.2,.8,.2,1),opacity .3s;opacity:0;pointer-events:none;";
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "22"); svg.setAttribute("height", "22"); svg.setAttribute("viewBox", "0 0 22 22");
+    const arrow = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    arrow.setAttribute("d", "M3 2 L3 18 L7.5 13.8 L10.6 20 L13.4 18.6 L10.4 12.6 L16.5 12.6 Z");
+    arrow.setAttribute("fill", "#7c3aed"); arrow.setAttribute("stroke", "#ffffff"); arrow.setAttribute("stroke-width", "1.6"); arrow.setAttribute("stroke-linejoin", "round");
+    svg.append(arrow);
+    const name = document.createElement("span");
+    name.style.cssText = "position:absolute;left:16px;top:18px;padding:2px 8px;border-radius:999px;background:#7c3aed;color:#fff;font:600 11px/16px system-ui,sans-serif;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25);";
+    box.append(svg, name);
+    root.append(box);
+    (document.body || document.documentElement).append(host);
+    parts = host.__timewarp = { box, name, timer: 0 };
+  }
+  parts.name.textContent = ${JSON.stringify(label)};
+  parts.box.style.opacity = "1";
+  parts.box.style.transform = "translate(${Math.round(x) - 3}px, ${Math.round(y) - 2}px)";
+  clearTimeout(parts.timer);
+  parts.timer = setTimeout(() => { parts.box.style.opacity = "0"; }, 6000);
+})()`;
 }
 
 // Matches a filled vault value in page output, including card numbers the
@@ -119,6 +154,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
     const result = await contents.executeJavaScript(`(() => ({ title: document.title, url: location.href, text: (document.body?.innerText || "").slice(0, ${MAX_TEXT}) }))()`, true);
     return redact(contents, `${result.title}\n${result.url}\n\n${result.text}`);
   }
+  const showCursor = (contents, point, agent) => contents.executeJavaScriptInIsolatedWorld(1009, [{ code: cursorScript(point.x, point.y, agent?.name || "Agent") }]).catch(() => {});
   async function focusAndClear(contents, node) {
     const { object } = await cdp(contents, "DOM.resolveNode", { backendNodeId: node });
     await cdp(contents, "Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){this.scrollIntoView({block:'center'});this.focus();if('value' in this){this.value='';this.dispatchEvent(new Event('input',{bubbles:true}));}else if(this.isContentEditable){this.textContent='';}}" });
@@ -130,6 +166,10 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
       const name = params.tool, input = params.arguments || {};
       const target = () => browser.webContents(conversationId, input.tab);
       const note = (tabId, action) => { browser.markAgent(conversationId, tabId, action ? { name: agent?.name, avatarUrl: agent?.avatarUrl, action } : null); onActivity(conversationId, action); };
+      // While the user has taken over, the agent can look but not act.
+      if (browser.userInControl(conversationId) && !READ_ONLY.has(name)) {
+        return { contentItems: [{ type: "inputText", text: "The user has taken control of the browser. Don't use browser actions until they hand it back; tell the user what you were about to do, or continue without the browser." }], success: false };
+      }
       switch (name) {
         case "open": {
           const state = input.new_tab ? browser.openTab(conversationId, { url: input.url }) : browser.navigate(conversationId, { url: input.url });
@@ -146,6 +186,8 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         case "click": {
           const { tab: item, contents } = target(); const node = nodeFor(contents, input.ref); const point = await centerOf(contents, node);
           note(item.id, "Clicking");
+          await showCursor(contents, point, agent);
+          await pause(250);
           for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) await cdp(contents, "Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", clickCount: type === "mouseMoved" ? 0 : 1 });
           await settle(contents);
           return text(`Clicked ${input.ref}. Now on ${contents.getURL()}: ${contents.getTitle()}. Take a snapshot to see the result.`);
@@ -153,6 +195,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         case "type": {
           const { tab: item, contents } = target(); const node = nodeFor(contents, input.ref);
           note(item.id, "Typing");
+          await showCursor(contents, await centerOf(contents, node), agent);
           await focusAndClear(contents, node);
           await cdp(contents, "Input.insertText", { text: String(input.text ?? "") });
           if (input.submit) await key(contents, "Enter");
@@ -191,6 +234,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
     // never sees. Later page output hides the value.
     pageUrl(conversationId, tabId) { return browser.webContents(conversationId, tabId).contents.getURL(); },
     async fillSecret(conversationId, { ref: id, tab: tabId, value, agent }) {
+      if (browser.userInControl(conversationId)) throw fail(409, "The user has taken control of the browser.");
       const { tab: item, contents } = browser.webContents(conversationId, tabId);
       const node = nodeFor(contents, id);
       browser.markAgent(conversationId, item.id, { name: agent?.name, avatarUrl: agent?.avatarUrl, action: "Filling from the vault" });

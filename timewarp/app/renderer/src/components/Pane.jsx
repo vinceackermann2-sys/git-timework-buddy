@@ -128,7 +128,10 @@ export function Pane({ conversation, agent, onClose }) {
             {signIns.map(item => <button key={item.id} type="button" className="tw-menu-item" data-close onClick={() => void fill(item)}><KeyRound size={14} />{item.username || item.label}</button>)}
           </Menu>
         ) : null}
-        {active?.agent ? <span className="tw-pane-agent" title={active.agent.action}><Avatar agent={active.agent} size="small" />{active.agent.action}</span> : null}
+        {active?.agent && !state.userControl ? <span className="tw-pane-agent" title={active.agent.action}><Avatar agent={active.agent} size="small" />{active.agent.action}</span> : null}
+        {state.userControl
+          ? <button type="button" className="tw-btn tw-control" title="Let the agent use the browser again" onClick={() => run("browser.handBack")}>Hand back</button>
+          : active?.agent ? <button type="button" className="tw-btn tw-control" title="Pause the agent's browser actions and use the page yourself" onClick={() => run("browser.takeControl")}>Take over</button> : null}
       </form>}
       <div className="tw-pane-content" ref={content}>
         {files ? <Files agent={agent} /> : !active || active.kind === "home" ? <Home conversation={conversation} agent={agent} onOpen={open} onFiles={() => setFiles(true)} /> : null}

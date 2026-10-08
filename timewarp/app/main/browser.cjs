@@ -57,9 +57,11 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
   });
   function groupState(conversationId) {
     const group = groups.get(conversationId) || { active: null };
-    return { conversationId, active: group.active, tabs: [...tabs.values()].filter(tab => tab.conversationId === conversationId).sort((a, b) => a.order - b.order).map(stateOf) };
+    return { conversationId, active: group.active, userControl: userControl.has(conversationId), tabs: [...tabs.values()].filter(tab => tab.conversationId === conversationId).sort((a, b) => a.order - b.order).map(stateOf) };
   }
   const changed = conversationId => notify("browser.state", groupState(conversationId));
+  // Conversations where the user took the browser over from the agent.
+  const userControl = new Set();
 
   function layout() {
     const window = getWindow();
@@ -186,7 +188,14 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
       if (!tab.view) { attach(tab); evict(); layout(); }
       return { tab, contents: tab.view.webContents };
     },
-    markAgent(conversationId, tabId, agent) { const tab = tabs.get(tabId); if (tab && tab.conversationId === conversationId) { tab.agent = agent; changed(conversationId); } },
+    setUserControl(conversationId, value) {
+      if (value) { userControl.add(conversationId); for (const tab of tabs.values()) if (tab.conversationId === conversationId) tab.agent = null; }
+      else userControl.delete(conversationId);
+      changed(conversationId);
+      return groupState(conversationId);
+    },
+    userInControl: conversationId => userControl.has(conversationId),
+    markAgent(conversationId, tabId, agent) { if (agent && userControl.has(conversationId)) return; const tab = tabs.get(tabId); if (tab && tab.conversationId === conversationId) { tab.agent = agent; changed(conversationId); } },
     closeConversation(conversationId) { for (const tab of [...tabs.values()]) if (tab.conversationId === conversationId) { if (tab.view) { getWindow()?.contentView.removeChildView(tab.view); tab.view.webContents.close(); } tabs.delete(tab.id); } groups.delete(conversationId); },
     // Preview builds only: where the active page view is and what it shows.
     async inspect(conversationId) {

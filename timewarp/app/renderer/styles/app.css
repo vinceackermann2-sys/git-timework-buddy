@@ -146,6 +146,7 @@ a { color: var(--color-primary); }
 .tw-user-message.failed { outline: 1px solid var(--color-destructive); }
 .tw-user-images { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 6px; }
 .tw-retry { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.tw-control { height: 30px; padding: 0 10px; font-size: 12.5px; flex: none; }
 .tw-agent-message { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: start; }
 .tw-agent-body { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .tw-markdown { overflow-wrap: anywhere; }
