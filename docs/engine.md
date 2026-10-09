@@ -136,15 +136,21 @@ stay on, and diagnostics are in the app log folder.
   an added MCP server, files, automations, workers, connector sign-in, the log
   file and diagnostics, automatic approval review allowing and denying, and
   asking the user (17 scenarios, all passing).
-- 291 tests (`npm test`), of which 58 are engine tests (`npm run test:engine`),
+- 296 tests (`npm test`), of which 63 are engine tests (`npm run test:engine`),
   including a real Codex conversation against a local model.
+- The interface was measured side by side with the running previous app at the
+  same window size (positions, sizes, fonts and colours of every visible text),
+  and 11 click-through flows (agents, browser profiles, skills, vault, archive,
+  settings, model, pane, chat, navigation, links) pass on a real account.
 - Every feature above was exercised end to end in preview builds: a signed-in
   sample account, the real Codex runtime and a scripted local model, with
   screenshots.
 - The packaged Windows app starts, shows sign-in and runs its bundled Codex
   (`smoke-engine`). The Store MSIX builds with the existing Store identity.
-- Not yet verified: a real account against the production cloud (sign-in,
-  billing, connected apps, chat sync and model replies), and a real Mac.
+- Verified with a real account against the production cloud: sign-in,
+  organization, billing, ChatGPT connection and usage, connected apps, chat
+  history sync. Not yet verified: model replies on a real account (the test
+  account's ChatGPT plan was at its usage limit), and a real Mac.
 
 ## Speed and memory
 

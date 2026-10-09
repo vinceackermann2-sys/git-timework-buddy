@@ -1094,3 +1094,8 @@ a.tw-agent-automation:hover { background: color-mix(in srgb, var(--ink) 3%, var(
 dialog.timewarp-setup-dialog { border: 0; margin: 0; width: 100vw; height: 100vh; max-width: none; max-height: none; }
 dialog.timewarp-setup-dialog h1, dialog.timewarp-setup-dialog h2 { font-weight: 400; }
 dialog.timewarp-setup-dialog .timewarp-org-gate-invites h2 { font-weight: 500; }
+/* Tile hover, as before: tool tiles lift slightly; skill tiles stay as they are */
+.tw-tool-grid .tw-tile { transition: transform 0.15s; }
+.tw-tool-grid .tw-tile.clickable:hover { transform: translateY(-2px) scale(1.01); border-color: var(--border); }
+.tw-scroll-grid:not(.tw-tool-grid) .tw-tile.clickable:hover { border-color: var(--border); }
+.tw-scroll-grid:not(.tw-tool-grid) .tw-tile.clickable:active { background: color-mix(in srgb, var(--ink) 6%, var(--surface)); }
