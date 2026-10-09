@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { Copy, CreditCard, Eye, EyeOff, KeyRound, LockKeyhole } from "lucide-react";
+import { Copy, CreditCard, Eye, EyeOff, KeyRound, LockKeyhole, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { call } from "../api.js";
-import { Avatar, Segmented, Switch, useToast } from "./common.jsx";
+import { Avatar, Dialog, PageHead, Switch, useToast } from "./common.jsx";
 
 const KINDS = [{ value: "password", label: "Sign-in" }, { value: "card", label: "Card" }, { value: "secret", label: "Secret" }];
-const icon = kind => kind === "card" ? <CreditCard size={16} /> : kind === "secret" ? <LockKeyhole size={16} /> : <KeyRound size={16} />;
+const icon = kind => kind === "card" ? <CreditCard size={20} strokeWidth={1.6} /> : kind === "secret" ? <LockKeyhole size={20} strokeWidth={1.6} /> : <KeyRound size={20} strokeWidth={1.6} />;
 
 function Hidden({ id, field, label }) {
   const [value, setValue] = useState(null);
@@ -12,14 +12,14 @@ function Hidden({ id, field, label }) {
   return (
     <span className="tw-secret">
       <code>{value ?? "••••••••"}</code>
-      <button type="button" className="tw-icon-button" title={value ? "Hide " + label : "Show " + label} aria-label={value ? "Hide " + label : "Show " + label} onClick={() => value ? setValue(null) : call("vault.reveal", { id, field }).then(result => setValue(result.value)).catch(error => toast(error, "error"))}>{value ? <EyeOff size={14} /> : <Eye size={14} />}</button>
-      <button type="button" className="tw-icon-button" title={"Copy " + label} aria-label={"Copy " + label} onClick={() => call("vault.copy", { id, field }).then(() => toast(`${label[0].toUpperCase() + label.slice(1)} copied. The clipboard clears in a minute.`)).catch(error => toast(error, "error"))}><Copy size={14} /></button>
+      <button type="button" className="tw-icon-button" title={value ? "Hide " + label : "Show " + label} aria-label={value ? "Hide " + label : "Show " + label} onClick={() => value ? setValue(null) : call("vault.reveal", { id, field }).then(result => setValue(result.value)).catch(error => toast(error, "error"))}>{value ? <EyeOff size={15} /> : <Eye size={15} />}</button>
+      <button type="button" className="tw-icon-button" title={"Copy " + label} aria-label={"Copy " + label} onClick={() => call("vault.copy", { id, field }).then(() => toast(`${label[0].toUpperCase() + label.slice(1)} copied. The clipboard clears in a minute.`)).catch(error => toast(error, "error"))}><Copy size={15} /></button>
     </span>
   );
 }
 
-function Editor({ item, onSaved, onCancel }) {
-  const [kind, setKind] = useState(item?.kind || "password");
+function Editor({ item, kind: initialKind, onSaved, onCancel }) {
+  const kind = item?.kind || initialKind || "password";
   const [draft, setDraft] = useState({
     label: item?.label || "", site: item?.origin || "", username: item?.username || "", password: "", notes: item?.notes || "",
     number: "", cvc: "", expiry: item?.expMonth ? `${String(item.expMonth).padStart(2, "0")}/${String(item.expYear).slice(-2)}` : "", cardholder: item?.cardholder || "", value: "",
@@ -46,9 +46,7 @@ function Editor({ item, onSaved, onCancel }) {
     finally { setBusy(false); }
   }
   return (
-    <form className="tw-card" onSubmit={save} autoComplete="off">
-      <h3>{item ? "Edit " + item.label : "Add to the vault"}</h3>
-      {item ? null : <Segmented label="Kind" value={kind} onChange={setKind} options={KINDS} />}
+    <form className="tw-import" onSubmit={save} autoComplete="off">
       {kind === "password" ? <>
         {field("Website", "site", { required: true, placeholder: "example.com" })}
         {field("Username or email", "username", { autoComplete: "off" })}
@@ -64,15 +62,21 @@ function Editor({ item, onSaved, onCancel }) {
       </> : null}
       {kind === "secret" ? field(item ? "New value (leave empty to keep it)" : "Value", "value", { type: "password", required: !item, autoComplete: "off" }) : null}
       {field(kind === "secret" ? "Name" : "Name (optional)", "label", { required: kind === "secret", maxLength: 120 })}
-      <div style={{ display: "flex", gap: 8 }}>
-        <button type="submit" className="tw-btn primary" disabled={busy}>{busy ? "Saving…" : item ? "Save" : "Add"}</button>
+      <div className="tw-dialog-actions">
         <button type="button" className="tw-btn" disabled={busy} onClick={onCancel}>Cancel</button>
+        <button type="submit" className="tw-btn primary" disabled={busy}>{busy ? "Saving…" : item ? "Save" : "Add"}</button>
       </div>
     </form>
   );
 }
 
-export function Vault({ agents, onEditAgent }) {
+const SECTIONS = [
+  { kind: "password", title: "Passwords", empty: "No saved passwords yet.", add: "Add" },
+  { kind: "card", title: "Credit cards", empty: "No saved cards yet.", add: "Add card" },
+  { kind: "secret", title: "Secrets and passkeys", empty: "No saved secrets yet.", add: "Add secret" },
+];
+
+export function Vault({ agents }) {
   const [state, setState] = useState(null);
   const [editing, setEditing] = useState(null);
   const [access, setAccess] = useState({});
@@ -84,58 +88,61 @@ export function Vault({ agents, onEditAgent }) {
     setAccess(current => ({ ...current, [agent.id]: value }));
     call("agents.update", { id: agent.id, vaultAccess: value }).catch(error => { toast(error, "error"); setAccess(current => ({ ...current, [agent.id]: !value })); });
   };
+  const unavailable = state && !state.available;
   const items = state?.items || [];
-  const groups = KINDS.map(kind => ({ ...kind, items: items.filter(item => item.kind === kind.value) })).filter(group => group.items.length);
+  const importPasswords = () => call("vault.importPasswords").then(result => {
+    if (result.cancelled) return;
+    toast(`Imported ${result.imported} sign-in${result.imported === 1 ? "" : "s"}${result.duplicates ? `, ${result.duplicates} already saved` : ""}${result.skipped ? `, ${result.skipped} skipped` : ""}. Delete the exported file now; it isn't encrypted.`);
+    void load();
+  }).catch(error => toast(error, "error"));
   return (
-    <section>
-      <h2>Vault</h2>
-      <p className="tw-hint" style={{ margin: 0 }}>Sign-ins, cards and secrets stay encrypted on this device and never sync. Agents with access can fill them into the built-in browser without seeing them; Timewarp asks you before an agent uses a card or secret.</p>
-      {state && !state.available ? <div className="tw-alert">This computer's secure storage is unavailable, so new items can't be saved.</div> : null}
-      {editing ? <Editor item={editing === "new" ? null : editing} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} /> : null}
-      {state === null ? <p className="tw-hint">Opening the vault…</p> : null}
-      {state && !items.length && !editing ? <div className="tw-card"><span className="tw-hint">The vault is empty.</span></div> : null}
-      {groups.map(group => (
-        <div key={group.value} className="tw-card">
-          <h3>{group.label === "Sign-in" ? "Sign-ins" : group.label + "s"}</h3>
-          <div className="tw-rows">
-            {group.items.map(item => (
-              <div key={item.id} className="tw-rows-item">
-                <span className="tw-vault-icon">{icon(item.kind)}</span>
-                <div style={{ flex: 1, minWidth: 0, display: "grid", gap: 2 }}>
-                  <strong className="tw-ellipsis">{item.label}</strong>
-                  <span className="tw-hint tw-ellipsis">
-                    {item.kind === "password" ? [item.origin.replace(/^https:\/\//, ""), item.username].filter(Boolean).join(" · ")
-                      : item.kind === "card" ? `${item.brand} ending ${item.last4} · expires ${String(item.expMonth).padStart(2, "0")}/${String(item.expYear).slice(-2)}${item.cardholder ? " · " + item.cardholder : ""}` : "Secret"}
-                    {item.createdByAgent ? " · saved by an agent" : ""}
-                  </span>
-                </div>
-                <Hidden id={item.id} field={item.kind === "password" ? "password" : item.kind === "card" ? "number" : "value"} label={item.kind === "card" ? "card number" : item.kind === "secret" ? "secret" : "password"} />
-                <button type="button" className="tw-btn" onClick={() => setEditing(item)}>Edit</button>
-                <button type="button" className="tw-btn danger" onClick={() => { if (window.confirm(`Delete ${item.label} from the vault? This can't be undone.`)) call("vault.remove", { id: item.id }).then(load).catch(error => toast(error, "error")); }}>Delete</button>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-      {editing ? null : (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" className="tw-btn primary" disabled={state && !state.available} onClick={() => setEditing("new")}>Add item</button>
-          <button type="button" className="tw-btn" disabled={state && !state.available} title="Import a passwords file (CSV) exported from your browser or password manager" onClick={() => call("vault.importPasswords").then(result => { if (result.cancelled) return; toast(`Imported ${result.imported} sign-in${result.imported === 1 ? "" : "s"}${result.duplicates ? `, ${result.duplicates} already saved` : ""}${result.skipped ? `, ${result.skipped} skipped` : ""}. Delete the exported file now; it isn't encrypted.`); void load(); }).catch(error => toast(error, "error"))}>Import passwords…</button>
-        </div>
-      )}
-      <div className="tw-card">
-        <h3>Agent access</h3>
-        <span className="tw-hint">Agents without access can't list or use vault items.</span>
-        <div className="tw-rows">
-          {agents.map(agent => (
-            <div key={agent.id} className="tw-rows-item">
-              <Avatar agent={agent} />
-              <strong style={{ flex: 1 }}>{agent.name}</strong>
-              <Switch label={`${agent.name} can use the vault`} checked={!!access[agent.id]} onChange={value => toggle(agent, value)} />
+    <div className="tw-page">
+      <PageHead title="Vault" subtitle="Passwords, cards and secrets stay encrypted on this device. Agents with access fill them in without seeing them." />
+      {unavailable ? <div className="tw-alert">This computer's secure storage is unavailable, so new items can't be saved.</div> : null}
+      {SECTIONS.map(section => {
+        const list = items.filter(item => item.kind === section.kind);
+        return (
+          <React.Fragment key={section.kind}>
+            <div className="tw-section-head">
+              <h3>{section.title}</h3>
+              {section.kind === "password" ? <button type="button" className="tw-btn" disabled={unavailable} title="Import a passwords file (CSV) exported from your browser or password manager" onClick={importPasswords}><Upload size={15} />Import</button> : null}
+              <button type="button" className="tw-btn" disabled={unavailable} onClick={() => setEditing({ kind: section.kind })}><Plus size={15} />{section.add}</button>
             </div>
-          ))}
-        </div>
+            {state === null ? <div className="tw-empty-box">Opening the vault…</div> : list.length ? (
+              <div className="tw-list-panel">
+                {list.map(item => (
+                  <div key={item.id} className="tw-list-row">
+                    <span className="tw-face">{icon(item.kind)}</span>
+                    <div>
+                      <strong>{item.label}</strong>
+                      <span className="desc">
+                        {item.kind === "password" ? [item.origin.replace(/^https:\/\//, ""), item.username].filter(Boolean).join(" · ")
+                          : item.kind === "card" ? `${item.brand} ending ${item.last4} · expires ${String(item.expMonth).padStart(2, "0")}/${String(item.expYear).slice(-2)}${item.cardholder ? " · " + item.cardholder : ""}` : "Secret"}
+                        {item.createdByAgent ? " · saved by an agent" : ""}
+                      </span>
+                    </div>
+                    <Hidden id={item.id} field={item.kind === "password" ? "password" : item.kind === "card" ? "number" : "value"} label={item.kind === "card" ? "card number" : item.kind === "secret" ? "secret" : "password"} />
+                    <button type="button" className="tw-icon-button" title="Edit" aria-label={"Edit " + item.label} onClick={() => setEditing({ item })}><Pencil size={15} /></button>
+                    <button type="button" className="tw-icon-button" title="Delete" aria-label={"Delete " + item.label} onClick={() => { if (window.confirm(`Delete ${item.label} from the vault? This can't be undone.`)) call("vault.remove", { id: item.id }).then(load).catch(error => toast(error, "error")); }}><Trash2 size={15} /></button>
+                  </div>
+                ))}
+              </div>
+            ) : <div className="tw-empty-box">{section.empty}</div>}
+          </React.Fragment>
+        );
+      })}
+      <div className="tw-section-head"><div><h3>Agent access</h3><p>Agents without access can't list or use vault items. Timewarp asks before an agent uses a card or secret.</p></div></div>
+      <div className="tw-rows-card">
+        {agents.map(agent => (
+          <div key={agent.id} className="tw-set-row">
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}><Avatar agent={agent} /><strong>{agent.name}</strong></div>
+            <Switch label={`${agent.name} can use the vault`} checked={!!access[agent.id]} onChange={value => toggle(agent, value)} />
+          </div>
+        ))}
       </div>
-    </section>
+      <Dialog open={!!editing} onClose={() => setEditing(null)} title={editing?.item ? "Edit " + editing.item.label : "Add " + (KINDS.find(kind => kind.value === editing?.kind)?.label.toLowerCase() || "item")}>
+        {editing ? <Editor item={editing.item} kind={editing.kind} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} /> : null}
+      </Dialog>
+    </div>
   );
 }

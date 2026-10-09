@@ -115,6 +115,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "conversations.markRead": ({ id }) => { signedIn(); return harness.conversations.markRead(id); },
     "conversations.history": ({ id }) => { signedIn(); return harness.history(id); },
     "conversations.status": ({ id }) => { signedIn(); return harness.conversations.status(id); },
+    "conversations.usage": ({ id }) => { signedIn(); return harness.conversations.usage(id); },
     "conversations.send": ({ id, text: message, images = [], files = [], clientId, retryOf }) => {
       signedIn();
       const existing = list => (Array.isArray(list) ? list : []).filter(file => typeof file === "string" && path.isAbsolute(file) && fs.existsSync(file) && fs.statSync(file).isFile()).slice(0, 10);
@@ -231,6 +232,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       return { skills, errors: [...new Set(errors)] };
     },
     "skills.setEnabled": async ({ path: file, enabled }) => { signedIn(); await client.request("skills/config/write", { path: text(file, 4000), enabled: !!enabled }); return { enabled: !!enabled }; },
+    "skills.create": async input => { signedIn(); const result = knowledge.createSkill({ name: text(input?.name, 200), description: text(input?.description, 1000), instructions: text(input?.instructions, 100000) }); await client.request("skills/list", { forceReload: true }).catch(() => {}); return result; },
     "skills.remove": async ({ name }) => { signedIn(); const result = knowledge.removeSkill(name); await client.request("skills/list", { forceReload: true }).catch(() => {}); return result; },
     "skills.read": async ({ path: file }) => {
       signedIn();

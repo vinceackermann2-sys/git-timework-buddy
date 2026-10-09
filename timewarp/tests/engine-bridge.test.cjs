@@ -52,3 +52,18 @@ test("the bridge only answers its loopback host", async t => {
   const status = await new Promise(resolve => http.get(base + "/healthz", { headers: { host: "attacker.example" } }, res => { res.resume(); resolve(res.statusCode); }));
   assert.equal(status, 403);
 });
+
+test("the bridge moves to a free port when another app uses its port", async t => {
+  const net = require("node:net");
+  const taken = net.createServer();
+  await new Promise(resolve => taken.listen(0, "127.0.0.1", resolve));
+  t.after(() => taken.close());
+  const busy = taken.address().port;
+  const bridge = createModelBridge({ token: "run-token", port: busy, cloud: async () => Response.json({}), funding: { current: async () => ({ source: "timewarp" }) } });
+  t.after(() => bridge.close());
+  const port = await bridge.listen();
+  assert.notEqual(port, busy);
+  assert.equal(bridge.port, port);
+  const health = await fetch(`http://127.0.0.1:${port}/healthz`).then(response => response.json());
+  assert.equal(health.name, "timewarp-device-bridge");
+});

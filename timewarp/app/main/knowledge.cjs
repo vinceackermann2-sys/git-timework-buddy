@@ -169,6 +169,20 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       fs.rmSync(target);
       return { files: importedFiles() };
     },
+    // A new skill written by the user: a folder with SKILL.md.
+    createSkill({ name, description, instructions }) {
+      const slug = String(name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+      const summary = String(description || "").replace(/\s+/g, " ").trim().slice(0, 300);
+      const body = String(instructions || "").trim().slice(0, 100000);
+      if (!slug || !SKILL_NAME.test(slug)) throw fail(400, "Give the skill a name with letters or numbers.");
+      if (!summary) throw fail(400, "Describe when agents should use the skill.");
+      if (!body) throw fail(400, "Write the skill's instructions.");
+      const target = path.join(skillsRoot, slug);
+      if (lstat(target)) throw fail(409, "A skill with that name already exists.");
+      const quote = value => JSON.stringify(value);
+      writeAtomic(path.join(target, "SKILL.md"), `---\nname: ${slug}\ndescription: ${quote(summary)}\n---\n\n${body}\n`);
+      return { name: slug };
+    },
     removeSkill(name) {
       if (!SKILL_NAME.test(String(name || ""))) throw fail(400, "That skill can't be removed.");
       const target = path.join(skillsRoot, name);

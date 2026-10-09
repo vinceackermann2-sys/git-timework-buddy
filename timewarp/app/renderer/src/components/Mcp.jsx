@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { call, useEvent } from "../api.js";
-import { Segmented, Switch, useToast } from "./common.jsx";
+import { Plus, Trash2 } from "lucide-react";
+import { Dialog, Segmented, Switch, useToast } from "./common.jsx";
 
 const AUTH = { notLoggedIn: "Sign-in needed", oAuth: "Signed in", bearerToken: "Token", unsupported: "", unknown: "" };
 
@@ -46,61 +47,68 @@ function AddServer({ onAdded, onCancel }) {
           <span className="tw-hint">The command runs on this computer with your permissions whenever an agent uses the server. Only add servers you trust.</span>
         </>
       )}
-      <div style={{ display: "flex", gap: 8 }}>
-        <button type="submit" className="tw-btn primary" disabled={busy}>{busy ? "Adding…" : "Add server"}</button>
+      <div className="tw-dialog-actions">
         <button type="button" className="tw-btn" disabled={busy} onClick={onCancel}>Cancel</button>
+        <button type="submit" className="tw-btn primary" disabled={busy}>{busy ? "Adding…" : "Add server"}</button>
       </div>
     </form>
   );
 }
 
-export function McpServers() {
+export function McpServers({ query = "", onCount }) {
   const [servers, setServers] = useState(null);
   const [adding, setAdding] = useState(false);
   const toast = useToast();
   const load = () => call("mcp.list").then(setServers).catch(error => { setServers([]); toast(error, "error"); });
   useEffect(() => { void load(); }, []);
+  useEffect(() => { if (servers) onCount?.(servers.length); }, [servers]);
   useEvent("mcp.changed", event => { if (event?.success === false) toast(event.error || "Sign-in didn't finish.", "error"); void load(); });
   const run = (method, input) => call(method, input).then(value => { if (Array.isArray(value)) setServers(value); }).catch(error => toast(error, "error"));
+  const needle = query.trim().toLowerCase();
+  const shown = (servers || []).filter(server => !needle || server.name.toLowerCase().includes(needle) || String(server.url || server.command || "").toLowerCase().includes(needle));
   return (
-    <div className="tw-card">
-      <h3>MCP servers</h3>
-      <span className="tw-hint">Add Model Context Protocol servers to give every agent more tools. New chats pick up changes.</span>
-      {servers === null ? <span className="tw-hint">Loading servers…</span> : servers.length ? (
-        <div className="tw-rows">
-          {servers.map(server => (
-            <div key={server.name} className="tw-rows-item">
-              <div style={{ flex: 1, minWidth: 0 }}>
+    <>
+      <div className="tw-section-head">
+        <div><h3>MCP servers</h3><p>Give every agent more tools with Model Context Protocol servers. New chats pick up changes.</p></div>
+        <button type="button" className="tw-btn" onClick={() => setAdding(true)}><Plus size={15} />Add server</button>
+      </div>
+      {servers === null ? <div className="tw-empty-box">Loading servers…</div> : shown.length ? (
+        <div className="tw-list-panel">
+          {shown.map(server => (
+            <div key={server.name} className="tw-list-row">
+              <span className="tw-face">{server.name[0]?.toUpperCase()}</span>
+              <div>
                 <strong>{server.name}</strong>
-                <span className="tw-hint tw-ellipsis">{server.transport === "http" ? server.url : [server.command, ...server.args].join(" ")}</span>
-                <span className="tw-hint">{server.error ? server.error : server.tools !== null ? `${server.tools} tool${server.tools === 1 ? "" : "s"}` : ""}{AUTH[server.authStatus] ? (server.error || server.tools !== null ? " · " : "") + AUTH[server.authStatus] : ""}</span>
+                <span className="desc">{server.transport === "http" ? server.url : [server.command, ...server.args].join(" ")}</span>
+                <span className="desc">{server.error ? server.error : server.tools !== null ? `${server.tools} tool${server.tools === 1 ? "" : "s"}` : ""}{AUTH[server.authStatus] ? (server.error || server.tools !== null ? " · " : "") + AUTH[server.authStatus] : ""}</span>
               </div>
               {server.authStatus === "notLoggedIn" ? <button type="button" className="tw-btn" onClick={() => run("mcp.signIn", { name: server.name }).then(() => toast("Finish signing in in your browser."))}>Sign in</button> : null}
-              <button type="button" className="tw-btn danger" onClick={() => { if (window.confirm(`Remove the ${server.name} server?`)) void run("mcp.remove", { name: server.name }); }}>Remove</button>
+              <button type="button" className="tw-icon-button" title="Remove" aria-label={"Remove " + server.name} onClick={() => { if (window.confirm(`Remove the ${server.name} server?`)) void run("mcp.remove", { name: server.name }); }}><Trash2 size={15} /></button>
               <Switch label={"Use " + server.name} checked={server.enabled} onChange={value => void run("mcp.setEnabled", { name: server.name, enabled: value })} />
             </div>
           ))}
         </div>
-      ) : null}
-      {adding ? <AddServer onCancel={() => setAdding(false)} onAdded={value => { setServers(value); setAdding(false); }} /> : <div><button type="button" className="tw-btn" onClick={() => setAdding(true)}>Add server</button></div>}
-    </div>
+      ) : <div className="tw-empty-box">{needle ? "No servers match your search." : "No MCP servers yet."}</div>}
+      <Dialog open={adding} onClose={() => setAdding(false)} title="Add MCP server">
+        {adding ? <AddServer onCancel={() => setAdding(false)} onAdded={value => { setServers(value); setAdding(false); }} /> : null}
+      </Dialog>
+    </>
   );
 }
 
-export function SharedInstructions() {
+export function SharedInstructions({ onDone }) {
   const [saved, setSaved] = useState(null);
   const [text, setText] = useState("");
   const toast = useToast();
   useEffect(() => { call("instructions.get").then(value => { setSaved(value.text); setText(value.text); }).catch(error => toast(error, "error")); }, []);
   return (
-    <div className="tw-card">
-      <h3>Instructions for every agent</h3>
-      <textarea className="tw-input tw-notes" style={{ minHeight: 120 }} value={text} maxLength={20000} disabled={saved === null} onChange={event => setText(event.target.value)} aria-label="Instructions for every agent" placeholder="For example: Answer in British English. Ask before sending email on my behalf." />
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <button type="button" className="tw-btn primary" disabled={saved === null || text === saved} onClick={() => call("instructions.save", { text }).then(value => { setSaved(value.text); setText(value.text); toast("Instructions saved."); }).catch(error => toast(error, "error"))}>Save</button>
+    <>
+      <textarea className="tw-textarea tw-notes" value={text} maxLength={20000} disabled={saved === null} onChange={event => setText(event.target.value)} aria-label="Instructions for every agent" placeholder="For example: Answer in British English. Ask before sending email on my behalf." />
+      <span className="tw-hint">Each agent's own instructions apply on top. New chats use the latest version.</span>
+      <div className="tw-dialog-actions">
         {saved ? <button type="button" className="tw-btn" onClick={() => { if (window.confirm("Clear the instructions for every agent?")) call("instructions.save", { text: "" }).then(value => { setSaved(value.text); setText(value.text); toast("Instructions cleared."); }).catch(error => toast(error, "error")); }}>Clear</button> : null}
-        <span className="tw-hint">Each agent's own instructions apply on top. New chats use the latest version.</span>
+        <button type="button" className="tw-btn primary" disabled={saved === null || text === saved} onClick={() => call("instructions.save", { text }).then(value => { setSaved(value.text); setText(value.text); toast("Instructions saved."); onDone?.(); }).catch(error => toast(error, "error"))}>Save</button>
       </div>
-    </div>
+    </>
   );
 }

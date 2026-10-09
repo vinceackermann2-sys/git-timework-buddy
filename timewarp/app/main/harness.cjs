@@ -80,6 +80,9 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       store.messages.append({ id: params.item.id, conversationId, authorId: conversation.agentId, text: params.item.text, turnId: params.turnId });
     }
     if (root && method === "thread/name/updated" && params.threadName) store.conversations.update(conversationId, { title: params.threadName });
+    if (method === "thread/tokenUsage/updated" && params.turnId && params.tokenUsage?.total) {
+      try { store.turnUsage.record(conversationId, params.threadId, params.turnId, params.tokenUsage.total); } catch {}
+    }
     emit(conversationId, method, { ...params, subAgent: !root });
   });
 
@@ -217,6 +220,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       markRead(id) { const c = ownedConversation(id); return c.read ? c : store.conversations.update(id, { read: true }, { touch: false }); },
       messages: id => { ownedConversation(id); return store.messages.list(id); },
       status: id => { ownedConversation(id); return { running: active.has(id), approvals: [...approvals.values()].filter(item => item.conversationId === id) }; },
+      usage: id => { ownedConversation(id); return store.turnUsage.list(id); },
     },
     async history(id) {
       const conversation = ownedConversation(id);

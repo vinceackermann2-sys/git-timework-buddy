@@ -1,11 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, Search, X } from "lucide-react";
 import { avatarSrc, errorText } from "../api.js";
 
 export function Avatar({ agent, size = "" }) {
   return <img className={"tw-avatar " + size} src={avatarSrc(agent)} alt="" draggable="false" />;
 }
 
-export function Dialog({ open, onClose, children, label }) {
+// A modal dialog. With a title it draws the heading, description and close
+// button used throughout the app.
+export function Dialog({ open, onClose, children, label, title, description, wide = false, className = "" }) {
   const ref = useRef(null);
   useEffect(() => {
     const dialog = ref.current;
@@ -14,31 +17,87 @@ export function Dialog({ open, onClose, children, label }) {
     if (!open && dialog.open) dialog.close();
   }, [open]);
   return (
-    <dialog ref={ref} className="tw-dialog" aria-label={label} onClose={onClose} onCancel={event => { event.preventDefault(); onClose(); }}
+    <dialog ref={ref} className={"tw-dialog" + (wide ? " wide" : "") + (className ? " " + className : "")} aria-label={label || title} onClose={onClose} onCancel={event => { event.preventDefault(); onClose(); }}
       onMouseDown={event => { if (event.target === ref.current) onClose(); }}>
-      {open ? <div className="tw-dialog-body">{children}</div> : null}
+      {open ? (
+        <div className="tw-dialog-body">
+          {title ? (
+            <div className="tw-dialog-head">
+              <div><h2>{title}</h2>{description ? <p>{description}</p> : null}</div>
+              <button type="button" className="tw-icon-button" aria-label="Close" onClick={onClose}><X size={18} /></button>
+            </div>
+          ) : null}
+          {children}
+        </div>
+      ) : null}
     </dialog>
   );
 }
 
 // A popover anchored to its trigger; closes on outside click or Escape.
-export function Menu({ trigger, children, align = "left", up = false, width }) {
-  const [open, setOpen] = useState(false);
+export function Menu({ trigger, children, align = "left", up = false, width, className = "", onOpenChange }) {
+  const [open, setOpenState] = useState(false);
   const ref = useRef(null);
+  const setOpen = useCallback(value => setOpenState(current => {
+    const next = typeof value === "function" ? value(current) : value;
+    if (next !== current) onOpenChange?.(next);
+    return next;
+  }), [onOpenChange]);
   useEffect(() => {
     if (!open) return;
     const close = event => { if (!ref.current?.contains(event.target)) setOpen(false); };
-    const escape = event => { if (event.key === "Escape") setOpen(false); };
+    const escape = event => { if (event.key === "Escape") { event.stopPropagation(); setOpen(false); } };
     document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", escape); };
-  }, [open]);
+    document.addEventListener("keydown", escape, true);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", escape, true); };
+  }, [open, setOpen]);
   const style = { [align]: 0, ...(up ? { bottom: "calc(100% + 6px)" } : { top: "calc(100% + 6px)" }), ...(width ? { width } : {}) };
   return (
     <span className="tw-anchor" ref={ref}>
-      {trigger({ open, toggle: () => setOpen(value => !value) })}
-      {open ? <div className="tw-menu" role="menu" style={style} onClick={event => { if (event.target.closest("[data-close]")) setOpen(false); }}>{children}</div> : null}
+      {trigger({ open, toggle: () => setOpen(value => !value), close: () => setOpen(false) })}
+      {open ? (
+        <div className={"tw-menu " + className} role="menu" style={style} onClick={event => { if (event.target.closest("[data-close]")) setOpen(false); }}>
+          {typeof children === "function" ? children({ close: () => setOpen(false) }) : children}
+        </div>
+      ) : null}
     </span>
+  );
+}
+
+// A compact dropdown: the current value with a chevron, options in a menu.
+export function Select({ value, options, onChange, label, icon, align = "right", width = 200 }) {
+  const current = options.find(option => option.value === value) || options[0];
+  return (
+    <Menu align={align} width={width} trigger={({ toggle, open }) => (
+      <button type="button" className="tw-picker" aria-label={label} aria-expanded={open} onClick={toggle}>
+        {current?.icon || icon || null}<span>{current?.label}</span><ChevronDown size={15} />
+      </button>
+    )}>
+      {options.map(option => (
+        <button key={option.value} type="button" className="tw-menu-item" data-close onClick={() => onChange(option.value)}>
+          {option.icon || null}<span className="grow">{option.label}{option.description ? <small>{option.description}</small> : null}</span>
+          {option.value === current?.value ? <Check size={15} /> : null}
+        </button>
+      ))}
+    </Menu>
+  );
+}
+
+export function SearchField({ value, onChange, placeholder, label, shortcut = false, autoFocus = false }) {
+  const input = useRef(null);
+  useEffect(() => {
+    if (!shortcut) return;
+    const find = event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") { event.preventDefault(); input.current?.focus(); input.current?.select(); } };
+    window.addEventListener("keydown", find);
+    return () => window.removeEventListener("keydown", find);
+  }, [shortcut]);
+  const mac = window.tw?.platform === "darwin";
+  return (
+    <label className="tw-search-field">
+      <Search size={17} />
+      <input ref={input} className="tw-input" type="search" value={value} placeholder={placeholder} aria-label={label || placeholder} autoFocus={autoFocus} onChange={event => onChange(event.target.value)} />
+      {shortcut && !value ? <kbd><span>{mac ? "⌘" : "Ctrl"}</span><span>F</span></kbd> : null}
+    </label>
   );
 }
 
@@ -50,6 +109,25 @@ export function Segmented({ value, options, onChange, label }) {
   return (
     <div className="tw-segmented" role="group" aria-label={label}>
       {options.map(option => <button key={option.value} type="button" aria-pressed={value === option.value} onClick={() => onChange(option.value)}>{option.label}</button>)}
+    </div>
+  );
+}
+
+// A settings row: title and description on the left, a control on the right.
+export function Row({ title, description, children }) {
+  return (
+    <div className="tw-set-row">
+      <div><strong>{title}</strong>{description ? <span className="desc">{description}</span> : null}</div>
+      {children}
+    </div>
+  );
+}
+
+export function PageHead({ title, subtitle, children }) {
+  return (
+    <div className="tw-page-head">
+      <div><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}</div>
+      {children}
     </div>
   );
 }

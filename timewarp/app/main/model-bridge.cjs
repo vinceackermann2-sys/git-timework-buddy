@@ -35,7 +35,7 @@ function createModelBridge({ token, cloud, funding, chatgpt, integrations, masco
     try {
       if (!/^(?:127\.0\.0\.1|localhost):\d+$/.test(req.headers.host || "")) return fail(res, 403, "Invalid host.");
       if (req.headers.origin) return fail(res, 403, "Browser pages cannot call the device bridge.");
-      const { pathname } = new URL(req.url, `http://127.0.0.1:${port}`);
+      const { pathname } = new URL(req.url, "http://127.0.0.1");
       if (pathname === "/healthz") return reply(res, 200, { ok: true, name: "timewarp-device-bridge", version: 2 });
       if (pathname.startsWith("/mascots/") && mascots?.serve(req, res, pathname) !== false) return;
       if (pathname === "/mcp/composio" && integrations) return integrations.mcp(req, res);
@@ -60,13 +60,27 @@ function createModelBridge({ token, cloud, funding, chatgpt, integrations, masco
   server.requestTimeout = 150_000;
   server.headersTimeout = 10_000;
   server.on("upgrade", (_req, socket) => socket.end("HTTP/1.1 501 Not Implemented\r\nConnection: close\r\n\r\n"));
+  // The usual port, or any free one when another app (such as the previous
+  // Timewarp app) already uses it.
+  const bind = at => new Promise((resolve, reject) => {
+    const failed = error => { server.off("listening", done); reject(error); };
+    const done = () => { server.off("error", failed); resolve(server.address().port); };
+    server.once("error", failed);
+    server.once("listening", done);
+    server.listen(at, "127.0.0.1");
+  });
+  let bound = null;
   return {
     server,
-    port,
-    listen: () => new Promise((resolve, reject) => {
-      server.once("error", error => reject(new Error(error.code === "EADDRINUSE" ? "Another Timewarp window is already running. Close it and reopen Timewarp." : "The local model bridge could not start.")));
-      server.listen(port, "127.0.0.1", resolve);
-    }),
+    get port() { return bound || port; },
+    listen: async () => {
+      try { bound = await bind(port); }
+      catch (error) {
+        if (error.code !== "EADDRINUSE" || !port) throw new Error("The local model bridge could not start.");
+        bound = await bind(0).catch(() => { throw new Error("The local model bridge could not start."); });
+      }
+      return bound;
+    },
     close: () => server.close(),
   };
 }

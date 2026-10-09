@@ -50,7 +50,8 @@ From `timewarp`:
     npm run engine:bench             # speed comparison with the previous app (Windows)
 
 Preview mode is compiled only into `--fixture` development builds and is
-refused for release builds. `TIMEWARP_TRACE_STARTUP=1` prints start-up timings.
+refused for release builds. The local model bridge uses port 7788, or a free
+port when another app (such as the previous Timewarp app) already uses it. `TIMEWARP_TRACE_STARTUP=1` prints start-up timings.
 
 ## Independence from Energy
 
@@ -98,18 +99,25 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Windows command sandbox setup | Codex | Same |
 | Suggested tasks | Energy, off for the reference account | Not carried over |
 | Feedback, diagnostics | Timewarp reporting, Energy debug export | Same feedback; diagnostics file rebuilt (no chats or account data) |
+| Conversation trace (Activity) | Energy UI | Rebuilt: turns and events with input, cached and output tokens and timing |
 | Browser sign-in import from Chrome/Edge profiles | Energy | Not carried over; saved passwords can be imported from a browser's CSV export instead |
 | Updates | Timewarp feed (Windows) | Same feed and checks |
 
-The interface is Timewarp's own React interface with the same features, not a
-copy of Energy's interface; the Timewarp-made screens (sign-in, organization,
-billing, onboarding) are the same files.
+The interface has the previous app's layout and screens: the sidebar with
+agent groups, activity feed, usage card and account menu; the home screen with
+its composer, tools, agent and model pickers and suggestions; the chat with
+Report, the Activity trace and thread actions; the side pane; and Settings
+(General, Tools, Browser, Vault, Memories, Skills, Organization, Billing, plus
+Automations). It is rebuilt in Timewarp's own React code from screenshots and
+measurements of the running previous app, not copied from Energy's code. The
+Timewarp-made screens (sign-in, organization, billing, onboarding) are the same
+files. Engine-only settings (notifications, instructions for every agent,
+command sandbox, setup, diagnostics) are in Settings → General.
 
 ### Verified how
 
-- 44 engine unit and integration tests (`npm run test:engine`), including a
-  real Codex conversation against a local model, plus the 256 portable tests
-  of the previous pipeline.
+- 276 tests (`npm test`), of which 45 are engine tests (`npm run test:engine`),
+  including a real Codex conversation against a local model.
 - Every feature above was exercised end to end in preview builds: a signed-in
   sample account, the real Codex runtime and a scripted local model, with
   screenshots.

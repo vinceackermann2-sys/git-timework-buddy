@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { MessageSquare, Play } from "lucide-react";
+import { MessageSquare, Play, Plus } from "lucide-react";
 import { call, relativeTime, useEvent } from "../api.js";
-import { Avatar, Switch, useToast } from "./common.jsx";
+import { Avatar, PageHead, Switch, useToast } from "./common.jsx";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const KINDS = [
@@ -98,7 +98,7 @@ function Runs({ automation }) {
     <div className="tw-rows">
       {runs.slice(0, 10).map(run => (
         <div key={run.id} className="tw-rows-item" style={{ padding: "6px 4px" }}>
-          <span className={"tw-pill" + (run.status === "completed" ? " ok" : "")}>{STATUS[run.status] || run.status}</span>
+          <span className={"tw-tag" + (run.status === "completed" ? " ok" : "")}>{STATUS[run.status] || run.status}</span>
           <span className="tw-hint" style={{ flex: 1 }}>{run.trigger === "manual" ? "Run now" : "Scheduled"} · {relativeTime(run.startedAt)}{run.error ? " · " + run.error : ""}</span>
         </div>
       ))}
@@ -117,12 +117,13 @@ export function Automations({ agents }) {
   const agentById = new Map(agents.map(agent => [agent.id, agent]));
   const toggle = (automation, enabled) => call("automations.update", { id: automation.id, enabled }).then(load).catch(error => toast(error, "error"));
   return (
-    <section>
-      <h2>Automations</h2>
-      <p className="tw-hint" style={{ margin: 0 }}>Give an agent recurring work. Each automation has its own chat, where every run's results appear.</p>
+    <div className="tw-page">
+      <PageHead title="Automations" subtitle="Give an agent recurring work. Each automation has its own chat, where every run's results appear.">
+        {editing ? null : <button type="button" className="tw-btn" disabled={!agents.length} onClick={() => setEditing("new")}><Plus size={15} />New automation</button>}
+      </PageHead>
       {editing ? <Editor automation={editing === "new" ? null : editing} agents={agents} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} /> : null}
       {items === null ? <p className="tw-hint">Loading automations…</p> : null}
-      {items?.length === 0 && !editing ? <div className="tw-card"><span className="tw-hint">No automations yet.</span></div> : null}
+      {items?.length === 0 && !editing ? <div className="tw-empty-box">No automations yet.</div> : null}
       {items?.map(automation => {
         const agent = agentById.get(automation.agentId);
         return (
@@ -149,7 +150,6 @@ export function Automations({ agents }) {
           </div>
         );
       })}
-      {editing ? null : <div><button type="button" className="tw-btn primary" disabled={!agents.length} onClick={() => setEditing("new")}>New automation</button></div>}
-    </section>
+    </div>
   );
 }

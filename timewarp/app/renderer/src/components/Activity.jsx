@@ -34,7 +34,7 @@ function Item({ item }) {
       return (
         <div className="tw-work-item">
           <div className="tw-work-line"><span className={"tw-status " + statusClass(item.status)} /><Terminal size={14} /><code title={item.command}>{short(item.command, 200)}</code>
-            {Number.isInteger(item.exitCode) && item.exitCode !== 0 ? <span className="tw-pill">exit {item.exitCode}</span> : null}</div>
+            {Number.isInteger(item.exitCode) && item.exitCode !== 0 ? <span className="tw-tag">exit {item.exitCode}</span> : null}</div>
           {item.aggregatedOutput ? <details><summary className="tw-hint" style={{ cursor: "pointer" }}>Output</summary><pre className="tw-output">{item.aggregatedOutput.slice(-20000)}</pre></details> : null}
         </div>
       );

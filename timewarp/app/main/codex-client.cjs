@@ -41,7 +41,9 @@ class CodexClient extends EventEmitter {
   }
   async launch() {
     this.setStatus("starting");
-    const child = this.spawnProcess(this.executable, ["app-server", ...this.args], {
+    // Arguments can depend on start-up work, such as the bridge port.
+    const args = typeof this.args === "function" ? await this.args() : this.args;
+    const child = this.spawnProcess(this.executable, ["app-server", ...args], {
       cwd: this.cwd,
       env: { ...process.env, ...this.env },
       stdio: ["pipe", "pipe", "pipe"],

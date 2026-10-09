@@ -36,7 +36,7 @@ function createVaultTools({ vault, browserTools, ask }) {
     specs: toolSpecs,
     async call(conversationId, params, agent) {
       const name = params.tool, input = params.arguments || {};
-      if (!agent?.vaultAccess) throw fail(403, `${agent?.name || "This agent"} doesn't have vault access. The user can turn it on in Customize → Vault.`);
+      if (!agent?.vaultAccess) throw fail(403, `${agent?.name || "This agent"} doesn't have vault access. The user can turn it on in Settings → Vault.`);
       if (name === "list") {
         let entries = vault.list();
         if (input.site) entries = entries.filter(entry => entry.kind !== "password" || matchesSite(entry.origin, /^https?:/.test(input.site) ? input.site : "https://" + input.site));

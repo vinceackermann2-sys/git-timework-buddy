@@ -1,36 +1,58 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, PanelLeft } from "lucide-react";
 import { call, request, useEvent } from "./api.js";
 import { applyAppearance } from "./theme.js";
-import { Avatar, ToastProvider, useToast } from "./components/common.jsx";
-import { Sidebar } from "./components/Sidebar.jsx";
+import { Dialog, ToastProvider, useToast } from "./components/common.jsx";
+import { Sidebar, UsageCard } from "./components/Sidebar.jsx";
+import { Home } from "./components/Home.jsx";
 import { Chat } from "./components/Chat.jsx";
-import { Customize, SECTIONS } from "./components/Customize.jsx";
+import { ALIASES, SECTIONS, Settings } from "./components/Settings.jsx";
 import { AgentDialog } from "./components/AgentDialog.jsx";
 import { Pane } from "./components/Pane.jsx";
 
-const remembered = key => { try { return localStorage.getItem(key) === "1"; } catch { return false; } };
-const remember = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch {} };
+const read = (key, fallback) => { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } };
+const write = (key, value) => { try { localStorage.setItem(key, String(value)); } catch {} };
 
 function parseRoute() {
   const [, view, id] = (location.hash.replace(/^#\/?/, "") || "").match(/^([a-z]*)\/?(.*)$/) || [];
   if (view === "c" && id) return { view: "chat", id };
-  if (view === "customize") return { view: "customize", section: SECTIONS.some(item => item.id === id) ? id : "general" };
+  if (view === "customize" || view === "settings") {
+    const section = ALIASES[id] || id;
+    return { view: "settings", section: SECTIONS.some(item => item.id === section) ? section : "general" };
+  }
   return { view: "home" };
 }
 const go = hash => { if (location.hash !== hash) location.hash = hash; };
 
-function Home({ agents, onNewChat }) {
+// Back and forward follow the app's own page history.
+function useHistoryButtons() {
+  const [state, setState] = useState({ back: false, forward: false });
+  useEffect(() => {
+    const nav = window.navigation;
+    if (!nav) return;
+    const update = () => setState({ back: !!nav.canGoBack, forward: !!nav.canGoForward });
+    update();
+    nav.addEventListener("currententrychange", update);
+    return () => nav.removeEventListener("currententrychange", update);
+  }, []);
+  return state;
+}
+
+function ProfileDialog({ open, onClose, account, onAccount, onSignOut }) {
+  const [name, setName] = useState("");
+  const toast = useToast();
+  useEffect(() => { if (open) setName(account?.user?.name || ""); }, [open]);
   return (
-    <section className="tw-main">
-      <div className="tw-blank" style={{ marginTop: "16vh" }}>
-        <img src="./timewarp-logo.svg" alt="" style={{ width: 54, height: 54 }} />
-        <h2>What should we work on?</h2>
-        <p>Pick an agent to start a chat. Agents work on this computer, in the browser and across your connected apps.</p>
-        <div className="tw-mascots" style={{ justifyContent: "center", marginTop: 8 }}>
-          {agents.map(agent => <button key={agent.id} type="button" className="tw-mascot" onClick={() => onNewChat(agent.id)}><Avatar agent={agent} size="large" />{agent.name}</button>)}
+    <Dialog open={open} onClose={onClose} title="Profile" description={account?.user?.email}>
+      <form className="tw-import" onSubmit={event => { event.preventDefault(); call("profile.update", { name }).then(value => { onAccount(value); toast("Name saved."); onClose(); }).catch(error => toast(error, "error")); }}>
+        <label className="tw-field"><span>Preferred name</span><input className="tw-input" autoFocus value={name} maxLength={100} onChange={event => setName(event.target.value)} /></label>
+        <div className="tw-dialog-actions">
+          <button type="button" className="tw-btn" onClick={onSignOut}>Log out</button>
+          <span className="grow" />
+          <button type="submit" className="tw-btn primary" disabled={!name.trim() || name.trim() === account?.user?.name}>Save</button>
         </div>
-      </div>
-    </section>
+      </form>
+    </Dialog>
   );
 }
 
@@ -40,20 +62,35 @@ function Shell({ account, setAccount, settings, setSettings }) {
   const [agents, setAgents] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [models, setModels] = useState(null);
+  const [funding, setFunding] = useState(null);
+  const [chatgpt, setChatgpt] = useState(null);
   const [search, setSearch] = useState("");
   const [dialog, setDialog] = useState({ open: false, agent: null });
-  const [paneOpen, setPaneOpenState] = useState(() => remembered("tw.pane"));
-  const setPaneOpen = value => { setPaneOpenState(value); remember("tw.pane", value); };
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [homeAgent, setHomeAgentState] = useState(() => read("tw.agent", ""));
+  const [pane, setPaneState] = useState(() => read("tw.pane", "0") === "1" ? "open" : "closed");
+  const [sidebar, setSidebarState] = useState(() => read("tw.sidebar", "shown"));
+  const [width, setWidth] = useState(() => Math.min(420, Math.max(220, Number(read("tw.sidebarWidth", 288)) || 288)));
+  const [first, setFirst] = useState(null);
   const refreshTimer = useRef(null);
+  const history = useHistoryButtons();
 
+  const setHomeAgent = id => { setHomeAgentState(id); write("tw.agent", id); };
+  const setPane = value => { setPaneState(value); if (value !== "full") write("tw.pane", value === "open" ? "1" : "0"); };
+  const setSidebar = value => { setSidebarState(value); write("tw.sidebar", value); };
   const loadAgents = useCallback(() => call("agents.list").then(setAgents).catch(error => toast(error, "error")), [toast]);
   const loadConversations = useCallback(() => call("conversations.list", { search: search.trim() || undefined }).then(setConversations).catch(() => {}), [search]);
   const loadModels = useCallback(() => call("models.list").then(setModels).catch(() => {}), []);
+  const loadFunding = useCallback(() => {
+    call("funding.get").then(setFunding).catch(() => {});
+    request("chatgptDetails").then(setChatgpt).catch(() => {});
+  }, []);
   const refreshSoon = useCallback(() => { clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => { void loadConversations(); }, 250); }, [loadConversations]);
 
-  useEffect(() => { void loadAgents(); void loadModels(); }, [loadAgents, loadModels]);
+  useEffect(() => { void loadAgents(); void loadModels(); loadFunding(); const timer = setInterval(loadFunding, 5 * 60 * 1000); return () => clearInterval(timer); }, [loadAgents, loadModels, loadFunding]);
   useEffect(() => { const timer = setTimeout(() => void loadConversations(), search ? 200 : 0); return () => clearTimeout(timer); }, [loadConversations, search]);
   useEffect(() => { const change = () => setRoute(parseRoute()); window.addEventListener("hashchange", change); return () => window.removeEventListener("hashchange", change); }, []);
+  useEffect(() => { const reload = () => void loadConversations(); window.addEventListener("tw:conversations", reload); return () => window.removeEventListener("tw:conversations", reload); }, [loadConversations]);
 
   const agentById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
   const current = route.view === "chat" ? conversations.find(item => item.id === route.id) : null;
@@ -65,7 +102,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
   }, [route.view, route.id, current]);
 
   useEvent("conversation.event", ({ conversationId, method, params }) => {
-    if (["turn/started", "turn/completed", "thread/name/updated", "turn/aborted"].includes(method)) refreshSoon();
+    if (["turn/started", "turn/completed", "thread/name/updated", "turn/aborted", "item/completed"].includes(method)) refreshSoon();
+    if (method === "turn/completed" && !params.subAgent) loadFunding();
     if (method === "turn/completed" && !params.subAgent && !document.hasFocus() && settings?.notifications?.replies !== false && "Notification" in window) {
       const conversation = conversations.find(item => item.id === conversationId);
       const agent = agentById.get(conversation?.agentId);
@@ -74,21 +112,21 @@ function Shell({ account, setAccount, settings, setSettings }) {
     }
   });
   useEvent("history.status", state => { if (state.state === "synced") { void loadAgents(); void loadConversations(); } });
-  useEvent("funding.changed", () => void loadModels());
-  useEvent("browser.agent", ({ conversationId }) => { if (route.view === "chat" && conversationId === route.id && !paneOpen) setPaneOpen(true); });
+  useEvent("funding.changed", () => { void loadModels(); loadFunding(); });
+  useEvent("browser.agent", ({ conversationId }) => { if (route.view === "chat" && conversationId === route.id && pane === "closed") setPane("open"); });
 
-  async function newChat(agentId) {
-    const agent = agentId || current?.agentId || opened?.agentId || agents[0]?.id;
-    if (!agent) { setDialog({ open: true, agent: null }); return; }
-    try {
-      const conversation = await call("conversations.create", { agentId: agent });
-      setConversations(list => [conversation, ...list]);
-      go("#/c/" + conversation.id);
-    } catch (error) { toast(error, "error"); }
+  // Starts a chat from the home screen with its first message.
+  async function start(agentId, message) {
+    const conversation = await call("conversations.create", { agentId });
+    setConversations(list => [conversation, ...list]);
+    setFirst({ conversationId: conversation.id, message });
+    setOpened(conversation);
+    go("#/c/" + conversation.id);
   }
-  function openAgent(agent) {
-    const latest = conversations.find(item => item.agentId === agent.id);
-    if (latest) go("#/c/" + latest.id); else void newChat(agent.id);
+  function newTask(agentId) {
+    if (agentId) setHomeAgent(agentId);
+    go("#/");
+    setTimeout(() => document.querySelector(".tw-home textarea")?.focus(), 50);
   }
   async function archiveConversation(conversation) {
     try {
@@ -102,44 +140,75 @@ function Shell({ account, setAccount, settings, setSettings }) {
     try { await call("agents.archive", { id: agent.id }); await loadAgents(); await loadConversations(); }
     catch (error) { toast(error, "error"); }
   }
+  async function reorder(ids) {
+    setAgents(list => ids.map(id => list.find(agent => agent.id === id)).filter(Boolean));
+    try { await call("agents.reorder", { ids }); } catch (error) { toast(error, "error"); void loadAgents(); }
+  }
   async function setSetting(key, value) {
-    setSettings(current => ({ ...current, [key]: value }));
+    setSettings(currentSettings => ({ ...currentSettings, [key]: value }));
     if (key === "appearance") applyAppearance(value);
     try { await call("settings.set", { key, value }); } catch (error) { toast(error, "error"); }
   }
   async function selectModel(choice) {
-    try { const selected = await call("models.select", choice); setModels(current => ({ ...current, selected })); }
+    try { const selected = await call("models.select", choice); setModels(value => ({ ...value, selected })); }
     catch (error) { toast(error, "error"); }
+  }
+  const settingsPage = section => go("#/customize/" + (section || "general"));
+  function startResize(event) {
+    event.preventDefault();
+    const move = moveEvent => setWidth(Math.min(420, Math.max(220, moveEvent.clientX)));
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); setWidth(value => { write("tw.sidebarWidth", value); return value; }); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   }
 
   const chatConversations = conversations.filter(item => agentById.has(item.agentId));
+  const chatAgent = opened && agentById.get(opened.agentId);
   let main;
-  if (route.view === "customize") {
-    main = <Customize section={route.section} onSection={section => go("#/customize/" + section)} account={account} onAccount={setAccount} settings={settings} onSetting={setSetting}
-      models={models} onModel={selectModel} agents={agents} onNewAgent={() => setDialog({ open: true, agent: null })} onEditAgent={agent => setDialog({ open: true, agent })} onArchiveAgent={archiveAgent} />;
-  } else if (route.view === "chat" && opened && agentById.get(opened.agentId)) {
-    main = <Chat key={opened.id} conversation={opened} agent={agentById.get(opened.agentId)} account={account} models={models} onModel={selectModel}
-      paneOpen={paneOpen} onTogglePane={() => setPaneOpen(!paneOpen)}
+  if (route.view === "settings") {
+    main = <Settings section={route.section} onSection={settingsPage} account={account} onAccount={setAccount} settings={settings} onSetting={setSetting}
+      models={models} onModel={selectModel} agents={agents} />;
+  } else if (route.view === "chat" && opened && chatAgent) {
+    main = <Chat key={opened.id} conversation={opened} agent={chatAgent} account={account} models={models} funding={funding}
+      paneOpen={pane !== "closed"} onTogglePane={() => setPane(pane === "closed" ? "open" : "closed")}
+      onEditAgent={agent => setDialog({ open: true, agent })} onSettings={settingsPage}
+      initialMessage={first?.conversationId === opened.id ? first.message : null} onInitialSent={() => setFirst(null)}
       onChanged={info => { if (info?.archived) { go("#/"); } void loadConversations(); }} />;
+  } else if (route.view === "chat") {
+    main = null;
   } else {
-    main = <Home agents={agents} onNewChat={newChat} />;
+    main = <Home agents={agents} agentId={agentById.has(homeAgent) ? homeAgent : agents[0]?.id} onAgent={setHomeAgent} models={models} onModel={selectModel} funding={funding}
+      onStart={start} onNewAgent={() => setDialog({ open: true, agent: null })} onSettings={settingsPage} />;
   }
-
-  const showPane = route.view === "chat" && paneOpen && opened && agentById.get(opened.agentId);
+  const showPane = route.view === "chat" && pane !== "closed" && opened && chatAgent;
   return (
-    <div className="tw-app" data-pane={showPane ? "open" : undefined}>
-      <Sidebar account={account} agents={agents} conversations={chatConversations} selectedId={route.id} view={route.view}
-        search={search} onSearch={setSearch}
-        onOpenConversation={conversation => go("#/c/" + conversation.id)} onNewChat={newChat} onOpenAgent={openAgent}
-        onNewAgent={() => setDialog({ open: true, agent: null })} onEditAgent={agent => setDialog({ open: true, agent })}
-        onStarAgent={agent => call("agents.update", { id: agent.id, starred: !agent.starredAt }).then(loadAgents).catch(error => toast(error, "error"))}
-        onArchiveAgent={archiveAgent} onOpenWorkspace={agent => call("agents.openWorkspace", { id: agent.id }).catch(error => toast(error, "error"))}
-        onArchiveConversation={archiveConversation} onCustomize={section => go("#/customize/" + (section || "general"))}
-        onSignOut={() => call("account.signOut").catch(error => toast(error, "error"))} />
-      {main}
-      {showPane ? <Pane key={"pane-" + opened.id} conversation={opened} agent={agentById.get(opened.agentId)} onClose={() => setPaneOpen(false)} /> : null}
+    <div className="tw-window" data-sidebar={sidebar} data-pane={showPane ? pane : undefined} style={{ "--sidebar-width": width + "px" }}>
+      <header className="tw-topbar">
+        <button type="button" title={sidebar === "hidden" ? "Show sidebar" : "Hide sidebar"} aria-label={sidebar === "hidden" ? "Show sidebar" : "Hide sidebar"} onClick={() => setSidebar(sidebar === "hidden" ? "shown" : "hidden")}><PanelLeft size={18} strokeWidth={1.6} /></button>
+        <button type="button" title="Go back" aria-label="Go back" disabled={!history.back} onClick={() => window.history.back()}><ChevronLeft size={18} strokeWidth={1.6} /></button>
+        <button type="button" title="Go forward" aria-label="Go forward" disabled={!history.forward} onClick={() => window.history.forward()}><ChevronRight size={18} strokeWidth={1.6} /></button>
+      </header>
+      <div className="tw-body">
+        <Sidebar account={account} agents={agents} conversations={chatConversations} selectedId={route.id} view={route.view}
+          search={search} onSearch={setSearch}
+          usage={<UsageCard funding={funding} chatgpt={chatgpt} onOpen={() => settingsPage("billing")} />}
+          onNewTask={() => newTask()} onOpenConversation={conversation => go("#/c/" + conversation.id)} onNewChat={newTask}
+          onNewAgent={() => setDialog({ open: true, agent: null })} onEditAgent={agent => setDialog({ open: true, agent })}
+          onStarAgent={agent => call("agents.update", { id: agent.id, starred: !agent.starredAt }).then(loadAgents).catch(error => toast(error, "error"))}
+          onArchiveAgent={archiveAgent} onOpenWorkspace={agent => call("agents.openWorkspace", { id: agent.id }).catch(error => toast(error, "error"))}
+          onArchiveConversation={archiveConversation} onReorder={reorder} onSettings={settingsPage} onProfile={() => setProfileOpen(true)}
+          onSignOut={() => call("account.signOut").catch(error => toast(error, "error"))} />
+        <div className="tw-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" onPointerDown={startResize} onDoubleClick={() => { setWidth(288); write("tw.sidebarWidth", 288); }} />
+        <div className="tw-stage">
+          <section className="tw-main" aria-label={route.view === "chat" ? opened?.title || "Conversation" : route.view === "settings" ? "Settings" : "Home"}>{main}</section>
+          {showPane ? <Pane key={"pane-" + opened.id} conversation={opened} agent={chatAgent} expanded={pane === "full"} onExpand={() => setPane(pane === "full" ? "open" : "full")}
+            onClose={() => setPane("closed")} onEditAgent={agent => setDialog({ open: true, agent })} /> : null}
+        </div>
+      </div>
       <AgentDialog open={dialog.open} agent={dialog.agent} onClose={() => setDialog({ open: false, agent: null })}
-        onSaved={agent => { setDialog({ open: false, agent: null }); void loadAgents().then(() => { if (!dialog.agent) void newChat(agent.id); }); }} />
+        onSaved={agent => { const created = !dialog.agent; setDialog({ open: false, agent: null }); void loadAgents().then(() => { if (created) newTask(agent.id); }); }} />
+      <ProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} account={account} onAccount={setAccount}
+        onSignOut={() => { setProfileOpen(false); call("account.signOut").catch(error => toast(error, "error")); }} />
     </div>
   );
 }

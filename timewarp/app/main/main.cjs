@@ -159,13 +159,21 @@ async function boot() {
     ...(fixture ? { home: fixture.sampleHome(path.join(profile, "preview-home")), env: {} } : {}),
   });
   fs.mkdirSync(path.join(runtimeDir, "codex-app-server-cwd"), { recursive: true });
+  // The local endpoint Codex uses for Timewarp models and connected apps.
+  const bridge = createModelBridge({ token: bridgeToken, cloud: services.cloud, funding: services.funding, chatgpt: services.chatgpt, integrations: services.integrations, mascots: require("../../desktop/mascots.cjs") });
+  const bridgeReady = bridge.listen();
+  bridgeReady.catch(error => console.error("[timewarp]", error.message));
   const vendor = vendorRoot();
   const client = new CodexClient({
     executable: codexExecutable(vendor), cwd: path.join(runtimeDir, "codex-app-server-cwd"),
-    args: [
-      "-c", 'model_providers.timewarp={name="Timewarp",base_url="http://127.0.0.1:7788/v1",wire_api="responses",env_key="TIMEWARP_BRIDGE_TOKEN"}',
-      "-c", 'model_provider="timewarp"',
-    ],
+    // Codex starts once the bridge has its port.
+    args: async () => {
+      await bridgeReady.catch(() => {});
+      return [
+        "-c", `model_providers.timewarp={name="Timewarp",base_url="http://127.0.0.1:${bridge.port}/v1",wire_api="responses",env_key="TIMEWARP_BRIDGE_TOKEN"}`,
+        "-c", 'model_provider="timewarp"',
+      ];
+    },
     env: { CODEX_HOME: codexHome, TIMEWARP_BRIDGE_TOKEN: bridgeToken, TIMEWARP_COMPOSIO_TOKEN: mcpToken, ...codexEnv(vendor) },
     clientInfo: { name: "timewarp", title: "Timewarp", version: VERSION },
   });
@@ -239,13 +247,9 @@ async function boot() {
 
   const mcp = createMcp({ client, openExternal: url => services.openExternal(url), notify: broadcast });
 
-  const bridge = createModelBridge({ token: bridgeToken, cloud: services.cloud, funding: services.funding, chatgpt: services.chatgpt, integrations: services.integrations, mascots: require("../../desktop/mascots.cjs") });
-  const bridgeReady = bridge.listen();
-  bridgeReady.catch(error => console.error("[timewarp]", error.message));
-
   async function registerTools(force = false) {
     if (!userId() || (toolsRegistered && !force)) return;
-    await client.request("config/value/write", { keyPath: "mcp_servers.timewarp_composio", value: { url: "http://127.0.0.1:7788/mcp/composio", enabled: true, bearer_token_env_var: "TIMEWARP_COMPOSIO_TOKEN" }, mergeStrategy: "replace" });
+    await client.request("config/value/write", { keyPath: "mcp_servers.timewarp_composio", value: { url: `http://127.0.0.1:${bridge.port}/mcp/composio`, enabled: true, bearer_token_env_var: "TIMEWARP_COMPOSIO_TOKEN" }, mergeStrategy: "replace" });
     await client.request("config/mcpServer/reload", undefined);
     toolsRegistered = true;
   }

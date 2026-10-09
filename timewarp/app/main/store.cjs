@@ -75,6 +75,14 @@ function openStore(file) {
       started_at text not null, finished_at text)`,
     "create index automation_runs_automation on automation_runs(automation_id, started_at)",
   ]);
+  // Token usage per turn, shown in a chat's activity trace.
+  migrate(4, [
+    `create table turn_usage(
+      turn_id text primary key, conversation_id text not null references conversations(id) on delete cascade,
+      thread_id text, input integer not null, cached integer not null, output integer not null, reasoning integer not null,
+      thread_total integer not null, updated_at text not null)`,
+    "create index turn_usage_conversation on turn_usage(conversation_id)",
+  ]);
   return createStore(db);
 }
 
@@ -116,6 +124,7 @@ function createStore(db) {
     modelSettings: parse(row.model_settings),
     archivedAt: row.archived_at, read: !!row.read, browserProfileId: row.browser_profile_id,
     createdAt: row.created_at, updatedAt: row.updated_at, lastActivityAt: row.last_activity_at,
+    ...(row.last_text !== undefined ? { lastText: row.last_text ? String(row.last_text).slice(0, 200) : null } : {}),
   };
   const messageOf = row => row && {
     id: row.id, conversationId: row.conversation_id, seq: row.seq, authorId: row.author_id,
@@ -164,7 +173,9 @@ function createStore(db) {
         args.push(pattern, pattern);
       }
       args.push(limit);
-      return all(`select c.* from conversations c where ${where.join(" and ")} order by c.last_activity_at desc limit ?`, ...args).map(conversationOf);
+      // The latest message, shown in the sidebar's activity list.
+      const last = "(select substr(m.text, 1, 400) from messages m where m.conversation_id = c.id and coalesce(m.status, '') not in ('failed', 'replaced') order by m.seq desc limit 1)";
+      return all(`select c.*, ${last} last_text from conversations c where ${where.join(" and ")} order by c.last_activity_at desc limit ?`, ...args).map(conversationOf);
     },
     create(input) {
       const at = input.createdAt || now(), id = input.id || crypto.randomUUID();
@@ -300,8 +311,33 @@ function createStore(db) {
     },
   };
 
+  // Codex reports cumulative thread usage. Each turn keeps the thread's totals
+  // at its last update; a turn's own usage is the growth since the previous
+  // turn of the same thread (or its totals, when the count restarted).
+  const turnUsage = {
+    list(conversationId) {
+      const rows = all("select * from turn_usage where conversation_id = ? order by thread_id, rowid", conversationId);
+      const previous = new Map(), result = [];
+      for (const row of rows) {
+        const before = previous.get(row.thread_id);
+        const restarted = !before || row.thread_total < before.thread_total;
+        const delta = key => restarted ? row[key] : Math.max(0, row[key] - before[key]);
+        result.push({ turnId: row.turn_id, threadId: row.thread_id, input: delta("input"), cached: delta("cached"), output: delta("output"), reasoning: delta("reasoning") });
+        previous.set(row.thread_id, row);
+      }
+      return result;
+    },
+    record(conversationId, threadId, turnId, total) {
+      const value = key => Math.max(0, Number(total?.[key]) || 0);
+      run(`insert into turn_usage(turn_id, conversation_id, thread_id, input, cached, output, reasoning, thread_total, updated_at) values (?,?,?,?,?,?,?,?,?)
+        on conflict(turn_id) do update set input = excluded.input, cached = excluded.cached, output = excluded.output, reasoning = excluded.reasoning,
+        thread_total = excluded.thread_total, updated_at = excluded.updated_at`,
+      turnId, conversationId, threadId, value("inputTokens"), value("cachedInputTokens"), value("outputTokens"), value("reasoningOutputTokens"), value("totalTokens"), now());
+    },
+  };
+
   return {
-    db, events, transaction, agents, conversations, messages, settings, automations, browserProfiles, recentSites,
+    db, events, transaction, agents, conversations, messages, settings, automations, browserProfiles, recentSites, turnUsage,
     on: (name, fn) => events.on(name, fn), off: (name, fn) => events.off(name, fn),
     close: () => db.close(),
   };

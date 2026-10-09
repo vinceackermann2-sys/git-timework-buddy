@@ -115,7 +115,7 @@ export function running(items) {
 // Restored chats can have messages without a Codex transcript on this device.
 export function turnsFromMessages(messages, ownerId) {
   return messages.map(message => ({
-    id: "message-" + message.id, status: message.status === "failed" ? "failed" : "completed", error: message.status === "failed" ? { message: "This message wasn't sent." } : null,
+    id: "message-" + message.id, startedAt: Date.parse(message.createdAt) / 1000 || null, status: message.status === "failed" ? "failed" : "completed", error: message.status === "failed" ? { message: "This message wasn't sent." } : null,
     items: [message.authorId === ownerId
       ? { type: "userMessage", id: message.id, clientId: message.id, content: [{ type: "text", text: message.text }] }
       : { type: "agentMessage", id: message.id, text: message.text }],
