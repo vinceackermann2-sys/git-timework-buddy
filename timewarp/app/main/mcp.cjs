@@ -67,13 +67,15 @@ function createMcp({ client, openExternal, notify = () => {} }) {
     const read = await client.request("config/read", {});
     return read.config?.mcp_servers || {};
   }
-  async function list() {
-    const [servers, status] = await Promise.all([configured(), client.request("mcpServerStatus/list", { detail: "toolsAndAuthOnly", limit: 100 }).catch(() => ({ data: [] }))]);
+  // Timewarp's own servers (connected apps) are listed only when asked, read-only.
+  // Without status the list comes straight from the config; Codex's status can take seconds.
+  async function list({ builtIn = false, status: withStatus = true } = {}) {
+    const [servers, status] = await Promise.all([configured(), withStatus ? client.request("mcpServerStatus/list", { detail: "toolsAndAuthOnly", limit: 100 }).catch(() => ({ data: [] })) : { data: [] }]);
     const statuses = new Map((status.data || []).map(item => [item.name, item]));
-    return Object.entries(servers).filter(([name]) => !RESERVED.test(name)).map(([name, value]) => {
+    return Object.entries(servers).filter(([name]) => builtIn || !RESERVED.test(name)).map(([name, value]) => {
       const state = statuses.get(name);
       return {
-        name, transport: value.url ? "http" : "stdio", url: value.url || null, command: value.command || null, args: value.args || [],
+        name, builtIn: RESERVED.test(name), transport: value.url ? "http" : "stdio", url: value.url || null, command: value.command || null, args: value.args || [],
         envKeys: Object.keys(value.env || {}), enabled: value.enabled !== false, authStatus: state?.authStatus || "unknown",
         tools: state && !state.toolsError ? Object.keys(state.tools || {}).length : null, error: state?.toolsError || null,
       };

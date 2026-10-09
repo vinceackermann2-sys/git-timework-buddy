@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { CalendarClock, Check, ChevronLeft, ChevronRight, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Plus, RotateCw, Settings, Trash2, UserRound, X } from "lucide-react";
+import { CalendarClock, Check, ChevronLeft, ChevronRight, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Plus, RotateCw, Settings, Trash2, UserRound, Volume2, VolumeX, X } from "lucide-react";
 import { call, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { Avatar, Menu, Switch, useToast } from "./common.jsx";
@@ -245,6 +245,7 @@ export function Pane({ conversation, agent, expanded, onExpand, onClose, onEditA
         <button type="button" className="tw-icon-button" aria-label="Go back" title="Back" disabled={!tool && !active?.canGoBack} onClick={() => tool ? setTool(null) : run("browser.back", { tabId: active.id })}><ChevronLeft size={16} strokeWidth={1.7} /></button>
         <button type="button" className="tw-icon-button" aria-label="Go forward" title="Forward" disabled={!!tool || !active?.canGoForward} onClick={() => run("browser.forward", { tabId: active.id })}><ChevronRight size={16} strokeWidth={1.7} /></button>
         <button type="button" className="tw-icon-button" aria-label={active?.loading ? "Stop" : "Refresh"} title={active?.loading ? "Stop" : "Refresh"} onClick={() => active?.kind === "web" ? run(active.loading ? "browser.stop" : "browser.reload", { tabId: active.id }) : null}>{active?.loading ? <X size={16} /> : <RotateCw size={16} strokeWidth={1.7} />}</button>
+        {active?.kind === "web" ? <button type="button" className="tw-icon-button" aria-label={active.muted ? "Unmute tab" : "Mute tab"} title={active.muted ? "Unmute tab" : "Mute tab"} onClick={() => run("browser.setMuted", { tabId: active.id, muted: !active.muted })}>{active.muted ? <VolumeX size={16} strokeWidth={1.7} /> : <Volume2 size={16} strokeWidth={1.7} />}</button> : null}
         <input className="tw-address" value={address} placeholder="Search or enter a URL" aria-label="Search or enter a URL"
           onFocus={event => { setEditing(true); event.target.select(); }} onBlur={() => setEditing(false)} onChange={event => setAddress(event.target.value)} />
         {signIns.length ? (

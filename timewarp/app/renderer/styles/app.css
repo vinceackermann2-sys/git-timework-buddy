@@ -39,15 +39,18 @@
   --color-muted: var(--selected);
   --color-muted-foreground: var(--muted);
   --color-border: var(--border);
-  --color-ring: hsl(var(--accent-h) 55% 60%);
   --color-primary: var(--theme-accent);
   --color-primary-foreground: var(--accent-ink);
   --color-accent: var(--user-bubble);
   --color-destructive: var(--danger);
-  --timewarp-accent-ink: var(--accent-ink);
+  /* As in desktop/appearance.css: a dark shade of the accent, the accent itself in dark mode. */
+  --timewarp-accent-ink: oklch(from var(--theme-accent) .43 .095 h);
+  --color-ring: oklch(from var(--theme-accent) .55 .12 h);
   color-scheme: light;
 }
 :root[data-scheme="dark"] {
+  --timewarp-accent-ink: var(--theme-accent);
+  --color-ring: var(--theme-accent);
   --accent-strong: hsl(var(--accent-h) 80% 80%);
   --window: color-mix(in srgb, var(--theme-accent) calc(var(--radiance) * 16%), #131117);
   --card: #1c1a21;
@@ -92,7 +95,7 @@ a { color: var(--accent-strong); }
 .tw-body { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--sidebar-width, 288px) minmax(0, 1fr); position: relative; }
 .tw-window[data-sidebar="hidden"] .tw-body { grid-template-columns: 0 minmax(0, 1fr); padding-left: 8px; }
 .tw-window[data-sidebar="hidden"] .tw-sidebar, .tw-window[data-sidebar="hidden"] .tw-resizer { display: none; }
-.tw-resizer { position: absolute; top: 0; bottom: 0; left: calc(var(--sidebar-width, 288px) - 4px); width: 8px; cursor: col-resize; z-index: 5; }
+.tw-resizer { position: absolute; top: 0; bottom: 0; left: var(--sidebar-width, 288px); width: 8px; cursor: ew-resize; z-index: 5; }
 .tw-stage { min-width: 0; min-height: 0; display: flex; gap: 12px; padding: 8px 8px 8px 0; }
 .tw-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--card); border-radius: 10px; overflow: hidden; position: relative; }
 .tw-window[data-pane="open"] .tw-main { flex: 1 1 0; min-width: 380px; }
@@ -141,25 +144,24 @@ a { color: var(--accent-strong); }
 .tw-agent-head:hover { background: var(--hover); }
 .tw-agent-head[aria-current="true"] { background: var(--selected); }
 .tw-agent-head .tw-avatar { width: 24px; height: 24px; }
-.tw-agent-head > span { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--muted-70); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-agent-head > span { flex: 1; min-width: 0; font-size: 13px; line-height: 17.33px; font-weight: 500; color: var(--muted-70); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-agent-head .tw-icon-button { width: 22px; height: 22px; border-radius: 6px; opacity: 0; color: var(--muted-70); }
 .tw-agent-head:hover .tw-icon-button, .tw-agent-head .tw-icon-button:focus-visible { opacity: 1; }
 .tw-agent-head[data-dragging="true"] { opacity: 0.5; }
 .tw-agent-head[data-drop="true"] { box-shadow: inset 0 2px 0 var(--accent-strong); }
-.tw-convo { position: relative; display: flex; align-items: center; gap: 8px; height: 36px; margin-top: 1px; padding: 0 4px 0 44px; border: none; border-radius: 10px; background: transparent; color: var(--ink-strong); text-align: left; cursor: pointer; width: 100%; text-decoration: none; }
+.tw-convo { position: relative; display: flex; align-items: center; gap: 8px; height: 36px; margin-top: 1px; padding: 0 4px 0 44px; border: none; border-radius: 10px; background: transparent; color: var(--ink-strong); text-align: left; cursor: pointer; width: 100%; text-decoration: none; line-height: 20px; }
 .tw-convo:hover { background: var(--hover); }
 .tw-convo[aria-current] { background: var(--selected); }
 .tw-convo > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tw-convo.unread > span:first-child { font-weight: 600; }
-.tw-convo time { flex: none; width: 24px; text-align: right; font-size: 13px; color: var(--muted-64); }
+.tw-convo time { flex: none; width: 24px; text-align: right; font-size: 12px; line-height: 16px; color: var(--muted-64); }
 .tw-convo .tw-icon-button { display: none; width: 24px; height: 24px; }
 .tw-convo:hover time { display: none; }
 .tw-convo:hover .tw-icon-button { display: inline-grid; }
-.tw-convo .tw-unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-strong); flex: none; margin-right: 8px; }
+.tw-convo .tw-unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary); flex: none; margin: 0 6px 0 10px; }
 .tw-show-more { display: block; width: 100%; height: 36px; margin-top: 1px; padding: 0 4px 0 44px; border: none; border-radius: 10px; background: transparent; color: var(--muted-64); text-align: left; cursor: pointer; }
 .tw-show-more:hover { background: var(--hover); }
 /* Stays at the bottom of the list; the rows above fade out behind it. */
-.tw-add-agent { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; gap: 16px; width: 100%; height: 36px; margin-top: 20px; padding: 0 12px 0 16px; border: none; border-radius: 10px; background: var(--window); color: var(--muted-64); cursor: pointer; box-shadow: 0 -24px 16px -4px var(--window); }
+.tw-add-agent { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; gap: 4px; width: 100%; height: 36px; margin-top: 20px; padding: 0 8px; border: none; border-radius: 10px; background: var(--window); color: var(--muted-64); line-height: 20px; cursor: pointer; box-shadow: 0 -24px 16px -4px var(--window); }
 .tw-add-agent:hover { background: color-mix(in srgb, var(--ink-strong) 4.5%, var(--window)); color: var(--ink-strong); }
 .tw-side-empty { padding: 6px 12px; color: var(--muted-64); font-size: 13px; }
 /* Search dialog */
@@ -184,18 +186,18 @@ a { color: var(--accent-strong); }
 .tw-feed-item strong { grid-area: name; font-weight: 400; font-size: 14px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-feed-item p { grid-area: text; margin: 0; font-size: 12px; line-height: 16px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-feed-item time { grid-area: time; font-size: 12px; color: var(--muted-64); }
-.tw-usage { display: block; flex: none; margin-top: 8px; padding: 8px 12px 10px; border-radius: 10px; background: var(--soft); text-decoration: none; color: var(--muted-64); cursor: pointer; border: none; width: 100%; text-align: left; }
+.tw-usage { display: block; flex: none; margin-top: 16px; padding: 12px; border-radius: 8px; background: var(--soft); text-decoration: none; color: var(--muted-64); cursor: pointer; border: none; width: 100%; text-align: left; }
 .tw-usage:hover { background: var(--soft-hover); }
 .tw-usage > div { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; line-height: 16px; }
 .tw-usage > div span:first-child { font-weight: 500; }
 .tw-usage-meter { height: 6px; margin-top: 6px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 6%, transparent); overflow: hidden; }
 .tw-usage-meter > i { display: block; height: 100%; border-radius: inherit; background: var(--accent-strong); }
-.tw-account { display: flex; align-items: center; gap: 8px; width: 100%; height: 48px; margin-top: 8px; padding: 0 12px; border: 0.67px solid transparent; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; color: var(--ink-strong); }
+.tw-account { display: flex; align-items: center; gap: 8px; width: 100%; height: 48px; margin-top: 8px; padding: 0 8px 0 11px; border: 0.67px solid transparent; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; color: var(--ink-strong); }
 .tw-account:hover, .tw-account[aria-expanded="true"] { background: var(--selected); }
 .tw-account[aria-expanded="true"] { border-color: color-mix(in srgb, var(--accent-strong) 45%, transparent); }
 .tw-account > span:nth-child(2) { flex: 1; min-width: 0; display: grid; }
-.tw-account strong { font-size: 14px; font-weight: 500; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tw-account small { font-size: 12.5px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-account strong { font-size: 14px; font-weight: 500; line-height: 17.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-account small { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--muted-64); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-org-picture { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--user-bubble); color: var(--accent-ink); font-weight: 700; font-size: 12px; overflow: hidden; flex: none; }
 .tw-org-picture img { width: 18px; height: 18px; object-fit: contain; }
 .tw-org-picture img.photo { width: 100%; height: 100%; object-fit: cover; }
@@ -330,8 +332,8 @@ a { color: var(--accent-strong); }
 .tw-thread { max-width: 812px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); }
 .tw-chat-start { display: grid; justify-items: center; gap: 4px; margin: 56px 0 36px; text-align: center; }
 .tw-chat-start .tw-avatar { width: 80px; height: 80px; border-radius: 0; margin-bottom: 14px; }
-.tw-chat-start strong { font-size: 16px; font-weight: 400; }
-.tw-chat-start span { font-size: 13px; color: var(--muted); }
+.tw-chat-start strong { font-size: 18px; line-height: 28px; letter-spacing: -0.45px; font-weight: 400; }
+.tw-chat-start span { font-size: 12px; line-height: 16px; color: var(--muted); }
 .tw-date { text-align: center; font-size: 12px; line-height: 16px; color: var(--muted); margin: 18px 0 12px; }
 .tw-user-row { display: grid; justify-items: end; gap: 4px; margin: 6px 0 22px 64px; }
 .tw-user-message { max-width: min(100%, 680px); background: var(--user-bubble); color: var(--ink); padding: 6px 12px; border-radius: 16px; font-size: 14px; line-height: 24px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -443,9 +445,9 @@ a { color: var(--accent-strong); }
 .tw-settings nav { position: sticky; top: 0; align-self: start; padding-top: 48px; display: grid; gap: 1px; }
 .tw-settings nav h4 { margin: 11px 0 0; height: 32px; display: flex; align-items: center; padding: 0 8px; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--muted-70); }
 .tw-settings nav h4:first-child { margin-top: 0; }
-.tw-settings nav button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; line-height: 20px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; text-align: left; }
-.tw-settings nav button:hover { background: var(--hover); color: var(--ink); }
-.tw-settings nav button[aria-current="true"] { background: var(--selected); }
+.tw-settings nav a { display: flex; text-decoration: none; align-items: center; gap: 8px; height: 32px; padding: 0 8px; line-height: 20px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; text-align: left; }
+.tw-settings nav a:hover { background: var(--hover); color: var(--ink); }
+.tw-settings nav a[aria-current="page"] { background: var(--selected); }
 .tw-page { min-width: 0; display: grid; gap: 16px; align-content: start; }
 .tw-page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 8px; }
 .tw-page-head > div { flex: 1; min-width: 0; }
@@ -922,7 +924,8 @@ a { color: var(--accent-strong); }
 /* Feedback and trace dialogs */
 .tw-dialog.tw-feedback { width: min(512px, calc(100vw - 32px)); }
 .tw-feedback .tw-textarea { min-height: 64px; height: 64px; resize: vertical; }
-.tw-feedback .tw-dialog-body { gap: 20px; }
+.tw-feedback .tw-dialog-body { gap: 24px; }
+.tw-feedback .tw-textarea { padding: 8px 10px; line-height: 20px; }
 .tw-dialog.wide { width: min(1128px, calc(100vw - 72px)); height: min(722px, calc(100vh - 80px)); }
 .tw-trace-head { padding: 16px 20px 14px; }
 .tw-trace-head h2 { font-size: 16px; line-height: 24px; font-weight: 600; }
@@ -966,3 +969,114 @@ a.tw-agent-automation:hover { background: color-mix(in srgb, var(--ink) 3%, var(
 .tw-toast { padding: 16px; width: 356px; max-width: calc(100vw - 36px); line-height: 20px; }
 .tw-toast strong { font-weight: 600; }
 .tw-toast > button { top: 6px; right: 6px; }
+/* Measured against the previous app */
+.tw-add-agent svg { width: 16px; height: 16px; margin: 0 8px; flex: none; }
+.tw-account .tw-org-picture { border-radius: 10px; }
+.tw-account > svg:last-child { color: var(--muted-64); }
+.tw-picker { height: 36px; padding: 8px 12px; gap: 4px; line-height: 20px; }
+.tw-picker > svg { color: var(--muted); }
+.tw-picker > svg:first-child:not(:last-child) { margin-right: 4px; }
+.tw-picker > svg:last-child { width: 16px; height: 16px; }
+.tw-search-field input { color: var(--muted); }
+.tw-search-field .tw-keys { position: absolute; right: 8px; top: 50%; margin-top: -10px; display: flex; gap: 1px; pointer-events: none; }
+.tw-search-field .tw-keys kbd { position: static; gap: 0; }
+.tw-search-field .tw-keys kbd { display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 16px; padding: 0 4px; border-radius: 6px; background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); font: 500 10px/13.33px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.tw-search-field .tw-keys kbd:first-child:not(:last-child) { font-size: 8px; line-height: 8px; letter-spacing: -0.2px; }
+/* Page content keeps 16px on both sides; cards that span the column don't. */
+.tw-page-head, .tw-lead, .tw-sub, .tw-inset, .tw-section-head { padding-right: 16px; }
+.tw-scroll-grid { margin-right: 16px; max-height: calc(100vh - 274px); }
+.tw-page > .tw-page-head + .tw-rows-card { margin-top: 8px; }
+.tw-set-row { padding: 12px 16px 20px; }
+.tw-page-head + .tw-vault-head { margin-top: 8px; }
+.tw-page > .tw-vault-head ~ .tw-vault-head { margin: 8px 0 0; padding: 24px 16px 0; }
+.tw-page > .tw-vault-head + .tw-empty-box, .tw-page > .tw-vault-head + .tw-list-panel { margin-right: 16px; }
+.tw-page > .tw-vault-head + .tw-empty-box { background: transparent; padding: 16px; border-radius: 10px; }
+.tw-page-head + .tw-vault-head + .tw-empty-box { padding: 20px; border-radius: 14px; }
+.tw-tile > div { gap: 4px; }
+.tw-tool-grid { padding: 8px 4px 4px; }
+.tw-tile-reconnect { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 12px; flex: none; border: 0.67px solid color-mix(in srgb, var(--muted) 25%, transparent); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 14px; line-height: 20px; font-weight: 500; cursor: pointer; }
+.tw-tile-reconnect:hover { background: color-mix(in srgb, var(--ink) 4%, var(--surface)); }
+/* MCP servers as tiles, with an add tile, as before */
+.tw-grid.tw-mcp-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0 16px; }
+.tw-mcp-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: none; border-radius: 6px; background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--muted); }
+.tw-add-tile { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 66px; padding: 12px; border: 0.67px dashed var(--border); border-radius: 14px; background: color-mix(in srgb, var(--surface) 40%, transparent); color: var(--muted); font-size: 14px; line-height: 20px; font-weight: 500; cursor: pointer; transition: transform 0.15s; }
+.tw-add-tile:hover, .tw-mcp-grid .tw-tile:hover { transform: translateY(-2px) scale(1.01); }
+.tw-mcp-grid .tw-tile { transition: transform 0.15s; }
+.tw-push-left { margin-right: auto; }
+/* Tools: rows 80px apart and a list that ends 16px above the window edge, without a page scrollbar */
+.tw-grid.tw-tool-grid { row-gap: 14px; }
+.tw-settings-inner:has(.tw-scroll-grid) { padding-bottom: 0; }
+/* Memories, as before: full-width search, compact cards, the imports folder in grey */
+.tw-memory-search { margin-top: 8px; }
+.tw-memory-search .tw-search-field { margin: 0; }
+.tw-memory-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; margin-top: 4px; }
+.tw-memory-card { gap: 2px; padding: 8px; }
+.tw-memory-card strong { font-size: 14px; line-height: 20px; }
+.tw-memory-card span { font-size: 14px; line-height: 20px; }
+.tw-memory-card.folder { padding: 12px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.tw-memory-card.folder > div span { font-variant-numeric: tabular-nums; }
+/* Organization, as before: 12px insets, compact members table */
+.tw-org-page .tw-page-head { padding: 0 12px; }
+.tw-org-card .tw-list-row { padding: 16px; min-height: 0; }
+.tw-org-page .tw-section-head { padding: 0 0 0 12px; margin-top: 8px; align-items: center; }
+.tw-org-page .tw-muted-head { flex: 1; font-size: 14px; line-height: 20px; color: var(--muted); }
+.tw-org-page .tw-members-card { margin-top: -4px; }
+.tw-org-page .tw-members th { height: 40px; padding: 0 12px; font-weight: 600; line-height: 20px; }
+.tw-org-page .tw-members th:nth-child(1) { width: 46%; }
+.tw-org-page .tw-members th:nth-child(2) { width: 28%; }
+.tw-org-page .tw-members td { padding: 12px; line-height: 20px; }
+.tw-members .tw-face.small { border-radius: 10px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.tw-org-page .tw-hint.tw-inset { margin-top: -4px; padding: 0 12px; font-size: 14px; line-height: 20px; }
+/* Billing starts 12px higher than the other pages, as before */
+.tw-billing-page { margin-top: -13px; }
+/* Skill tiles: descriptions at 80% of the muted colour, as before */
+.tw-scroll-grid:not(.tw-tool-grid) .tw-tile span.desc { color: color-mix(in srgb, var(--muted) 80%, transparent); }
+/* Reconnect prompts, as before: 32px rows, 12px text, small buttons */
+.tw-reconnects { margin: 0 20px -1px; }
+.tw-reconnect { min-height: 33.33px; padding: 4px 8px; line-height: 15px; }
+.tw-reconnect-face { width: 14px; height: 14px; font-size: 8px; line-height: 10px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.tw-reconnect .tw-btn { height: 24px; padding: 0 8px; font-size: 12px; line-height: 16px; border-radius: 6px; }
+/* Composer bar, as before: buttons touch on the left, 1px apart on the right */
+.tw-composer-row { gap: 0; }
+.tw-composer-row > .grow ~ * { margin-left: 1px; }
+.tw-pill[aria-label="Tools"] { gap: 4px; }
+.tw-account[aria-expanded="true"] { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+/* Effort slider spans the popover, with 11px end labels, as before */
+.tw-effort { margin-left: 0; margin-right: 0; }
+.tw-effort-ends { margin: 0; font-size: 11px; line-height: 16.5px; }
+.tw-tools-menu .tw-menu-label.spaced { margin-top: 9px; }
+.tw-tools-menu .tw-menu-item.selected:not(:hover) { background: transparent; }
+/* Chat and pane share the stage at a draggable 8px divider (half each by default), as before */
+.tw-window[data-pane="open"] .tw-stage { gap: 0; }
+.tw-window[data-pane="open"] .tw-main { flex: calc(1 - var(--pane-share, 0.5)) 1 0; }
+.tw-window[data-pane="open"] .tw-pane { flex: var(--pane-share, 0.5) 1 0; }
+.tw-pane-resizer { flex: none; width: 8px; cursor: ew-resize; touch-action: none; }
+/* Pane bars, as before: toolbar buttons touch (2px after home); tab-bar buttons sit lower and touch */
+.tw-pane-toolbar { gap: 0; padding: 0 8px 0 4px; }
+.tw-pane-toolbar > [aria-label="Browser home"] { margin-right: 2px; }
+.tw-pane-toolbar > .tw-address { margin: 0 2px; }
+.tw-pane-controls { gap: 0; }
+.tw-pane-controls .tw-icon-button.add { margin-right: 4px; }
+.tw-pane-controls .tw-icon-button:not(.add) { position: relative; top: 5px; }
+/* Agent picker rows, as before: 36px with the mascot uncropped; New Agent after a divider */
+.tw-agent-menu .tw-menu-item { min-height: 36px; padding: 8px; gap: 12px; }
+.tw-agent-menu .tw-menu-item:last-child { padding: 8px 12px; }
+.tw-agent-menu .tw-menu-item .tw-avatar { border-radius: 0; }
+.tw-agent-menu .tw-menu-sep { margin: 4px -4px; }
+/* Dialogs, as before: 14px titles, the close button in the corner, 14px corners */
+.tw-dialog { border-radius: 14px; }
+.tw-dialog-head h2 { font-size: 14px; line-height: 14px; }
+.tw-dialog-head p { margin-top: 8px; }
+.tw-dialog-head .tw-icon-button { position: absolute; top: 16px; right: 16px; margin: 0; }
+/* Archived conversations */
+.tw-dialog.tw-archived-dialog { width: min(576px, calc(100vw - 32px)); max-height: calc(100vh - 120px); }
+.tw-archived-dialog[open] .tw-dialog-body { max-height: calc(100vh - 120px); grid-template-rows: auto auto minmax(0, 1fr); }
+.tw-dialog-search { position: relative; display: block; }
+.tw-dialog-search > svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.tw-dialog-search input { width: 100%; height: 36px; padding: 4px 10px 4px 36px; }
+.tw-archived-list { margin: 0 -8px; min-height: 0; overflow-y: auto; }
+.tw-archived-row { display: flex; align-items: center; gap: 16px; padding: 12px 8px; border-bottom: 0.67px solid var(--border); }
+.tw-archived-row:last-child { border-bottom: none; }
+.tw-archived-row > div { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.tw-archived-row p { margin: 0; font-size: 14px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-archived-row p.when { font-size: 12px; line-height: 16px; color: var(--muted); }

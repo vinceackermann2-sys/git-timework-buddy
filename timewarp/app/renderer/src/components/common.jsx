@@ -117,7 +117,7 @@ export function SearchField({ value, onChange, placeholder, label, shortcut = fa
     <label className="tw-search-field">
       <Search size={17} />
       <input ref={input} className="tw-input" type="search" value={value} placeholder={placeholder} aria-label={label || placeholder} autoFocus={autoFocus} onChange={event => onChange(event.target.value)} />
-      {shortcut && !value ? <kbd><span>{mac ? "⌘" : "Ctrl"}</span><span>F</span></kbd> : null}
+      {shortcut && !value ? <span className="tw-keys"><kbd>{mac ? "⌘" : "Ctrl"}</kbd><kbd>F</kbd></span> : null}
     </label>
   );
 }

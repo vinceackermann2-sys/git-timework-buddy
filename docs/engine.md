@@ -119,9 +119,10 @@ The interface has the previous app's layout and screens: the sidebar with
 agent groups, activity feed, usage card and account menu; the home screen with
 its composer, tools, agent and model pickers and suggestions; the chat with
 Report, the Activity trace and thread actions; the side pane; the search
-dialog and right-click menus on agents and chats; and Settings (General, Tools,
-Browser, Vault, Memories, Skills, Organization, Billing; Automations stays at
-`#/customize/automations`). It is rebuilt in Timewarp's own React code from
+dialog and right-click menus on agents and chats; and Settings (General at
+`#/customize/settings`, Tools, Browser, Vault, Memories, Skills, Organization,
+Billing; like before there is no Automations page: an agent's automations are on
+its page in the side pane, and the agent manages them). It is rebuilt in Timewarp's own React code from
 screenshots and measurements of the running previous app, not copied from Energy's code. The
 Timewarp-made screens (sign-in, organization, billing, onboarding) are the same
 files. Settings → General has the previous app's rows only; reply notifications

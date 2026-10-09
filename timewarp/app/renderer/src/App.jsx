@@ -6,7 +6,7 @@ import { Dialog, ToastProvider, useToast } from "./components/common.jsx";
 import { Sidebar, UsageCard } from "./components/Sidebar.jsx";
 import { Home } from "./components/Home.jsx";
 import { Chat } from "./components/Chat.jsx";
-import { ALIASES, SECTIONS, Settings } from "./components/Settings.jsx";
+import { ALIASES, SECTIONS, Settings, sectionHref } from "./components/Settings.jsx";
 import { AgentDialog } from "./components/AgentDialog.jsx";
 import { Pane } from "./components/Pane.jsx";
 
@@ -19,7 +19,8 @@ function parseRoute() {
   if ((view === "conversation" || view === "c") && id) return { view: "chat", id };
   if (view === "customize" || view === "settings") {
     const section = ALIASES[id] || id;
-    return { view: "settings", section: SECTIONS.some(item => item.id === section) ? section : "general" };
+    // Unknown and unlisted sections show General, as in the previous app.
+    return { view: "settings", section: SECTIONS.some(item => item.id === section && !item.hidden) ? section : "general" };
   }
   return { view: "home" };
 }
@@ -68,7 +69,11 @@ function Shell({ account, setAccount, settings, setSettings }) {
   const [dialog, setDialog] = useState({ open: false, agent: null });
   const [profileOpen, setProfileOpen] = useState(false);
   const [homeAgent, setHomeAgentState] = useState(() => read("tw.agent", ""));
-  const [pane, setPaneState] = useState(() => read("tw.pane", "0") === "1" ? "open" : "closed");
+  // Each chat remembers whether its pane is open, as in the previous app; new chats start without it.
+  const [pane, setPaneState] = useState(() => { const start = parseRoute(); return start.view === "chat" && read("tw.pane." + start.id, "closed") === "open" ? "open" : "closed"; });
+  // How much of the stage the pane takes, dragged at the divider (half by default).
+  const [split, setSplit] = useState(() => Math.min(0.8, Math.max(0.2, Number(read("tw.paneSplit", 0.5)) || 0.5)));
+  const stage = useRef(null);
   const [sidebar, setSidebarState] = useState(() => read("tw.sidebar", "shown"));
   const [width, setWidth] = useState(() => Math.min(420, Math.max(220, Number(read("tw.sidebarWidth", 288)) || 288)));
   const [first, setFirst] = useState(null);
@@ -76,7 +81,7 @@ function Shell({ account, setAccount, settings, setSettings }) {
   const history = useHistoryButtons();
 
   const setHomeAgent = id => { setHomeAgentState(id); write("tw.agent", id); };
-  const setPane = value => { setPaneState(value); if (value !== "full") write("tw.pane", value === "open" ? "1" : "0"); };
+  const setPane = value => { setPaneState(value); if (value !== "full" && route.view === "chat") write("tw.pane." + route.id, value === "open" ? "open" : "closed"); };
   const setSidebar = value => { setSidebarState(value); write("tw.sidebar", value); };
   const loadAgents = useCallback(() => call("agents.list").then(setAgents).catch(error => toast(error, "error")), [toast]);
   const loadConversations = useCallback(() => call("conversations.list").then(setConversations).catch(() => {}), []);
@@ -92,6 +97,7 @@ function Shell({ account, setAccount, settings, setSettings }) {
   useEffect(() => { call("app.info").then(info => { if (info.previousSessionUnclean) toast({ title: "Timewarp closed unexpectedly.", body: "Review your conversations before continuing." }, "warning"); }).catch(() => {}); }, []);
   useEffect(() => { void loadConversations(); }, [loadConversations]);
   useEffect(() => { const change = () => setRoute(parseRoute()); window.addEventListener("hashchange", change); return () => window.removeEventListener("hashchange", change); }, []);
+  useEffect(() => { if (route.view === "chat") setPaneState(read("tw.pane." + route.id, "closed") === "open" ? "open" : "closed"); }, [route.view, route.id]);
   useEffect(() => { const reload = () => void loadConversations(); window.addEventListener("tw:conversations", reload); return () => window.removeEventListener("tw:conversations", reload); }, [loadConversations]);
 
   const agentById = useMemo(() => new Map(agents.map(agent => [agent.id, agent])), [agents]);
@@ -177,7 +183,18 @@ function Shell({ account, setAccount, settings, setSettings }) {
     try { const selected = await call("models.select", choice); setModels(value => ({ ...value, selected })); }
     catch (error) { toast(error, "error"); }
   }
-  const settingsPage = section => go("#/customize/" + (section || "general"));
+  const settingsPage = section => go(sectionHref(section));
+  function startSplit(event) {
+    event.preventDefault();
+    const box = stage.current?.getBoundingClientRect();
+    if (!box) return;
+    // The chat keeps 380px and the pane 360px, as their minimum widths say.
+    const share = x => Math.min(1 - 380 / box.width, Math.max(360 / box.width, (box.right - x) / box.width));
+    const move = moveEvent => setSplit(share(moveEvent.clientX));
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); setSplit(value => { write("tw.paneSplit", value); return value; }); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
   function startResize(event) {
     event.preventDefault();
     const move = moveEvent => setWidth(Math.min(420, Math.max(220, moveEvent.clientX)));
@@ -222,8 +239,9 @@ function Shell({ account, setAccount, settings, setSettings }) {
           onArchiveConversation={archiveConversation} onReorder={reorder} onSettings={settingsPage} onProfile={() => setProfileOpen(true)}
           onSignOut={() => call("account.signOut").catch(error => toast(error, "error"))} />
         <div className="tw-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" onPointerDown={startResize} onDoubleClick={() => { setWidth(288); write("tw.sidebarWidth", 288); }} />
-        <div className="tw-stage">
+        <div className="tw-stage" ref={stage} style={{ "--pane-share": split }}>
           <section className="tw-main" aria-label={route.view === "chat" ? opened?.title || "Conversation" : route.view === "settings" ? "Settings" : "Home"}>{main}</section>
+          {showPane && pane === "open" ? <div className="tw-pane-resizer" role="separator" aria-label="Resize pane" aria-orientation="vertical" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((1 - split) * 100)} onPointerDown={startSplit} onDoubleClick={() => { setSplit(0.5); write("tw.paneSplit", 0.5); }} /> : null}
           {showPane ? <Pane key={"pane-" + opened.id} conversation={opened} agent={chatAgent} expanded={pane === "full"} onExpand={() => setPane(pane === "full" ? "open" : "full")}
             onClose={() => setPane("closed")} onEditAgent={agent => setDialog({ open: true, agent })} onAgentChanged={loadAgents} onSettings={settingsPage} onStart={start} onArchiveAgent={archiveAgent} /> : null}
         </div>

@@ -54,13 +54,65 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     id: tab.id, conversationId: tab.conversationId, profileId: tab.profileId, kind: tab.kind,
     url: tab.view ? tab.view.webContents.getURL() : tab.url, title: tab.title || "", favicon: tab.favicon || null,
     loading: !!tab.loading, canGoBack: !!tab.view?.webContents.navigationHistory.canGoBack(),
-    canGoForward: !!tab.view?.webContents.navigationHistory.canGoForward(), agent: tab.agent || null,
+    canGoForward: !!tab.view?.webContents.navigationHistory.canGoForward(), agent: tab.agent || null, muted: tab.muted !== false,
   });
+  const chatTabs = conversationId => [...tabs.values()].filter(tab => tab.conversationId === conversationId).sort((a, b) => a.order - b.order);
   function groupState(conversationId) {
+    restore(conversationId);
     const group = groups.get(conversationId) || { active: null };
-    return { conversationId, active: group.active, userControl: userControl.has(conversationId), tabs: [...tabs.values()].filter(tab => tab.conversationId === conversationId).sort((a, b) => a.order - b.order).map(stateOf) };
+    return { conversationId, active: group.active, userControl: userControl.has(conversationId), tabs: chatTabs(conversationId).map(stateOf) };
   }
-  const changed = conversationId => notify("browser.state", groupState(conversationId));
+  const changed = conversationId => { remember(conversationId); notify("browser.state", groupState(conversationId)); };
+
+  // A chat's tabs come back after a restart, as in the previous app: addresses,
+  // titles and the active tab are kept (no page content); a page loads when shown.
+  const SAVED_KEY = "browserTabs", SAVED_CHATS = 50, SAVED_TABS = 12;
+  const restored = new Set(), dirty = new Set();
+  let saveTimer = null;
+  function restore(conversationId) {
+    if (!conversationId || restored.has(conversationId)) return;
+    restored.add(conversationId);
+    let saved;
+    try { saved = store.settings.get(SAVED_KEY, {})?.[conversationId]; } catch { return; }
+    if (!Array.isArray(saved?.tabs) || !saved.tabs.length) return;
+    const profiles = new Set(store.browserProfiles.list().map(profile => profile.id));
+    const fallback = () => store.conversations.get(conversationId)?.browserProfileId || store.browserProfiles.ensureDefault().id;
+    let active = null;
+    saved.tabs.slice(-SAVED_TABS).forEach((item, index) => {
+      const url = item.kind === "web" && recordable(item.url) ? item.url : null;
+      const id = typeof item.id === "string" && /^[0-9a-f-]{36}$/i.test(item.id) && !tabs.has(item.id) ? item.id : crypto.randomUUID();
+      tabs.set(id, { id, conversationId, profileId: profiles.has(item.profileId) ? item.profileId : fallback(), kind: url ? "web" : "home", url, title: String(item.title || "").slice(0, 300), order: Date.now() - SAVED_TABS + index, usedAt: 0 });
+      if (item.active || !active) active = id;
+    });
+    groups.set(conversationId, { active });
+  }
+  function save() {
+    saveTimer = null;
+    let saved;
+    try { saved = { ...(store.settings.get(SAVED_KEY, {}) || {}) }; } catch { return; }
+    for (const conversationId of dirty) {
+      const list = chatTabs(conversationId).slice(-SAVED_TABS);
+      if (!list.length) { delete saved[conversationId]; continue; }
+      const active = groups.get(conversationId)?.active;
+      saved[conversationId] = { savedAt: Date.now(), tabs: list.map(tab => {
+        const url = tab.kind === "web" ? (tab.view ? tab.view.webContents.getURL() : tab.url) : null;
+        return { id: tab.id, kind: url && recordable(url) ? "web" : "home", url: url && recordable(url) ? url : null, title: tab.title || "", profileId: tab.profileId, active: tab.id === active };
+      }) };
+    }
+    dirty.clear();
+    const kept = Object.entries(saved).sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0)).slice(0, SAVED_CHATS);
+    try { store.settings.set(SAVED_KEY, Object.fromEntries(kept)); } catch {}
+  }
+  function remember(conversationId) {
+    if (!restored.has(conversationId)) return;
+    dirty.add(conversationId);
+    if (!saveTimer) saveTimer = setTimeout(save, 1000);
+  }
+  // The tab on screen gets its page when the pane shows it.
+  function wake() {
+    const tab = tabs.get(groups.get(shown)?.active);
+    if (visible && tab?.kind === "web" && !tab.view) { attach(tab); evict(); }
+  }
   // Conversations where the user took the browser over from the agent.
   const userControl = new Set();
 
@@ -87,6 +139,8 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     view.setVisible(false);
     view.setBounds(bounds && bounds.width > 200 ? { x: 0, y: 0, width: bounds.width, height: bounds.height } : { x: 0, y: 0, ...HIDDEN_SIZE });
     const contents = view.webContents;
+    // Pages start muted, as in the previous app; the toolbar turns sound on.
+    contents.setAudioMuted(tab.muted !== false);
     contents.setWindowOpenHandler(({ url }) => {
       try { void openTab(tab.conversationId, { url: safeUrl(url), profileId: tab.profileId }); } catch {}
       return { action: "deny" };
@@ -124,6 +178,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
   }
 
   function openTab(conversationId, { url = null, profileId, activate = true } = {}) {
+    restore(conversationId);
     const profile = profileId || store.conversations.get(conversationId)?.browserProfileId || store.browserProfiles.ensureDefault().id;
     const tab = { id: crypto.randomUUID(), conversationId, profileId: profile, kind: url ? "web" : "home", url: url ? safeUrl(url) : null, title: "", order: Date.now(), usedAt: Date.now() };
     tabs.set(tab.id, tab);
@@ -136,6 +191,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
   }
 
   function tabFor(conversationId, tabId) {
+    restore(conversationId);
     const id = tabId || groups.get(conversationId)?.active;
     const tab = id && tabs.get(id);
     if (!tab || tab.conversationId !== conversationId) throw fail(404, "This browser tab is closed.");
@@ -170,12 +226,13 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
   return {
     safeUrl,
     state: conversationId => groupState(conversationId),
-    show(conversationId) { shown = conversationId; layout(); return groupState(conversationId); },
+    show(conversationId) { shown = conversationId; restore(conversationId); wake(); layout(); return groupState(conversationId); },
     setBounds(rect) {
       if (!rect) { visible = false; layout(); return; }
       const round = value => Math.max(0, Math.round(Number(value) || 0));
       bounds = { x: round(rect.x), y: round(rect.y), width: round(rect.width), height: round(rect.height) };
       visible = bounds.width > 40 && bounds.height > 40 && rect.visible !== false;
+      wake();
       layout();
     },
     openTab, navigate, close, sessionFor,
@@ -193,6 +250,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     forward(conversationId, tabId) { const tab = tabFor(conversationId, tabId); if (tab.view?.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return stateOf(tab); },
     reload(conversationId, tabId) { const tab = tabFor(conversationId, tabId); tab.view?.webContents.reload(); return stateOf(tab); },
     stop(conversationId, tabId) { const tab = tabFor(conversationId, tabId); tab.view?.webContents.stop(); return stateOf(tab); },
+    setMuted(conversationId, tabId, muted) { const tab = tabFor(conversationId, tabId); tab.muted = !!muted; tab.view?.webContents.setAudioMuted(tab.muted); changed(conversationId); return stateOf(tab); },
     // The chat's tabs reopen in the chosen profile, with its own sign-ins.
     setProfile(conversationId, profileId) {
       if (!store.browserProfiles.list().some(profile => profile.id === profileId)) throw fail(404, "This browser profile is unavailable.");
@@ -237,7 +295,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     },
     userInControl: conversationId => userControl.has(conversationId),
     markAgent(conversationId, tabId, agent) { if (agent && userControl.has(conversationId)) return; const tab = tabs.get(tabId); if (tab && tab.conversationId === conversationId) { tab.agent = agent; changed(conversationId); } },
-    closeConversation(conversationId) { for (const tab of [...tabs.values()]) if (tab.conversationId === conversationId) { if (tab.view) { getWindow()?.contentView.removeChildView(tab.view); tab.view.webContents.close(); } tabs.delete(tab.id); } groups.delete(conversationId); },
+    closeConversation(conversationId) { restored.add(conversationId); for (const tab of [...tabs.values()]) if (tab.conversationId === conversationId) { if (tab.view) { getWindow()?.contentView.removeChildView(tab.view); tab.view.webContents.close(); } tabs.delete(tab.id); } groups.delete(conversationId); remember(conversationId); },
     // Preview builds only: where the active page view is and what it shows.
     async inspect(conversationId) {
       const tab = tabs.get(groups.get(conversationId)?.active);
@@ -245,7 +303,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
       const image = await tab.view.webContents.capturePage();
       return { bounds: tab.view.getBounds(), visible: tab.view.getVisible(), image: image.resize({ width: 480 }).toDataURL() };
     },
-    destroy() { for (const tab of tabs.values()) if (tab.view) tab.view.webContents.close(); tabs.clear(); groups.clear(); },
+    destroy() { if (saveTimer) { clearTimeout(saveTimer); save(); } for (const tab of tabs.values()) if (tab.view) tab.view.webContents.close(); tabs.clear(); groups.clear(); },
   };
 }
 

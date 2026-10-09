@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, CreditCard, Gauge, LoaderCircle, Mic, Plus, Reply, RotateCcw, Search, Square, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, CreditCard, Gauge, LoaderCircle, Mic, Plus, Reply, RotateCcw, Search, Square, TriangleAlert, X, Zap } from "lucide-react";
 import { call, initials, request, useEvent } from "../api.js";
 import { Avatar, Dialog, Menu, useToast } from "./common.jsx";
 import { useDictation } from "../dictation.js";
@@ -116,11 +116,13 @@ export function ToolsPicker({ agentId, onBrowse }) {
     try { await call("integrations.setAccess", { agentId, items: value }); } catch (error) { setAccess(previous); toast(error, "error"); }
   }
   const match = app => !query.trim() || app.displayName.toLowerCase().includes(query.trim().toLowerCase());
-  const featured = (items || []).filter(app => !app.accounts?.length && (query.trim() ? true : app.featured)).filter(match).slice(0, query.trim() ? 12 : 5);
-  // The button shows the agent's apps first, then featured ones.
-  const shown = [...enabled, ...(items || []).filter(app => !app.accounts?.length && app.featured)].slice(0, 3);
+  // Connected apps include those waiting to reconnect, as before; those show a warning and reconnect.
+  const linked = (items || []).filter(app => app.accounts?.length || app.pendingAccounts?.length);
+  const featured = (items || []).filter(app => !linked.includes(app) && (query.trim() ? true : app.featured)).filter(match).slice(0, query.trim() ? 12 : 5);
+  const reconnect = app => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"));
+  const shown = [...linked, ...(items || []).filter(app => !linked.includes(app) && app.featured)].slice(0, 3);
   return (
-    <Menu up={false} align="left" width={240} className="tw-tools-menu" trigger={({ toggle, open }) => (
+    <Menu up align="left" width={240} className="tw-tools-menu" trigger={({ toggle, open }) => (
       <button type="button" className="tw-pill" aria-expanded={open} onClick={toggle} aria-label="Tools">
         {shown.length ? <span className="tw-pill-icons">{shown.map(app => <AppIcon key={app.id} app={app} />)}</span> : null}
         <span>Tools</span><ChevronDown size={16} />
@@ -128,15 +130,19 @@ export function ToolsPicker({ agentId, onBrowse }) {
     )}>
       <label className="tw-menu-search"><Search size={16} /><input autoFocus value={query} placeholder="Search tools..." aria-label="Search tools" onChange={event => setQuery(event.target.value)} /></label>
       {items === null ? <div className="tw-menu-label">Loading…</div> : null}
-      {connected.filter(match).length ? <div className="tw-menu-label">Connected</div> : null}
-      {connected.filter(match).map(app => (
+      {linked.filter(match).length ? <div className="tw-menu-label">Connected</div> : null}
+      {linked.filter(match).map(app => app.accounts?.length ? (
         <button key={app.id} type="button" className={"tw-menu-item" + (allowed(app) ? " selected" : "")} aria-pressed={allowed(app)} onClick={() => void toggle(app)}>
           <AppIcon app={app} /><span className="grow">{app.displayName}</span>{allowed(app) ? <Check size={15} /> : null}
         </button>
+      ) : (
+        <button key={app.id} type="button" className="tw-menu-item" data-close title="Reconnect" onClick={() => void reconnect(app)}>
+          <AppIcon app={app} /><span className="grow">{app.displayName}</span><TriangleAlert size={15} />
+        </button>
       ))}
-      {featured.length ? <div className="tw-menu-label">{query.trim() ? "Available" : "Featured"}</div> : null}
+      {featured.length ? <div className={"tw-menu-label" + (linked.filter(match).length ? " spaced" : "")}>{query.trim() ? "Available" : "Featured"}</div> : null}
       {featured.map(app => (
-        <button key={app.id} type="button" className="tw-menu-item" data-close onClick={() => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"))}>
+        <button key={app.id} type="button" className="tw-menu-item" data-close onClick={() => void reconnect(app)}>
           <AppIcon app={app} /><span className="grow">{app.displayName}</span><Plus size={16} />
         </button>
       ))}
@@ -150,7 +156,7 @@ export function AgentPicker({ agents, value, onChange, onNewAgent }) {
   const agent = agents.find(item => item.id === value) || agents[0];
   if (!agent) return null;
   return (
-    <Menu up={false} align="left" width={224} trigger={({ toggle, open }) => (
+    <Menu up={false} align="left" width={224} className="tw-agent-menu" trigger={({ toggle, open }) => (
       <button type="button" className="tw-pill agent" aria-expanded={open} onClick={toggle} aria-label={"Change agent from " + agent.name}>
         <Avatar agent={agent} size="tiny" /><span>{agent.name}</span><ChevronDown size={16} />
       </button>

@@ -250,7 +250,7 @@ export function Sidebar({ account, agents, conversations, selectedId, view, home
         <button type="button" className="tw-account" aria-expanded={open} onClick={toggle} aria-label="Account">
           <OrgPicture organization={organization} />
           <span><strong>{organization?.name || account?.user?.name || "Timewarp"}</strong><small>{account?.user?.email || ""}</small></span>
-          <ChevronUp size={17} />
+          <ChevronUp size={16} />
         </button>
       )}>
         <OrganizationRow organization={organization} account={account} onSettings={onSettings} />

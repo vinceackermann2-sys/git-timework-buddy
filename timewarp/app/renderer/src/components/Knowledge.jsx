@@ -87,13 +87,12 @@ export function Memories() {
   return (
     <div className="tw-page">
       <PageHead title="Memories" />
-      <SearchField value={query} onChange={setQuery} placeholder="Search memories" shortcut />
+      <div className="tw-memory-search"><SearchField value={query} onChange={setQuery} placeholder="Search memories" shortcut /></div>
       {memory && !memory.files.length && !memory.notes?.trim() || (!files.length && !noteMatch) ? <div className="tw-empty-box dashed">No memories found.</div> : (
       <div className="tw-memory-cards">
         {files.length ? (
-          <button type="button" className="tw-memory-card" onClick={() => setDialog("imports")}>
+          <button type="button" className="tw-memory-card folder" onClick={() => setDialog("imports")}>
             <div><strong>Imports</strong><span>{memory ? memory.files.length : "…"}</span></div>
-            <span>{memory?.files.length ? "Memory files imported from other assistants." : "Nothing imported yet."}</span>
           </button>
         ) : null}
         {noteMatch ? (
@@ -157,10 +156,11 @@ function CreateSkill({ onCreated, onCancel }) {
 // Tabs as in the previous app; Codex scopes: user, repo (workspace), admin and system.
 const SKILL_TABS = [
   ["yours", "Your skills", skill => skill.scope === "user" && !skill.fromApp],
-  ["all", "All", () => true],
+  // As before: All is every skill except those from apps; Codex's own system skills aren't listed.
+  ["all", "All", skill => skill.scope !== "system" && !skill.fromApp],
   ["apps", "From Apps", skill => skill.fromApp],
   ["workspace", "Workspace", skill => skill.scope === "repo"],
-  ["managed", "Managed", skill => skill.scope === "admin" || skill.scope === "system"],
+  ["managed", "Managed", skill => skill.scope === "admin"],
 ];
 
 function SkillDialog({ viewing, onClose, onEnabled, onRemoved }) {

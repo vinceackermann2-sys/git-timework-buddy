@@ -11,8 +11,8 @@ const path = require("node:path");
 
 const BROWSERS = {
   win32: [
-    { id: "edge", name: "Edge", base: "LOCALAPPDATA", dir: "Microsoft/Edge/User Data" },
     { id: "chrome", name: "Chrome", base: "LOCALAPPDATA", dir: "Google/Chrome/User Data" },
+    { id: "edge", name: "Edge", base: "LOCALAPPDATA", dir: "Microsoft/Edge/User Data" },
     { id: "brave", name: "Brave", base: "LOCALAPPDATA", dir: "BraveSoftware/Brave-Browser/User Data" },
     { id: "vivaldi", name: "Vivaldi", base: "LOCALAPPDATA", dir: "Vivaldi/User Data" },
   ],

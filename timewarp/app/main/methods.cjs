@@ -204,6 +204,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "browser.show": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.show(conversationId); },
     "browser.bounds": ({ rect }) => { browser.setBounds(rect || null); return null; },
     "browser.state": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.state(conversationId); },
+    "browser.setMuted": ({ conversationId, tabId, muted }) => { signedIn(); harness.conversations.get(conversationId); return browser.setMuted(conversationId, tabId, !!muted); },
     "browser.newTab": ({ conversationId, url }) => { signedIn(); harness.conversations.get(conversationId); return browser.openTab(conversationId, { url: url || null }); },
     "browser.navigate": ({ conversationId, tabId, url }) => { signedIn(); harness.conversations.get(conversationId); return browser.navigate(conversationId, { tabId, url }); },
     "browser.activate": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.activate(conversationId, tabId); },
@@ -311,15 +312,25 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
           skills.push({ name: skill.name, title: skill.interface?.displayName || skillTitle(skill.name), fromApp: /[\\/]plugins[\\/]cache[\\/]/.test(skill.path), description: skill.interface?.shortDescription || skill.shortDescription || skill.description || "", details: skill.description || "", scope: skill.scope, enabled: skill.enabled !== false, path: skill.path, removable: local });
         }
       }
-      skills.sort((a, b) => (a.scope === "system") - (b.scope === "system") || a.title.localeCompare(b.title));
-      return { skills, errors: [...new Set(errors)] };
+      // One entry per skill name and scope: a copy in Timewarp's own folder wins over the same
+      // skill in a folder Codex also reads (such as ~/.agents/skills).
+      const unique = new Map();
+      for (const skill of skills) {
+        const key = skill.scope + ":" + skill.name, kept = unique.get(key);
+        if (!kept || (skill.removable && !kept.removable)) unique.set(key, skill);
+      }
+      // Ordered by folder, as the previous app listed them ("hyperframes-audio" before "hyperframes").
+      const sortKey = skill => { const file = skill.path.replace(/\\/g, "/"); const cut = skill.fromApp ? file.search(/\/plugins\/cache\//) : file.lastIndexOf("/skills/"); return cut >= 0 ? file.slice(cut) : file; };
+      const list = [...unique.values()].sort((a, b) => (a.scope === "system") - (b.scope === "system") || (sortKey(a) < sortKey(b) ? -1 : sortKey(a) > sortKey(b) ? 1 : 0));
+      return { skills: list, errors: [...new Set(errors)] };
     },
     // Codex plugins from the curated catalog, shown beside connected apps in Tools.
     "plugins.list": async () => {
       signedIn();
       // Local marketplaces (the curated catalog that ships with Codex), as the previous app listed.
       const result = await client.request("plugin/list", { marketplaceKinds: ["local"] });
-      const featured = new Set(result.featuredPluginIds || []);
+      // Featured ids name the remote catalog ("asana@openai-curated-remote"); local plugins match by name.
+      const featured = new Set((result.featuredPluginIds || []).map(id => String(id).split("@")[0]));
       const items = [];
       for (const market of result.marketplaces || []) for (const plugin of market.plugins || []) {
         if (plugin.availability === "DISABLED_BY_ADMIN" || plugin.installPolicy === "NOT_AVAILABLE") continue;
@@ -328,7 +339,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
         items.push({
           id: plugin.id, name: plugin.name, marketplacePath: market.path || null, marketplace: market.name,
           title: ui.displayName || plugin.name, description: ui.shortDescription || "", details: ui.longDescription || "",
-          icon: imageData(ui.composerIcon) || imageData(ui.logo) || remote, installed: !!plugin.installed, enabled: !!plugin.enabled, featured: featured.has(plugin.id),
+          icon: imageData(ui.composerIcon) || imageData(ui.logo) || remote, installed: !!plugin.installed, enabled: !!plugin.enabled, featured: featured.has(plugin.name),
         });
       }
       return items;
@@ -353,7 +364,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     },
     "skills.openFolder": async () => { signedIn(); fs.mkdirSync(knowledge.skillsRoot, { recursive: true }); const error = await shell.openPath(knowledge.skillsRoot); if (error) throw fail(500, error); return { opened: true }; },
     // MCP servers the user adds, and instructions every agent follows.
-    "mcp.list": () => { signedIn(); return mcp.list(); },
+    "mcp.list": input => { signedIn(); return mcp.list({ builtIn: input?.builtIn === true, status: input?.status !== false }); },
     "mcp.add": input => { signedIn(); return mcp.add(input); },
     "mcp.setEnabled": ({ name, enabled }) => { signedIn(); return mcp.setEnabled(name, enabled); },
     "mcp.remove": ({ name }) => { signedIn(); return mcp.remove(name); },

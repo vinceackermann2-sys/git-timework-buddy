@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { call, useEvent } from "../api.js";
-import { Download, Plus, Trash2 } from "lucide-react";
+import { Download, Plug, Plus, Trash2 } from "lucide-react";
 import { Dialog, Segmented, Switch, useToast } from "./common.jsx";
 import { ImportKnowledge } from "./Knowledge.jsx";
 
@@ -17,7 +17,7 @@ function parseEnv(text) {
   return env;
 }
 
-function AddServer({ onAdded, onCancel }) {
+function AddServer({ onAdded, onCancel, onImport }) {
   const [draft, setDraft] = useState({ name: "", transport: "http", url: "", command: "", args: "", env: "" });
   const [busy, setBusy] = useState(false);
   const toast = useToast();
@@ -49,6 +49,7 @@ function AddServer({ onAdded, onCancel }) {
         </>
       )}
       <div className="tw-dialog-actions">
+        {onImport ? <button type="button" className="tw-btn ghost tw-push-left" disabled={busy} onClick={onImport}><Download size={15} />Import from other apps</button> : null}
         <button type="button" className="tw-btn" disabled={busy} onClick={onCancel}>Cancel</button>
         <button type="submit" className="tw-btn primary" disabled={busy}>{busy ? "Adding…" : "Add server"}</button>
       </div>
@@ -56,47 +57,70 @@ function AddServer({ onAdded, onCancel }) {
   );
 }
 
+// Timewarp's own servers read as names ("timewarp_composio" is "Timewarp Composio").
+const serverTitle = server => server.builtIn ? server.name.split(/[_-]+/).filter(Boolean).map(part => part[0].toUpperCase() + part.slice(1)).join(" ") : server.name;
+const serverTarget = server => server.transport === "http" ? server.url : [server.command, ...server.args].join(" ");
+
+// One server: what it offers, sign-in, on or off, remove.
+function ServerDetails({ server, onRun, onClose }) {
+  const toast = useToast();
+  const status = [server.error ? server.error : server.tools !== null ? `${server.tools} tool${server.tools === 1 ? "" : "s"}` : "", AUTH[server.authStatus] || ""].filter(Boolean).join(" · ");
+  if (server.builtIn) return <p className="tw-plugin-text">Built into Timewarp: your connected apps reach agents through this server.{status ? " " + status + "." : ""}</p>;
+  return (
+    <>
+      {status ? <p className="tw-plugin-text">{status}</p> : null}
+      <div className="tw-list-panel">
+        <div className="tw-list-row compact">
+          <div className="grow"><strong>Use this server</strong><span className="desc">New chats pick up changes.</span></div>
+          <Switch label={"Use " + server.name} checked={server.enabled} onChange={value => void onRun("mcp.setEnabled", { name: server.name, enabled: value })} />
+        </div>
+      </div>
+      <div className="tw-dialog-actions">
+        <button type="button" className="tw-btn danger" onClick={() => { if (window.confirm(`Remove the ${server.name} server?`)) void onRun("mcp.remove", { name: server.name }).then(onClose); }}><Trash2 size={15} />Remove</button>
+        {server.authStatus === "notLoggedIn" ? <button type="button" className="tw-btn primary" onClick={() => onRun("mcp.signIn", { name: server.name }).then(() => toast("Finish signing in in your browser."))}>Sign in</button> : null}
+      </div>
+    </>
+  );
+}
+
 export function McpServers({ query = "", onCount }) {
   const [servers, setServers] = useState(null);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [open, setOpen] = useState(null);
   const toast = useToast();
-  const load = () => call("mcp.list").then(setServers).catch(error => { setServers([]); toast(error, "error"); });
+  // The configured servers show at once; their tools and sign-in state follow.
+  const load = () => call("mcp.list", { builtIn: true, status: false }).then(quick => { setServers(current => current || quick); return call("mcp.list", { builtIn: true }); })
+    .then(setServers).catch(error => { setServers(current => current || []); toast(error, "error"); });
   useEffect(() => { void load(); }, []);
   useEffect(() => { if (servers) onCount?.(servers.length); }, [servers]);
   useEvent("mcp.changed", event => { if (event?.success === false) toast(event.error || "Sign-in didn't finish.", "error"); void load(); });
-  const run = (method, input) => call(method, input).then(value => { if (Array.isArray(value)) setServers(value); }).catch(error => toast(error, "error"));
+  // Changes return the user's servers; the list reloads to keep Timewarp's own.
+  const run = (method, input) => call(method, input).then(() => load()).catch(error => toast(error, "error"));
   const needle = query.trim().toLowerCase();
-  const shown = (servers || []).filter(server => !needle || server.name.toLowerCase().includes(needle) || String(server.url || server.command || "").toLowerCase().includes(needle));
+  const shown = (servers || []).filter(server => !needle || serverTitle(server).toLowerCase().includes(needle) || String(serverTarget(server)).toLowerCase().includes(needle));
+  const detail = open && (servers || []).find(server => server.name === open);
   return (
     <>
-      <div className="tw-section-head">
-        <div><h3>MCP servers</h3><p>Give every agent more tools with Model Context Protocol servers. New chats pick up changes.</p></div>
-        <button type="button" className="tw-btn" onClick={() => setImporting(true)}><Download size={15} />Import</button>
-        <button type="button" className="tw-btn" onClick={() => setAdding(true)}><Plus size={15} />Add server</button>
-      </div>
-      {servers === null ? <div className="tw-empty-box">Loading servers…</div> : shown.length ? (
-        <div className="tw-list-panel">
+      {servers === null ? <p className="tw-loading">Loading servers…</p> : (
+        <div className="tw-grid tw-mcp-grid">
           {shown.map(server => (
-            <div key={server.name} className="tw-list-row">
-              <span className="tw-face">{server.name[0]?.toUpperCase()}</span>
-              <div>
-                <strong>{server.name}</strong>
-                <span className="desc">{server.transport === "http" ? server.url : [server.command, ...server.args].join(" ")}</span>
-                <span className="desc">{server.error ? server.error : server.tools !== null ? `${server.tools} tool${server.tools === 1 ? "" : "s"}` : ""}{AUTH[server.authStatus] ? (server.error || server.tools !== null ? " · " : "") + AUTH[server.authStatus] : ""}</span>
-              </div>
-              {server.authStatus === "notLoggedIn" ? <button type="button" className="tw-btn" onClick={() => run("mcp.signIn", { name: server.name }).then(() => toast("Finish signing in in your browser."))}>Sign in</button> : null}
-              <button type="button" className="tw-icon-button" title="Remove" aria-label={"Remove " + server.name} onClick={() => { if (window.confirm(`Remove the ${server.name} server?`)) void run("mcp.remove", { name: server.name }); }}><Trash2 size={15} /></button>
-              <Switch label={"Use " + server.name} checked={server.enabled} onChange={value => void run("mcp.setEnabled", { name: server.name, enabled: value })} />
-            </div>
+            <button key={server.name} type="button" className={"tw-tile clickable" + (server.enabled ? "" : " off")} onClick={() => setOpen(server.name)}>
+              <span className="tw-mcp-icon"><Plug size={24} strokeWidth={1.75} /></span>
+              <div><strong>{serverTitle(server)}</strong><span className="desc">{serverTarget(server)}</span></div>
+            </button>
           ))}
+          {needle ? null : <button type="button" className="tw-add-tile" onClick={() => setAdding(true)}><Plus size={24} strokeWidth={1.75} />Add MCP server</button>}
         </div>
-      ) : <div className="tw-empty-box">{needle ? "No servers match your search." : "No MCP servers yet."}</div>}
+      )}
+      <Dialog open={!!detail} onClose={() => setOpen(null)} title={detail ? serverTitle(detail) : ""} description={detail ? serverTarget(detail) : ""}>
+        {detail ? <ServerDetails server={detail} onRun={run} onClose={() => setOpen(null)} /> : null}
+      </Dialog>
       <Dialog open={importing} onClose={() => setImporting(false)} title="Import MCP servers" description="Servers set up in ChatGPT / Codex, Claude or Cursor on this computer.">
         {importing ? <ImportKnowledge category="mcp" onImported={() => { setImporting(false); void load(); }} /> : null}
       </Dialog>
       <Dialog open={adding} onClose={() => setAdding(false)} title="Add MCP server">
-        {adding ? <AddServer onCancel={() => setAdding(false)} onAdded={value => { setServers(value); setAdding(false); }} /> : null}
+        {adding ? <AddServer onCancel={() => setAdding(false)} onImport={() => { setAdding(false); setImporting(true); }} onAdded={() => { setAdding(false); void load(); }} /> : null}
       </Dialog>
     </>
   );

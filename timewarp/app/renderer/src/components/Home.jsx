@@ -45,7 +45,7 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, onSta
     const count = counts(source);
     if (count.total) suggestions.push({ id: "import-" + source, icon: <Icon name={{ "claude-code": "claude", cursor: "cursor" }[source] || "chatgpt"} />, title: `Import your ${SOURCES[source]} setup`, meta: count.text, action: "Import", run: () => setImporting(source) });
   }
-  suggestions.push({ id: "browser-profiles", icon: <span className="tw-icons"><Icon name="edge-color" /><Icon name="chrome-color" /></span>, title: "Browser profiles", meta: "Manage profiles on this device", action: "Manage", run: () => onSettings("browser") });
+  suggestions.push({ id: "browser-profiles", icon: <span className="tw-icons"><Icon name="chrome-color" /><Icon name="edge-color" /></span>, title: "Browser profiles", meta: "Manage profiles on this device", action: "Manage", run: () => onSettings("browser") });
   const visible = suggestions.filter(item => !dismissed.has(item.id));
   const agent = agents.find(item => item.id === agentId) || agents[0];
   return (

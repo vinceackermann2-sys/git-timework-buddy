@@ -198,7 +198,8 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
         } else {
           const folder = skillFolder(path.join(root, "skills"), name);
           if (!folder) throw fail(409, "An import selection is no longer available. Refresh and try again.");
-          copySkill(folder, name);
+          // Codex already loads skills from ~/.agents/skills; a copy would list them twice.
+          if (!lstat(path.join(home, ".agents", "skills", name, "SKILL.md"))?.isFile()) copySkill(folder, name);
           imported.skills++;
         }
       }

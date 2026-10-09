@@ -376,11 +376,12 @@ async function boot() {
         onError: () => console.error("[timewarp] Chat history sync is pending; local chats are preserved."),
       });
     }
+    // Tools first: Codex keeps the previous run's bridge address until they're registered.
+    void registerTools().catch(error => appLog.warn("tools", "Connected-app tools are pending; refresh Tools to retry. " + error.message));
+    void connectLegacySkills().catch(() => console.error("[timewarp] Previously connected skill folders are unavailable."));
     await history.sync();
     agents.assignMascots();
     await selectModel().catch(() => console.error("[timewarp] The default model could not be updated."));
-    void registerTools().catch(() => console.error("[timewarp] Connected-app tools are pending; refresh Tools to retry."));
-    void connectLegacySkills().catch(() => console.error("[timewarp] Previously connected skill folders are unavailable."));
     if (fixture && !process.env.TIMEWARP_FIXTURE_ONBOARDING) await onboarding.skip();
   }
 

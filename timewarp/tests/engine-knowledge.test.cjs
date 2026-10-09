@@ -70,21 +70,28 @@ test("skill folders connected by the previous app are found again", t => {
 
 test("skills linked in by a skill installer are found and copied", t => {
   const { home, codexHome, knowledge } = setup(t);
-  const shared = path.join(home, ".agents/skills/find-skills");
+  const shared = path.join(home, "skill-store/find-skills");
   fs.mkdirSync(shared, { recursive: true });
   fs.writeFileSync(path.join(shared, "SKILL.md"), "---\nname: find-skills\ndescription: Find skills.\n---\n");
   fs.mkdirSync(path.join(home, ".codex/skills"), { recursive: true });
   fs.symlinkSync(shared, path.join(home, ".codex/skills/find-skills"), "junction");
+  // Codex reads ~/.agents/skills itself, so a skill there isn't copied a second time.
+  const agents = path.join(home, ".agents/skills/media-use");
+  fs.mkdirSync(agents, { recursive: true });
+  fs.writeFileSync(path.join(agents, "SKILL.md"), "---\nname: media-use\ndescription: Media.\n---\n");
+  fs.symlinkSync(agents, path.join(home, ".codex/skills/media-use"), "junction");
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), "tw-outside-"));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.writeFileSync(path.join(outside, "SKILL.md"), "outside\n");
   fs.symlinkSync(outside, path.join(home, ".codex/skills/elsewhere"), "junction");
   const items = Object.fromEntries(knowledge.detect().items.map(item => [item.id, item.names]));
-  assert.deepEqual(items["codex-chatgpt:skills"], ["find-skills"], "links outside the user's folders are ignored");
-  knowledge.importItems([{ id: "codex-chatgpt:skills", names: ["find-skills"] }]);
+  assert.deepEqual(items["codex-chatgpt:skills"], ["find-skills", "media-use"], "links outside the user's folders are ignored");
+  const result = knowledge.importItems([{ id: "codex-chatgpt:skills", names: ["find-skills", "media-use"] }]);
+  assert.equal(result.imported.skills, 2);
   const copied = path.join(codexHome, "skills/find-skills");
   assert.equal(fs.lstatSync(copied).isSymbolicLink(), false);
   assert.match(fs.readFileSync(path.join(copied, "SKILL.md"), "utf8"), /Find skills/);
+  assert.equal(fs.existsSync(path.join(codexHome, "skills/media-use")), false, "a skill Codex already loads isn't copied");
 });
 
 test("MCP servers are found in Codex, Claude and Cursor settings on Windows and macOS", t => {

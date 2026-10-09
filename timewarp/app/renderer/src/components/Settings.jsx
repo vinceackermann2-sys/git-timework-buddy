@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Blocks, BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Ellipsis, Globe, KeyRound, LayoutGrid, Monitor, Moon, Pencil, Plus, Search, Settings2, Sun, Trash2, UserPlus, UserRound, X } from "lucide-react";
+import { Blocks, BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Ellipsis, Globe, KeyRound, LayoutGrid, Monitor, Moon, Pencil, Plus, Search, Settings2, Sun, Trash2, TriangleAlert, UserPlus, UserRound, X } from "lucide-react";
 import { presets, hexToAccent } from "../../../../shared/appearance.cjs";
-import { call, initials, request, useEvent } from "../api.js";
+import { call, initials, relativeTime, request, useEvent } from "../api.js";
 import { Avatar, Dialog, Menu, PageHead, Row, SearchField, Select, Switch, useToast } from "./common.jsx";
 import { AppIcon, ModelPicker, useApps } from "./Composer.jsx";
 import { Memories, Skills } from "./Knowledge.jsx";
@@ -19,6 +19,8 @@ export const GROUPS = [
 ];
 export const SECTIONS = GROUPS.flatMap(group => group.items);
 // Section addresses from earlier versions.
+// General lives at #/customize/settings, as in the previous app.
+export const sectionHref = id => "#/customize/" + (!id || id === "general" ? "settings" : id);
 export const ALIASES = { settings: "general", colors: "general", models: "general", about: "general", agents: "general", memory: "memories", apps: "tools" };
 
 const sameAccent = (a, b) => a && b && Math.abs(a.hue - b.hue) < 0.5 && Math.abs(a.saturation - b.saturation) < 0.01 && Math.abs(a.lightness - b.lightness) < 0.01;
@@ -34,7 +36,7 @@ function ChatGptRow() {
   const connected = state && state.status !== "disconnected";
   const allowed = state?.funding?.subscriptionAllowed !== false;
   const description = !state ? "…" : !allowed ? "Your plan uses Timewarp AI credits. A ChatGPT plan can power AI usage on the Free plan."
-    : state.status === "available" ? `Connected${state.account?.email ? " as " + state.account.email : ""}` : state.status === "reauth_required" ? "Sign in again to keep using your ChatGPT plan" : "Not connected";
+    : state.status === "available" ? `Connected${state.account?.email ? " as " + state.account.email : ""}${state.account?.planType ? ` (${state.account.planType})` : ""}` : state.status === "reauth_required" ? "Sign in again to keep using your ChatGPT plan" : "Not connected";
   const run = action => { setBusy(true); request(action).then(() => { if (action === "connectChatgpt") toast("Finish connecting ChatGPT in your browser."); return load(); }).catch(error => toast(error, "error")).finally(() => setBusy(false)); };
   return (
     <Row title="ChatGPT" description={description}>
@@ -45,24 +47,26 @@ function ChatGptRow() {
   );
 }
 
-function Archived({ open, onClose, agents }) {
+function Archived({ open, onClose }) {
   const [items, setItems] = useState(null);
+  const [query, setQuery] = useState("");
   const toast = useToast();
-  const agentById = new Map(agents.map(agent => [agent.id, agent]));
-  useEffect(() => { if (open) call("conversations.list", { archived: true }).then(setItems).catch(error => toast(error, "error")); }, [open]);
+  useEffect(() => { if (open) { setQuery(""); call("conversations.list", { archived: true }).then(setItems).catch(error => toast(error, "error")); } }, [open]);
+  const needle = query.trim().toLowerCase();
+  const shown = (items || []).filter(conversation => !needle || (conversation.title || "New conversation").toLowerCase().includes(needle));
   return (
-    <Dialog open={open} onClose={onClose} title="Archived conversations" description="Unarchive a conversation to show it in the sidebar again.">
-      {items === null ? <p className="tw-hint">Loading…</p> : items.length ? (
-        <div className="tw-list-panel tw-scroll-list">
-          {items.map(conversation => (
-            <div key={conversation.id} className="tw-list-row compact">
-              <Avatar agent={agentById.get(conversation.agentId)} />
-              <div className="grow"><strong>{conversation.title || "New conversation"}</strong><span className="desc">{agentById.get(conversation.agentId)?.name || "Removed agent"} · {new Date(conversation.lastActivityAt).toLocaleDateString()}</span></div>
+    <Dialog open={open} onClose={onClose} className="tw-archived-dialog" title="Archived conversations" description="Unarchive a conversation to return it to the sidebar.">
+      <label className="tw-dialog-search"><Search size={16} /><input className="tw-input" value={query} placeholder="Search archived conversations..." aria-label="Search archived conversations" onChange={event => setQuery(event.target.value)} /></label>
+      {items === null ? <p className="tw-hint">Loading…</p> : shown.length ? (
+        <div className="tw-archived-list">
+          {shown.map(conversation => (
+            <div key={conversation.id} className="tw-archived-row">
+              <div><p>{conversation.title || "New conversation"}</p><p className="when">Last active {relativeTime(conversation.lastActivityAt)}</p></div>
               <button type="button" className="tw-btn" onClick={() => call("conversations.archive", { id: conversation.id, archived: false }).then(() => { setItems(list => list.filter(item => item.id !== conversation.id)); window.dispatchEvent(new Event("tw:conversations")); }).catch(error => toast(error, "error"))}>Unarchive</button>
             </div>
           ))}
         </div>
-      ) : <p className="tw-hint">No archived conversations.</p>}
+      ) : <p className="tw-hint">{needle ? "No archived conversations match your search." : "No archived conversations."}</p>}
     </Dialog>
   );
 }
@@ -214,13 +218,15 @@ function Tools({ agents }) {
   const [plugin, setPlugin] = useState(null);
   const toast = useToast();
   const loadPlugins = () => call("plugins.list").then(setPlugins).catch(() => setPlugins([]));
-  useEffect(() => { call("mcp.list").then(list => setMcpCount(list.length)).catch(() => {}); void loadPlugins(); }, []);
+  useEffect(() => { call("mcp.list", { builtIn: true, status: false }).then(list => setMcpCount(list.length)).catch(() => {}); void loadPlugins(); }, []);
   // Connected apps and plugins share one list, apps first for the same name.
-  const apps = (items || []).map(app => ({ key: "app:" + app.id, kind: "app", app, title: app.displayName, description: app.shortDescription || "Connect " + app.displayName + " through Composio", featured: !!app.featured, connected: !!app.accounts?.length }));
+  // Accounts that need signing in again still count as connected and offer Reconnect, as before.
+  const apps = (items || []).map(app => ({ key: "app:" + app.id, kind: "app", app, title: app.displayName, description: app.shortDescription || "Connect " + app.displayName + " through Composio", featured: !!app.featured, connected: !!(app.accounts?.length || app.pendingAccounts?.length), pending: !!app.pendingAccounts?.length }));
   const extras = plugins.map(item => ({ key: "plugin:" + item.id, kind: "plugin", plugin: item, title: item.title, description: item.description, featured: item.featured, connected: item.installed }));
   const byName = (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }) || (a.kind === "app" ? -1 : 1);
-  const all = [...apps, ...extras].sort(byName);
-  const tabs = { featured: [...apps.filter(entry => entry.featured), ...extras.filter(entry => entry.featured).sort(byName)], all, connected: apps.filter(entry => entry.connected) };
+  // Connected apps first, then plugins, each by name.
+  const all = [...[...apps].sort(byName), ...[...extras].sort(byName)];
+  const tabs = { featured: [...apps.filter(entry => entry.featured), ...extras.filter(entry => entry.featured).sort(byName)], all, connected: all.filter(entry => entry.connected) };
   const needle = query.trim().toLowerCase();
   const list = (needle ? all : tabs[tab] || []).filter(entry => !needle || entry.title.toLowerCase().includes(needle) || entry.description.toLowerCase().includes(needle));
   const detail = open && (items || []).find(app => app.id === open);
@@ -244,8 +250,10 @@ function Tools({ agents }) {
             <div key={entry.key} className="tw-tile clickable" role="button" tabIndex={0} onClick={() => choose(entry)} onKeyDown={event => { if (event.key === "Enter") choose(entry); }}>
               {entry.kind === "app" ? <AppIcon app={entry.app} size={36} /> : entry.plugin.icon ? <img src={entry.plugin.icon} alt="" width="36" height="36" className="tw-tool-icon" /> : <span className="tw-app-letter" style={{ width: 36, height: 36, fontSize: 18 }}>{initials(entry.title).slice(0, 1)}</span>}
               <div><strong>{entry.title}</strong><span className="desc">{entry.description}</span></div>
-              {entry.kind === "app" && entry.connected ? <span className="tw-faces">{entry.app.accounts.slice(0, 3).map(account => <span key={account.id} title={account.displayName}>{initials(account.displayName).slice(0, 1)}</span>)}</span> : null}
-              {entry.kind === "plugin" && entry.connected ? null : (
+              {entry.kind === "app" && entry.app.accounts?.length ? <span className="tw-faces">{entry.app.accounts.slice(0, 3).map(account => <span key={account.id} title={account.displayName}>{initials(account.displayName).slice(0, 1)}</span>)}</span> : null}
+              {entry.pending ? (
+                <button type="button" className="tw-tile-reconnect" aria-label={"Reconnect " + entry.title} onClick={event => { event.stopPropagation(); connect(entry.app); }}><TriangleAlert size={16} />Reconnect</button>
+              ) : entry.kind === "plugin" && entry.connected ? null : (
                 <button type="button" className="tw-round tw-add-round" title={"Connect " + entry.title} aria-label={"Connect " + entry.title}
                   onClick={event => { event.stopPropagation(); entry.kind === "plugin" ? setPlugin(entry.plugin) : connect(entry.app); }}><Plus size={16} /></button>
               )}
@@ -365,7 +373,7 @@ async function uploadPicture(file) {
 function Organization({ account, onAccount }) {
   const toast = useToast();
   const organization = account?.activeOrganization;
-  const [members, setMembers] = useState([]);
+  const [members, setMembers] = useState(null);
   const [invites, setInvites] = useState([]);
   const [dialog, setDialog] = useState(null);
   const [query, setQuery] = useState(null);
@@ -376,20 +384,21 @@ function Organization({ account, onAccount }) {
   const [name, setName] = useState(organization?.name || "");
   const [newName, setNewName] = useState("");
   const picture = useRef(null);
-  const load = () => Promise.all([call("organizations.members"), call("organizations.invitations")]).then(([m, i]) => { setMembers(m || []); setInvites(i || []); }).catch(() => {});
+  const load = () => Promise.all([call("organizations.members"), call("organizations.invitations")]).then(([m, i]) => { setMembers(m || []); setInvites(i || []); }).catch(error => { setMembers(current => current || []); toast(error, "error"); });
   useEffect(() => { setName(organization?.name || ""); void load(); }, [organization?.id]);
-  const me = members.find(member => member.userId === account?.user?.id);
-  const manager = me?.roles?.some(value => ["owner", "admin"].includes(value));
+  const me = (members || []).find(member => member.userId === account?.user?.id);
+  // The account knows the role at once; the member list takes a moment.
+  const manager = [...(organization?.roles || []), ...(me?.roles || [])].some(value => ["owner", "admin"].includes(value));
   const refresh = value => { onAccount(value); void load(); };
   const needle = (query || "").trim().toLowerCase();
-  const shown = members.filter(member => !needle || [member.name, member.email].some(value => String(value || "").toLowerCase().includes(needle)));
+  const shown = (members || []).filter(member => !needle || [member.name, member.email].some(value => String(value || "").toLowerCase().includes(needle)));
   const pictureUrl = organization?.logo || organization?.image;
   const role0 = member => { const value = member.roles?.[0] || "member"; return value[0].toUpperCase() + value.slice(1); };
   return (
-    <div className="tw-page">
-      <PageHead title="Organization" subtitle={organization ? `Inviting people to ${organization.name} adds them to this organization. Chats and AI credits stay personal.` : "Create or join an organization."} />
+    <div className="tw-page tw-org-page">
+      <PageHead title="Organization" subtitle={organization ? `Inviting people to ${organization.name} adds them to this organization. Chats and AI credits stay personal.${members ? ` You have ${members.length} member${members.length === 1 ? "" : "s"} in this organization.` : ""}` : "Create or join an organization."} />
       {organization ? (
-        <div className="tw-rows-card">
+        <div className="tw-rows-card tw-org-card">
           <div className="tw-list-row">
             <span className="tw-org-picture large">{pictureUrl ? <img className="photo" src={pictureUrl} alt="" /> : <img src="./timewarp-logo.svg" alt="" />}</span>
             <div><strong>{organization.name}</strong><span className="desc">Organization</span></div>
@@ -407,10 +416,11 @@ function Organization({ account, onAccount }) {
           : <input className="tw-input tw-inline-search" autoFocus value={query} placeholder="Search members" aria-label="Search members" onChange={event => setQuery(event.target.value)} onBlur={() => { if (!query) setQuery(null); }} />}
         {manager ? <button type="button" className="tw-btn" onClick={() => setDialog("invite")}><UserPlus size={16} />Invite</button> : null}
       </div>
-      <div className="tw-rows-card">
+      <div className="tw-rows-card tw-members-card">
         <table className="tw-members">
           <thead><tr><th>Name</th><th>Role</th><th>Joined</th></tr></thead>
           <tbody>
+            {members === null ? <tr><td colSpan={3}>Loading members...</td></tr> : null}
             {shown.map(member => (
               <tr key={member.id}>
                 <td><span className="tw-member"><span className="tw-face small">{initials(member.name || member.email).slice(0, 1)}</span>{member.name || member.email}</span></td>
@@ -428,7 +438,7 @@ function Organization({ account, onAccount }) {
           </tbody>
         </table>
       </div>
-      <p className="tw-hint tw-inset">Showing {shown.length} of {members.length}</p>
+      {members ? <p className="tw-hint tw-inset">Showing {shown.length} of {members.length}</p> : null}
       {organization ? null : <div><button type="button" className="tw-btn ghost" onClick={() => setDialog("create")}><Plus size={15} />New organization</button></div>}
       <Dialog open={dialog === "edit"} onClose={() => setDialog(null)} title="Edit organization">
         <form className="tw-import" onSubmit={event => { event.preventDefault(); call("organizations.update", { name }).then(() => call("account.get")).then(refresh).then(() => { toast("Organization saved."); setDialog(null); }).catch(error => toast(error, "error")); }}>
@@ -471,7 +481,7 @@ export function Settings({ section, onSection, ...props }) {
           {GROUPS.map(group => (
             <React.Fragment key={group.label}>
               <h4>{group.label}</h4>
-              {group.items.filter(item => !item.hidden).map(item => <button key={item.id} type="button" aria-current={section === item.id} onClick={() => onSection(item.id)}><item.icon size={16} strokeWidth={1.7} /><span>{item.label}</span></button>)}
+              {group.items.filter(item => !item.hidden).map(item => <a key={item.id} href={sectionHref(item.id)} aria-current={section === item.id ? "page" : undefined}><item.icon size={16} strokeWidth={1.7} /><span>{item.label}</span></a>)}
             </React.Fragment>
           ))}
         </nav>

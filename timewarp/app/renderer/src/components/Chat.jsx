@@ -233,6 +233,15 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
     const node = scroller.current;
     if (node && pinned.current) node.scrollTop = node.scrollHeight;
   }, [turns, approvals, loading]);
+  // A chat at the bottom stays there when its width changes, such as when the pane opens.
+  useEffect(() => {
+    const node = scroller.current, content = thread.current;
+    if (!node || !content || typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(() => { if (pinned.current) node.scrollTop = node.scrollHeight; });
+    observer.observe(node);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   async function send(message, retryOf) {
     const clientId = crypto.randomUUID();
