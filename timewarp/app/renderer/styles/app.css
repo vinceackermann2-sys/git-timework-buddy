@@ -1099,3 +1099,11 @@ dialog.timewarp-setup-dialog .timewarp-org-gate-invites h2 { font-weight: 500; }
 .tw-tool-grid .tw-tile.clickable:hover { transform: translateY(-2px) scale(1.01); border-color: var(--border); }
 .tw-scroll-grid:not(.tw-tool-grid) .tw-tile.clickable:hover { border-color: var(--border); }
 .tw-scroll-grid:not(.tw-tool-grid) .tw-tile.clickable:active { background: color-mix(in srgb, var(--ink) 6%, var(--surface)); }
+/* Activity feed, as before: 32px day rows, 20px names, previews in 64% ink, unrounded mascots */
+.tw-day { display: flex; align-items: center; height: 32px; margin: 12px 0 0; padding: 0 8px; font-weight: 500; line-height: 16px; }
+.tw-side-scroll.feed > .tw-day:first-child { margin-top: 12px; }
+.tw-feed-item { padding: 8px 4px 8px 8px; min-height: 56px; }
+.tw-feed-item .tw-avatar { border-radius: 0; }
+.tw-feed-item strong { line-height: 20px; }
+.tw-feed-item p { color: var(--muted-64); }
+.tw-feed-item time { min-width: 20px; line-height: 16px; text-align: right; }

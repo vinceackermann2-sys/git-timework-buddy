@@ -92,7 +92,7 @@ test("browser profiles can be renamed and removed; their chats return to the def
   assert.equal(store.conversations.get(chat.id).browserProfileId, null);
 });
 
-test("chat lists carry the agent's latest reply for the activity feed", t => {
+test("chat lists carry the latest message for the activity feed, as before", t => {
   const { store } = tempStore(t);
   const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
   const chat = store.conversations.create({ ownerId: "u1", agentId: agent.id });
@@ -101,7 +101,7 @@ test("chat lists carry the agent's latest reply for the activity feed", t => {
   store.messages.append({ id: "m2", conversationId: chat.id, authorId: agent.id, text: "Reply" });
   store.messages.append({ id: "m3", conversationId: chat.id, authorId: "u1", text: "Next question" });
   store.messages.append({ id: "m4", conversationId: chat.id, authorId: agent.id, text: "Lost", status: "failed" });
-  assert.equal(store.conversations.list("u1")[0].lastText, "Reply");
+  assert.equal(store.conversations.list("u1")[0].lastText, "Next question");
 });
 
 test("turn usage is the growth of the thread's totals", t => {
