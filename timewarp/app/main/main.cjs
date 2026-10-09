@@ -6,9 +6,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
-// Recent app log lines for the diagnostics file. The app logs its own state
-// messages only; chat content, files and secrets are never logged.
+// Recent app log lines for the diagnostics file, also written to
+// runtime/logs/main.log. The app logs its own state messages only; chat
+// content, files and secrets are never logged.
 const recentLog = [];
+let appLog = null;
 for (const level of ["error", "warn"]) {
   const original = console[level].bind(console);
   console[level] = (...args) => {
@@ -16,6 +18,7 @@ for (const level of ["error", "warn"]) {
     try { line = args.map(value => value instanceof Error ? value.message : typeof value === "string" ? value : JSON.stringify(value)).join(" "); } catch { line = String(args[0]); }
     recentLog.push(`${new Date().toISOString()} ${level} ${line.slice(0, 500)}`);
     if (recentLog.length > 300) recentLog.shift();
+    appLog?.[level](/^\[timewarp\]/.test(line) ? "timewarp" : "console", line.replace(/^\[timewarp\]\s*/, ""));
     original(...args);
   };
 }
@@ -26,6 +29,8 @@ const VERSION = build.version || app.getVersion();
 const profile = process.env.TIMEWARP_USER_DATA_DIR ? path.resolve(process.env.TIMEWARP_USER_DATA_DIR) : path.join(app.getPath("appData"), build.profile || "Timewarp Dev");
 const runtimeDir = path.join(profile, "runtime");
 fs.mkdirSync(runtimeDir, { recursive: true });
+appLog = require("./log.cjs").createLog(path.join(runtimeDir, "logs"));
+appLog.info("startup", `Timewarp ${VERSION} starting`, { platform: process.platform, arch: process.arch, osRelease: require("node:os").release(), electron: process.versions.electron, packaged: app.isPackaged });
 app.setName("Timewarp");
 app.setPath("userData", profile);
 app.setPath("sessionData", profile);
@@ -80,7 +85,18 @@ function createWindow() {
     if (/^https:\/\//i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
-  mainWindow.webContents.on("will-navigate", (event, url) => { if (!url.startsWith("app://app/")) event.preventDefault(); });
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith("app://app/")) return;
+    event.preventDefault();
+    appLog.warn("window-navigation", "Blocked navigation away from the app", { origin: (() => { try { return new URL(url).origin; } catch { return "invalid"; } })() });
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => appLog.error("renderer:error", "The window's renderer stopped", { reason: details.reason, exitCode: details.exitCode }));
+  mainWindow.webContents.on("unresponsive", () => appLog.warn("renderer:error", "The window stopped responding"));
+  mainWindow.webContents.on("responsive", () => appLog.info("renderer:error", "The window responds again"));
+  mainWindow.webContents.on("console-message", details => {
+    if (details.level === "error") appLog.error("renderer:error", String(details.message || "").slice(0, 300), { source: path.basename(String(details.sourceId || "")), line: details.lineNumber });
+  });
+  mainWindow.webContents.on("did-finish-load", () => appLog.info("startup-timing", `window loaded after ${Date.now() - traceStart}ms`));
   mainWindow.on("closed", () => { mainWindow = null; });
   void mainWindow.loadURL("app://app/index.html");
   return mainWindow;
@@ -101,7 +117,10 @@ function applicationMenu() {
 
 // Start-up timing, printed when TIMEWARP_TRACE_STARTUP is set.
 const traceStart = Date.now();
-const trace = label => { if (process.env.TIMEWARP_TRACE_STARTUP) console.log(`[timewarp] startup ${Date.now() - traceStart}ms ${label}`); };
+const trace = label => {
+  if (process.env.TIMEWARP_TRACE_STARTUP) console.log(`[timewarp] startup ${Date.now() - traceStart}ms ${label}`);
+  if (!/^(call|answered|request) /.test(label)) appLog?.info("startup-timing", `${Date.now() - traceStart}ms ${label}`);
+};
 
 async function boot() {
   trace("ready");
@@ -122,7 +141,7 @@ async function boot() {
   const { vendorRoot, codexExecutable, codexEnv } = require("./codex-paths.cjs");
   const { createServices } = require("./services.cjs");
   const { createHistoryAdapter } = require("./history-adapter.cjs");
-  const { engineInstructions } = require("./instructions.cjs");
+  const { engineInstructions, DELEGATION } = require("./instructions.cjs");
   const { createBrowser } = require("./browser.cjs");
   const { createBrowserTools } = require("./browser-tools.cjs");
   const { createKnowledge } = require("./knowledge.cjs");
@@ -187,12 +206,33 @@ async function boot() {
       return [
         "-c", `model_providers.timewarp={name="Timewarp",base_url="http://127.0.0.1:${bridge.port}/v1",wire_api="responses",env_key="TIMEWARP_BRIDGE_TOKEN"}`,
         "-c", 'model_provider="timewarp"',
+        // The previous app's guidance on when to use workers.
+        "-c", "features.multi_agent_v2.multi_agent_mode_hint_text=" + JSON.stringify(DELEGATION),
       ];
     },
-    env: { CODEX_HOME: codexHome, TIMEWARP_BRIDGE_TOKEN: bridgeToken, TIMEWARP_COMPOSIO_TOKEN: mcpToken, ...codexEnv(vendor) },
+    env: {
+      CODEX_HOME: codexHome, TIMEWARP_BRIDGE_TOKEN: bridgeToken, TIMEWARP_COMPOSIO_TOKEN: mcpToken, ...codexEnv(vendor, process.env, { home: codexHome }),
+      // Git in agent commands handles long Windows paths, as before.
+      ...(process.platform === "win32" ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.longpaths", GIT_CONFIG_VALUE_0: "true" } : {}),
+    },
     clientInfo: { name: "timewarp", title: "Timewarp", version: VERSION },
   });
-  client.on("status", state => broadcast("codex.status", { status: state.status }));
+  client.on("status", state => {
+    broadcast("codex.status", { status: state.status });
+    (state.status === "failed" ? appLog.error : appLog.info)("codex:app-server", `Codex ${state.status}`, state.status === "failed" ? { code: state.code ?? null, signal: state.signal ?? null } : undefined);
+  });
+  client.on("stderr", line => appLog.warn("codex:app-server:stderr", line));
+  // Content-free run records: ids, status and timing, never messages.
+  const turnStarts = new Map();
+  client.on("notification", ({ method, params }) => {
+    if (method === "turn/started") turnStarts.set(params.turn?.id, Date.now());
+    if (method === "turn/completed") {
+      const started = turnStarts.get(params.turn?.id);
+      turnStarts.delete(params.turn?.id);
+      appLog.info("turn", `Turn ${params.turn?.status}`, { thread: String(params.threadId || "").slice(0, 8), turn: String(params.turn?.id || "").slice(0, 8), durationMs: started ? Date.now() - started : null, error: params.turn?.error?.codexErrorInfo || (params.turn?.error ? "error" : null) });
+    }
+    if (method === "error" && !params.willRetry) appLog.warn("turn", "Turn error", { thread: String(params.threadId || "").slice(0, 8), info: params.error?.codexErrorInfo || null });
+  });
   client.on("notification", ({ method, params }) => { if (method === "windowsSandbox/setupCompleted") broadcast("sandbox.changed", params); });
   let executionNotice = null;
   const executionChanged = () => {
@@ -200,7 +240,7 @@ async function boot() {
     executionNotice = setTimeout(() => { executionNotice = null; for (const window of appWindows()) window.webContents.send("timewarp:executionChanged"); broadcast("execution.changed", {}); }, 200);
     executionNotice.unref?.();
   };
-  const guard = require("../../desktop/execution-guard.cjs").bindExecutionGuard(client, { userId: () => userId(), onChange: executionChanged });
+  const guard = require("../../desktop/execution-guard.cjs").bindExecutionGuard(client, { userId: () => userId(), onChange: executionChanged, countItems: true });
   require("../../desktop/codex-funding.cjs").bindCodexFunding({ client, chatgpt: services.chatgpt, funding: services.funding, userId: () => userId() });
 
   async function modelChoices() {
@@ -227,7 +267,7 @@ async function boot() {
     return lines.join("\n") + "\n\n" + knowledge.instructions(store.settings.get("memory")?.mode) + "\n\n" + engineInstructions();
   }
 
-  const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast });
+  const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast, log: appLog });
   const browserTools = createBrowserTools({ browser, onActivity: (conversationId, action) => broadcast("browser.agent", { conversationId, action }) });
   // Raise when the tool set changes: chats then continue in a new thread.
   const vault = createVault({ store, cipher: safeStorageCipher(safeStorage), userId: () => userId() });
@@ -260,7 +300,37 @@ async function boot() {
   });
   automations = createAutomations({ store, harness, userId: () => userId(), notify: broadcast, log: (...args) => console.error("[timewarp]", ...args) });
 
-  const mcp = createMcp({ client, openExternal: url => services.openExternal(url), notify: broadcast });
+  // App and MCP server sign-ins open in an app window that uses the default
+  // browser profile, as in the previous app, so a site signed in there is
+  // signed in for the agent's browser too. It closes when the sign-in returns
+  // to Timewarp's callback on this computer.
+  function openConnector(link, title = "Connect an app") {
+    let url;
+    try { url = new URL(link); } catch { throw new Error("The sign-in link isn't valid."); }
+    if (url.protocol !== "https:" || url.username || url.password) throw new Error("The sign-in link isn't valid.");
+    const session = browser.sessionFor(store.browserProfiles.ensureDefault().id);
+    const window = new BrowserWindow({
+      parent: mainWindow || undefined, width: 560, height: 780, minWidth: 420, minHeight: 560, title, icon: appIcon, autoHideMenuBar: true, backgroundColor: "#ffffff", show: false,
+      webPreferences: { session, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
+    });
+    const loopback = address => { try { return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(address).hostname); } catch { return false; } };
+    const web = address => { try { return ["https:", "http:"].includes(new URL(address).protocol); } catch { return false; } };
+    window.once("ready-to-show", () => window.show());
+    window.webContents.setWindowOpenHandler(({ url: next }) => web(next) && new URL(next).protocol === "https:"
+      ? { action: "allow", overrideBrowserWindowOptions: { parent: window, autoHideMenuBar: true, webPreferences: { session, sandbox: true, contextIsolation: true, nodeIntegration: false } } }
+      : { action: "deny" });
+    window.webContents.on("will-navigate", (event, next) => { if (!web(next)) event.preventDefault(); });
+    window.webContents.on("did-navigate", (_event, next) => {
+      if (!loopback(next)) return;
+      appLog.info("connector", "Sign-in returned to Timewarp");
+      setTimeout(() => { if (!window.isDestroyed()) window.close(); }, 1500);
+    });
+    window.webContents.on("did-fail-load", (_event, code, description, next, isMainFrame) => { if (isMainFrame && code !== -3) appLog.warn("connector", "The sign-in page didn't load", { code, description, origin: (() => { try { return new URL(next).origin; } catch { return null; } })() }); });
+    appLog.info("connector", "Sign-in window opened", { origin: url.origin });
+    void window.loadURL(url.href);
+    return { opened: true };
+  }
+  const mcp = createMcp({ client, openExternal: url => openConnector(url, "Sign in to a server"), notify: broadcast });
 
   async function registerTools(force = false) {
     if (!userId() || (toolsRegistered && !force)) return;
@@ -309,7 +379,7 @@ async function boot() {
         automations: owner ? store.automations.list(owner).length : 0,
         mcpServers: servers.map(server => ({ transport: server.transport, enabled: server.enabled, tools: server.tools, failed: !!server.error })),
       },
-      log: recentLog.slice(-200),
+      log: appLog.tail(200).length ? appLog.tail(200) : recentLog.slice(-200),
     };
   }
   const defaultAppearance = () => ({ scheme: "system", accent: defaultAccent, radiance: 0.5, texture: { type: "dots", step: 0 } });
@@ -319,11 +389,11 @@ async function boot() {
 
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();
-  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service });
+  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service, openConnector });
   const trusted = event => event.senderFrame && event.senderFrame === event.sender.mainFrame && event.senderFrame.url.startsWith("app://app/");
   ipcMain.handle("tw:call", async (event, method, input) => {
     if (!trusted(event)) return { ok: false, error: { message: "Untrusted window.", status: 403 } };
@@ -352,13 +422,15 @@ async function boot() {
   trace("account ready");
   require("../../desktop/updates.cjs").configureUpdates({
     app, autoUpdater: require("electron-updater").autoUpdater, release: build.release || { enabled: false },
+    logger: { info: (...args) => appLog.info("updater", args.join(" ")), warn: (...args) => appLog.warn("updater", args.join(" ")), error: (...args) => appLog.error("updater", args.map(value => value?.message || value).join(" ")), log: (...args) => appLog.info("updater", args.join(" ")) },
     readUpdateConfig: () => require("js-yaml").load(fs.readFileSync(path.join(process.resourcesPath, "app-update.yml"), "utf8")),
     notify: install => {
       void dialog.showMessageBox({ type: "info", title: "Timewarp update", message: "An update is ready. Restart Timewarp to install it.", buttons: ["Restart and install", "Later"], defaultId: 1, cancelId: 1 })
         .then(result => { if (result.response === 0) install(); }).catch(() => {});
     },
   });
-  app.on("before-quit", () => { automations.stop(); browser.destroy(); clearTimeout(executionNotice); guard.stop?.(); history?.stop(); services.close(); bridge.close(); void client.stop(); store.close(); });
+  app.on("will-quit", () => appLog.info("shutdown", "Timewarp quit"));
+  app.on("before-quit", () => { appLog.info("shutdown", "Quitting"); automations.stop(); browser.destroy(); clearTimeout(executionNotice); guard.stop?.(); history?.stop(); services.close(); bridge.close(); void client.stop(); store.close(); });
 }
 
 if (!app.requestSingleInstanceLock()) app.exit(0);

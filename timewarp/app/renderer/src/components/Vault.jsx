@@ -22,7 +22,7 @@ function Editor({ item, kind: initialKind, onSaved, onCancel }) {
   const kind = item?.kind || initialKind || "password";
   const [draft, setDraft] = useState({
     label: item?.label || "", site: item?.origin || "", username: item?.username || "", password: "", notes: item?.notes || "",
-    number: "", cvc: "", expiry: item?.expMonth ? `${String(item.expMonth).padStart(2, "0")}/${String(item.expYear).slice(-2)}` : "", cardholder: item?.cardholder || "", value: "",
+    number: "", expiry: item?.expMonth ? `${String(item.expMonth).padStart(2, "0")}/${String(item.expYear).slice(-2)}` : "", cardholder: item?.cardholder || "", value: "",
   });
   const [busy, setBusy] = useState(false);
   const toast = useToast();
@@ -36,7 +36,7 @@ function Editor({ item, kind: initialKind, onSaved, onCancel }) {
       if (kind === "password") input = { ...input, site: draft.site, username: draft.username, ...(draft.password ? { password: draft.password } : {}) };
       if (kind === "card") {
         const [month, year] = draft.expiry.split("/").map(part => part.trim());
-        input = { ...input, cardholder: draft.cardholder, expMonth: Number(month), expYear: Number(year?.length === 2 ? "20" + year : year), ...(draft.number ? { number: draft.number, cvc: draft.cvc } : {}) };
+        input = { ...input, cardholder: draft.cardholder, expMonth: Number(month), expYear: Number(year?.length === 2 ? "20" + year : year), ...(draft.number ? { number: draft.number } : {}) };
       }
       if (kind === "secret" && draft.value) input.value = draft.value;
       await (item ? call("vault.update", { id: item.id, ...input }) : call("vault.create", input));
@@ -54,10 +54,8 @@ function Editor({ item, kind: initialKind, onSaved, onCancel }) {
       </> : null}
       {kind === "card" ? <>
         {field(item ? "New card number (leave empty to keep it)" : "Card number", "number", { inputMode: "numeric", required: !item, autoComplete: "off" })}
-        <div className="tw-schedule">
-          {field("Expiry (MM/YY)", "expiry", { required: true, placeholder: "08/29", pattern: "\\d{1,2}\\s*/\\s*\\d{2,4}" })}
-          {field("Security code", "cvc", { inputMode: "numeric", maxLength: 4, autoComplete: "off" })}
-        </div>
+        {field("Expiry (MM/YY)", "expiry", { required: true, placeholder: "08/29", pattern: "\\d{1,2}\\s*/\\s*\\d{2,4}" })}
+        <span className="tw-hint">Security codes are never stored. You type the code when you pay.</span>
         {field("Name on card", "cardholder")}
       </> : null}
       {kind === "secret" ? field(item ? "New value (leave empty to keep it)" : "Value", "value", { type: "password", required: !item, autoComplete: "off" }) : null}

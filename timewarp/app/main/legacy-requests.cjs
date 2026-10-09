@@ -3,7 +3,7 @@
 // screens (desktop/*-ui.js), which call window.timewarp.request(action, input).
 const BILLING_ROUTES = new Set(["/billing", "/billing/service", "/billing/history"]);
 
-function createLegacyRequests({ services, harness, guard, version, selectModel, registerTools, historyStatus, onboarding = null }) {
+function createLegacyRequests({ services, harness, guard, version, selectModel, registerTools, historyStatus, onboarding = null, openConnector = null }) {
   const { auth, chatgpt, funding, integrations } = services;
   return async function request(action, input = {}) {
     switch (action) {
@@ -22,7 +22,7 @@ function createLegacyRequests({ services, harness, guard, version, selectModel, 
       case "selectChatgpt": await funding.requireFree(); return chatgpt.selectAccount(input.id);
       case "refreshAiFunding": await selectModel(); return funding.current();
       case "refreshTools": integrations.invalidate(); await registerTools(true); return { ready: true };
-      case "openConnectorBrowser": await services.ensureCallback(); await services.openExternal(input.url); return { ownerId: null, external: true };
+      case "openConnectorBrowser": await services.ensureCallback(); if (openConnector) { openConnector(input.url); return { ownerId: null, external: false }; } await services.openExternal(input.url); return { ownerId: null, external: true };
       case "closeConnectorBrowser": return { closed: true };
       case "authProviders": return services.providers();
       case "signIn": return auth.signIn(input);

@@ -40,6 +40,7 @@ From `timewarp`:
 
     npm run engine:dev               # build and open (separate "Timewarp Dev" profile)
     npm run engine:preview           # signed-in sample account, scripted model, real Codex
+    npm run engine:e2e               # end-to-end harness check in a preview build (15 scenarios)
     npm run test:engine              # engine tests, including a real Codex conversation
     npm run engine:audit             # build and check the engine contains nothing from Energy
     npm run engine:package:draft     # unsigned Windows installer (build/engine-installer-draft)
@@ -52,6 +53,13 @@ From `timewarp`:
 Preview mode is compiled only into `--fixture` development builds and is
 refused for release builds. The local model bridge uses port 7788, or a free
 port when another app (such as the previous Timewarp app) already uses it. `TIMEWARP_TRACE_STARTUP=1` prints start-up timings.
+
+The app log is `runtime/logs/main.log` in the profile, as in the previous app
+(one older file, `main.1.log`, is kept): start-up timing, window and renderer
+errors, browser page failures, Codex status and stderr, content-free turn
+records (status and duration), connector sign-ins, updates and shutdown. It
+never contains chat or page content, files, account details or vault values.
+Settings → General → Diagnostics opens the folder.
 
 ## Independence from Energy
 
@@ -79,21 +87,24 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Agents (create, mascot or picture, rename, instructions, star, reorder, archive) | Energy UI | Same; avatars are mascots, as the previous app's "generate avatar" was |
 | Chats (new, list, search, rename, archive, read state, notifications) | Energy UI | Same |
 | Chat (streaming, reasoning, plans, commands, file changes, tools, web search, images, sub-agents) | Energy harness on Energy's Codex build | Same on the official Codex; activity cards rebuilt |
+| Agent working rules (task execution contract, delegation, Windows shell) | Timewarp's harness instructions and patches | Same text; the previous app's worker guidance replaces Codex's default "only delegate on request" hint; up to 4 agents at once |
+| Run limits (200 tool calls, 20 minutes, stop after 3 identical failures or on the first error when asked; Stop ends workers too) | Timewarp execution guard | Same guard, counting the official app server's tool items |
+| Task panel (stop reason, tool, error and token counts, workers you can follow) | Timewarp task activity | Rebuilt above the composer; a worker's transcript opens from it |
 | Approvals, stop, retry a failed message, per-chat model | Energy UI | Same |
 | Warm chat session on open | Energy | Same |
 | Attachments | Files | Same: images to the model, other files copied into the agent's workspace |
 | Dictation | Cloud transcription | Same service |
 | Chat history sync, restore, Privacy Mode | Timewarp sync | Same format and service |
 | Built-in browser (tabs, profiles, recent sites, downloads) | Energy browser | Rebuilt on `WebContentsView`; profiles can be created, renamed and removed from the chat's browser and Settings → Browser, and switching reopens the chat's pages in the chosen profile |
-| Agent browser control, agent cursor, take over / hand back | agent-browser and Timewarp cursor | Rebuilt as in-process tools; cursor in the page; take over supported |
+| Agent browser control, agent cursor, take over / hand back | agent-browser and Timewarp cursor | Rebuilt as in-process tools (open, snapshot, click, type, press, scroll, read, screenshot, tabs, back, forward, wait, close); cursor in the page; take over supported; works with the pane closed |
 | Files view and previews (PDF, Excel, CSV, Word, images, code, markdown) | Energy UI | Rebuilt; refreshes as the agent works |
-| Vault (sign-ins, cards, secrets, agent access, fill without revealing values) | Energy vault | Rebuilt; cards and secrets need permission each time; address-bar fill; password import from browser CSV exports |
+| Vault (sign-ins, cards, secrets, agent access, fill without revealing values) | Energy vault | Rebuilt; cards and secrets need permission each time; address-bar fill; password import from browser CSV exports; card security codes are never stored, as before |
 | Passkeys | Energy (macOS 13.3+) | Not carried over |
 | Memory (notes, imports from ChatGPT / Codex, Claude, Cursor) | Energy memory | Rebuilt on the same files (`memories/user.md`, `memories/imports`). Imports find the same memory files, skills (including skills linked in by skill installers) and MCP servers (Codex `config.toml`, Claude Code, Claude's desktop app, Cursor) on Windows and macOS; a Cursor project folder can be chosen |
 | Skills (list, enable, import, view) | Codex skills | Same; previously connected skill folders stay available |
 | Instructions for every agent | Energy | Same (Codex global `AGENTS.md`) |
 | Automations (schedules, run now, history) | Energy | Rebuilt; previous automations import paused |
-| Connected apps (Composio), per-agent access | Timewarp Composio | Same service; access UI rebuilt |
+| Connected apps (Composio), per-agent access | Timewarp Composio | Same service and agent tools; sign-in opens in an app window with the default browser profile, as before; access UI rebuilt |
 | MCP servers (URL with sign-in, or local command) | Energy | Rebuilt on the Codex config |
 | Codex plugin catalog | Energy defaults plugin | Not carried over (it shipped Energy's own plugin) |
 | Windows command sandbox setup | Codex | Same |
@@ -116,7 +127,12 @@ command sandbox, setup, diagnostics) are in Settings → General.
 
 ### Verified how
 
-- 285 tests (`npm test`), of which 54 are engine tests (`npm run test:engine`),
+- `npm run engine:e2e`: the real app and Codex with the preview account and a
+  scripted model go through chat, commands with approval, decline and stop,
+  browser use with the pane open and closed, vault fill, connected-app tools,
+  an added MCP server, files, automations, workers, connector sign-in, the log
+  file and diagnostics (15 scenarios, all passing).
+- 289 tests (`npm test`), of which 56 are engine tests (`npm run test:engine`),
   including a real Codex conversation against a local model.
 - Every feature above was exercised end to end in preview builds: a signed-in
   sample account, the real Codex runtime and a scripted local model, with

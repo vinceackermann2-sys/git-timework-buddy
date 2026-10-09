@@ -15,6 +15,18 @@ const KEYS = {
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const READ_ONLY = new Set(["tabs", "snapshot", "read", "screenshot", "wait"]);
+// A full pointer and mouse sequence at the element's center, then its default
+// action (follow a link, toggle a box, submit a form).
+const CLICK_IN_PAGE = `function () {
+  this.scrollIntoView({ block: "center" });
+  const box = this.getBoundingClientRect(), init = { bubbles: true, cancelable: true, composed: true, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, button: 0, view: window };
+  this.dispatchEvent(new PointerEvent("pointerdown", { ...init, pointerType: "mouse", isPrimary: true }));
+  this.dispatchEvent(new MouseEvent("mousedown", init));
+  if (typeof this.focus === "function") this.focus();
+  this.dispatchEvent(new PointerEvent("pointerup", { ...init, pointerType: "mouse", isPrimary: true }));
+  this.dispatchEvent(new MouseEvent("mouseup", init));
+  this.click();
+}`;
 
 const ref = { type: "string", description: "Element reference from the latest snapshot, for example e12." };
 const tab = { type: "string", description: "Optional tab id from the tabs tool. Defaults to the active tab." };
@@ -184,11 +196,17 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         }
         case "snapshot": { const { tab: item, contents } = target(); note(item.id, "Reading the page"); return text(`${contents.getTitle()}\n${contents.getURL()}\n\n${await snapshot(contents)}`); }
         case "click": {
-          const { tab: item, contents } = target(); const node = nodeFor(contents, input.ref); const point = await centerOf(contents, node);
+          const { tab: item, contents, onScreen } = target(); const node = nodeFor(contents, input.ref); const point = await centerOf(contents, node);
           note(item.id, "Clicking");
           await showCursor(contents, point, agent);
           await pause(250);
-          for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) await cdp(contents, "Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", clickCount: type === "mouseMoved" ? 0 : 1 });
+          // Chromium only takes mouse input on pages that are on screen. A page
+          // behind a closed pane or another tab gets the click through the DOM.
+          if (onScreen) for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) await cdp(contents, "Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", clickCount: type === "mouseMoved" ? 0 : 1 });
+          else {
+            const { object } = await cdp(contents, "DOM.resolveNode", { backendNodeId: node });
+            await cdp(contents, "Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: CLICK_IN_PAGE });
+          }
           await settle(contents);
           return text(`Clicked ${input.ref}. Now on ${contents.getURL()}: ${contents.getTitle()}. Take a snapshot to see the result.`);
         }

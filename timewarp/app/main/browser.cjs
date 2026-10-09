@@ -29,7 +29,7 @@ function recordable(url) {
   try { const value = new URL(url); return ["http:", "https:"].includes(value.protocol) && !value.username && !value.password; } catch { return false; }
 }
 
-function createBrowser({ window: getWindow, store, notify = () => {}, userAgentSuffix = "Timewarp" }) {
+function createBrowser({ window: getWindow, store, notify = () => {}, userAgentSuffix = "Timewarp", log = null }) {
   const tabs = new Map(); // tab id -> tab
   const groups = new Map(); // conversation id -> { active: tab id | null }
   const partitions = new Set();
@@ -63,15 +63,18 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
   // Conversations where the user took the browser over from the agent.
   const userControl = new Set();
 
+  // Hidden pages keep a real size, so the agent can still read and work in
+  // them while the pane is closed or another tab or chat is shown.
+  const HIDDEN_SIZE = { width: 1280, height: 860 };
+  const onScreen = tab => !!(visible && bounds && tab.conversationId === shown && groups.get(shown)?.active === tab.id && tab.kind === "web");
   function layout() {
-    const window = getWindow();
+    const size = bounds && bounds.width > 200 && bounds.height > 200 ? { width: bounds.width, height: bounds.height } : HIDDEN_SIZE;
     for (const tab of tabs.values()) {
       if (!tab.view) continue;
-      const show = visible && bounds && tab.conversationId === shown && groups.get(shown)?.active === tab.id && tab.kind === "web";
-      tab.view.setVisible(!!show);
-      if (show) tab.view.setBounds(bounds);
+      const show = onScreen(tab);
+      tab.view.setVisible(show);
+      tab.view.setBounds(show ? bounds : { x: 0, y: 0, ...size });
     }
-    void window;
   }
 
   function attach(tab) {
@@ -81,6 +84,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
     tab.view = view;
     window.contentView.addChildView(view);
     view.setVisible(false);
+    view.setBounds(bounds && bounds.width > 200 ? { x: 0, y: 0, width: bounds.width, height: bounds.height } : { x: 0, y: 0, ...HIDDEN_SIZE });
     const contents = view.webContents;
     contents.setWindowOpenHandler(({ url }) => {
       try { void openTab(tab.conversationId, { url: safeUrl(url), profileId: tab.profileId }); } catch {}
@@ -98,6 +102,10 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
       changed(tab.conversationId);
     });
     contents.on("did-navigate-in-page", (_event, url) => { tab.url = url; changed(tab.conversationId); });
+    contents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
+      if (isMainFrame && code !== -3) log?.warn("browser-view", "A page didn't load", { code, description, origin: (() => { try { return new URL(url).origin; } catch { return null; } })() });
+    });
+    contents.on("render-process-gone", (_event, details) => log?.warn("browser-view", "A page's renderer stopped", { reason: details?.reason }));
     contents.on("render-process-gone", () => { tab.loading = false; tab.title = "This page stopped responding"; changed(tab.conversationId); });
     if (tab.url && tab.url !== "about:blank") void contents.loadURL(tab.url).catch(() => {});
   }
@@ -169,7 +177,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
       visible = bounds.width > 40 && bounds.height > 40 && rect.visible !== false;
       layout();
     },
-    openTab, navigate, close,
+    openTab, navigate, close, sessionFor,
     activate(conversationId, tabId) { const tab = tabFor(conversationId, tabId); groups.get(conversationId).active = tab.id; if (tab.kind === "web" && !tab.view) { attach(tab); evict(); } layout(); changed(conversationId); return groupState(conversationId); },
     back(conversationId, tabId) { const tab = tabFor(conversationId, tabId); if (tab.view?.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack(); return stateOf(tab); },
     forward(conversationId, tabId) { const tab = tabFor(conversationId, tabId); if (tab.view?.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return stateOf(tab); },
@@ -206,8 +214,10 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
     webContents(conversationId, tabId) {
       const tab = tabFor(conversationId, tabId);
       if (tab.kind !== "web") throw fail(409, "Open a web page first.");
-      if (!tab.view) { attach(tab); evict(); layout(); }
-      return { tab, contents: tab.view.webContents };
+      if (!tab.view) { attach(tab); evict(); }
+      // Pages the agent works in run at full speed even while hidden.
+      tab.view.webContents.setBackgroundThrottling(false);
+      return { tab, contents: tab.view.webContents, onScreen: onScreen(tab) };
     },
     setUserControl(conversationId, value) {
       if (value) { userControl.add(conversationId); for (const tab of tabs.values()) if (tab.conversationId === conversationId) tab.agent = null; }

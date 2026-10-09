@@ -51,7 +51,11 @@ class CodexClient extends EventEmitter {
     });
     this.child = child;
     this.stderr = "";
-    child.stderr.on("data", chunk => { this.stderr = (this.stderr + chunk.toString()).slice(-8000); });
+    child.stderr.on("data", chunk => {
+      const text = chunk.toString();
+      this.stderr = (this.stderr + text).slice(-8000);
+      for (const line of text.split(/\r?\n/)) if (line.trim()) this.emit("stderr", line.slice(0, 1000));
+    });
     readline.createInterface({ input: child.stdout }).on("line", line => this.receive(line));
     const exited = new Promise(resolve => child.once("exit", (code, signal) => resolve({ code, signal })));
     child.once("error", error => this.fail(error));

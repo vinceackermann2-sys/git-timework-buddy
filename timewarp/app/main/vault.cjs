@@ -77,7 +77,8 @@ function createVault({ store, cipher, userId }) {
       if (input.number !== undefined) {
         const number = digits(input.number);
         if (number.length < 12 || number.length > 19 || !luhn(number)) throw fail(400, "Check the card number.");
-        secret = { number, cvc: digits(input.cvc).slice(0, 4) };
+        // Like the previous app, security codes are never stored.
+        secret = { number };
         Object.assign(metadata, { brand: brandOf(number), last4: number.slice(-4) });
       } else Object.assign(metadata, { brand: previous.brand, last4: previous.last4 });
       const month = Number(input.expMonth ?? previous.expMonth), year = Number(input.expYear ?? previous.expYear);

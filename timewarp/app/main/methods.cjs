@@ -31,7 +31,7 @@ function fillSignIn(username, password) {
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Agent ownership is checked on every call by agents.get().
   const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
@@ -54,6 +54,14 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       return { saved: true, path: target.filePath };
     },
     "onboarding.restart": () => onboarding.restart(),
+    // The app log folder (runtime/logs), for support.
+    "app.openLogs": async () => {
+      if (!logs) throw fail(404, "Logs are unavailable.");
+      fs.mkdirSync(logs.directory, { recursive: true });
+      const error = await shell.openPath(logs.directory);
+      if (error) throw fail(500, error);
+      return { opened: true };
+    },
     "vault.importPasswords": async () => {
       signedIn();
       const chosen = await dialog.showOpenDialog({ title: "Import passwords", properties: ["openFile"], filters: [{ name: "Passwords export (CSV)", extensions: ["csv"] }] });
@@ -124,6 +132,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "conversations.history": ({ id }) => { signedIn(); return harness.history(id); },
     "conversations.status": ({ id }) => { signedIn(); return harness.conversations.status(id); },
     "conversations.usage": ({ id }) => { signedIn(); return harness.conversations.usage(id); },
+    "conversations.worker": ({ id, threadId }) => { signedIn(); return harness.conversations.worker(id, threadId); },
     "conversations.send": ({ id, text: message, images = [], files = [], clientId, retryOf }) => {
       signedIn();
       const existing = list => (Array.isArray(list) ? list : []).filter(file => typeof file === "string" && path.isAbsolute(file) && fs.existsSync(file) && fs.statSync(file).isFile()).slice(0, 10);
@@ -153,7 +162,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       signedIn();
       await services.ensureCallback();
       const result = await services.integrations.beginConnect(input);
-      if (result?.connectUrl) await services.openExternal(result.connectUrl);
+      if (result?.connectUrl) await (openConnector ? openConnector(result.connectUrl) : services.openExternal(result.connectUrl));
       return result;
     },
     "integrations.disconnect": input => { signedIn(); return services.integrations.disconnect(input); },

@@ -221,6 +221,18 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       messages: id => { ownedConversation(id); return store.messages.list(id); },
       status: id => { ownedConversation(id); return { running: active.has(id), approvals: [...approvals.values()].filter(item => item.conversationId === id) }; },
       usage: id => { ownedConversation(id); return store.turnUsage.list(id); },
+      // A worker's transcript, for following it from the chat. The worker
+      // must belong to this conversation.
+      async worker(id, threadId) {
+        const conversation = ownedConversation(id);
+        if (typeof threadId !== "string" || !threadId) throw fail(400, "Choose a worker.");
+        const result = await client.request("thread/read", { threadId, includeTurns: true });
+        const thread = result.thread || {};
+        const roots = new Set([conversation.codexThreadId, ...(conversation.previousThreadIds || [])].filter(Boolean));
+        const owned = conversationForThread(threadId) === id || roots.has(thread.parentThreadId);
+        if (!owned || roots.has(threadId)) throw fail(404, "This worker isn't part of the conversation.");
+        return { threadId, name: thread.agentNickname || thread.name || thread.agentRole || null, status: thread.status || null, turns: thread.turns || [] };
+      },
     },
     async history(id) {
       const conversation = ownedConversation(id);
@@ -289,10 +301,19 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     },
     async interrupt(id) {
       ownedConversation(id);
-      const turn = active.get(id);
-      if (!turn?.turnId) return { interrupted: false };
-      await client.request("turn/interrupt", { threadId: turn.threadId, turnId: turn.turnId });
-      return { interrupted: true };
+      // Stop can arrive just before Codex registers the turn; try again
+      // briefly while the reply is still starting.
+      for (let attempt = 0; ; attempt++) {
+        const turn = active.get(id);
+        if (!turn) return { interrupted: false };
+        try {
+          if (turn.turnId) { await client.request("turn/interrupt", { threadId: turn.threadId, turnId: turn.turnId }); return { interrupted: true }; }
+        } catch (error) {
+          if (attempt >= 20 || !/no active turn|not found|unknown turn/i.test(error.message || "")) throw error;
+        }
+        if (attempt >= 20) return { interrupted: false };
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
     },
     respond(requestId, response) {
       const pending = approvals.get(requestId);

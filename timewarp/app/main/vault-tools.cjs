@@ -12,7 +12,7 @@ const item = { type: "string", description: "Vault item id from the list tool." 
 const TOOLS = [
   ["list", "List the vault items you may use: sign-ins (site and username), payment cards (brand, last four digits, expiry) and named secrets. Values are never shown.", { site: { type: "string", description: "Optional website to find sign-ins for." } }, []],
   ["fill_sign_in", "Fill a saved sign-in into the page in the built-in browser. Take a snapshot first and pass the username and password field references. The values are typed for you.", { item, username_ref: ref, password_ref: ref, tab }, ["item"]],
-  ["fill_card", "Fill a saved payment card into a checkout form in the built-in browser. The user is asked to allow it each time. Pass the references of the fields the form has.", { item, number_ref: ref, expiry_ref: { ...ref, description: "Field for the expiry as MM/YY." }, exp_month_ref: ref, exp_year_ref: ref, cvc_ref: ref, name_ref: ref, tab }, ["item", "number_ref"]],
+  ["fill_card", "Fill a saved payment card into a checkout form in the built-in browser. The user is asked to allow it each time. Pass the references of the fields the form has. Security codes are never stored: ask the user to type it.", { item, number_ref: ref, expiry_ref: { ...ref, description: "Field for the expiry as MM/YY." }, exp_month_ref: ref, exp_year_ref: ref, name_ref: ref, tab }, ["item", "number_ref"]],
   ["fill_secret", "Fill a saved secret, such as an API key, into a field in the built-in browser. The user is asked to allow it each time.", { item, ref, tab }, ["item", "ref"]],
   ["save_sign_in", "Save a sign-in you created for the user, for example after signing up for a service, so it can be filled later.", { site: { type: "string" }, username: { type: "string" }, password: { type: "string" }, label: { type: "string" } }, ["site", "password"]],
 ];
@@ -46,7 +46,8 @@ function createVaultTools({ vault, browserTools, ask }) {
         const saved = vault.create({ kind: "password", site: input.site, username: input.username, password: input.password, label: input.label }, { agentId: agent.id });
         return text(`Saved the sign-in for ${saved.origin} as ${saved.id}.`);
       }
-      const entry = vault.secret(input.item);
+      if (typeof input.item !== "string" || !input.item.trim()) throw fail(400, "Pass the id of a vault item from the list tool.");
+      const entry = vault.secret(input.item.trim());
       const page = browserTools.pageUrl(conversationId, input.tab);
       const fill = (fieldRef, value) => fieldRef && value ? browserTools.fillSecret(conversationId, { ref: fieldRef, tab: input.tab, value, agent }) : null;
       if (name === "fill_sign_in") {
@@ -67,9 +68,8 @@ function createVaultTools({ vault, browserTools, ask }) {
         await fill(input.expiry_ref, `${month}/${year.slice(-2)}`);
         await fill(input.exp_month_ref, month);
         await fill(input.exp_year_ref, year);
-        await fill(input.cvc_ref, entry.cvc);
         await fill(input.name_ref, entry.cardholder);
-        return text(`Filled the ${entry.brand} ending ${entry.last4}. Check the form and ask the user before placing an order.`);
+        return text(`Filled the ${entry.brand} ending ${entry.last4}. Ask the user to type the security code themselves, check the form, and ask the user before placing an order.`);
       }
       if (name === "fill_secret") {
         if (entry.kind !== "secret") throw fail(400, "That item isn't a secret.");

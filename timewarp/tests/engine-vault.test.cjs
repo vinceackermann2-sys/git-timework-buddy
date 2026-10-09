@@ -77,8 +77,9 @@ test("vault tools fill values without returning them and ask before cards", asyn
   const declined = await call("fill_card", { item: card.id, number_ref: "e5" });
   assert.equal(declined.success, false);
   allow = true;
-  await call("fill_card", { item: card.id, number_ref: "e5", expiry_ref: "e6", cvc_ref: "e7" });
-  assert.deepEqual(typed.slice(-3), [["e5", "4242424242424242"], ["e6", "08/29"], ["e7", "123"]]);
+  const cardFilled = await call("fill_card", { item: card.id, number_ref: "e5", expiry_ref: "e6" });
+  assert.deepEqual(typed.slice(-2), [["e5", "4242424242424242"], ["e6", "08/29"]]);
+  assert.match(cardFilled.contentItems[0].text, /type the security code/);
   assert.equal(asked.length, 3);
 
   const saved = await call("save_sign_in", { site: "new.example", username: "ada", password: "generated-1" });

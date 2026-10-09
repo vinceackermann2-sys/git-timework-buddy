@@ -152,7 +152,10 @@ function General({ settings, onSetting, models, onModel, agents }) {
         ) : null}
         <Row title="Feedback" description="Tell us what happened or what could be better"><button type="button" className="tw-btn" onClick={() => setDialog("feedback")}>Send feedback</button></Row>
         <Row title="Diagnostics" description="Save versions and recent app messages for support. No chats, files or account details.">
-          <button type="button" className="tw-btn" onClick={() => call("diagnostics.export").then(result => { if (result.saved) toast("Diagnostics saved."); }).catch(error => toast(error, "error"))}>Save…</button>
+          <span style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="tw-btn" onClick={() => call("app.openLogs").catch(error => toast(error, "error"))}>Open logs</button>
+            <button type="button" className="tw-btn" onClick={() => call("diagnostics.export").then(result => { if (result.saved) toast("Diagnostics saved."); }).catch(error => toast(error, "error"))}>Save…</button>
+          </span>
         </Row>
         <Row title="Version" description="Timewarp runs its agents with the OpenAI Codex app server. Third-party notices are included with the app."><span className="tw-hint">{info?.version || ""}</span></Row>
       </div>

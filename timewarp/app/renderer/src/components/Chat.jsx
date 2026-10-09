@@ -7,6 +7,7 @@ import { ActivityGroup, PlanCard } from "./Activity.jsx";
 import { ApprovalCard } from "./Approval.jsx";
 import { Composer, FundingBanner } from "./Composer.jsx";
 import { Trace } from "./Trace.jsx";
+import { TaskActivity } from "./TaskActivity.jsx";
 import { Avatar, Dialog, Menu, useToast } from "./common.jsx";
 
 const baseName = file => String(file).split(/[\\/]/).pop();
@@ -284,6 +285,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
         </div>
       </div>
       {atBottom ? null : <button type="button" className="tw-jump" aria-label="Scroll to bottom" onClick={() => { const node = scroller.current; if (node) node.scrollTop = node.scrollHeight; }}><ArrowDown size={16} /></button>}
+      <TaskActivity conversationId={id} turns={turns} />
       <Composer
         autoFocusKey={id} running={running} models={chatModels} onModel={chooseModel}
         placeholder="Send another message..." disabled={loading && !initialMessage}

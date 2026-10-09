@@ -3,8 +3,20 @@ const crypto = require('node:crypto');
 
 // Local, content-free run counters. The native transcript remains the source of
 // detailed tool evidence. These counters are never sent to a telemetry service.
+// Tool items as the official app server reports them (countItems), for
+// runtimes without item/toolCall/completed.
+const TOOL_ITEMS = new Set(['commandExecution', 'mcpToolCall', 'dynamicToolCall', 'fileChange', 'webSearch', 'imageGeneration']);
+function toolOutcome(item) {
+  const failed = ['failed', 'declined'].includes(item.status) || item.success === false || !!item.error ||
+    (item.type === 'commandExecution' && Number.isInteger(item.exitCode) && item.exitCode !== 0);
+  const signature = item.type === 'commandExecution' ? [item.type, item.command]
+    : item.type === 'mcpToolCall' ? [item.type, item.server, item.tool, item.arguments]
+      : item.type === 'dynamicToolCall' ? [item.type, item.namespace, item.tool, item.arguments]
+        : [item.type, item.changes?.map(change => change.path) || item.query || null];
+  return { failed, signature };
+}
 function bindExecutionGuard(client, { userId, onChange = () => {}, now = Date.now,
-  maxToolCalls = 200, maxDurationMs = 20 * 60 * 1000 } = {}) {
+  maxToolCalls = 200, maxDurationMs = 20 * 60 * 1000, countItems = false } = {}) {
   const raw = client.request.bind(client), threads = new Map();
   let owner = null;
   const clear = () => { for (const row of threads.values()) clearTimeout(row.timer); threads.clear(); };
@@ -126,9 +138,22 @@ function bindExecutionGuard(client, { userId, onChange = () => {}, now = Date.no
     if (event.method === 'item/completed' && p.item?.type === 'commandExecution') {
       row.commandFailed = ['failed','declined'].includes(p.item.status) || (Number.isInteger(p.item.exitCode) && p.item.exitCode !== 0);
     }
+    if (countItems && event.method === 'item/completed' && TOOL_ITEMS.has(p.item?.type) && p.item.id && !task.seen.has(p.item.id)) {
+      task.seen.add(p.item.id); task.toolCalls++;
+      const { failed, signature } = toolOutcome(p.item);
+      const key = crypto.createHash('sha256').update(JSON.stringify(signature)).digest('hex');
+      if (failed) {
+        task.failures++;
+        const count = (task.failedCommands.get(key) || 0) + 1; task.failedCommands.set(key, count);
+        if (task.stopOnError) void stop(root, 'Stopped after the first tool error, as requested. Open activity for the exact error; the task is unfinished.');
+        else if (count >= 3) void stop(root, 'A tool failed three times. The run was stopped to avoid another retry loop.');
+      } else task.failedCommands.delete(key);
+      if (task.toolCalls >= maxToolCalls) void stop(root, `This run reached its ${maxToolCalls}-tool-call budget. Review the activity before continuing.`);
+      onChange();
+    }
     // The pinned code-mode runtime reports tool failures (including blocked
     // commands) here, even when no commandExecution item was created.
-    if (event.method === 'item/toolCall/completed' && typeof p.tool === 'string') {
+    if (!countItems && event.method === 'item/toolCall/completed' && typeof p.tool === 'string') {
       const itemKey = p.callId ? `${id}:${p.callId}` : null;
       if (!itemKey || !task.seen.has(itemKey)) {
         if(itemKey)task.seen.add(itemKey); task.toolCalls++;

@@ -78,3 +78,23 @@ test('completion delivered before the start response cannot resurrect a turn',as
   const client=new EventEmitter(),calls=[];client.request=async(method,params)=>{calls.push(method);client.emit('notification',{method:'turn/completed',params:{threadId:params.threadId,turn:{id:'fast'}}});return {turn:{id:'fast',status:'inProgress'}};};
   const guard=bindExecutionGuard(client,{userId:()=> 'owner',maxDurationMs:15});t.after(guard.stop);await client.request('turn/start',{threadId:'root',input:[]});await new Promise(resolve=>setTimeout(resolve,25));assert.deepEqual(calls,['turn/start']);assert.equal(guard.snapshot(['root'])[0].stopped,false);
 });
+
+test('with the official app server, tool items are counted and repeated failures stop the run', async t => {
+  const f = fixture({ countItems: true, maxToolCalls: 5 }); t.after(f.guard.stop); await f.start();
+  const done = (id, item) => f.event('item/completed', { threadId: 'root', item: { id, ...item } });
+  done('a', { type: 'dynamicToolCall', namespace: 'timewarp_browser', tool: 'open', arguments: { url: 'https://example.com' }, status: 'completed', success: true });
+  done('a', { type: 'dynamicToolCall', namespace: 'timewarp_browser', tool: 'open', arguments: { url: 'https://example.com' }, status: 'completed', success: true });
+  done('b', { type: 'agentMessage', text: 'Not a tool' });
+  assert.equal(f.snapshot().toolCalls, 1, 'Each tool item counts once; messages do not count');
+  for (const id of ['c1', 'c2', 'c3']) done(id, { type: 'commandExecution', command: 'npm test', status: 'completed', exitCode: 1 });
+  assert.equal(f.snapshot().failures, 3);
+  assert.equal(f.snapshot().stopped, true);
+  assert.match(f.snapshot().reason, /three times/);
+});
+
+test('with the official app server, the tool-call budget stops the run', async t => {
+  const f = fixture({ countItems: true, maxToolCalls: 3 }); t.after(f.guard.stop); await f.start();
+  for (const id of ['m1', 'm2', 'm3']) f.event('item/completed', { threadId: 'root', item: { id, type: 'mcpToolCall', server: 's', tool: 't' + id, arguments: {}, status: 'completed' } });
+  assert.equal(f.snapshot().stopped, true);
+  assert.match(f.snapshot().reason, /3-tool-call budget/);
+});

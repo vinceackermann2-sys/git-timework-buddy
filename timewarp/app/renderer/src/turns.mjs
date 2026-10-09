@@ -103,6 +103,10 @@ export function summarize(items) {
   if (tools) parts.push(`Used ${tools} tool${tools === 1 ? "" : "s"}`);
   if (searches) parts.push(`Searched the web${searches > 1 ? ` ${searches} times` : ""}`);
   if (workers) parts.push(`Coordinated ${workers === 1 ? "a worker" : workers + " worker actions"}`);
+  const started = items.filter(item => item.type === "subAgentActivity" && item.kind === "started").length;
+  const finished = items.filter(item => item.type === "subAgentActivity" && item.kind === "completed").length;
+  if (started) parts.push(started === 1 ? "Started a worker" : `Started ${started} workers`);
+  if (finished) parts.push(finished === 1 ? "A worker finished" : `${finished} workers finished`);
   if (!parts.length && count("reasoning")) parts.push("Thought it through");
   if (!parts.length) parts.push("Worked on it");
   return parts.join(" · ");

@@ -39,7 +39,18 @@ function scriptedResponse(body) {
   const events = [{ type: "response.created", response: { id } }];
   const command = process.platform === "win32" ? "Write-Output 'Hello from the Timewarp preview'" : "echo 'Hello from the Timewarp preview'";
   const browse = /\bbrowse\b/i.test(latest), runCommand = /\brun\b/i.test(latest);
-  if (codeMode && browse && !outputs.length) {
+  // Tests drive any tool through the code tool: a message with an ```exec
+  // block runs that script, and the reply quotes its output.
+  const script = lastUser >= 0 ? /```exec\n([\s\S]*?)```/.exec(textOf([inputs[lastUser]]))?.[1] : null;
+  // "spawn a worker" starts a worker through the collaboration tools.
+  const spawn = /\bspawn a worker\b/i.test(latest);
+  if (spawn && !outputs.length) {
+    const call = { type: "function_call", id: "fc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "spawn_agent", namespace: "collaboration", arguments: JSON.stringify({ task_name: "helper", message: "Say hello from the worker", fork_turns: "none" }) };
+    events.push({ type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
+  } else if (codeMode && script && !outputs.length) {
+    const call = { type: "custom_tool_call", id: "ctc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "exec", input: script };
+    events.push({ type: "response.output_item.added", output_index: 0, item: { ...call, input: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
+  } else if (codeMode && browse && !outputs.length) {
     // "browse and click <url>" also clicks the first control on the page.
     const url = /https?:\/\/\S+/.exec(latest)?.[0] || "https://example.com/";
     const click = /\bclick\b/i.test(latest)
@@ -56,7 +67,7 @@ function scriptedResponse(body) {
     events.push({ type: "response.output_item.added", output_index: 0, item: codeMode ? { ...call, input: "" } : { ...call, arguments: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
   } else {
     const text = outputs.length
-      ? (browse ? "I opened the page in the browser. Here is what it shows:\n\n```\n" : "The command finished. Here is what it printed:\n\n```\n") + outputText(outputs.at(-1).output).slice(0, 700) + "\n```"
+      ? spawn ? "Started a worker:\n\n```\n" + outputText(outputs.at(-1).output).slice(0, 2000) + "\n```" : script ? "Script output:\n\n```\n" + outputText(outputs.at(-1).output).slice(0, 6000) + "\n```" : (browse ? "I opened the page in the browser. Here is what it shows:\n\n```\n" : "The command finished. Here is what it printed:\n\n```\n") + outputText(outputs.at(-1).output).slice(0, 700) + "\n```"
       : `**Preview reply.** You wrote: “${latest.slice(0, 200)}”.\n\n- Streaming, markdown and code work\n- Ask me to *run* something to see a tool call\n\n\`\`\`js\nconsole.log("Timewarp");\n\`\`\``;
     events.push({ type: "response.output_item.added", output_index: 0, item: { type: "message", role: "assistant", id: message, content: [] } });
     for (const chunk of text.match(/[\s\S]{1,24}/g)) events.push({ type: "response.output_text.delta", item_id: message, output_index: 0, content_index: 0, delta: chunk });
@@ -135,8 +146,9 @@ function createFixture() {
     if (route === "/connectors") {
       if (payload?.action === "list-apps") return json({ apps: [
         { toolkitSlug: "gmail", name: "Gmail", description: "Read and send email.", logo: null, accounts: [{ connectionId: "conn-gmail-1", label: "Preview inbox", email: "inbox@preview.invalid", status: "ACTIVE" }] },
-        { toolkitSlug: "slack", name: "Slack", description: "Read and post messages.", logo: null, accounts: [] },
+        { toolkitSlug: "slack", name: "Slack", description: "Read and post messages.", logo: null, authConfigId: "ac_preview_slack", accounts: [] },
       ] });
+      if (payload?.action === "initiate-connection") return json({ redirectUrl: "https://example.com/?timewarp-connect=1", connectionId: "conn-new-" + crypto.randomUUID() });
       return json(payload?.action === "catalog" ? { apps: [] } : { ok: true });
     }
     return json({ error: "Unavailable in preview mode." }, 404);

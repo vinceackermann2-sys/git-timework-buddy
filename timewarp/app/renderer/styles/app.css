@@ -583,6 +583,28 @@ a { color: var(--accent-strong); }
 .tw-link { border: none; background: none; padding: 0; color: var(--accent-strong); font: inherit; cursor: pointer; }
 .tw-link:hover { text-decoration: underline; }
 
+/* Task activity: run limits, counts and workers, above the composer */
+.tw-task { flex: none; align-self: center; width: min(800px, calc(100% - 96px)); margin: 0 0 8px; max-height: min(32vh, 260px); overflow: auto; border: 0.67px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-sm); }
+.tw-task-toggle { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 9px; width: 100%; min-height: 42px; padding: 9px 12px; border: none; background: var(--surface); color: var(--ink); cursor: pointer; text-align: left; font-size: 14px; }
+.tw-task-toggle > svg:first-child { color: var(--accent-strong); }
+.tw-task-toggle strong { font-weight: 500; }
+.tw-task-toggle span { margin-left: auto; color: var(--muted); font-size: 12.5px; }
+.tw-task-body { padding: 0 8px 8px; }
+.tw-task-limit { margin: 6px 8px; padding: 8px 10px; border-left: 2px solid var(--danger); font-size: 13px; line-height: 1.5; }
+.tw-task-note { margin: 6px 8px 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.tw-task-worker { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 8px; border: none; border-radius: 10px; background: transparent; color: var(--ink); cursor: pointer; text-align: left; }
+.tw-task-worker:hover { background: var(--hover); }
+.tw-task-worker > i { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--muted); }
+.tw-task-worker[data-status="running"] > i { background: var(--accent-strong); box-shadow: 0 0 0 3px var(--user-bubble); }
+.tw-task-worker[data-status="errored"] > i, .tw-task-worker[data-status="failed"] > i { background: var(--danger); }
+.tw-task-worker[data-status="completed"] > i, .tw-task-worker[data-status="shutdown"] > i { background: var(--ok); }
+.tw-task-worker > span { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.tw-task-worker strong { font-weight: 500; font-size: 14px; }
+.tw-task-worker small { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-task-worker em { font-style: normal; color: var(--muted); font-size: 12px; flex: none; }
+.tw-worker-thread { display: grid; gap: 12px; max-height: 60vh; overflow-y: auto; }
+@container (max-width: 640px) { .tw-task { width: calc(100% - 24px); } }
+
 /* Toasts */
 .tw-toasts { position: fixed; bottom: 18px; right: 18px; display: grid; gap: 8px; z-index: 60; }
 .tw-toast { background: var(--surface); border: 0.67px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 10px 14px; max-width: 360px; font-size: 13px; }
