@@ -295,6 +295,8 @@ async function boot() {
   harness = createHarness({
     store, client, userId: () => userId(), instructionsFor, tools,
     modelSettings: () => store.settings.get("modelSettings"),
+    // Automatic review unless the user chose to be asked (Settings → General).
+    approvalsReviewer: () => process.env.TIMEWARP_APPROVALS_REVIEWER || (store.settings.get("preferences")?.approvals === "ask" ? "user" : "auto_review"),
     notify: (name, payload) => { broadcast(name, payload); automations?.observe(name, payload); },
     log: (...args) => console.error("[timewarp]", ...args),
   });

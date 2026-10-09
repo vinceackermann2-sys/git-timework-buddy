@@ -52,3 +52,15 @@ test("activity summaries count files, tools, searches and workers", async () => 
     "Changed 2 files · Used 1 tool · Searched the web · Coordinated a worker");
   assert.equal(summarize([{ type: "reasoning" }]), "Thought it through");
 });
+
+test("automatic approval reviews attach to their turn with a readable action", async () => {
+  const { applyEvent } = await turns;
+  let state = applyEvent([], "turn/started", { turn: { id: "t1", startedAt: 1 } });
+  const action = { type: "command", source: "shell", command: '"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Remove-Item -Force x"', cwd: "C:\w" };
+  state = applyEvent(state, "item/autoApprovalReview/started", { threadId: "th", turnId: "t1", reviewId: "r1", review: { status: "inProgress" }, action });
+  state = applyEvent(state, "item/autoApprovalReview/completed", { threadId: "th", turnId: "t1", reviewId: "r1", review: { status: "denied", riskLevel: "high", rationale: "Deletes files." }, action });
+  state = applyEvent(state, "guardianWarning", { threadId: "th", message: "Automatic approval review denied." });
+  assert.deepEqual(state[0].reviews, [{ id: "r1", status: "denied", risk: "high", rationale: "Deletes files.", action: "Remove-Item -Force x" }]);
+  assert.deepEqual(state[0].warnings, ["Automatic approval review denied."]);
+  assert.equal(applyEvent(state, "item/autoApprovalReview/completed", { turnId: "unknown", reviewId: "r2", review: {}, action }), state, "Reviews for unknown turns are ignored");
+});

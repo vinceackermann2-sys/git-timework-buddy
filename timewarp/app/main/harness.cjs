@@ -23,7 +23,9 @@ const HISTORY_MESSAGES = 60, HISTORY_CHARS = 60000;
 const ATTACHED = "[Attached files, saved in your workspace]";
 
 // tools: { version, specs(agent, conversation), call(conversationId, params, agent), finished(conversationId) }
-function createHarness({ store, client, userId, instructionsFor, threadConfig = () => ({}), modelSettings, tools = null, notify = () => {}, log = () => {} }) {
+// approvalsReviewer: "auto_review" lets Codex's reviewer decide requests for
+// extra access, as the previous app did; "user" asks the user each time.
+function createHarness({ store, client, userId, instructionsFor, threadConfig = () => ({}), modelSettings, approvalsReviewer = () => "user", tools = null, notify = () => {}, log = () => {} }) {
   const toolsVersion = tools?.version || 0;
   const threadOwner = new Map(); // codex thread id -> root conversation id (includes sub-agent threads)
   const loaded = new Set(); // threads resumed or started in this Codex session
@@ -139,7 +141,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   async function ensureThread(conversation, { exceptMessageId } = {}) {
     const agent = ownedAgent(conversation.agentId);
     fs.mkdirSync(agent.workspace, { recursive: true });
-    const base = { cwd: agent.workspace, approvalPolicy: "on-request", sandbox: "workspace-write", developerInstructions: instructionsFor(agent, conversation), config: threadConfig(agent, conversation) };
+    const base = { cwd: agent.workspace, approvalPolicy: "on-request", approvalsReviewer: approvalsReviewer(), sandbox: "workspace-write", developerInstructions: instructionsFor(agent, conversation), config: threadConfig(agent, conversation) };
     const current = conversation.codexThreadId && conversation.toolsVersion >= toolsVersion;
     if (current && loaded.has(conversation.codexThreadId)) return conversation.codexThreadId;
     if (current) {
@@ -286,7 +288,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
         const settings = conversation.modelSettings?.name ? conversation.modelSettings : modelSettings();
         active.set(id, { threadId, turnId: null });
         const result = await client.request("turn/start", {
-          threadId, input, clientUserMessageId: userMessage.id,
+          threadId, input, clientUserMessageId: userMessage.id, approvalsReviewer: approvalsReviewer(),
           ...settings?.name ? { model: settings.name } : {},
           ...settings?.reasoningEffort ? { effort: settings.reasoningEffort } : {},
         });

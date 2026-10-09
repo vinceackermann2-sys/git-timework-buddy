@@ -37,13 +37,19 @@ function scriptedResponse(body) {
   if (process.env.TIMEWARP_FIXTURE_DUMP) require("node:fs").writeFileSync(process.env.TIMEWARP_FIXTURE_DUMP, JSON.stringify(body, null, 1));
   if (process.env.TIMEWARP_FIXTURE_LOG) console.error("[timewarp] fixture request", JSON.stringify({ latest, codeMode, tools: (body.tools || []).map(item => item.name || item.type), inputs: (body.input || []).map(item => item.type + ":" + (item.role || "")), outputs: outputs.length }));
   const events = [{ type: "response.created", response: { id } }];
-  const command = process.platform === "win32" ? "Write-Output 'Hello from the Timewarp preview'" : "echo 'Hello from the Timewarp preview'";
-  const browse = /\bbrowse\b/i.test(latest), runCommand = /\brun\b/i.test(latest);
+  // Codex's automatic approval reviewer asks for a JSON verdict. The preview
+  // allows ordinary commands and denies deleting files.
+  const reviewing = body.text?.format?.name === "codex_output_schema" && /APPROVAL REQUEST START/.test(textOf(body.input));
+  const risky = /\brisky\b/i.test(latest);
+  const command = risky
+    ? (process.platform === "win32" ? "Remove-Item -Recurse -Force 'C:\\timewarp-preview-nothing-here'" : "rm -rf /tmp/timewarp-preview-nothing-here")
+    : process.platform === "win32" ? "Write-Output 'Hello from the Timewarp preview'" : "echo 'Hello from the Timewarp preview'";
+  const browse = !reviewing && /\bbrowse\b/i.test(latest), runCommand = !reviewing && /\brun\b/i.test(latest);
   // Tests drive any tool through the code tool: a message with an ```exec
   // block runs that script, and the reply quotes its output.
-  const script = lastUser >= 0 ? /```exec\n([\s\S]*?)```/.exec(textOf([inputs[lastUser]]))?.[1] : null;
+  const script = !reviewing && lastUser >= 0 ? /```exec\n([\s\S]*?)```/.exec(textOf([inputs[lastUser]]))?.[1] : null;
   // "spawn a worker" starts a worker through the collaboration tools.
-  const spawn = /\bspawn a worker\b/i.test(latest);
+  const spawn = !reviewing && /\bspawn a worker\b/i.test(latest);
   if (spawn && !outputs.length) {
     const call = { type: "function_call", id: "fc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "spawn_agent", namespace: "collaboration", arguments: JSON.stringify({ task_name: "helper", message: "Say hello from the worker", fork_turns: "none" }) };
     events.push({ type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
@@ -66,7 +72,10 @@ function scriptedResponse(body) {
       : { type: "function_call", id: "fc_" + crypto.randomUUID(), call_id: callId, name: "exec_command", arguments: JSON.stringify({ cmd: command }) };
     events.push({ type: "response.output_item.added", output_index: 0, item: codeMode ? { ...call, input: "" } : { ...call, arguments: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
   } else {
-    const text = outputs.length
+    const plan = reviewing ? textOf([inputs[lastUser]]) : "";
+    const text = reviewing
+      ? JSON.stringify(/Remove-Item|rm -rf/.test(plan) ? { risk_level: "high", user_authorization: "unknown", outcome: "deny", rationale: "Deleting files isn't part of the task." } : { outcome: "allow" })
+      : outputs.length
       ? spawn ? "Started a worker:\n\n```\n" + outputText(outputs.at(-1).output).slice(0, 2000) + "\n```" : script ? "Script output:\n\n```\n" + outputText(outputs.at(-1).output).slice(0, 6000) + "\n```" : (browse ? "I opened the page in the browser. Here is what it shows:\n\n```\n" : "The command finished. Here is what it printed:\n\n```\n") + outputText(outputs.at(-1).output).slice(0, 700) + "\n```"
       : `**Preview reply.** You wrote: “${latest.slice(0, 200)}”.\n\n- Streaming, markdown and code work\n- Ask me to *run* something to see a tool call\n\n\`\`\`js\nconsole.log("Timewarp");\n\`\`\``;
     events.push({ type: "response.output_item.added", output_index: 0, item: { type: "message", role: "assistant", id: message, content: [] } });

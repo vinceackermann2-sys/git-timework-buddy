@@ -133,6 +133,19 @@ async function main() {
   const output = reply => { const match = /```\n([\s\S]*?)\n```/.exec(reply); return match ? match[1] : reply; };
   const json = reply => { const text = output(reply), start = text.indexOf("{"); try { return JSON.parse(text.slice(start, text.lastIndexOf("}") + 1)); } catch { throw new Error("The script printed: " + text.slice(0, 600)); } };
 
+  async function declined() {
+      const id = await chat();
+      const result = await turn(id, "Please run a quick check", { approve: false, timeout: 15000 }).catch(error => ({ error }));
+      const status = await call("conversations.status", { id });
+      const request = status.approvals?.[0];
+      if (!request) throw new Error("No approval was requested: " + (result.error?.message || ""));
+      await call("approvals.respond", { id: request.id, response: { decision: "decline" } });
+      for (const deadline = Date.now() + 30000; Date.now() < deadline; await pause(500)) if (!(await call("conversations.status", { id })).running) break;
+      const history = await call("conversations.history", { id });
+      const ran = (history.turns.at(-1).items || []).some(item => item.type === "commandExecution" && item.status === "completed" && /Hello from/.test(item.aggregatedOutput || ""));
+      if (ran) throw new Error("A declined command still ran.");
+      return "a declined command did not run";
+  }
   const scenarios = {
     async chat() {
       const id = await chat();
@@ -145,9 +158,18 @@ async function main() {
     async command() {
       const id = await chat();
       const result = await turn(id, "Please run a quick check");
-      if (!result.approvals.some(item => item.method === "item/commandExecution/requestApproval") && !result.items.some(item => item.type === "commandExecution")) throw new Error("No command ran.");
       if (!/Hello from the Timewarp preview/.test(result.reply)) throw new Error("Command output missing: " + result.reply.slice(0, 300));
-      return `command ran${result.approvals.length ? " after approval" : ""} and its output reached the reply`;
+      if (result.approvals.length) throw new Error("With automatic review, the user shouldn't be asked: " + result.approvals.map(item => item.method).join(", "));
+      return "the reviewer allowed the command without asking, and its output reached the reply";
+    },
+    async reviewDenied() {
+      const id = await chat();
+      const result = await turn(id, "Please run a risky cleanup", { approve: false });
+      const runs = await app.evaluate(`window.timewarp.request("executionStatus", { conversationId: ${JSON.stringify(id)} })`);
+      const ran = result.items.some(item => item.type === "commandExecution" && item.status === "completed" && item.exitCode === 0);
+      if (ran) throw new Error("A command the reviewer denied still ran.");
+      if (!runs.some(run => /approval review/i.test(run.reason || ""))) throw new Error("The run didn't stop with the review reason: " + JSON.stringify(runs));
+      return "the reviewer denied a risky command, it didn't run, and the run stopped with the reason shown";
     },
     async browser() {
       const id = await chat();
@@ -264,23 +286,20 @@ async function main() {
       return "an automation ran and recorded its run";
     },
     async approvalsDeclined() {
-      const id = await chat();
-      const result = await turn(id, "Please run a quick check", { approve: false, timeout: 15000 }).catch(error => ({ error }));
-      const status = await call("conversations.status", { id });
-      const request = status.approvals?.[0];
-      if (!request) throw new Error("No approval was requested: " + (result.error?.message || ""));
-      await call("approvals.respond", { id: request.id, response: { decision: "decline" } });
-      for (const deadline = Date.now() + 30000; Date.now() < deadline; await pause(500)) if (!(await call("conversations.status", { id })).running) break;
-      const history = await call("conversations.history", { id });
-      const ran = (history.turns.at(-1).items || []).some(item => item.type === "commandExecution" && item.status === "completed" && /Hello from/.test(item.aggregatedOutput || ""));
-      if (ran) throw new Error("A declined command still ran.");
-      return "a declined command did not run";
+      // With "Ask me", requests come to the user, who can decline them.
+      const settings = await call("settings.get");
+      await call("settings.set", { key: "preferences", value: { ...settings.preferences, approvals: "ask" } });
+      try { return await declined(); } finally { await call("settings.set", { key: "preferences", value: { ...settings.preferences, approvals: "auto" } }); }
     },
-    async interrupt() {
+    async interruptWhileAsking() {
+      const settings = await call("settings.get");
+      await call("settings.set", { key: "preferences", value: { ...settings.preferences, approvals: "ask" } });
+      try { return (await scenarios.interrupt("Please run a quick check")) + " while an approval was waiting"; } finally { await call("settings.set", { key: "preferences", value: { ...settings.preferences, approvals: "auto" } }); }
+    },
+    async interrupt(text = "Hello, take your time") {
       const id = await chat();
-      await call("conversations.send", { id, text: "Please run a quick check", images: [], files: [], clientId: crypto.randomUUID() });
-      for (const deadline = Date.now() + 20000; Date.now() < deadline; await pause(300)) if ((await call("conversations.status", { id })).running) break;
-      if (process.env.E2E_DEBUG) { await pause(1500); const status = await call("conversations.status", { id }); const history = await call("conversations.history", { id }); console.log("DEBUG", JSON.stringify({ running: status.running, approvals: (status.approvals || []).map(item => item.method), turns: history.turns.map(turn => [turn.id, turn.status, (turn.items || []).map(item => item.type + ":" + (item.status || ""))]) })); }
+      await call("conversations.send", { id, text, images: [], files: [], clientId: crypto.randomUUID() });
+      for (const deadline = Date.now() + 20000; Date.now() < deadline; await pause(100)) if ((await call("conversations.status", { id })).running) break;
       await call("conversations.interrupt", { id });
       for (const deadline = Date.now() + 20000; Date.now() < deadline; await pause(300)) if (!(await call("conversations.status", { id })).running) return "a running reply stopped when asked";
       throw new Error("The reply didn't stop.");

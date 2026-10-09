@@ -40,7 +40,7 @@ From `timewarp`:
 
     npm run engine:dev               # build and open (separate "Timewarp Dev" profile)
     npm run engine:preview           # signed-in sample account, scripted model, real Codex
-    npm run engine:e2e               # end-to-end harness check in a preview build (15 scenarios)
+    npm run engine:e2e               # end-to-end harness check in a preview build (17 scenarios)
     npm run test:engine              # engine tests, including a real Codex conversation
     npm run engine:audit             # build and check the engine contains nothing from Energy
     npm run engine:package:draft     # unsigned Windows installer (build/engine-installer-draft)
@@ -89,6 +89,7 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Chat (streaming, reasoning, plans, commands, file changes, tools, web search, images, sub-agents) | Energy harness on Energy's Codex build | Same on the official Codex; activity cards rebuilt |
 | Agent working rules (task execution contract, delegation, Windows shell) | Timewarp's harness instructions and patches | Same text; the previous app's worker guidance replaces Codex's default "only delegate on request" hint; up to 4 agents at once |
 | Run limits (200 tool calls, 20 minutes, stop after 3 identical failures or on the first error when asked; Stop ends workers too) | Timewarp execution guard | Same guard, counting the official app server's tool items |
+| Approvals for extra access (commands outside the workspace, network, MCP tools) | Automatic review by a reviewer agent; a denial stops the run | Same (Codex's automatic reviewer); each review shows in the chat; Settings → General → Approvals can switch to asking the user |
 | Task panel (stop reason, tool, error and token counts, workers you can follow) | Timewarp task activity | Rebuilt above the composer; a worker's transcript opens from it |
 | Approvals, stop, retry a failed message, per-chat model | Energy UI | Same |
 | Warm chat session on open | Energy | Same |
@@ -131,8 +132,9 @@ command sandbox, setup, diagnostics) are in Settings → General.
   scripted model go through chat, commands with approval, decline and stop,
   browser use with the pane open and closed, vault fill, connected-app tools,
   an added MCP server, files, automations, workers, connector sign-in, the log
-  file and diagnostics (15 scenarios, all passing).
-- 289 tests (`npm test`), of which 56 are engine tests (`npm run test:engine`),
+  file and diagnostics, automatic approval review allowing and denying, and
+  asking the user (17 scenarios, all passing).
+- 290 tests (`npm test`), of which 57 are engine tests (`npm run test:engine`),
   including a real Codex conversation against a local model.
 - Every feature above was exercised end to end in preview builds: a signed-in
   sample account, the real Codex runtime and a scripted local model, with

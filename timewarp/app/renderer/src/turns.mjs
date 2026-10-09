@@ -65,6 +65,19 @@ export function applyEvent(turns, method, params) {
     case "error":
       if (params.willRetry || !params.turnId) return turns;
       return upsertTurn(turns, params.turnId, { error: params.error });
+    // Codex's automatic approval reviewer: one entry per review, on its turn.
+    case "item/autoApprovalReview/started":
+    case "item/autoApprovalReview/completed": {
+      const turn = turns.find(item => item.id === params.turnId);
+      if (!turn) return turns;
+      const review = { id: params.reviewId, status: method.endsWith("started") ? "inProgress" : params.review?.status, risk: params.review?.riskLevel || null, rationale: params.review?.rationale || null, action: reviewedAction(params.action) };
+      const reviews = [...(turn.reviews || []).filter(item => item.id !== review.id), review];
+      return upsertTurn(turns, params.turnId, { reviews });
+    }
+    case "guardianWarning": {
+      const turn = [...turns].reverse().find(item => item.status === "inProgress");
+      return turn ? upsertTurn(turns, turn.id, { warnings: [...(turn.warnings || []), String(params.message || "")] }) : turns;
+    }
     case "turn/aborted":
       return turns.map(turn => turn.status === "inProgress" ? { ...turn, status: "interrupted", error: { message: params.reason || "The reply stopped." } } : turn);
     default:
@@ -73,6 +86,23 @@ export function applyEvent(turns, method, params) {
 }
 
 export function isActivity(item) { return ACTIVITY.has(item?.type); }
+
+// A short description of the action an approval review looked at.
+export function reviewedAction(action) {
+  if (!action) return "an action";
+  if (action.type === "command") {
+    // The shell wrapper ("powershell.exe" -Command "…", bash -lc '…') is noise.
+    const text = String(action.command || "").replace(/\\\\/g, "\\");
+    const inner = /^\s*"?[^"\s]*(?:powershell|pwsh|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+)?(?:-Command|-lc|-c|\/c)\s+(["']?)([\s\S]*)\1\s*$/i.exec(text);
+    return inner ? inner[2] : text;
+  }
+  if (action.type === "execve") return [action.program, ...(action.argv || []).slice(1)].join(" ");
+  if (action.type === "applyPatch") return "changing " + (action.files || []).map(file => String(file).split(/[\\/]/).pop()).join(", ");
+  if (action.type === "networkAccess") return "network access to " + action.host;
+  if (action.type === "mcpToolCall") return `${action.server} · ${action.toolName || action.tool || "tool"}`;
+  if (action.type === "writeStdin") return "input to a running command";
+  return action.type || "an action";
+}
 
 // Splits a turn into display blocks: user messages, agent messages and
 // activity groups made of the tool items between them.

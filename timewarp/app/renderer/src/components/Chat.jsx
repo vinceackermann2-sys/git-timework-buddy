@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArrowDown, ChevronDown, ChevronRight, ChevronUp, EllipsisVertical, FileText, FolderOpen, MessageSquareWarning, PanelRight, Pencil, RotateCcw, Search, X } from "lucide-react";
+import { Archive, ArrowDown, ChevronDown, ChevronRight, ChevronUp, EllipsisVertical, FileText, FolderOpen, MessageSquareWarning, PanelRight, Pencil, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
 import { call, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { ATTACHED, applyEvent, blocksOf, turnsFromMessages, userFiles, userImages, userText } from "../turns.mjs";
@@ -49,7 +49,7 @@ function Turn({ turn, agent, onRetry }) {
   const lastAgent = [...blocks].reverse().find(block => block.kind === "agent");
   const replied = blocks.some(block => block.kind === "agent" && block.item.text);
   const failed = turn.status === "failed" && !replied;
-  const showSide = side.length || live || turn.error || turn.plan?.steps?.length;
+  const showSide = side.length || live || turn.error || turn.plan?.steps?.length || turn.reviews?.length || turn.warnings?.length;
   return (
     <>
       {users.map(block => <UserMessage key={block.key} item={block.item} failed={failed} onRetry={failed && onRetry ? item => onRetry(turn, item) : null} />)}
@@ -61,6 +61,13 @@ function Turn({ turn, agent, onRetry }) {
               ? <ActivityGroup key={block.key} items={block.items} live={live} />
               : <div key={block.key} className="tw-bubble"><Markdown text={block.item.text} streaming={live && block === lastAgent && block.item.status !== "completed"} /></div>)}
             {live && !replied ? <span className="tw-thinking"><span className="tw-dots"><span /><span /><span /></span>{agent?.name || "Your agent"} is working</span> : null}
+            {(turn.reviews || []).map(review => (
+              <div key={review.id} className="tw-review" data-status={review.status}>
+                <ShieldCheck size={14} />
+                <span>{review.status === "inProgress" ? "Reviewing " : review.status === "approved" ? "Automatically allowed " : review.status === "denied" ? "Not allowed " : "Couldn't review "}<code>{review.action}</code>{review.rationale && review.status !== "approved" ? " — " + review.rationale : ""}</span>
+              </div>
+            ))}
+            {(turn.warnings || []).map((warning, index) => <div key={index} className="tw-review" data-status="denied"><ShieldCheck size={14} /><span>{warning}</span></div>)}
             {turn.status === "interrupted" && !turn.error ? <span className="tw-hint">Stopped.</span> : null}
             {turn.error ? <div className="tw-turn-error">{turn.error.message || "The reply could not be completed."}</div> : null}
           </div>

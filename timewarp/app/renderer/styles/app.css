@@ -583,6 +583,13 @@ a { color: var(--accent-strong); }
 .tw-link { border: none; background: none; padding: 0; color: var(--accent-strong); font: inherit; cursor: pointer; }
 .tw-link:hover { text-decoration: underline; }
 
+/* Automatic approval reviews */
+.tw-review { display: flex; align-items: flex-start; gap: 7px; max-width: 100%; color: var(--muted); font-size: 12.5px; line-height: 18px; padding: 2px 4px; }
+.tw-review > svg { flex: none; margin-top: 2px; }
+.tw-review code { font: 11.5px var(--font-mono); overflow-wrap: anywhere; }
+.tw-review[data-status="denied"], .tw-review[data-status="timedOut"], .tw-review[data-status="aborted"] { color: var(--danger); }
+.tw-review[data-status="approved"] > svg { color: var(--ok); }
+
 /* Task activity: run limits, counts and workers, above the composer */
 .tw-task { flex: none; align-self: center; width: min(800px, calc(100% - 96px)); margin: 0 0 8px; max-height: min(32vh, 260px); overflow: auto; border: 0.67px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-sm); }
 .tw-task-toggle { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 9px; width: 100%; min-height: 42px; padding: 9px 12px; border: none; background: var(--surface); color: var(--ink); cursor: pointer; text-align: left; font-size: 14px; }

@@ -130,6 +130,10 @@ function General({ settings, onSetting, models, onModel, agents }) {
         <Row title="Privacy Mode" description={"Pauses cloud chat-history synchronization. Your model requests still use the cloud. Files, memory, browser profiles, cookies and the vault stay on this device." + (sync && !privateMode ? " " + sync : "")}>
           <Switch label="Privacy Mode" checked={privateMode} onChange={value => onSetting("privacy", { ...settings.privacy, mode: value ? "private" : "standard" })} />
         </Row>
+        <Row title="Approvals" description="When an agent needs extra access, such as running a command outside its workspace, an automatic reviewer allows safe actions and stops risky ones, as before. Or Timewarp can ask you each time.">
+          <Select label="Approvals" value={settings.preferences?.approvals === "ask" ? "ask" : "auto"} width={220} onChange={approvals => onSetting("preferences", { ...settings.preferences, approvals })}
+            options={[{ value: "auto", label: "Automatic review" }, { value: "ask", label: "Ask me" }]} />
+        </Row>
         <Row title="Archived conversations" description="View and unarchive conversations removed from the sidebar"><button type="button" className="tw-btn" onClick={() => setDialog("archived")}>Manage</button></Row>
         <Row title="Memory" description="Allow memory reads and writes for all agents">
           <Select label="Memory" value={settings.memory?.mode === "disabled" ? "disabled" : "enabled"} width={160} onChange={mode => onSetting("memory", { ...settings.memory, mode })}
