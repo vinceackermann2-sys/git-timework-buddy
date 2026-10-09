@@ -29,7 +29,7 @@ test("agent browser tools use a non-reserved namespace with strict schemas", () 
   assert.equal(namespace.type, "namespace");
   assert.notEqual(namespace.name, "browser", "browser is reserved by the Responses API");
   const names = namespace.tools.map(tool => tool.name);
-  assert.deepEqual(names, ["open", "tabs", "snapshot", "click", "type", "press", "scroll", "read", "screenshot", "back", "forward", "wait", "close_tab"]);
+  assert.deepEqual(names, ["open", "tabs", "snapshot", "click", "type", "press", "scroll", "read", "screenshot", "back", "forward", "wait", "close_tab", "select", "hover", "upload"]);
   for (const tool of namespace.tools) assert.equal(tool.inputSchema.additionalProperties, false, tool.name);
 });
 
@@ -39,4 +39,21 @@ test("values filled from the vault are hidden from page output, even when reform
   assert.equal(hide("Card: 4242 4242 4242 4242 ok", "4242424242424242"), "Card: [filled from vault] ok");
   assert.equal(hide("Card: 4242-4242-4242-4242", "4242424242424242"), "Card: [filled from vault]");
   assert.equal(hide('value="p@ss.(word)+"', "p@ss.(word)+"), 'value="[filled from vault]"');
+});
+
+test("the agent can upload only files inside its own workspace", t => {
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+  const { workspaceFiles } = require("../app/main/browser-tools.cjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tw-upload-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspace = path.join(root, "workspace");
+  fs.mkdirSync(path.join(workspace, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(workspace, "docs", "cv.pdf"), "pdf");
+  fs.writeFileSync(path.join(root, "secret.txt"), "secret");
+  const agent = { workspace };
+  assert.deepEqual(workspaceFiles(agent, ["docs/cv.pdf"]), [fs.realpathSync(path.join(workspace, "docs", "cv.pdf"))]);
+  assert.throws(() => workspaceFiles(agent, ["../secret.txt"]), /workspace folder/);
+  assert.throws(() => workspaceFiles(agent, [path.join(root, "secret.txt")]), /workspace folder/);
+  assert.throws(() => workspaceFiles(agent, ["docs"]), /isn't a file/);
+  assert.throws(() => workspaceFiles(agent, []), /Choose 1/);
 });

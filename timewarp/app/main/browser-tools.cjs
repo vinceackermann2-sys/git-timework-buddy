@@ -3,7 +3,49 @@
 // the conversation's tabs in Timewarp's built-in browser, using Electron's
 // per-page debugger; no remote debugging port is opened.
 
-const MAX_SNAPSHOT = 24000, MAX_TEXT = 20000;
+const fs = require("node:fs");
+const path = require("node:path");
+
+const MAX_SNAPSHOT = 24000, MAX_TEXT = 20000, MAX_UPLOADS = 10;
+// Chooses a dropdown option by its text or value and tells the page.
+const SELECT_IN_PAGE = `function (wanted) {
+  const select = this.tagName === "SELECT" ? this : this.closest("select") || this.querySelector("select");
+  if (!select) return { ok: false, error: "That element isn't a dropdown. Click it and choose from the list instead." };
+  const text = value => String(value || "").replace(/\\s+/g, " ").trim().toLowerCase(), target = text(wanted);
+  const options = [...select.options];
+  const option = options.find(item => text(item.label || item.text) === target) || options.find(item => text(item.value) === target) || options.find(item => text(item.label || item.text).includes(target));
+  if (!option) return { ok: false, error: "No option matches. The options are: " + options.map(item => (item.label || item.text).trim()).join(", ").slice(0, 400) };
+  select.focus();
+  select.value = option.value;
+  option.selected = true;
+  select.dispatchEvent(new Event("input", { bubbles: true }));
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  return { ok: true, label: (option.label || option.text).trim() };
+}`;
+const HOVER_IN_PAGE = `function () {
+  this.scrollIntoView({ block: "center" });
+  const box = this.getBoundingClientRect(), init = { bubbles: true, composed: true, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, view: window };
+  this.dispatchEvent(new PointerEvent("pointerover", { ...init, pointerType: "mouse" }));
+  this.dispatchEvent(new PointerEvent("pointerenter", { ...init, bubbles: false, pointerType: "mouse" }));
+  this.dispatchEvent(new MouseEvent("mouseover", init));
+  this.dispatchEvent(new MouseEvent("mouseenter", { ...init, bubbles: false }));
+  this.dispatchEvent(new MouseEvent("mousemove", init));
+}`;
+
+// Files the agent may upload: only files inside its own workspace folder.
+function workspaceFiles(agent, files) {
+  if (!agent?.workspace) throw Object.assign(new Error("This agent has no workspace folder."), { status: 400 });
+  if (!Array.isArray(files) || !files.length || files.length > MAX_UPLOADS) throw Object.assign(new Error(`Choose 1–${MAX_UPLOADS} files from your workspace folder.`), { status: 400 });
+  const base = fs.realpathSync(agent.workspace);
+  return files.map(file => {
+    const candidate = path.resolve(base, String(file));
+    let real;
+    try { real = fs.realpathSync(candidate); } catch { throw Object.assign(new Error(`${file} isn't in your workspace folder.`), { status: 404 }); }
+    if (real !== base && !real.startsWith(base + path.sep)) throw Object.assign(new Error("Only files in your workspace folder can be uploaded."), { status: 403 });
+    if (!fs.statSync(real).isFile()) throw Object.assign(new Error(`${file} isn't a file.`), { status: 400 });
+    return real;
+  });
+}
 const INTERACTIVE = new Set(["button", "link", "textbox", "searchbox", "combobox", "checkbox", "radio", "switch", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "tab", "slider", "spinbutton", "treeitem", "listbox", "textarea"]);
 const STRUCTURE = new Set(["heading", "img", "image", "cell", "columnheader", "rowheader", "listitem", "dialog", "alert", "status", "navigation", "main", "form", "table", "row", "paragraph", "StaticText", "list"]);
 const KEYS = {
@@ -44,6 +86,9 @@ const TOOLS = [
   ["forward", "Go forward.", { tab }, []],
   ["wait", "Wait for the page: until text appears, or for a number of seconds (at most 20).", { text: { type: "string" }, seconds: { type: "number" }, tab }, []],
   ["close_tab", "Close a browser tab.", { tab }, []],
+  ["select", "Choose an option in a dropdown (select) by its reference, matching the option's visible text or value.", { ref, option: { type: "string" }, tab }, ["ref", "option"]],
+  ["hover", "Move the pointer over an element, for example to open a menu.", { ref, tab }, ["ref"]],
+  ["upload", "Attach files from your workspace folder to a file field by its reference.", { ref, files: { type: "array", items: { type: "string" }, description: "Paths relative to your workspace folder." }, tab }, ["ref", "files"]],
 ];
 
 function toolSpecs() {
@@ -221,6 +266,36 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
           return text(`Typed into ${input.ref}${input.submit ? " and pressed Enter" : ""}.`);
         }
         case "press": { const { tab: item, contents } = target(); note(item.id, "Pressing " + input.key); await key(contents, input.key); await settle(contents, 300); return text(`Pressed ${input.key}.`); }
+        case "select": {
+          const { tab: item, contents } = target(); const node = nodeFor(contents, input.ref);
+          note(item.id, "Choosing an option");
+          await showCursor(contents, await centerOf(contents, node), agent);
+          const { object } = await cdp(contents, "DOM.resolveNode", { backendNodeId: node });
+          const { result } = await cdp(contents, "Runtime.callFunctionOn", { objectId: object.objectId, arguments: [{ value: String(input.option ?? "") }], returnByValue: true, functionDeclaration: SELECT_IN_PAGE });
+          if (!result?.value?.ok) throw fail(400, result?.value?.error || "That option isn't in the list.");
+          await settle(contents, 300);
+          return text(`Chose "${result.value.label}" in ${input.ref}.`);
+        }
+        case "hover": {
+          const { tab: item, contents, onScreen } = target(); const node = nodeFor(contents, input.ref); const point = await centerOf(contents, node);
+          note(item.id, "Pointing");
+          await showCursor(contents, point, agent);
+          if (onScreen) await cdp(contents, "Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+          else {
+            const { object } = await cdp(contents, "DOM.resolveNode", { backendNodeId: node });
+            await cdp(contents, "Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: HOVER_IN_PAGE });
+          }
+          await settle(contents, 400);
+          return text(`Pointing at ${input.ref}. Take a snapshot to see what appeared.`);
+        }
+        case "upload": {
+          const { tab: item, contents } = target(); const node = nodeFor(contents, input.ref);
+          const files = workspaceFiles(agent, input.files);
+          note(item.id, "Attaching files");
+          await cdp(contents, "DOM.setFileInputFiles", { backendNodeId: node, files });
+          await settle(contents, 300);
+          return text(`Attached ${files.map(file => path.basename(file)).join(", ")} to ${input.ref}.`);
+        }
         case "scroll": {
           const { tab: item, contents } = target(); note(item.id, "Scrolling");
           const amount = Math.max(0.2, Math.min(10, Number(input.amount) || 1)) * (input.direction === "up" ? -1 : 1);
@@ -270,4 +345,4 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
   };
 }
 
-module.exports = { createBrowserTools, toolSpecs, patternFor };
+module.exports = { createBrowserTools, toolSpecs, patternFor, workspaceFiles };

@@ -279,7 +279,9 @@ async function boot() {
       return result.response === 0;
     },
   });
-  const TOOLS_VERSION = 2;
+  // Raised when the dynamic tools change, so chats continue in a thread that has them
+  // (3: browser select, hover and upload; cards without security codes).
+  const TOOLS_VERSION = 3;
   const tools = {
     version: TOOLS_VERSION,
     specs: () => [...browserTools.specs(), ...vaultTools.specs()],

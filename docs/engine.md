@@ -97,7 +97,7 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Dictation | Cloud transcription | Same service |
 | Chat history sync, restore, Privacy Mode | Timewarp sync | Same format and service |
 | Built-in browser (tabs, profiles, recent sites, downloads) | Energy browser | Rebuilt on `WebContentsView`; profiles can be created, renamed and removed from the chat's browser and Settings → Browser, and switching reopens the chat's pages in the chosen profile |
-| Agent browser control, agent cursor, take over / hand back | agent-browser and Timewarp cursor | Rebuilt as in-process tools (open, snapshot, click, type, press, scroll, read, screenshot, tabs, back, forward, wait, close); cursor in the page; take over supported; works with the pane closed |
+| Agent browser control, agent cursor, take over / hand back | agent-browser and Timewarp cursor | Rebuilt as in-process tools (open, snapshot, click, type, press, scroll, read, screenshot, tabs, back, forward, wait, close, choose from dropdowns, hover, upload from the workspace); cursor in the page; take over supported; works with the pane closed |
 | Files view and previews (PDF, Excel, CSV, Word, images, code, markdown) | Energy UI | Rebuilt; refreshes as the agent works |
 | Vault (sign-ins, cards, secrets, agent access, fill without revealing values) | Energy vault | Rebuilt; cards and secrets need permission each time; address-bar fill; password import from browser CSV exports; card security codes are never stored, as before |
 | Passkeys | Energy (macOS 13.3+) | Not carried over |
@@ -134,7 +134,7 @@ command sandbox, setup, diagnostics) are in Settings → General.
   an added MCP server, files, automations, workers, connector sign-in, the log
   file and diagnostics, automatic approval review allowing and denying, and
   asking the user (17 scenarios, all passing).
-- 290 tests (`npm test`), of which 57 are engine tests (`npm run test:engine`),
+- 291 tests (`npm test`), of which 58 are engine tests (`npm run test:engine`),
   including a real Codex conversation against a local model.
 - Every feature above was exercised end to end in preview builds: a signed-in
   sample account, the real Codex runtime and a scripted local model, with

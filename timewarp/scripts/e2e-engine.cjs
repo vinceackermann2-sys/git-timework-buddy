@@ -19,7 +19,11 @@ const freePort = () => new Promise(resolve => { const server = net.createServer(
 const PAGES = {
   "/form": `<!doctype html><title>Timewarp test form</title><h1>Greeting form</h1>
     <label>Name <input id="name"></label><button id="go" onclick="document.getElementById('out').textContent='Hello '+document.getElementById('name').value">Greet</button>
-    <p id="out"></p><div style="height:4000px"></div><p>Bottom of the page</p>`,
+    <p id="out"></p>
+    <label>Size <select onchange="document.getElementById('chosen').textContent='Size '+this.value"><option value="s">Small</option><option value="l">Large</option></select></label><p id="chosen"></p>
+    <button onmouseover="document.getElementById('hovered').textContent='Menu open'">Menu</button><p id="hovered"></p>
+    <label>Document <input type="file" onchange="document.getElementById('file').textContent='Attached '+this.files[0].name"></label><p id="file"></p>
+    <div style="height:4000px"></div><p>Bottom of the page</p>`,
   "/login": `<!doctype html><title>Timewarp test sign-in</title><h1>Sign in</h1>
     <form onsubmit="event.preventDefault()"><label>Email <input name="username" type="email" autocomplete="username"></label>
     <label>Password <input name="password" type="password" autocomplete="current-password"></label><button>Sign in</button></form>
@@ -179,6 +183,8 @@ async function main() {
         await app.evaluate(`document.querySelector('[aria-label="Show pane"]')?.click()`);
         await pause(2500);
       } else await call("browser.show", { conversationId: id });
+      // A file in the agent workspace for the upload step.
+      await turn(id, script(`await tools.exec_command({ cmd: ${JSON.stringify(process.platform === "win32" ? "Set-Content -Path upload.txt -Value hello" : "printf hello > upload.txt")} }); text("ok");`));
       const result = await turn(id, script(`
         const started = Date.now(); const step = label => text(label + " " + (Date.now() - started) + " ms; ");
         const opened = await tools.timewarp_browser__open({ url: ${JSON.stringify(site + "/form")} }); step("open");
@@ -190,20 +196,30 @@ async function main() {
         await tools.timewarp_browser__click({ ref: button }); step("click");
         await tools.timewarp_browser__wait({ text: "Hello Ada", seconds: 5 }); step("wait");
         const page = String(await tools.timewarp_browser__read({})); step("read");
+        const outline2 = String(await tools.timewarp_browser__snapshot({}));
+        const size = (outline2.match(/combobox "Size"[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
+        const menu = (outline2.match(/button "Menu"[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
+        const doc = (outline2.match(/[^\\n]*Document[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
+        await tools.timewarp_browser__select({ ref: size, option: "Large" }); step("select");
+        await tools.timewarp_browser__hover({ ref: menu }); step("hover");
+        await tools.timewarp_browser__upload({ ref: doc, files: ["upload.txt"] }); step("upload");
+        const page2 = String(await tools.timewarp_browser__read({}));
+        const extras = { chose: page2.includes("Size l"), hovered: page2.includes("Menu open"), attached: page2.includes("Attached upload.txt") };
         await tools.timewarp_browser__scroll({ direction: "down", amount: 2 }); step("scroll");
         await tools.timewarp_browser__press({ key: "End" }); step("press");
         const shot = await tools.timewarp_browser__screenshot({}); step("screenshot");
         await tools.timewarp_browser__open({ url: ${JSON.stringify(site + "/login")}, new_tab: true });
         const tabs = String(await tools.timewarp_browser__tabs({})); step("tabs");
         await tools.timewarp_browser__back({}); step("back");
-        text(JSON.stringify({ field, button, typed, greeted: page.includes("Hello Ada"), page: page.slice(0, 200), screenshot: !!shot, tabs: (tabs.match(/127\\.0\\.0\\.1/g) || []).length }));
+        text(JSON.stringify({ field, button, typed, greeted: page.includes("Hello Ada"), page: page.slice(0, 200), extras, screenshot: !!shot, tabs: (tabs.match(/127\\.0\\.0\\.1/g) || []).length }));
       `));
       const value = json(result.reply);
       if (!value.field || !value.button || !value.greeted) throw new Error("Typing and clicking failed: " + JSON.stringify(value));
+      if (!value.extras?.chose || !value.extras.hovered || !value.extras.attached) throw new Error("Choosing, hovering or uploading failed: " + JSON.stringify(value.extras));
       if (value.tabs < 2) throw new Error("A second tab didn't open: " + JSON.stringify(value));
       const state = await call("browser.state", { conversationId: id });
       if (state.tabs.length < 2) throw new Error("The pane doesn't show the agent's tabs.");
-      return "opened, read, typed, clicked, waited, scrolled, pressed keys, took a screenshot and used two tabs";
+      return "opened, read, typed, clicked, chose an option, hovered, uploaded a file, waited, scrolled, pressed keys, took a screenshot and used two tabs";
     },
     async vault() {
       const id = await chat();
