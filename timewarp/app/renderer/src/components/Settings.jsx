@@ -1,26 +1,25 @@
 import React, { useEffect, useRef, useState } from "react";
-import { BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Globe, KeyRound, LayoutGrid, Monitor, Moon, Pencil, Plus, Search, SlidersHorizontal, Sun, Trash2, UserPlus, UserRound } from "lucide-react";
+import { Blocks, BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Ellipsis, Globe, KeyRound, LayoutGrid, Monitor, Moon, Pencil, Plus, Search, Settings2, Sun, Trash2, UserPlus, UserRound, X } from "lucide-react";
 import { presets, hexToAccent } from "../../../../shared/appearance.cjs";
 import { call, initials, request, useEvent } from "../api.js";
-import { Avatar, Dialog, PageHead, Row, SearchField, Select, Switch, useToast } from "./common.jsx";
+import { Avatar, Dialog, Menu, PageHead, Row, SearchField, Select, Switch, useToast } from "./common.jsx";
 import { AppIcon, ModelPicker, useApps } from "./Composer.jsx";
 import { Memories, Skills } from "./Knowledge.jsx";
 import { Automations } from "./Automations.jsx";
-import { McpServers, SharedInstructions } from "./Mcp.jsx";
+import { McpServers } from "./Mcp.jsx";
 import { Vault } from "./Vault.jsx";
-import { FeedbackDialog } from "./Chat.jsx";
 
 export const GROUPS = [
-  { label: "Preferences", items: [{ id: "general", label: "General", icon: SlidersHorizontal }] },
+  { label: "Preferences", items: [{ id: "general", label: "General", icon: Settings2 }] },
   { label: "Capabilities", items: [
-    { id: "tools", label: "Tools", icon: LayoutGrid }, { id: "browser", label: "Browser", icon: Globe }, { id: "vault", label: "Vault", icon: KeyRound },
-    { id: "memories", label: "Memories", icon: Brain }, { id: "skills", label: "Skills", icon: BookMarked }, { id: "automations", label: "Automations", icon: CalendarClock },
+    { id: "tools", label: "Tools", icon: Blocks }, { id: "browser", label: "Browser", icon: Globe }, { id: "vault", label: "Vault", icon: KeyRound },
+    { id: "memories", label: "Memories", icon: Brain }, { id: "skills", label: "Skills", icon: BookMarked }, { id: "automations", label: "Automations", icon: CalendarClock, hidden: true },
   ] },
   { label: "Workspace", items: [{ id: "organization", label: "Organization", icon: Building2 }, { id: "billing", label: "Billing", icon: CreditCard }] },
 ];
 export const SECTIONS = GROUPS.flatMap(group => group.items);
 // Section addresses from earlier versions.
-export const ALIASES = { colors: "general", models: "general", about: "general", agents: "general", memory: "memories", apps: "tools" };
+export const ALIASES = { settings: "general", colors: "general", models: "general", about: "general", agents: "general", memory: "memories", apps: "tools" };
 
 const sameAccent = (a, b) => a && b && Math.abs(a.hue - b.hue) < 0.5 && Math.abs(a.saturation - b.saturation) < 0.01 && Math.abs(a.lightness - b.lightness) < 0.01;
 const accentCss = accent => accent && Number.isFinite(accent.hue) ? `hsl(${accent.hue} ${Math.round((accent.saturation ?? 1) * 100)}% ${Math.round((accent.lightness ?? 0.9) * 100)}%)` : "var(--theme-accent)";
@@ -68,40 +67,13 @@ function Archived({ open, onClose, agents }) {
   );
 }
 
-// Windows needs a one-time setup before agents can run commands in a sandbox
-// without asking each time. Windows asks the user to approve it.
-function SandboxRow() {
-  const [status, setStatus] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const toast = useToast();
-  const load = () => call("sandbox.status").then(value => setStatus(value.status)).catch(() => setStatus("unknown"));
-  useEffect(() => {
-    void load();
-    return window.tw.on("sandbox.changed", result => { setBusy(false); if (!result.success) toast(result.error || "The sandbox setup didn't finish.", "error"); void load(); });
-  }, []);
-  const ready = status === "ready";
-  return (
-    <Row title="Command sandbox" description={ready ? "Agents run commands inside their workspace without asking each time." : "Without it, agents ask before every command. Windows asks you to approve the setup once."}>
-      {ready ? <span className="tw-tag ok">Ready</span> : (
-        <button type="button" className="tw-btn" disabled={busy || status === null} onClick={() => { setBusy(true); call("sandbox.setup", { mode: "elevated" }).catch(error => { setBusy(false); toast(error, "error"); }); }}>
-          {busy ? "Setting up…" : status === "updateRequired" ? "Update" : "Set up"}
-        </button>
-      )}
-    </Row>
-  );
-}
-
 function General({ settings, onSetting, models, onModel, agents }) {
   const toast = useToast();
   const [colors, setColors] = useState(false);
   const [dialog, setDialog] = useState(null);
-  const [history, setHistory] = useState(null);
-  const [info, setInfo] = useState(null);
-  useEffect(() => { call("history.status").then(setHistory).catch(() => {}); call("app.info").then(setInfo).catch(() => {}); }, []);
   const appearance = settings.appearance || {};
   const setAppearance = patch => onSetting("appearance", { ...appearance, ...patch });
   const privateMode = settings.privacy?.mode === "private";
-  const sync = history?.state === "synced" ? "Chat history synced " + new Date(history.lastSyncedAt).toLocaleTimeString([], { timeStyle: "short" }) + "." : history?.state === "error" ? "Chat history sync is pending." : "";
   return (
     <div className="tw-page">
       <PageHead title="General" subtitle="Configure preferences" />
@@ -127,47 +99,16 @@ function General({ settings, onSetting, models, onModel, agents }) {
         ) : null}
         <Row title="Model" description="LLM used for new conversations. Existing conversations keep their original model."><ModelPicker models={models} onSelect={onModel} up={false} /></Row>
         <ChatGptRow />
-        <Row title="Privacy Mode" description={"Pauses cloud chat-history synchronization. Your model requests still use the cloud. Files, memory, browser profiles, cookies and the vault stay on this device." + (sync && !privateMode ? " " + sync : "")}>
+        <Row title="Privacy Mode" description="Pauses cloud chat-history synchronization. Your model requests still use the cloud. Files, memory, browser profiles, cookies and the vault stay on this device.">
           <Switch label="Privacy Mode" checked={privateMode} onChange={value => onSetting("privacy", { ...settings.privacy, mode: value ? "private" : "standard" })} />
-        </Row>
-        <Row title="Approvals" description="When an agent needs extra access, such as running a command outside its workspace, an automatic reviewer allows safe actions and stops risky ones, as before. Or Timewarp can ask you each time.">
-          <Select label="Approvals" value={settings.preferences?.approvals === "ask" ? "ask" : "auto"} width={220} onChange={approvals => onSetting("preferences", { ...settings.preferences, approvals })}
-            options={[{ value: "auto", label: "Automatic review" }, { value: "ask", label: "Ask me" }]} />
         </Row>
         <Row title="Archived conversations" description="View and unarchive conversations removed from the sidebar"><button type="button" className="tw-btn" onClick={() => setDialog("archived")}>Manage</button></Row>
         <Row title="Memory" description="Allow memory reads and writes for all agents">
-          <Select label="Memory" value={settings.memory?.mode === "disabled" ? "disabled" : "enabled"} width={160} onChange={mode => onSetting("memory", { ...settings.memory, mode })}
-            options={[{ value: "enabled", label: "Enabled" }, { value: "disabled", label: "Disabled" }]} />
+          <Select label="Memory" value={({ disabled: "none", read: "read", write: "write", none: "none" })[settings.memory?.mode] || "enabled"} width={160} onChange={mode => onSetting("memory", { ...settings.memory, mode })}
+            options={[{ value: "enabled", label: "Enabled" }, { value: "read", label: "Read only" }, { value: "write", label: "Write only" }, { value: "none", label: "None" }]} />
         </Row>
-      </div>
-      <div className="tw-rows-card">
-        <Row title="Reply notifications" description="Notify me when an agent finishes while Timewarp is in the background">
-          <Switch label="Reply notifications" checked={settings.notifications?.replies !== false} onChange={value => onSetting("notifications", { ...settings.notifications, replies: value })} />
-        </Row>
-        <Row title="Instructions for every agent" description="Guidance all agents follow, on top of their own instructions"><button type="button" className="tw-btn" onClick={() => setDialog("instructions")}>Edit</button></Row>
-        {window.tw.platform === "win32" ? <SandboxRow /> : null}
-        <Row title="Setup" description="Go through the welcome steps again. Your agents, chats and settings stay as they are.">
-          <button type="button" className="tw-btn" onClick={() => { if (window.confirm("Run setup again? Your agents, chats and settings stay as they are.")) call("onboarding.restart").then(() => { location.hash = "#/"; location.reload(); }).catch(error => toast(error, "error")); }}>Run setup again</button>
-        </Row>
-        {info ? (
-          <Row title="Hardware acceleration" description="Uses the graphics card to draw Timewarp. Turn it off if the window flickers or stays blank, for example on older Macs. Timewarp restarts.">
-            <Switch label="Hardware acceleration" checked={info.hardwareAcceleration !== false} onChange={value => { if (window.confirm("Restart Timewarp now to change hardware acceleration?")) call("app.setHardwareAcceleration", { enabled: value }).catch(error => toast(error, "error")); }} />
-          </Row>
-        ) : null}
-        <Row title="Feedback" description="Tell us what happened or what could be better"><button type="button" className="tw-btn" onClick={() => setDialog("feedback")}>Send feedback</button></Row>
-        <Row title="Diagnostics" description="Save versions and recent app messages for support. No chats, files or account details.">
-          <span style={{ display: "flex", gap: 8 }}>
-            <button type="button" className="tw-btn" onClick={() => call("app.openLogs").catch(error => toast(error, "error"))}>Open logs</button>
-            <button type="button" className="tw-btn" onClick={() => call("diagnostics.export").then(result => { if (result.saved) toast("Diagnostics saved."); }).catch(error => toast(error, "error"))}>Save…</button>
-          </span>
-        </Row>
-        <Row title="Version" description="Timewarp runs its agents with the OpenAI Codex app server. Third-party notices are included with the app."><span className="tw-hint">{info?.version || ""}</span></Row>
       </div>
       <Archived open={dialog === "archived"} onClose={() => setDialog(null)} agents={agents} />
-      <Dialog open={dialog === "instructions"} onClose={() => setDialog(null)} title="Instructions for every agent">
-        {dialog === "instructions" ? <SharedInstructions onDone={() => setDialog(null)} /> : null}
-      </Dialog>
-      <FeedbackDialog open={dialog === "feedback"} onClose={() => setDialog(null)} />
     </div>
   );
 }
@@ -206,6 +147,13 @@ function AppDetails({ app, agents, onClose }) {
             <button type="button" className="tw-btn" onClick={() => { if (window.confirm(`Disconnect ${account.displayName}?`)) call("integrations.disconnect", { integrationId: app.id, accountId: account.id }).then(onClose).catch(error => toast(error, "error")); }}>Disconnect</button>
           </div>
         ))}
+        {(app.pendingAccounts || []).map(account => (
+          <div key={account.id} className="tw-list-row compact">
+            <span className="tw-face">{initials(account.displayName).slice(0, 1)}</span>
+            <div className="grow"><strong>{account.displayName}</strong><span className="desc">Needs signing in again</span></div>
+            <button type="button" className="tw-btn" onClick={() => { if (window.confirm(`Remove ${account.displayName}?`)) call("integrations.disconnect", { integrationId: app.id, accountId: account.id }).then(onClose).catch(error => toast(error, "error")); }}>Remove</button>
+          </div>
+        ))}
       </div>
       {agents.length ? (
         <>
@@ -232,101 +180,168 @@ function AppDetails({ app, agents, onClose }) {
   );
 }
 
+// A Codex plugin: what it does and a way to connect it.
+function PluginDetails({ plugin, onClose, onInstalled }) {
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  if (!plugin) return null;
+  const install = () => {
+    setBusy(true);
+    call("plugins.install", { marketplacePath: plugin.marketplacePath, pluginName: plugin.name })
+      .then(result => { toast(result.needsSignIn.length ? `Finish signing in to ${result.needsSignIn.join(", ")} in your browser.` : `${plugin.title} is connected.`); onInstalled(); onClose(); })
+      .catch(error => toast(error, "error")).finally(() => setBusy(false));
+  };
+  return (
+    <>
+      <div className="tw-plugin-head">
+        {plugin.icon ? <img src={plugin.icon} alt="" width="36" height="36" /> : <span className="tw-app-letter" style={{ width: 36, height: 36, fontSize: 18 }}>{initials(plugin.title).slice(0, 1)}</span>}
+        <div><h2>{plugin.title}</h2>{plugin.description ? <p>{plugin.description}</p> : null}</div>
+        <button type="button" className="tw-icon-button" aria-label="Close" onClick={onClose}><X size={18} /></button>
+      </div>
+      {plugin.details ? <p className="tw-plugin-text">{plugin.details}</p> : null}
+      <button type="button" className="tw-btn accent tw-wide" disabled={busy || plugin.installed} onClick={install}>{plugin.installed ? "Connected" : busy ? "Connecting…" : "Connect " + plugin.title}</button>
+    </>
+  );
+}
+
 function Tools({ agents }) {
   const { items, error } = useApps();
+  const [plugins, setPlugins] = useState([]);
   const [tab, setTab] = useState("featured");
   const [query, setQuery] = useState("");
   const [mcpCount, setMcpCount] = useState(0);
   const [open, setOpen] = useState(null);
+  const [plugin, setPlugin] = useState(null);
   const toast = useToast();
-  useEffect(() => { call("mcp.list").then(list => setMcpCount(list.length)).catch(() => {}); }, []);
-  const all = items || [];
-  const tabs = { featured: all.filter(app => app.featured), all, connected: all.filter(app => app.accounts?.length) };
+  const loadPlugins = () => call("plugins.list").then(setPlugins).catch(() => setPlugins([]));
+  useEffect(() => { call("mcp.list").then(list => setMcpCount(list.length)).catch(() => {}); void loadPlugins(); }, []);
+  // Connected apps and plugins share one list, apps first for the same name.
+  const apps = (items || []).map(app => ({ key: "app:" + app.id, kind: "app", app, title: app.displayName, description: app.shortDescription || "Connect " + app.displayName + " through Composio", featured: !!app.featured, connected: !!app.accounts?.length }));
+  const extras = plugins.map(item => ({ key: "plugin:" + item.id, kind: "plugin", plugin: item, title: item.title, description: item.description, featured: item.featured, connected: item.installed }));
+  const byName = (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }) || (a.kind === "app" ? -1 : 1);
+  const all = [...apps, ...extras].sort(byName);
+  const tabs = { featured: [...apps.filter(entry => entry.featured), ...extras.filter(entry => entry.featured).sort(byName)], all, connected: apps.filter(entry => entry.connected) };
   const needle = query.trim().toLowerCase();
-  const list = (needle ? all : tabs[tab] || []).filter(app => !needle || app.displayName.toLowerCase().includes(needle) || (app.shortDescription || "").toLowerCase().includes(needle));
-  const detail = open && all.find(app => app.id === open);
+  const list = (needle ? all : tabs[tab] || []).filter(entry => !needle || entry.title.toLowerCase().includes(needle) || entry.description.toLowerCase().includes(needle));
+  const detail = open && (items || []).find(app => app.id === open);
+  const choose = entry => entry.kind === "plugin" ? setPlugin(entry.plugin) : entry.connected ? setOpen(entry.app.id) : connect(entry.app);
+  const connect = app => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in your browser.")).catch(failure => toast(failure, "error"));
   return (
     <div className="tw-page">
       <PageHead title="Tools" subtitle="Connect apps and manage connected accounts available to Timewarp." />
       <SearchField value={query} onChange={setQuery} placeholder="Search tools..." shortcut />
-      <div className="tw-tabs" role="group" aria-label="Tools">
-        {[["featured", "Featured", tabs.featured.length], ["all", "All", all.length], ["connected", "Connected", tabs.connected.length], ["mcp", "MCP", mcpCount]].map(([id, label, count]) => (
-          <button key={id} type="button" aria-pressed={needle && tab !== "mcp" ? id === "all" : tab === id} onClick={() => setTab(id)}>{label} <em>{count}</em></button>
-        ))}
-      </div>
-      {error ? <div className="tw-alert">{error}</div> : null}
-      {tab === "mcp" ? <McpServers query={query} onCount={setMcpCount} /> : items === null ? <p className="tw-hint">Loading tools…</p> : list.length ? (
-        <div className="tw-grid">
-          {list.slice(0, 200).map(app => {
-            const connected = app.accounts?.length;
-            return (
-              <div key={app.id} className={"tw-tile" + (connected ? " clickable" : "")} role={connected ? "button" : undefined} tabIndex={connected ? 0 : undefined}
-                onClick={connected ? () => setOpen(app.id) : undefined} onKeyDown={connected ? event => { if (event.key === "Enter") setOpen(app.id); } : undefined}>
-                <AppIcon app={app} size={40} />
-                <div><strong>{app.displayName}</strong><span className="desc">{app.shortDescription || "Connect " + app.displayName}</span></div>
-                {connected ? <span className="tw-faces">{app.accounts.slice(0, 3).map(account => <span key={account.id} title={account.displayName}>{initials(account.displayName).slice(0, 1)}</span>)}</span> : null}
-                <button type="button" className="tw-round" title={"Connect " + app.displayName} aria-label={"Connect " + app.displayName}
-                  onClick={event => { event.stopPropagation(); call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in your browser.")).catch(failure => toast(failure, "error")); }}><Plus size={18} /></button>
-              </div>
-            );
-          })}
+      {needle ? null : (
+        <div className="tw-tabs" role="group" aria-label="Tools">
+          {[["featured", "Featured", tabs.featured.length], ["all", "All", all.length], ["connected", "Connected", tabs.connected.length], ["mcp", "MCP", mcpCount]].map(([id, label, count]) => (
+            <button key={id} type="button" aria-pressed={tab === id} onClick={() => setTab(id)}>{label} <em>{count}</em></button>
+          ))}
         </div>
-      ) : <div className="tw-empty-box">{needle ? "No tools match your search." : tab === "connected" ? "No connected apps yet." : "No tools here."}</div>}
-      <p className="tw-hint">Agents use connected apps through Composio. Connections are authorized in your browser; tokens stay with Composio.</p>
+      )}
+      {error ? <div className="tw-alert">{error}</div> : null}
+      {tab === "mcp" && !needle ? <McpServers query={query} onCount={setMcpCount} /> : items === null ? <p className="tw-loading">Loading tools...</p> : list.length ? (
+        <div className="tw-grid tw-scroll-grid tw-tool-grid">
+          {list.slice(0, 300).map(entry => (
+            <div key={entry.key} className="tw-tile clickable" role="button" tabIndex={0} onClick={() => choose(entry)} onKeyDown={event => { if (event.key === "Enter") choose(entry); }}>
+              {entry.kind === "app" ? <AppIcon app={entry.app} size={36} /> : entry.plugin.icon ? <img src={entry.plugin.icon} alt="" width="36" height="36" className="tw-tool-icon" /> : <span className="tw-app-letter" style={{ width: 36, height: 36, fontSize: 18 }}>{initials(entry.title).slice(0, 1)}</span>}
+              <div><strong>{entry.title}</strong><span className="desc">{entry.description}</span></div>
+              {entry.kind === "app" && entry.connected ? <span className="tw-faces">{entry.app.accounts.slice(0, 3).map(account => <span key={account.id} title={account.displayName}>{initials(account.displayName).slice(0, 1)}</span>)}</span> : null}
+              {entry.kind === "plugin" && entry.connected ? null : (
+                <button type="button" className="tw-round tw-add-round" title={"Connect " + entry.title} aria-label={"Connect " + entry.title}
+                  onClick={event => { event.stopPropagation(); entry.kind === "plugin" ? setPlugin(entry.plugin) : connect(entry.app); }}><Plus size={16} /></button>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : <p className="tw-loading">{needle ? "No tools match your search." : tab === "connected" ? "No connected apps yet." : "No tools here."}</p>}
       <Dialog open={!!detail} onClose={() => setOpen(null)} title={detail?.displayName} description={detail?.shortDescription}>
         <AppDetails app={detail} agents={agents} onClose={() => setOpen(null)} />
+      </Dialog>
+      <Dialog open={!!plugin} onClose={() => setPlugin(null)} label={plugin?.title} className="tw-plugin-dialog">
+        <PluginDetails plugin={plugin} onClose={() => setPlugin(null)} onInstalled={loadPlugins} />
       </Dialog>
     </div>
   );
 }
 
-function Browser({ onSection }) {
+const BROWSER_NAMES = { timewarp: "Timewarp", chrome: "Chrome", edge: "Edge", brave: "Brave", vivaldi: "Vivaldi", arc: "Arc", chromium: "Chromium" };
+const browserBadge = type => !type || type === "timewarp" ? "./timewarp-logo.svg" : `./onboarding-icons/${type === "chrome" || type === "edge" ? type + "-color" : type}.svg`;
+const LETTER_COLORS = ["#e8710a", "#1a73e8", "#188038", "#a142f4", "#d93025", "#12b5cb"];
+const letterColor = text => LETTER_COLORS[[...String(text || "")].reduce((sum, character) => sum + character.charCodeAt(0), 0) % LETTER_COLORS.length];
+
+// A person, or the account's initial, with the browser it comes from.
+function ProfileAvatar({ type, account, picture }) {
+  return (
+    <span className="tw-face tw-profile-avatar" style={account && !picture ? { background: letterColor(account), color: "#fff" } : null}>
+      {picture ? <img className="photo" src={picture} alt="" /> : account ? <b>{account[0].toUpperCase()}</b> : <UserRound size={18} strokeWidth={1.8} />}
+      <img className="tw-face-badge" src={browserBadge(type)} alt="" />
+    </span>
+  );
+}
+
+function Browser() {
   const [profiles, setProfiles] = useState([]);
+  const [importable, setImportable] = useState([]);
   const [editing, setEditing] = useState(null);
   const [name, setName] = useState("");
+  const [busy, setBusy] = useState(null);
   const toast = useToast();
-  const load = () => call("browser.profiles").then(setProfiles).catch(error => toast(error, "error"));
-  useEffect(() => { void load(); }, []);
-  const save = event => {
+  const load = () => {
+    call("browser.profiles").then(setProfiles).catch(error => toast(error, "error"));
+    call("browser.importable").then(setImportable).catch(() => setImportable([]));
+  };
+  useEffect(() => { load(); }, []);
+  const rename = event => {
     event.preventDefault();
-    (editing === "new" ? call("browser.createProfile", { label: name }) : call("browser.renameProfile", { id: editing.id, label: name }))
-      .then(() => { setEditing(null); void load(); }).catch(error => toast(error, "error"));
+    call("browser.renameProfile", { id: editing.id, label: name }).then(() => { setEditing(null); load(); }).catch(error => toast(error, "error"));
   };
   const remove = profile => {
     if (!window.confirm(`Remove the ${profile.label} profile? Its sign-ins and cookies are deleted from this device, and chats using it switch to the default profile.`)) return;
-    call("browser.removeProfile", { id: profile.id }).then(setProfiles).catch(error => toast(error, "error"));
+    call("browser.removeProfile", { id: profile.id }).then(load).catch(error => toast(error, "error"));
   };
-  const importPasswords = () => call("vault.importPasswords").then(result => {
-    if (!result.cancelled) toast(`Imported ${result.imported} sign-in${result.imported === 1 ? "" : "s"} into the Vault${result.duplicates ? `, ${result.duplicates} already saved` : ""}. Delete the exported file now; it isn't encrypted.`);
-  }).catch(error => toast(error, "error"));
+  const add = profile => {
+    setBusy(profile.label);
+    call("browser.importProfile", profile.source).then(created => {
+      toast({ title: `${created.label} added`, body: "Choose it from the profile button in a chat's browser. Sign in to your sites there once; saved passwords can come in from Vault → Import." });
+      load();
+    }).catch(error => toast(error, "error")).finally(() => setBusy(null));
+  };
   return (
     <div className="tw-page">
       <PageHead title="Browser" subtitle="Manage which accounts Timewarp can use when browsing." />
-      <p className="tw-lead">Browser profiles, cookies, passwords and browser actions stay on this device. Each chat uses one profile; choose it from the profile button in the chat's browser.</p>
-      <div className="tw-section-head"><h3 className="tw-muted-head">Your browser profiles</h3><button type="button" className="tw-btn" onClick={() => { setName(""); setEditing("new"); }}><Plus size={15} />New profile</button></div>
+      <p className="tw-lead">Browser profiles, cookies, passwords and browser actions stay on this device. The local harness uses the cloud model.</p>
+      <h3 className="tw-sub">Your browser profiles</h3>
       <div className="tw-list-panel">
         {profiles.map(profile => (
-          <div key={profile.id} className="tw-list-row">
-            <span className="tw-face"><UserRound size={20} strokeWidth={1.6} /><img className="tw-face-badge" src="./timewarp-logo.svg" alt="" /></span>
-            <div><strong>{profile.label}</strong><span className="desc">{profile.isDefault ? "Timewarp · default" : "Timewarp"}</span></div>
-            <button type="button" className="tw-icon-button" title="Rename" aria-label={"Rename " + profile.label} onClick={() => { setName(profile.label); setEditing(profile); }}><Pencil size={15} /></button>
-            {profile.isDefault ? null : <button type="button" className="tw-icon-button" title="Remove" aria-label={"Remove " + profile.label} onClick={() => remove(profile)}><Trash2 size={15} /></button>}
+          <div key={profile.id} className="tw-list-row tw-profile-row">
+            <ProfileAvatar type={profile.source?.type} />
+            <div><strong>{profile.label}</strong><span className="desc">{profile.source?.browser || BROWSER_NAMES[profile.source?.type] || "Timewarp"}</span></div>
+            <span className="tw-row-actions">
+              <Menu align="right" width={180} trigger={({ toggle }) => <button type="button" className="tw-icon-button" aria-label={"Options for " + profile.label} onClick={toggle}><Ellipsis size={16} /></button>}>
+                <button type="button" className="tw-menu-item" data-close onClick={() => { setName(profile.label); setEditing(profile); }}><Pencil size={15} /><span className="grow">Rename</span></button>
+                {profile.isDefault ? null : <button type="button" className="tw-menu-item" data-close onClick={() => remove(profile)}><Trash2 size={15} /><span className="grow">Remove</span></button>}
+              </Menu>
+            </span>
           </div>
         ))}
       </div>
-      <h3 className="tw-sub">Passwords from another browser</h3>
-      <div className="tw-list-panel">
-        <div className="tw-list-row">
-          <span className="tw-face"><KeyRound size={20} strokeWidth={1.6} /></span>
-          <div><strong>Import saved passwords</strong><span className="desc" style={{ whiteSpace: "normal" }}>Export passwords from Chrome, Edge, Safari, Firefox or a password manager as a CSV file and import it. Agents fill them in from the Vault without seeing them.</span></div>
-          <button type="button" className="tw-btn" onClick={importPasswords}>Import</button>
-        </div>
-      </div>
-      <p className="tw-hint tw-inset">To use a site signed in, sign in once in the chat's browser; the profile remembers it. <button type="button" className="tw-link" onClick={() => onSection("vault")}>Open Vault</button></p>
-      <Dialog open={!!editing} onClose={() => setEditing(null)} title={editing === "new" ? "New browser profile" : "Rename profile"} description={editing === "new" ? "A profile keeps its own sign-ins and cookies, separate from your other profiles." : null}>
-        <form className="tw-import" onSubmit={save}>
+      {importable.length ? (
+        <>
+          <h3 className="tw-sub">Importable browser profiles</h3>
+          <div className="tw-list-panel">
+            {importable.map(profile => (
+              <div key={profile.source.browserId + "/" + profile.source.profilePath} className="tw-list-row tw-profile-row">
+                <ProfileAvatar type={profile.source.browserId} picture={profile.picture} account={profile.source.browserId === "chrome" ? profile.accountName : null} />
+                <div><strong>{profile.label}</strong><span className="desc">{profile.browser}</span></div>
+                <button type="button" className="tw-btn soft" disabled={!!busy} onClick={() => add(profile)}>{busy === profile.label ? "Importing…" : "Import"}</button>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+      <Dialog open={!!editing} onClose={() => setEditing(null)} title="Rename profile">
+        <form className="tw-import" onSubmit={rename}>
           <label className="tw-field"><span>Name</span><input className="tw-input" autoFocus required maxLength={60} value={name} placeholder="Work" onChange={event => setName(event.target.value)} /></label>
-          <div className="tw-dialog-actions"><button type="button" className="tw-btn" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="tw-btn primary" disabled={!name.trim()}>{editing === "new" ? "Create" : "Save"}</button></div>
+          <div className="tw-dialog-actions"><button type="button" className="tw-btn" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="tw-btn primary" disabled={!name.trim()}>Save</button></div>
         </form>
       </Dialog>
     </div>
@@ -354,6 +369,8 @@ function Organization({ account, onAccount }) {
   const [invites, setInvites] = useState([]);
   const [dialog, setDialog] = useState(null);
   const [query, setQuery] = useState(null);
+  // "Add organization" in the account menu opens the create dialog here.
+  useEffect(() => { const create = () => setDialog("create"); window.addEventListener("tw:new-organization", create); return () => window.removeEventListener("tw:new-organization", create); }, []);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const [name, setName] = useState(organization?.name || "");
@@ -370,7 +387,7 @@ function Organization({ account, onAccount }) {
   const role0 = member => { const value = member.roles?.[0] || "member"; return value[0].toUpperCase() + value.slice(1); };
   return (
     <div className="tw-page">
-      <PageHead title="Organization" subtitle={organization ? `Inviting people to ${organization.name} adds them to this organization. Chats and AI credits stay personal. You have ${members.length} member${members.length === 1 ? "" : "s"} in this organization.` : "Create or join an organization."} />
+      <PageHead title="Organization" subtitle={organization ? `Inviting people to ${organization.name} adds them to this organization. Chats and AI credits stay personal.` : "Create or join an organization."} />
       {organization ? (
         <div className="tw-rows-card">
           <div className="tw-list-row">
@@ -412,7 +429,7 @@ function Organization({ account, onAccount }) {
         </table>
       </div>
       <p className="tw-hint tw-inset">Showing {shown.length} of {members.length}</p>
-      <div><button type="button" className="tw-btn ghost" onClick={() => setDialog("create")}><Plus size={15} />New organization</button></div>
+      {organization ? null : <div><button type="button" className="tw-btn ghost" onClick={() => setDialog("create")}><Plus size={15} />New organization</button></div>}
       <Dialog open={dialog === "edit"} onClose={() => setDialog(null)} title="Edit organization">
         <form className="tw-import" onSubmit={event => { event.preventDefault(); call("organizations.update", { name }).then(() => call("account.get")).then(refresh).then(() => { toast("Organization saved."); setDialog(null); }).catch(error => toast(error, "error")); }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -443,7 +460,7 @@ function Organization({ account, onAccount }) {
 
 export function Settings({ section, onSection, ...props }) {
   const pages = {
-    general: () => <General {...props} />, tools: () => <Tools {...props} />, browser: () => <Browser onSection={onSection} />, vault: () => <Vault {...props} />,
+    general: () => <General {...props} />, tools: () => <Tools {...props} />, browser: () => <Browser />, vault: () => <Vault {...props} />,
     memories: () => <Memories />, skills: () => <Skills />, automations: () => <Automations {...props} />, organization: () => <Organization {...props} />, billing: () => <Billing />,
   };
   const page = (pages[section] || pages.general)();
@@ -454,7 +471,7 @@ export function Settings({ section, onSection, ...props }) {
           {GROUPS.map(group => (
             <React.Fragment key={group.label}>
               <h4>{group.label}</h4>
-              {group.items.map(item => <button key={item.id} type="button" aria-current={section === item.id} onClick={() => onSection(item.id)}><item.icon size={17} strokeWidth={1.6} /><span>{item.label}</span></button>)}
+              {group.items.filter(item => !item.hidden).map(item => <button key={item.id} type="button" aria-current={section === item.id} onClick={() => onSection(item.id)}><item.icon size={16} strokeWidth={1.7} /><span>{item.label}</span></button>)}
             </React.Fragment>
           ))}
         </nav>

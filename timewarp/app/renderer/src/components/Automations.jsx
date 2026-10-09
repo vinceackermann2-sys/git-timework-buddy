@@ -141,7 +141,7 @@ export function Automations({ agents }) {
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button type="button" className="tw-btn" onClick={() => call("automations.run", { id: automation.id }).then(() => { toast("Running now."); void load(); }).catch(error => toast(error, "error"))}><Play size={14} /> Run now</button>
-              {automation.conversationId ? <button type="button" className="tw-btn" onClick={() => { location.hash = "#/c/" + automation.conversationId; }}><MessageSquare size={14} /> Open chat</button> : null}
+              {automation.conversationId ? <button type="button" className="tw-btn" onClick={() => { location.hash = "#/conversation/" + automation.conversationId; }}><MessageSquare size={14} /> Open chat</button> : null}
               <button type="button" className="tw-btn" onClick={() => setEditing(automation)}>Edit</button>
               <button type="button" className="tw-btn" onClick={() => setOpen(open === automation.id ? null : automation.id)}>{open === automation.id ? "Hide runs" : "Runs"}</button>
               <button type="button" className="tw-btn danger" onClick={() => { if (window.confirm(`Delete the automation "${automation.name}"? Its chat stays.`)) call("automations.remove", { id: automation.id }).then(load).catch(error => toast(error, "error")); }}>Delete</button>

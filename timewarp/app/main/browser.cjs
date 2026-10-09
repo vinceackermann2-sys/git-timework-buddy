@@ -16,7 +16,7 @@ function safeUrl(input) {
   if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?([/?#]|$)/i.test(text)) address = "http://" + text; // local development servers
   else if (/^[^\s/:]+\.[^\s/:]{2,}(:\d+)?([/?#]|$)/.test(text)) address = "https://" + text;
   else if (/^[a-z][a-z0-9+.-]*:/i.test(text) && !/\s/.test(text)) address = text;
-  else address = "https://duckduckgo.com/?q=" + encodeURIComponent(text);
+  else address = "https://www.google.com/search?q=" + encodeURIComponent(text); // searches go to Google, as in Chrome
   let url;
   try { url = new URL(address); }
   catch { throw fail(400, "That address isn't valid."); }
@@ -29,7 +29,7 @@ function recordable(url) {
   try { const value = new URL(url); return ["http:", "https:"].includes(value.protocol) && !value.username && !value.password; } catch { return false; }
 }
 
-function createBrowser({ window: getWindow, store, notify = () => {}, userAgentSuffix = "Timewarp", log = null }) {
+function createBrowser({ window: getWindow, store, notify = () => {}, log = null }) {
   const tabs = new Map(); // tab id -> tab
   const groups = new Map(); // conversation id -> { active: tab id | null }
   const partitions = new Set();
@@ -44,7 +44,8 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
       partitions.add(partition);
       value.setPermissionRequestHandler((_contents, permission, callback) => callback(["fullscreen", "clipboard-sanitized-write"].includes(permission)));
       value.on("will-download", (_event, item) => { item.once("done", (_e, state) => { if (state === "completed") shell.showItemInFolder(item.getSavePath()); }); });
-      value.setUserAgent(value.getUserAgent().replace(/\s*Electron\/\S+/, "").replace(/\s*timewarp-desktop\/\S+/i, "") + " " + userAgentSuffix);
+      // Pages see the same Chrome identity as in Chrome itself.
+      value.setUserAgent(value.getUserAgent().replace(/\s*Electron\/\S+/, "").replace(/\s*timewarp(?:-desktop)?\/\S+/gi, "").trim());
     }
     return value;
   }
@@ -179,6 +180,15 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
     },
     openTab, navigate, close, sessionFor,
     activate(conversationId, tabId) { const tab = tabFor(conversationId, tabId); groups.get(conversationId).active = tab.id; if (tab.kind === "web" && !tab.view) { attach(tab); evict(); } layout(); changed(conversationId); return groupState(conversationId); },
+    // Back to the new tab page in the same tab.
+    home(conversationId, tabId) {
+      const tab = tabFor(conversationId, tabId);
+      if (tab.view) { getWindow()?.contentView.removeChildView(tab.view); tab.view.webContents.close(); tab.view = null; }
+      Object.assign(tab, { kind: "home", url: null, title: "", favicon: null, loading: false, agent: null });
+      layout();
+      changed(conversationId);
+      return groupState(conversationId);
+    },
     back(conversationId, tabId) { const tab = tabFor(conversationId, tabId); if (tab.view?.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack(); return stateOf(tab); },
     forward(conversationId, tabId) { const tab = tabFor(conversationId, tabId); if (tab.view?.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return stateOf(tab); },
     reload(conversationId, tabId) { const tab = tabFor(conversationId, tabId); tab.view?.webContents.reload(); return stateOf(tab); },

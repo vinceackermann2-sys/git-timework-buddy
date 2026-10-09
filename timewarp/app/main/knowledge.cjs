@@ -269,11 +269,15 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
         .filter(directory => lstat(directory)?.isDirectory());
     },
     // The memory section of an agent's instructions.
+    // Modes: enabled, read (read only), write (write only) and none.
     instructions(mode) {
-      if (mode === "disabled") return "Memory is turned off. Don't read or write the user's memory files.";
+      if (mode === "disabled" || mode === "none") return "Memory is turned off. Don't read or write the user's memory files.";
+      if (mode === "write") return `Your memory about the user is in ${notesFile}. When the user shares a lasting preference or fact, or asks you to remember something, add it to that file briefly. Don't read the file or use what it says. Never store passwords, keys or payment details there.`;
       const text = notes().trim(), files = importedFiles();
       const lines = [
-        `Your memory about the user is in ${notesFile}. When the user shares a lasting preference or fact, or asks you to remember something, update that file briefly. Never store passwords, keys or payment details there.`,
+        mode === "read"
+          ? `Your memory about the user is in ${notesFile}. Use it, but don't change that file.`
+          : `Your memory about the user is in ${notesFile}. When the user shares a lasting preference or fact, or asks you to remember something, update that file briefly. Never store passwords, keys or payment details there.`,
       ];
       if (text) lines.push("Current notes:\n<user_notes>\n" + (text.length > PROMPT_NOTES ? text.slice(0, PROMPT_NOTES) + "\n…" : text) + "\n</user_notes>");
       if (files.length) {

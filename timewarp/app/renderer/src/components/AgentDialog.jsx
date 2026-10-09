@@ -1,10 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ImagePlus } from "lucide-react";
+import { ImageUp, X } from "lucide-react";
 import { MASCOTS, avatarSrc, call } from "../api.js";
 import { Dialog, useToast } from "./common.jsx";
 
 const MAX_PICTURE = 2 * 1024 * 1024;
 
+// New and edit agent, laid out as in the previous app: the picture, a choice
+// of mascots or an uploaded picture, a name and the agent's responsibilities
+// (its AGENTS.md).
 export function AgentDialog({ open, agent, onClose, onSaved }) {
   const editing = !!agent;
   const [name, setName] = useState("");
@@ -51,34 +54,29 @@ export function AgentDialog({ open, agent, onClose, onSaved }) {
   }
 
   const preview = picture || (mascot ? `./mascots/${mascot.toLowerCase()}.png` : avatarSrc(agent));
+  const title = editing ? "Edit Agent" : "New Agent";
   return (
-    <Dialog open={open} onClose={onClose} label={editing ? "Edit agent" : "New agent"}>
-      <form onSubmit={save} style={{ display: "grid", gap: 16 }}>
-        <h2>{editing ? "Edit agent" : "New agent"}</h2>
-        <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-          <img className="tw-avatar large" src={preview} alt="" />
-          <div className="tw-mascots" role="group" aria-label="Choose a mascot">
-            {MASCOTS.map(choice => (
-              <button key={choice} type="button" className="tw-mascot" aria-pressed={mascot === choice && !picture} onClick={() => { setMascot(choice); setPicture(null); }}>
-                <img src={`./mascots/${choice.toLowerCase()}.png`} alt="" />{choice}
-              </button>
-            ))}
-            <button type="button" className="tw-mascot" aria-pressed={!!picture} onClick={() => file.current?.click()}>
-              <span style={{ width: 60, height: 60, display: "grid", placeItems: "center" }}><ImagePlus size={24} /></span>Picture
+    <Dialog open={open} onClose={onClose} label={title} className="tw-agent-dialog">
+      <form onSubmit={save} className="tw-agent-form">
+        <h2>{title}</h2>
+        <button type="button" className="tw-icon-button tw-dialog-close" aria-label="Close" onClick={onClose}><X size={16} /></button>
+        <img className="tw-agent-preview" src={preview} alt="" />
+        <span className="tw-agent-form-label">Choose mascot</span>
+        <div className="tw-mascots" role="group" aria-label="Choose mascot">
+          {MASCOTS.map(choice => (
+            <button key={choice} type="button" className="tw-mascot" aria-label={"Choose " + choice} aria-pressed={mascot === choice && !picture} onClick={() => { setMascot(choice); setPicture(null); }}>
+              <img src={`./mascots/${choice.toLowerCase()}.png`} alt="" /><span>{choice}</span>
             </button>
-            <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={choosePicture} />
-          </div>
+          ))}
         </div>
-        <label className="tw-field"><span>Name</span><input className="tw-input" value={name} maxLength={60} autoFocus onChange={event => setName(event.target.value)} placeholder="Orbit" /></label>
-        <label className="tw-field"><span>Instructions</span>
-          <textarea className="tw-textarea" value={instructions} onChange={event => setInstructions(event.target.value)} placeholder="What should this agent focus on? How should it work and respond?" maxLength={20000} />
-          <span className="tw-hint">Saved as AGENTS.md in the agent's workspace folder.</span>
+        <button type="button" className="tw-btn tw-upload" onClick={() => file.current?.click()}><ImageUp size={16} />Upload picture</button>
+        <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={choosePicture} />
+        <label className="tw-agent-field"><span>Name</span><input className="tw-input" value={name} maxLength={60} autoFocus onChange={event => setName(event.target.value)} placeholder="Agent name" /></label>
+        <label className="tw-agent-field"><span>Agent responsibilities (optional)</span>
+          <textarea className="tw-textarea" rows={3} value={instructions} onChange={event => setInstructions(event.target.value)} placeholder="e.g. Manage email, coordinate calendars, and organize shared files." maxLength={20000} />
         </label>
         {error ? <div className="tw-alert" role="alert">{error}</div> : null}
-        <div className="tw-dialog-actions">
-          <button type="button" className="tw-btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="tw-btn primary" disabled={busy}>{editing ? "Save" : "Create agent"}</button>
-        </div>
+        <button type="submit" className="tw-btn accent tw-wide" disabled={busy || !name.trim()}>{busy ? (editing ? "Saving…" : "Creating…") : editing ? "Save" : "Create"}</button>
       </form>
     </Dialog>
   );

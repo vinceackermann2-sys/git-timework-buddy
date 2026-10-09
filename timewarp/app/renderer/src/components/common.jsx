@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Search, X } from "lucide-react";
+import { Check, ChevronDown, Search, TriangleAlert, X } from "lucide-react";
 import { avatarSrc, errorText } from "../api.js";
 
 export function Avatar({ agent, size = "" }) {
@@ -61,6 +61,27 @@ export function Menu({ trigger, children, align = "left", up = false, width, cla
         </div>
       ) : null}
     </span>
+  );
+}
+
+// A menu at the pointer, for right-clicks on sidebar rows.
+export function ContextMenu({ at, onClose, children, width = 176 }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!at) return;
+    const away = event => { if (!ref.current?.contains(event.target)) onClose(); };
+    const escape = event => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", escape, true);
+    window.addEventListener("blur", onClose);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", escape, true); window.removeEventListener("blur", onClose); };
+  }, [at, onClose]);
+  if (!at) return null;
+  const style = { position: "fixed", left: Math.max(8, Math.min(at.x, innerWidth - width - 8)), top: Math.max(8, Math.min(at.y, innerHeight - 140)), width };
+  return (
+    <div ref={ref} className="tw-menu tw-context-menu" role="menu" style={style} onClick={event => { if (event.target.closest("[data-close]")) onClose(); }}>
+      {children}
+    </div>
   );
 }
 
@@ -136,15 +157,23 @@ const ToastContext = createContext(() => {});
 export function useToast() { return useContext(ToastContext); }
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
+  // A message, or { title, body } for a notice like the previous app's.
   const show = useCallback((message, kind = "info") => {
     const id = Math.random().toString(36).slice(2);
-    setToasts(list => [...list.slice(-3), { id, message: kind === "error" ? errorText(message) : String(message), kind }]);
-    setTimeout(() => setToasts(list => list.filter(toast => toast.id !== id)), kind === "error" ? 7000 : 3500);
+    const notice = message && typeof message === "object" && "title" in message;
+    setToasts(list => [...list.slice(-3), { id, kind, title: notice ? message.title : null, message: notice ? message.body : kind === "error" ? errorText(message) : String(message) }]);
+    setTimeout(() => setToasts(list => list.filter(toast => toast.id !== id)), kind === "error" || notice ? 8000 : 3500);
   }, []);
   return (
     <ToastContext.Provider value={show}>
       {children}
-      <div className="tw-toasts" aria-live="polite">{toasts.map(toast => <div key={toast.id} className={"tw-toast " + toast.kind}>{toast.message}</div>)}</div>
+      <div className="tw-toasts" aria-live="polite">{toasts.map(toast => (
+        <div key={toast.id} className={"tw-toast " + toast.kind}>
+          {toast.kind === "warning" || toast.kind === "error" ? <TriangleAlert size={20} fill="currentColor" stroke="var(--surface)" /> : null}
+          <div>{toast.title ? <strong>{toast.title}</strong> : null}<span>{toast.message}</span></div>
+          <button type="button" aria-label="Dismiss" onClick={() => setToasts(list => list.filter(item => item.id !== toast.id))}><X size={14} /></button>
+        </div>
+      ))}</div>
     </ToastContext.Provider>
   );
 }

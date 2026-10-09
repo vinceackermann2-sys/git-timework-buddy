@@ -76,14 +76,15 @@ test("browser profiles can be renamed and removed; their chats return to the def
   assert.equal(store.conversations.get(chat.id).browserProfileId, null);
 });
 
-test("chat lists carry the latest message for the activity feed", t => {
+test("chat lists carry the agent's latest reply for the activity feed", t => {
   const { store } = tempStore(t);
   const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
   const chat = store.conversations.create({ ownerId: "u1", agentId: agent.id });
   assert.equal(store.conversations.list("u1")[0].lastText, null);
   store.messages.append({ id: "m1", conversationId: chat.id, authorId: "u1", text: "First" });
   store.messages.append({ id: "m2", conversationId: chat.id, authorId: agent.id, text: "Reply" });
-  store.messages.append({ id: "m3", conversationId: chat.id, authorId: "u1", text: "Lost", status: "failed" });
+  store.messages.append({ id: "m3", conversationId: chat.id, authorId: "u1", text: "Next question" });
+  store.messages.append({ id: "m4", conversationId: chat.id, authorId: agent.id, text: "Lost", status: "failed" });
   assert.equal(store.conversations.list("u1")[0].lastText, "Reply");
 });
 

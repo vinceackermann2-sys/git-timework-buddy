@@ -220,6 +220,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       },
       archive(id, archived) { ownedConversation(id); return store.conversations.update(id, { archivedAt: archived ? new Date().toISOString() : null }); },
       markRead(id) { const c = ownedConversation(id); return c.read ? c : store.conversations.update(id, { read: true }, { touch: false }); },
+      markUnread(id) { const c = ownedConversation(id); return c.read ? store.conversations.update(id, { read: false }, { touch: false }) : c; },
       messages: id => { ownedConversation(id); return store.messages.list(id); },
       status: id => { ownedConversation(id); return { running: active.has(id), approvals: [...approvals.values()].filter(item => item.conversationId === id) }; },
       usage: id => { ownedConversation(id); return store.turnUsage.list(id); },

@@ -40,8 +40,8 @@
   --color-muted-foreground: var(--muted);
   --color-border: var(--border);
   --color-ring: hsl(var(--accent-h) 55% 60%);
-  --color-primary: var(--accent-strong);
-  --color-primary-foreground: #ffffff;
+  --color-primary: var(--theme-accent);
+  --color-primary-foreground: var(--accent-ink);
   --color-accent: var(--user-bubble);
   --color-destructive: var(--danger);
   --timewarp-accent-ink: var(--accent-ink);
@@ -95,7 +95,8 @@ a { color: var(--accent-strong); }
 .tw-resizer { position: absolute; top: 0; bottom: 0; left: calc(var(--sidebar-width, 288px) - 4px); width: 8px; cursor: col-resize; z-index: 5; }
 .tw-stage { min-width: 0; min-height: 0; display: flex; gap: 12px; padding: 8px 8px 8px 0; }
 .tw-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--card); border-radius: 10px; overflow: hidden; position: relative; }
-.tw-window[data-pane="open"] .tw-main { flex: 0 1 46%; min-width: 380px; }
+.tw-window[data-pane="open"] .tw-main { flex: 1 1 0; min-width: 380px; }
+.tw-window[data-pane="open"] .tw-stage { gap: 8px; }
 .tw-window[data-pane="full"] .tw-main { display: none; }
 
 /* Buttons and fields */
@@ -133,10 +134,12 @@ a { color: var(--accent-strong); }
 .tw-brand .tw-icon-button { width: 34px; height: 34px; color: var(--ink-strong); }
 .tw-new-task { margin-top: 8px; height: 38px; flex: none; display: flex; align-items: center; justify-content: center; gap: 8px; border: none; border-radius: 10px; background: var(--soft); color: var(--muted-64); font-weight: 500; cursor: pointer; }
 .tw-new-task:hover { background: var(--soft-hover); color: var(--ink-strong); }
-.tw-side-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; margin: 20px -8px 0; padding: 0 8px 8px; }
+.tw-side-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; margin: 20px -8px 0; padding: 0 8px; scrollbar-width: none; }
+.tw-side-scroll::-webkit-scrollbar { display: none; }
 .tw-agent-group + .tw-agent-group { margin-top: 20px; }
 .tw-agent-head { position: relative; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 4px 0 12px; border-radius: 10px; cursor: pointer; user-select: none; }
 .tw-agent-head:hover { background: var(--hover); }
+.tw-agent-head[aria-current="true"] { background: var(--selected); }
 .tw-agent-head .tw-avatar { width: 24px; height: 24px; }
 .tw-agent-head > span { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--muted-70); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-agent-head .tw-icon-button { width: 22px; height: 22px; border-radius: 6px; opacity: 0; color: var(--muted-70); }
@@ -145,7 +148,7 @@ a { color: var(--accent-strong); }
 .tw-agent-head[data-drop="true"] { box-shadow: inset 0 2px 0 var(--accent-strong); }
 .tw-convo { position: relative; display: flex; align-items: center; gap: 8px; height: 36px; margin-top: 1px; padding: 0 4px 0 44px; border: none; border-radius: 10px; background: transparent; color: var(--ink-strong); text-align: left; cursor: pointer; width: 100%; text-decoration: none; }
 .tw-convo:hover { background: var(--hover); }
-.tw-convo[aria-current="true"] { background: var(--selected); }
+.tw-convo[aria-current] { background: var(--selected); }
 .tw-convo > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-convo.unread > span:first-child { font-weight: 600; }
 .tw-convo time { flex: none; width: 24px; text-align: right; font-size: 13px; color: var(--muted-64); }
@@ -155,19 +158,32 @@ a { color: var(--accent-strong); }
 .tw-convo .tw-unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-strong); flex: none; margin-right: 8px; }
 .tw-show-more { display: block; width: 100%; height: 36px; margin-top: 1px; padding: 0 4px 0 44px; border: none; border-radius: 10px; background: transparent; color: var(--muted-64); text-align: left; cursor: pointer; }
 .tw-show-more:hover { background: var(--hover); }
-.tw-add-agent { display: flex; align-items: center; gap: 16px; width: 100%; height: 36px; margin-top: 20px; padding: 0 12px 0 16px; border: none; border-radius: 10px; background: transparent; color: var(--muted-64); cursor: pointer; }
-.tw-add-agent:hover { background: var(--hover); color: var(--ink-strong); }
+/* Stays at the bottom of the list; the rows above fade out behind it. */
+.tw-add-agent { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; gap: 16px; width: 100%; height: 36px; margin-top: 20px; padding: 0 12px 0 16px; border: none; border-radius: 10px; background: var(--window); color: var(--muted-64); cursor: pointer; box-shadow: 0 -24px 16px -4px var(--window); }
+.tw-add-agent:hover { background: color-mix(in srgb, var(--ink-strong) 4.5%, var(--window)); color: var(--ink-strong); }
 .tw-side-empty { padding: 6px 12px; color: var(--muted-64); font-size: 13px; }
-.tw-side-search { margin-top: 12px; flex: none; }
-.tw-side-search input { height: 36px; border-radius: 10px; background: var(--soft); border-color: transparent; padding-left: 36px; }
-.tw-day { margin: 18px 12px 6px; font-size: 13px; font-weight: 500; color: var(--muted-70); text-transform: capitalize; }
-.tw-feed-item { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; grid-template-areas: "avatar name time" "avatar text time"; column-gap: 16px; align-items: center; width: 100%; padding: 8px 4px 8px 8px; border: none; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; color: var(--ink-strong); }
+/* Search dialog */
+.tw-dialog.tw-palette { width: min(448px, calc(100vw - 32px)); margin: 30vh auto auto; border: 0.67px solid var(--border); overflow: hidden; }
+.tw-palette-input { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px; border-bottom: 0.67px solid var(--border); color: var(--muted); }
+.tw-palette-input input { flex: 1; min-width: 0; height: 100%; border: none; outline: none; background: transparent; color: var(--ink-strong); font: inherit; font-size: 15px; }
+.tw-palette-input input::placeholder { color: var(--muted); }
+.tw-palette-list { max-height: min(384px, 50vh); overflow-y: auto; padding: 4px; }
+.tw-palette-option { display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 12px; border-radius: 8px; color: var(--ink-strong); font-size: 14px; cursor: pointer; }
+.tw-palette-option[aria-selected="true"] { background: color-mix(in srgb, var(--theme-accent) 30%, var(--surface)); }
+.tw-palette-option .tw-avatar.tiny { width: 18px; height: 18px; }
+.tw-palette-option .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-palette-option time { font-size: 12px; color: var(--muted); }
+.tw-palette-gap { height: 8px; }
+.tw-palette-empty { margin: 0; padding: 12px; color: var(--muted); font-size: 14px; }
+.tw-day { margin: 18px 8px 6px; font-size: 12px; font-weight: 600; color: var(--muted-70); }
+.tw-side-scroll.feed > .tw-day:first-child { margin-top: 8px; }
+.tw-feed-item { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; grid-template-areas: "avatar name time" "avatar text time"; column-gap: 8px; align-items: center; width: 100%; padding: 8px 4px 8px 8px; border: none; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; color: var(--ink-strong); }
 .tw-feed-item:hover { background: var(--hover); }
 .tw-feed-item[aria-current="true"] { background: var(--selected); }
 .tw-feed-item .tw-avatar { grid-area: avatar; width: 40px; height: 40px; border-radius: 12px; }
-.tw-feed-item strong { grid-area: name; font-weight: 400; font-size: 15px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tw-feed-item p { grid-area: text; margin: 0; font-size: 14px; line-height: 20px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tw-feed-item time { grid-area: time; font-size: 13px; color: var(--muted-64); }
+.tw-feed-item strong { grid-area: name; font-weight: 400; font-size: 14px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-feed-item p { grid-area: text; margin: 0; font-size: 12px; line-height: 16px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-feed-item time { grid-area: time; font-size: 12px; color: var(--muted-64); }
 .tw-usage { display: block; flex: none; margin-top: 8px; padding: 8px 12px 10px; border-radius: 10px; background: var(--soft); text-decoration: none; color: var(--muted-64); cursor: pointer; border: none; width: 100%; text-align: left; }
 .tw-usage:hover { background: var(--soft-hover); }
 .tw-usage > div { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; line-height: 16px; }
@@ -189,30 +205,34 @@ a { color: var(--accent-strong); }
 .tw-avatar.large { width: 72px; height: 72px; border-radius: 18px; }
 
 /* Home */
-.tw-home { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 40px 24px; }
+.tw-home { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 92px 24px 48px; }
 .tw-home-inner { width: min(672px, 100%); margin: auto 0; }
 .tw-home h1 { margin: 0 0 32px; padding: 0 14px; font: 400 30px/1 var(--font-display); letter-spacing: -0.75px; color: var(--ink); }
 .tw-suggestions { margin-top: 48px; display: grid; gap: 1px; }
 .tw-suggestion { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 8px 0 16px; border-radius: 14px; color: var(--ink); cursor: pointer; border: none; background: transparent; width: 100%; text-align: left; text-decoration: none; }
 .tw-suggestion:hover { background: var(--hover); }
-.tw-suggestion > img, .tw-suggestion > svg { width: 18px; height: 18px; flex: none; }
+.tw-suggestion > img, .tw-suggestion > svg, .tw-suggestion > .tw-glyph { width: 16px; height: 16px; flex: none; }
 .tw-suggestion .tw-icons { display: flex; gap: 4px; }
-.tw-suggestion .tw-icons img { width: 18px; height: 18px; }
-.tw-suggestion strong { font-weight: 500; font-size: 15px; color: color-mix(in srgb, var(--ink) 80%, transparent); }
-.tw-suggestion span.meta { color: var(--muted); font-size: 15px; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-suggestion .tw-icons img { width: 16px; height: 16px; }
+.tw-glyph { width: 18px; height: 18px; flex: none; background: currentColor; -webkit-mask: var(--glyph) center / contain no-repeat; mask: var(--glyph) center / contain no-repeat; opacity: 0.85; }
+.tw-suggestion strong { font-weight: 500; font-size: 14px; line-height: 20px; color: var(--muted); }
+.tw-suggestion span.meta { color: color-mix(in srgb, var(--muted) 60%, transparent); font-size: 14px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-suggestion .grow { flex: 1; }
 .tw-suggestion .actions { display: none; gap: 6px; }
 .tw-suggestion:hover .actions, .tw-suggestion:focus-within .actions { display: flex; }
-.tw-suggestion .actions .tw-btn { height: 28px; font-size: 13px; }
+.tw-suggestion .actions .tw-btn { height: 32px; padding: 0 10px; font-size: 14px; border-radius: 999px; box-shadow: var(--shadow-sm); }
 
 /* Composer */
 .tw-composer { flex: none; position: relative; padding: 0 48px 12px; }
 .tw-composer-inner { max-width: 800px; margin: 0 auto; }
 .tw-home .tw-composer { padding: 0; }
-.tw-banner { display: flex; align-items: center; gap: 6px; height: 33px; margin: 0 16px -1px; padding: 0 16px; border: 0.67px solid var(--border); border-bottom: none; border-radius: 16px 16px 0 0; background: var(--banner); font-size: 12px; color: var(--ink); cursor: pointer; width: calc(100% - 32px); text-align: left; }
-.tw-banner strong { font-weight: 500; }
+.tw-banner { display: flex; align-items: center; gap: 6px; height: 33px; margin: 0 16px -1px; padding: 0 13px; border: 0.67px solid var(--border); border-bottom: none; border-radius: 16px 16px 0 0; background: var(--banner); font-size: 12px; color: var(--ink); cursor: pointer; width: calc(100% - 32px); text-align: left; }
+.tw-banner > svg { color: var(--muted); flex: none; }
+.tw-banner strong { font-weight: 500; line-height: 15px; }
+.tw-banner > span { line-height: 15px; }
+.tw-banner > span[aria-hidden] { color: var(--muted); }
 .tw-banner .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-.tw-banner .end { font-weight: 500; }
+.tw-banner .end { font-weight: 400; }
 .tw-composer-box { position: relative; border: 0.67px solid var(--border); border-radius: 24px; background: var(--surface); box-shadow: var(--shadow-sm); }
 .tw-composer-box textarea { display: block; width: 100%; border: none; outline: none; resize: none; background: transparent; font-size: 14px; line-height: 20px; padding: 0 4px; color: var(--ink); }
 .tw-composer-box textarea::placeholder { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -224,12 +244,12 @@ a { color: var(--accent-strong); }
 .tw-composer-box.compact.tall { align-items: flex-end; }
 .tw-composer-row { display: flex; align-items: center; gap: 2px; margin-top: 10px; }
 .tw-composer-row .grow { flex: 1; }
-.tw-pill { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 999px; border: none; background: transparent; color: var(--muted); font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.tw-pill { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 999px; border: none; background: transparent; color: var(--muted); font-size: 14px; line-height: 20px; font-weight: 500; cursor: pointer; white-space: nowrap; }
 .tw-pill:hover, .tw-pill[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
 .tw-pill .tw-pill-icons { display: flex; gap: 1px; }
 .tw-pill .tw-pill-icons img { width: 16px; height: 16px; }
-.tw-pill.agent { color: var(--ink); }
-.tw-pill.model { font-weight: 400; color: var(--ink); gap: 5px; }
+.tw-pill.model { font-size: 12px; line-height: 17px; font-weight: 400; color: var(--ink); gap: 5px; padding: 0 8px; border-radius: 8px; }
+.tw-pill.model svg { width: 13px; height: 13px; color: var(--muted); }
 .tw-pill.model em { font-style: normal; color: var(--muted); }
 .tw-round { width: 32px; height: 32px; border-radius: 50%; border: none; display: grid; place-items: center; background: transparent; color: var(--muted); cursor: pointer; flex: none; }
 .tw-round:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
@@ -298,10 +318,10 @@ a { color: var(--accent-strong); }
 .tw-chat-header { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 8px 0 24px; flex: none; background: var(--card); }
 .tw-crumbs-chat { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .tw-crumbs-chat .tw-avatar { width: 20px; height: 20px; }
-.tw-crumbs-chat > button.agent { border: none; background: none; padding: 0; color: var(--muted); cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.tw-crumbs-chat > a.agent { flex: none; padding: 0; color: var(--muted); cursor: pointer; display: flex; align-items: center; gap: 8px; text-decoration: none; }
+.tw-crumbs-chat > a.agent:hover { color: var(--ink); }
 .tw-crumbs-chat > svg { color: var(--muted); flex: none; }
-.tw-crumbs-chat > button.title, .tw-crumbs-chat > input { min-width: 64px; border: none; background: none; padding: 2px 6px; margin-left: -6px; border-radius: 6px; font: inherit; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
-.tw-crumbs-chat > button.title:hover { background: var(--hover); }
+.tw-crumbs-chat > span.title, .tw-crumbs-chat > input { min-width: 64px; border: none; background: none; padding: 2px 6px; margin-left: -6px; border-radius: 6px; font: inherit; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
 .tw-crumbs-chat > input { outline: none; background: var(--surface); box-shadow: 0 0 0 1px var(--border); }
 .tw-head-btn { display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px; border: none; border-radius: 8px; background: transparent; font-size: 14px; font-weight: 500; color: var(--ink); cursor: pointer; white-space: nowrap; }
 .tw-head-btn.muted { color: var(--muted); }
@@ -323,6 +343,17 @@ a { color: var(--accent-strong); }
 .tw-agent-stack { grid-column: 2; grid-row: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: 6px; }
 .tw-bubble { max-width: min(100%, 680px); background: var(--surface); border-radius: 16px 16px 16px 8px; padding: 6px 12px; font-size: 14px; line-height: 24px; overflow-wrap: anywhere; box-shadow: 0 2px 6px -2px rgb(0 0 0 / 0.04), 0 4px 24px 4px rgb(0 0 0 / 0.02); }
 .tw-bubble.plain { background: transparent; padding: 0; }
+.tw-bubble { position: relative; }
+.tw-bubble-actions { position: absolute; top: -12px; right: 8px; display: none; gap: 2px; padding: 2px; border-radius: 8px; background: var(--surface); border: 0.67px solid var(--border); box-shadow: var(--shadow-sm); z-index: 2; }
+.tw-bubble:hover > .tw-bubble-actions, .tw-bubble-actions:focus-within { display: flex; }
+.tw-bubble-actions button { width: 24px; height: 24px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.tw-bubble-actions button:hover { background: var(--hover); color: var(--ink); }
+/* Consecutive agent messages share one picture, at the end of the run. */
+.tw-agent-row:has(+ .tw-agent-row) { margin-bottom: 6px; }
+.tw-agent-row:has(+ .tw-agent-row) > .tw-avatar { visibility: hidden; }
+.tw-reply-chip { display: inline-flex; align-items: center; gap: 4px; max-width: min(260px, 60%); height: 26px; margin: 0 6px 0 0; padding: 0 4px 0 8px; border-radius: 8px; background: var(--selected); color: var(--ink); font-size: 14px; flex: none; }
+.tw-reply-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-reply-chip button { border: none; background: none; padding: 2px; border-radius: 4px; display: grid; place-items: center; color: var(--muted); cursor: pointer; }
 .tw-thinking { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; padding: 6px 4px; }
 .tw-dots span { display: inline-block; width: 5px; height: 5px; margin-right: 3px; border-radius: 50%; background: currentColor; animation: tw-dot 1.2s infinite ease-in-out; }
 .tw-dots span:nth-child(2) { animation-delay: 0.15s; } .tw-dots span:nth-child(3) { animation-delay: 0.3s; }
@@ -348,6 +379,7 @@ a { color: var(--accent-strong); }
 .tw-markdown a { color: var(--accent-strong); font-weight: 500; text-decoration: none; }
 .tw-markdown a:hover { text-decoration: underline; }
 .tw-markdown a .tw-favicon { width: 16px; height: 16px; border-radius: 3px; vertical-align: -3px; margin-right: 5px; }
+.tw-markdown a .tw-link-icon { vertical-align: -2px; margin-right: 5px; }
 .tw-markdown code { font: 12.5px var(--font-mono); background: var(--code-background); padding: 1px 5px; border-radius: 5px; }
 .tw-markdown pre { max-width: 100%; background: var(--code-background); border-radius: 10px; padding: 12px 14px; overflow-x: auto; }
 .tw-markdown pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.5; }
@@ -407,11 +439,11 @@ a { color: var(--accent-strong); }
 
 /* Settings */
 .tw-settings { flex: 1; min-height: 0; overflow-y: auto; }
-.tw-settings-inner { display: grid; grid-template-columns: 144px minmax(0, 680px); gap: 40px; justify-content: center; padding: 40px 16px 64px; }
-.tw-settings nav { position: sticky; top: 0; align-self: start; padding-top: 64px; display: grid; gap: 2px; }
-.tw-settings nav h4 { margin: 12px 0 0; height: 32px; display: flex; align-items: center; padding: 0 8px; font-size: 12px; font-weight: 500; color: var(--muted-70); }
+.tw-settings-inner { display: grid; grid-template-columns: 144px minmax(0, 680px); gap: 40px; justify-content: center; padding: 40px 32px 64px 8px; }
+.tw-settings nav { position: sticky; top: 0; align-self: start; padding-top: 48px; display: grid; gap: 1px; }
+.tw-settings nav h4 { margin: 11px 0 0; height: 32px; display: flex; align-items: center; padding: 0 8px; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--muted-70); }
 .tw-settings nav h4:first-child { margin-top: 0; }
-.tw-settings nav button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; text-align: left; }
+.tw-settings nav button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; line-height: 20px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 14px; cursor: pointer; text-align: left; }
 .tw-settings nav button:hover { background: var(--hover); color: var(--ink); }
 .tw-settings nav button[aria-current="true"] { background: var(--selected); }
 .tw-page { min-width: 0; display: grid; gap: 16px; align-content: start; }
@@ -423,10 +455,10 @@ a { color: var(--accent-strong); }
 .tw-page > p.lead { margin: 0; color: var(--muted); }
 .tw-rows-card { background: var(--surface); border: 0.67px solid var(--border); border-radius: 14px; overflow: hidden; }
 .tw-rows-card.padded { padding: 16px; display: grid; gap: 12px; }
-.tw-set-row { display: flex; align-items: center; gap: 16px; padding: 14px 16px; min-height: 70px; }
+.tw-set-row { display: flex; align-items: center; gap: 16px; padding: 13px 16px 19px; min-height: 70px; }
 .tw-set-row + .tw-set-row { border-top: none; }
 .tw-set-row > div:first-child { flex: 1; min-width: 0; display: grid; gap: 4px; }
-.tw-set-row strong { font-size: 14px; font-weight: 400; line-height: 16px; color: var(--ink); }
+.tw-set-row strong { font-size: 14px; font-weight: 400; line-height: 14px; color: var(--ink); }
 .tw-set-row span.desc { font-size: 14px; line-height: 20px; color: var(--muted); }
 .tw-set-row.stack { display: grid; }
 .tw-picker { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 10px; border: none; border-radius: 8px; background: transparent; color: var(--ink); cursor: pointer; font-size: 14px; }
@@ -437,7 +469,7 @@ a { color: var(--accent-strong); }
 .tw-color-editor { padding: 0 16px 16px; display: grid; gap: 14px; }
 .tw-switch { position: relative; width: 40px; height: 24px; border-radius: 999px; border: none; background: color-mix(in srgb, var(--muted) 25%, transparent); cursor: pointer; flex: none; transition: background 0.15s; }
 .tw-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: white; transition: transform 0.15s; box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); }
-.tw-switch[aria-checked="true"] { background: var(--accent-strong); }
+.tw-switch[aria-checked="true"] { background: var(--theme-accent); box-shadow: inset 0 0 0 0.67px color-mix(in srgb, var(--theme-accent) 80%, var(--accent-ink)); }
 .tw-switch[aria-checked="true"]::after { transform: translateX(16px); }
 .tw-switch:disabled { opacity: 0.5; cursor: default; }
 .tw-segmented { display: inline-flex; padding: 3px; border-radius: 10px; background: var(--selected); gap: 2px; }
@@ -540,23 +572,14 @@ a { color: var(--accent-strong); }
 .tw-org-picture.large img:not(.photo) { width: 26px; height: 26px; }
 .tw-billing-page { display: block; }
 .tw-memory-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-.tw-agent-panel { position: absolute; inset: 0; overflow-y: auto; padding: 48px 40px; display: grid; justify-items: center; align-content: start; gap: 12px; text-align: center; }
-.tw-agent-panel h2 { margin: 4px 0 0; font: 400 24px var(--font-display); }
-.tw-agent-panel .tw-avatar.large { width: 88px; height: 88px; border-radius: 0; }
-.tw-agent-panel-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-.tw-agent-panel section { width: min(560px, 100%); text-align: left; margin-top: 16px; padding: 16px; border-radius: 14px; border: 0.67px solid var(--border); background: var(--card); }
-.tw-agent-panel h3 { margin: 0 0 6px; font-size: 14px; font-weight: 500; }
-.tw-agent-panel p { margin: 0; white-space: pre-wrap; font-size: 14px; }
-.tw-profile-button { width: 30px; height: 30px; border-radius: 50%; border: 0.67px solid var(--border); background: var(--card); display: grid; place-items: center; cursor: pointer; flex: none; }
-.tw-profile-button img { width: 16px; height: 16px; }
 .tw-avatar.tiny { width: 16px; height: 16px; }
-.tw-compact-input { flex: 1; min-width: 0; display: grid; }
-.tw-side-search input { padding-right: 34px; }
-.tw-side-search-close { position: absolute; right: 2px; width: 30px; height: 30px; }
+.tw-compact-input { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; }
+.tw-compact-input > .tw-attachments { flex-basis: 100%; }
+.tw-compact-input > textarea { flex: 1; min-width: 120px; width: auto; }
 .tw-menu.tw-account-menu { padding: 6px; }
 ::highlight(tw-find) { background: hsl(48 100% 70% / 0.7); color: inherit; }
 ::highlight(tw-find-current) { background: hsl(28 100% 60% / 0.9); color: inherit; }
-.tw-trace-cols, .tw-trace-row { grid-template-columns: minmax(0, 1fr) 72px 72px 72px 80px; }
+.tw-trace-cols, .tw-trace-row { grid-template-columns: minmax(0, 1fr) 64px 64px 64px 64px 72px; }
 .tw-trace-row > span:not(:first-child), .tw-trace-cols > span:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
 .tw-trace-row .tw-ellipsis svg { vertical-align: -2px; }
 .tw-trace-none { padding: 22px 36px; color: var(--muted); font-size: 15px; }
@@ -577,7 +600,6 @@ a { color: var(--accent-strong); }
   .tw-messages { padding: 0 16px 24px; }
   .tw-user-row { margin-left: 24px; }
   .tw-agent-row { margin-right: 0; }
-  .tw-crumbs-chat > button.agent span { display: none; }
 }
 
 .tw-link { border: none; background: none; padding: 0; color: var(--accent-strong); font: inherit; cursor: pointer; }
@@ -614,8 +636,13 @@ a { color: var(--accent-strong); }
 
 /* Toasts */
 .tw-toasts { position: fixed; bottom: 18px; right: 18px; display: grid; gap: 8px; z-index: 60; }
-.tw-toast { background: var(--surface); border: 0.67px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 10px 14px; max-width: 360px; font-size: 13px; }
-.tw-toast.error { border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.tw-toast { position: relative; display: flex; align-items: flex-start; gap: 12px; background: var(--surface); border: 0.67px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 14px 36px 14px 16px; min-width: 260px; max-width: 360px; font-size: 14px; line-height: 21px; color: var(--ink); }
+.tw-toast > svg { flex: none; margin-top: 1px; color: var(--ink-strong); }
+.tw-toast.error > svg { color: var(--danger); }
+.tw-toast > div { display: grid; gap: 1px; min-width: 0; }
+.tw-toast strong { font-weight: 500; }
+.tw-toast > button { position: absolute; top: 8px; right: 8px; border: none; background: none; color: var(--muted); cursor: pointer; padding: 2px; border-radius: 4px; opacity: 0; }
+.tw-toast:hover > button { opacity: 1; }
 
 /* Shared account, organization, billing and onboarding screens */
 #timewarp-auth-view { height: 100%; background: var(--card); }
@@ -633,31 +660,78 @@ a { color: var(--accent-strong); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* Side pane: built-in browser, files and tools */
-.tw-pane { flex: 1 1 54%; min-width: 360px; min-height: 0; display: flex; flex-direction: column; background: var(--card); border-radius: 10px; overflow: hidden; }
+.tw-pane { flex: 1 1 0; min-width: 360px; min-height: 0; display: flex; flex-direction: column; background: var(--card); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-sm); }
 .tw-window[data-pane="full"] .tw-pane { flex: 1; }
-.tw-pane-top { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 6px 0 8px; flex: none; }
-.tw-pane-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
-.tw-pane-tab { display: flex; align-items: center; gap: 6px; max-width: 200px; min-width: 70px; height: 30px; padding: 0 4px 0 10px; border-radius: 8px; cursor: pointer; color: var(--muted); font-size: 13px; flex: none; }
-.tw-pane-tab:hover { background: var(--hover); }
-.tw-pane-tab[aria-selected="true"] { background: var(--selected); color: var(--ink); }
+/* Tabs sit on a strip; the selected tab joins the toolbar below, as in Chrome. */
+.tw-pane-top { display: flex; align-items: flex-end; height: 34px; padding: 0 4px 0 2px; flex: none; background: color-mix(in srgb, var(--surface) 55%, var(--card)); box-shadow: inset 0 -0.67px 0 var(--border); }
+.tw-pane-tabs { flex: 1; min-width: 0; display: flex; align-items: flex-end; height: 100%; padding: 0 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.tw-pane-tab { position: relative; display: flex; align-items: center; gap: 4px; width: 160px; min-width: 72px; flex: 0 1 160px; height: 32px; padding: 0 28px 2px 10px; border-radius: 10px 10px 0 0; cursor: pointer; color: var(--muted); font-size: 12px; line-height: 16px; }
+.tw-pane-tab:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.tw-pane-tab[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 -1px 2px rgb(0 0 0 / 0.04); z-index: 1; }
+.tw-pane-tab[aria-selected="true"]::before, .tw-pane-tab[aria-selected="true"]::after { content: ""; position: absolute; bottom: 0; width: 8px; height: 8px; }
+.tw-pane-tab[aria-selected="true"]::before { left: -8px; background: radial-gradient(circle at 0 0, transparent 7.5px, var(--surface) 8px); }
+.tw-pane-tab[aria-selected="true"]::after { right: -8px; background: radial-gradient(circle at 100% 0, transparent 7.5px, var(--surface) 8px); }
+.tw-pane-tab > svg, .tw-pane-tab > img { flex: none; margin-right: 4px; }
 .tw-pane-tab span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tw-pane-tab button { border: none; background: none; padding: 3px; border-radius: 5px; display: grid; place-items: center; color: inherit; cursor: pointer; opacity: 0.7; }
-.tw-pane-tab button:hover { background: var(--hover); opacity: 1; }
-.tw-pane-toolbar { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 10px; border-bottom: 0.67px solid var(--border); flex: none; }
-.tw-address { flex: 1; min-width: 0; height: 32px; border: none; background: transparent; text-align: center; outline: none; font-size: 14px; color: var(--ink); border-radius: 8px; }
-.tw-address:focus { background: var(--card); text-align: left; padding: 0 10px; }
+.tw-pane-tab button { position: absolute; right: 8px; top: 6px; width: 20px; height: 20px; border: none; background: none; border-radius: 6px; display: grid; place-items: center; color: var(--muted); cursor: pointer; }
+.tw-pane-tab button:hover { background: var(--hover); color: var(--ink); }
+.tw-pane-controls { display: flex; align-items: center; gap: 4px; height: 100%; padding-bottom: 4px; flex: none; }
+.tw-pane-controls .tw-icon-button { width: 28px; height: 28px; border-radius: 8px; color: var(--muted); }
+.tw-pane-controls .tw-icon-button.add { align-self: flex-start; margin-top: 2px; }
+.tw-pane-controls .tw-icon-button:hover { color: var(--ink); }
+.tw-pane-toolbar { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 4px; flex: none; background: var(--surface); border-bottom: 0.67px solid var(--border); }
+.tw-pane-toolbar > .tw-icon-button, .tw-pane-toolbar .tw-anchor > .tw-icon-button { width: 32px; height: 32px; border-radius: 8px; color: var(--muted); }
+.tw-pane-toolbar .tw-icon-button:disabled { opacity: 0.45; }
+.tw-address { flex: 1; min-width: 0; height: 28px; padding: 4px 10px; border: none; background: transparent; text-align: center; outline: none; font-size: 14px; color: var(--ink); border-radius: 8px; }
+.tw-address:focus { background: var(--card); text-align: left; box-shadow: inset 0 0 0 0.67px var(--border); }
 .tw-address::placeholder { color: var(--muted); }
 .tw-pane-agent { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 4px; border-radius: 999px; background: var(--user-bubble); color: var(--accent-ink); font-size: 12px; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .tw-control { height: 28px; padding: 0 10px; font-size: 12.5px; flex: none; }
+.tw-profile-face { position: relative; width: 20px; height: 20px; flex: none; }
+.tw-profile-face > span { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--muted) 15%, transparent); color: var(--muted); }
+.tw-profile-face > img { position: absolute; right: -6px; bottom: -6px; width: 14px; height: 14px; padding: 1.5px; border-radius: 50%; background: var(--card); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.tw-menu.tw-profile-menu .tw-menu-item { min-height: 40px; }
+.tw-menu.tw-profile-menu .tw-profile-face { margin-right: 4px; }
 .tw-pane-content { position: relative; flex: 1; min-height: 0; background: var(--card); }
-.tw-pane-home { position: absolute; inset: 0; overflow-y: auto; padding: 0 40px 40px; display: grid; align-content: center; gap: 40px; justify-items: center; }
-.tw-pane-home section { width: min(600px, 100%); display: grid; gap: 22px; justify-items: center; }
-.tw-pane-home h2 { margin: 0; font-size: 16px; font-weight: 500; color: var(--ink); }
+.tw-pane-home { position: absolute; inset: 0; overflow-y: auto; padding: 0 28px 40px; display: grid; align-content: center; gap: 38px; justify-items: center; }
+.tw-pane-home section { width: min(600px, 100%); display: grid; gap: 18px; justify-items: center; }
+.tw-pane-home h2 { margin: 0; font-size: 15px; line-height: 22.5px; font-weight: 600; color: var(--ink); }
+.tw-pane-home .tw-hint { font-size: 13px; }
 .tw-pane-tiles { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
-.tw-pane-tile { display: grid; justify-items: center; align-content: center; gap: 16px; min-height: 164px; padding: 20px 10px; border-radius: 16px; border: 0.67px solid var(--border); background: color-mix(in srgb, var(--ink) 3%, var(--card)); cursor: pointer; font-size: 16px; color: var(--ink); }
+.tw-pane-tile { display: grid; justify-items: center; align-content: center; gap: 19px; min-height: 164px; padding: 24px 16px; border-radius: 18px; border: 0.67px solid var(--border); background: color-mix(in srgb, var(--ink) 4%, var(--card)); cursor: pointer; font-size: 16px; color: var(--ink); }
+.tw-pane-tile strong { font-weight: 500; }
 .tw-pane-tile:hover { border-color: color-mix(in srgb, var(--accent-strong) 35%, var(--border)); }
-.tw-pane-tile > span:first-child { width: 64px; height: 64px; border-radius: 14px; display: grid; place-items: center; background: var(--surface); color: var(--ink); }
-.tw-pane-tile .tw-avatar { width: 56px; height: 56px; border-radius: 0; }
+.tw-pane-tile > span:first-child { width: 64px; height: 64px; border-radius: 16px; display: grid; place-items: center; background: color-mix(in srgb, var(--theme-accent) 22%, var(--card)); color: var(--ink); }
+/* Tool pages (Agent, Files) inside a tab */
+.tw-tool-page { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.tw-tool-page > header { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 12px; border-bottom: 0.67px solid var(--border); flex: none; }
+.tw-tool-page > header strong { font-size: 12px; font-weight: 700; }
+.tw-tool-page > header .tw-icon-button { width: 32px; height: 32px; border-radius: 8px; color: var(--ink); }
+.tw-tool-body { position: relative; flex: 1; min-height: 0; overflow-y: auto; }
+.tw-agent-page { width: min(560px, 100%); margin: 0 auto; padding: 24px 12px 32px; }
+.tw-agent-page-head { display: grid; justify-items: center; gap: 12px; margin-bottom: 26px; }
+.tw-agent-picture { position: relative; width: 96px; height: 96px; border-radius: 50%; border: none; background: none; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.tw-agent-picture .tw-avatar { width: 80px; height: 80px; border-radius: 0; }
+.tw-agent-picture .badge { position: absolute; right: 2px; bottom: 2px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--card); border: 0.67px solid var(--border); box-shadow: var(--shadow-sm); opacity: 0; transition: opacity 0.15s; }
+.tw-agent-picture:hover .badge, .tw-agent-picture:focus-visible .badge { opacity: 1; }
+.tw-agent-name { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 4px 8px; border: none; background: none; border-radius: 8px; font-size: 18px; line-height: 28px; font-weight: 500; color: var(--ink); cursor: pointer; }
+.tw-agent-name svg { color: var(--muted); opacity: 0; }
+.tw-agent-name:hover svg { opacity: 1; }
+.tw-agent-page h3 { margin: 0 8px 8px; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--muted); }
+.tw-agent-page-row { display: flex; align-items: center; justify-content: space-between; margin-top: 26px; }
+.tw-agent-add { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; margin: 0 8px 8px 0; border: none; border-radius: 8px; background: transparent; font-size: 12px; font-weight: 500; color: var(--muted); cursor: pointer; }
+.tw-agent-add:hover { background: var(--hover); color: var(--ink); }
+.tw-agent-card { background: var(--surface); border: 0.67px solid var(--border); border-radius: 14px; overflow: hidden; }
+.tw-agent-instructions { max-height: 161px; overflow-y: auto; padding: 4px 8px; -webkit-mask: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); mask: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+.tw-agent-instructions .tw-markdown { font-size: 14px; line-height: 24px; }
+.tw-agent-instructions > p { margin: 6px 0; font-size: 14px; }
+.tw-agent-tool { display: flex; align-items: center; gap: 8px; min-height: 39px; padding: 8px; }
+.tw-agent-tool + .tw-agent-tool { border-top: 0.67px solid var(--border); }
+.tw-agent-tool > img, .tw-agent-tool > svg, .tw-agent-tool > .tw-app-letter { flex: none; color: var(--muted); }
+.tw-agent-tool strong { font-size: 14px; line-height: 20px; font-weight: 500; flex: none; }
+.tw-agent-tool .desc { flex: 1; min-width: 0; font-size: 12px; line-height: 16px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-agent-tool .tw-icon-button { width: 24px; height: 24px; border-radius: 8px; color: var(--muted); opacity: 0; }
+.tw-agent-tool:hover .tw-icon-button, .tw-agent-tool .tw-icon-button:focus-visible { opacity: 1; }
 .tw-recent { width: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
 .tw-recent button { display: grid; justify-items: center; gap: 8px; padding: 14px 8px; border-radius: 14px; border: 0.67px solid var(--border); background: var(--card); cursor: pointer; font-size: 13px; color: var(--ink); }
 .tw-recent button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -713,3 +787,182 @@ a { color: var(--accent-strong); }
 :root[data-platform="darwin"] .tw-topbar { -webkit-app-region: drag; padding-left: 84px; }
 :root[data-platform="darwin"] .tw-topbar button { -webkit-app-region: no-drag; }
 :root[data-platform="darwin"] #timewarp-auth-view::before, :root[data-platform="darwin"] .tw-splash::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: 36px; -webkit-app-region: drag; }
+
+/* "See options" from the limit banner */
+.tw-dialog.tw-limit { width: min(448px, calc(100vw - 32px)); }
+.tw-limit .tw-dialog-body { gap: 20px; }
+.tw-limit .tw-dialog-head h2 { font-size: 16px; font-weight: 500; }
+.tw-limit-meter > div { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.tw-limit-meter > div span:first-child { font-weight: 500; }
+.tw-limit-meter > i { display: block; height: 4px; margin-top: 8px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.tw-limit-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
+.tw-limit-actions .tw-btn { height: 36px; justify-content: center; gap: 8px; font-size: 14px; }
+.tw-limit-actions .tw-btn img { width: 17px; height: 17px; }
+.tw-limit-actions .tw-btn.primary { background: var(--theme-accent); color: var(--accent-ink); border-color: transparent; }
+
+/* Settings → Browser */
+.tw-profile-row { min-height: 66px; padding: 0 16px 0 17px; gap: 12px; }
+.tw-profile-row > div { flex: 1; min-width: 0; }
+.tw-profile-row strong { display: block; font-size: 14px; line-height: 17.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-profile-row .desc { display: block; margin-top: 3px; font-size: 14px; line-height: 19.25px; color: var(--muted); }
+.tw-face.tw-profile-avatar { width: 36px; height: 36px; overflow: visible; background: color-mix(in srgb, var(--muted) 15%, transparent); }
+.tw-face.tw-profile-avatar > img.photo { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
+.tw-face.tw-profile-avatar > b { font-size: 16px; font-weight: 600; }
+.tw-face.tw-profile-avatar .tw-face-badge { right: -2px; bottom: -2px; width: 14px !important; height: 14px !important; padding: 1.5px; background: var(--card); box-shadow: 0 1px 2px rgb(0 0 0 / 0.15); }
+.tw-row-actions { opacity: 0; transition: opacity 0.12s; }
+.tw-profile-row:hover .tw-row-actions, .tw-row-actions:focus-within { opacity: 1; }
+.tw-btn.soft { height: 32px; padding: 0 10px; min-width: 80px; border-radius: 999px; border-color: transparent; background: color-mix(in srgb, var(--ink) 8%, var(--card)); color: var(--ink-strong); }
+.tw-btn.soft:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 12%, var(--card)); }
+
+/* Settings pages, measured from the previous app */
+.tw-page > .tw-search-field, .tw-page > .tw-tabs { margin: 0 16px; }
+.tw-search-field { height: 32px; padding: 0 8px; background: var(--surface); border: 0.67px solid var(--border); border-radius: 8px; }
+.tw-search-field > svg { left: 9px; width: 16px; height: 16px; }
+.tw-search-field input { height: 28px; padding: 0 10px 0 24px; border: none; background: transparent; border-radius: 8px; font-size: 14px; line-height: 20px; outline: none; box-shadow: none; }
+.tw-search-field kbd span { font: 500 10px/13px var(--font-sans); padding: 3px 4px; border: none; border-radius: 6px; background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+.tw-search-field kbd span:first-child { font-size: 8px; }
+.tw-tabs { gap: 1px; }
+.tw-tabs button { gap: 6px; height: 32px; padding: 0 8px; font-size: 14px; line-height: 20px; }
+.tw-tabs button em { font-weight: 500; }
+.tw-tabs button[aria-pressed="true"] { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+.tw-loading { margin: 32px 0 0; text-align: center; color: var(--muted); font-size: 14px; }
+.tw-scroll-grid { max-height: calc(100vh - 268px); overflow-y: auto; align-content: start; margin: 0 0 0 16px; }
+.tw-grid.tw-scroll-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.tw-tool-grid { padding: 4px; }
+.tw-tile { gap: 12px; min-height: 66px; padding: 12px; }
+.tw-tile strong { font-size: 14px; line-height: 17.5px; }
+.tw-tile span.desc { font-size: 14px; line-height: 19.25px; }
+.tw-tile.off { opacity: 0.6; }
+.tw-tile > .tw-tile-icon { width: 40px; height: 40px; border-radius: 10px; }
+.tw-tile > .tw-tile-icon svg { width: 24px; height: 24px; }
+.tw-tool-grid .tw-tile > img, .tw-tool-grid .tw-tile > .tw-tool-icon { width: 36px; height: 36px; border-radius: 8px; margin-left: 1px; }
+.tw-tile .tw-round.tw-add-round { width: 32px; height: 32px; color: var(--ink); background: var(--surface); border: 0.67px solid color-mix(in srgb, var(--muted) 25%, transparent); box-shadow: var(--shadow-sm); }
+.tw-faces span { width: 32px; height: 32px; margin-left: -10px; border: none; box-shadow: var(--shadow-sm); background: color-mix(in srgb, var(--ink) 6%, var(--card)); font-size: 14px; }
+.tw-faces + .tw-round { margin-left: -10px; }
+.tw-empty-box.dashed { min-height: 224px; display: grid; place-items: center; border-style: dashed; background: transparent; font-size: 14px; }
+/* Vault sections */
+.tw-vault-head { align-items: flex-start; }
+.tw-vault-head > div { flex: 1; min-width: 0; }
+.tw-vault-head h3 { font-size: 18px; line-height: 28px; font-weight: 500; }
+.tw-vault-head p { margin: 4px 0 0; font-size: 16px; line-height: 24px; color: var(--muted); max-width: 460px; }
+.tw-page > .tw-vault-head ~ .tw-vault-head { margin: 8px -16px 0; padding: 24px 0 0 32px; border-top: 0.67px solid var(--border); }
+.tw-page > .tw-vault-head + .tw-empty-box, .tw-page > .tw-vault-head + .tw-list-panel { margin-left: 16px; }
+/* Skill and plugin details */
+.tw-dialog.tw-skill-dialog { width: min(672px, calc(100vw - 48px)); }
+.tw-skill-head, .tw-plugin-head { display: flex; align-items: flex-start; gap: 16px; }
+.tw-skill-head > div, .tw-plugin-head > div { flex: 1; min-width: 0; }
+.tw-skill-head h2, .tw-plugin-head h2 { margin: 4px 0 0; font-size: 18px; line-height: 24px; font-weight: 500; }
+.tw-skill-head p, .tw-plugin-head p { margin: 4px 0 0; font-size: 14px; line-height: 20px; color: var(--muted); }
+.tw-skill-head .tw-tile-icon { width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; flex: none; }
+.tw-skill-scroll { max-height: min(560px, calc(100vh - 240px)); overflow-y: auto; display: grid; gap: 16px; padding-right: 4px; }
+.tw-skill-facts { margin: 0; padding: 16px 12px; border-radius: 14px; border: 0.67px solid var(--border); background: var(--card); display: grid; gap: 4px; }
+.tw-skill-facts dt { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--muted); }
+.tw-skill-facts dd { margin: 0 0 10px; font-size: 14px; line-height: 24px; }
+.tw-skill-facts dd .tw-markdown p { margin: 0; }
+.tw-skill-dialog .tw-skill-text { max-height: none; overflow: visible; border: none; padding: 0; background: transparent; }
+.tw-dialog.tw-plugin-dialog { width: min(448px, calc(100vw - 32px)); }
+.tw-plugin-head img { width: 36px; height: 36px; border-radius: 8px; flex: none; object-fit: contain; }
+.tw-plugin-head h2 { font-size: 14px; line-height: 20px; margin-top: 0; }
+.tw-plugin-text { margin: 0; font-size: 14px; line-height: 24px; color: var(--muted); }
+.tw-wide { width: 100%; height: 36px; justify-content: center; }
+.tw-search-field input { flex: 1; min-width: 0; width: auto; }
+.tw-page-head { margin-bottom: 0; }
+.tw-lead { margin: 8px 0 0; font-size: 14px; line-height: 20px; }
+.tw-page h3.tw-sub { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--muted); }
+.tw-page h3.tw-sub + .tw-list-panel { margin-top: -8px; }
+.tw-pane-tile .tw-avatar { width: 64px; height: 64px; border-radius: 0; }
+/* Beside the pane the chat is narrow: replies use the full width, without the picture. */
+@container (max-width: 620px) {
+  .tw-agent-row { grid-template-columns: minmax(0, 1fr); margin-right: 0; }
+  .tw-agent-row > .tw-avatar { display: none; }
+  .tw-agent-stack { grid-column: 1; }
+  .tw-user-row { margin-left: 24px; }
+}
+.tw-agent-tool .tw-switch { width: 30px; height: 18px; }
+.tw-agent-tool .tw-switch::after { top: 1.5px; left: 1.5px; width: 15px; height: 15px; }
+.tw-agent-tool .tw-switch[aria-checked="true"]::after { transform: translateX(12px); }
+/* Menus, as in the previous app */
+.tw-menu { padding: 4px; border-radius: 8px; background: color-mix(in srgb, var(--surface) 98.8%, var(--ink)); }
+.tw-menu-item { gap: 8px; min-height: 32px; padding: 6px 8px; border-radius: 6px; font-size: 14px; line-height: 20px; font-weight: 400; }
+.tw-menu-item svg, .tw-menu-item > img { width: 16px; height: 16px; }
+.tw-menu-item.selected { background: color-mix(in srgb, var(--theme-accent) 25%, var(--surface)); }
+.tw-menu-label { padding: 6px 8px; font-size: 12px; line-height: 16px; font-weight: 500; }
+.tw-menu-search { gap: 8px; padding: 0 8px; margin: -4px -4px 4px; height: 38px; }
+.tw-menu-search input { height: 32px; font-size: 14px; line-height: 20px; }
+.tw-menu-sep { margin: 4px -4px; }
+/* Account menu */
+.tw-org-row { position: relative; }
+.tw-menu-item.tw-org-item { min-height: 56px; padding: 8px; gap: 12px; }
+.tw-menu-item.tw-org-item[aria-expanded="true"] { background: color-mix(in srgb, var(--theme-accent) 25%, var(--surface)); }
+.tw-org-item .tw-org-picture { width: 40px; height: 40px; border-radius: 10px; }
+.tw-org-item .tw-org-picture img { width: 26px; height: 26px; }
+.tw-org-item .grow strong { display: block; font-size: 14px; line-height: 20px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.tw-org-item .grow small { display: block; font-size: 14px; line-height: 20px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+.tw-menu.tw-submenu { left: calc(100% + 8px); top: 0; width: 256px; min-width: 0; }
+.tw-account[aria-expanded="true"] { border-color: transparent; }
+/* New / edit agent */
+.tw-dialog.tw-agent-dialog { width: min(512px, calc(100vw - 32px)); border-radius: 14px; }
+.tw-agent-form { position: relative; display: grid; justify-items: center; }
+.tw-agent-form h2 { margin: 0; width: 100%; text-align: center; font-size: 18px; line-height: 28px; font-weight: 600; }
+.tw-agent-form .tw-dialog-close { position: absolute; top: -8px; right: -8px; width: 32px; height: 32px; color: var(--ink); }
+.tw-agent-preview { width: 112px; height: 112px; margin-top: 20px; object-fit: contain; }
+.tw-agent-form-label { margin-top: 12px; font-size: 14px; line-height: 20px; font-weight: 500; }
+.tw-agent-form .tw-mascots { justify-content: center; gap: 10px; margin-top: 12px; flex-wrap: nowrap; }
+.tw-agent-form .tw-mascot { width: 103px; height: 107px; align-content: center; gap: 4px; padding: 8px 4px; border: 2px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--surface) 98.8%, var(--ink)); font-size: 13px; line-height: 18.5px; }
+.tw-agent-form .tw-mascot[aria-pressed="true"] { border-color: var(--theme-accent); background: color-mix(in srgb, var(--theme-accent) 25%, var(--surface)); }
+.tw-agent-form .tw-mascot img { width: 64px; height: 64px; border-radius: 0; object-fit: contain; }
+.tw-agent-form .tw-upload { margin-top: 12px; box-shadow: var(--shadow-sm); }
+.tw-agent-field { width: 100%; display: grid; gap: 8px; margin-top: 20px; }
+.tw-agent-field + .tw-agent-field { margin-top: 8px; }
+.tw-agent-field > span { padding: 0 12px; font-size: 12px; line-height: 12px; font-weight: 500; color: var(--muted); }
+.tw-agent-field .tw-input { height: 36px; padding: 4px 10px; border-radius: 8px; font-size: 14px; }
+.tw-agent-field .tw-textarea { min-height: 77px; padding: 8px 10px; border-radius: 8px; font-size: 14px; line-height: 20px; resize: vertical; }
+.tw-agent-form > .tw-alert { width: 100%; margin-top: 12px; }
+.tw-agent-form > .tw-wide { margin-top: 20px; }
+/* Feedback and trace dialogs */
+.tw-dialog.tw-feedback { width: min(512px, calc(100vw - 32px)); }
+.tw-feedback .tw-textarea { min-height: 64px; height: 64px; resize: vertical; }
+.tw-feedback .tw-dialog-body { gap: 20px; }
+.tw-dialog.wide { width: min(1128px, calc(100vw - 72px)); height: min(722px, calc(100vh - 80px)); }
+.tw-trace-head { padding: 16px 20px 14px; }
+.tw-trace-head h2 { font-size: 16px; line-height: 24px; font-weight: 600; }
+.tw-trace-head p { font-size: 13px; line-height: 20px; }
+.tw-trace-cols, .tw-trace-row { padding: 8px 12px; font-size: 13px; }
+.tw-trace-cols { font-size: 12px; }
+.tw-segmented { padding: 4px; border-radius: 10px; background: color-mix(in srgb, var(--ink) 4%, var(--surface)); }
+.tw-segmented button { padding: 4px 12px; font-size: 14px; font-weight: 500; color: var(--ink); }
+.tw-segmented button[aria-pressed="true"] { background: color-mix(in srgb, var(--ink) 7%, var(--surface)); box-shadow: none; }
+.tw-menu.tw-account-menu { overflow: visible; max-height: none; }
+/* Sidebar rows: drag handle on hover, right-click menus, rename in place */
+.tw-agent-face { position: relative; width: 24px; height: 24px; display: grid; place-items: center; flex: none; }
+.tw-agent-face .grip { position: absolute; inset: 4px; color: var(--muted-70); opacity: 0; cursor: grab; }
+.tw-agent-head:hover .tw-agent-face .tw-avatar { opacity: 0; }
+.tw-agent-head:hover .tw-agent-face .grip { opacity: 1; }
+.tw-menu.tw-context-menu { z-index: 60; }
+.tw-convo.editing { padding-right: 8px; }
+.tw-convo.editing input { flex: 1; min-width: 0; height: 28px; padding: 0 8px; border: 0.67px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; outline: none; }
+.tw-agent-page h3.tw-agent-section { margin-top: 26px; }
+.tw-agent-card.tw-agent-action, .tw-agent-action { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 39px; padding: 8px 12px; border: none; background: var(--surface); color: var(--ink); font-size: 14px; line-height: 20px; cursor: pointer; text-align: left; }
+.tw-agent-card.tw-agent-action { border: 0.67px solid var(--border); }
+.tw-agent-action:hover { background: color-mix(in srgb, var(--ink) 3%, var(--surface)); }
+.tw-agent-action.inner { border-top: 0.67px solid var(--border); }
+.tw-agent-action svg { color: var(--muted); flex: none; }
+a.tw-agent-automation { color: var(--ink); text-decoration: none; }
+a.tw-agent-automation:hover { background: color-mix(in srgb, var(--ink) 3%, var(--surface)); }
+/* Billing uses the full settings column, as before (four plans in a row). */
+.tw-billing-page .tw-billing { max-width: none; padding: 0 0 40px; }
+/* Reconnect prompts above the composer */
+.tw-reconnects { margin: 0 16px -1px; max-height: 204px; overflow-y: auto; border: 0.67px solid var(--border); border-bottom: none; border-radius: 16px 16px 0 0; background: var(--banner); }
+.tw-reconnects + .tw-banner { border-radius: 0; }
+.tw-reconnect { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 8px 4px 13px; font-size: 12px; line-height: 16px; font-weight: 500; }
+.tw-reconnect + .tw-reconnect { border-top: 0.67px solid var(--border); }
+.tw-reconnect .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-reconnect-face { width: 14px; height: 14px; border-radius: 50%; display: grid; place-items: center; background: var(--selected); color: var(--muted); font-size: 8px; flex: none; }
+.tw-reconnect .tw-btn { height: 28px; padding: 0 10px; font-size: 13px; }
+.tw-reconnect .tw-btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.tw-effort .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--theme-accent); transition: width 0.15s; pointer-events: none; }
+.tw-effort .stop { z-index: 1; }
+.tw-agent-head > .tw-agent-face { flex: none; }
+.tw-toast { padding: 16px; width: 356px; max-width: calc(100vw - 36px); line-height: 20px; }
+.tw-toast strong { font-weight: 600; }
+.tw-toast > button { top: 6px; right: 6px; }

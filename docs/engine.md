@@ -89,42 +89,43 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Chat (streaming, reasoning, plans, commands, file changes, tools, web search, images, sub-agents) | Energy harness on Energy's Codex build | Same on the official Codex; activity cards rebuilt |
 | Agent working rules (task execution contract, delegation, Windows shell) | Timewarp's harness instructions and patches | Same text; the previous app's worker guidance replaces Codex's default "only delegate on request" hint; up to 4 agents at once |
 | Run limits (200 tool calls, 20 minutes, stop after 3 identical failures or on the first error when asked; Stop ends workers too) | Timewarp execution guard | Same guard, counting the official app server's tool items |
-| Approvals for extra access (commands outside the workspace, network, MCP tools) | Automatic review by a reviewer agent; a denial stops the run | Same (Codex's automatic reviewer); each review shows in the chat; Settings → General → Approvals can switch to asking the user |
+| Approvals for extra access (commands outside the workspace, network, MCP tools) | Automatic review by a reviewer agent; a denial stops the run | Same (Codex's automatic reviewer); each review shows in the chat |
 | Task panel (stop reason, tool, error and token counts, workers you can follow) | Timewarp task activity | Rebuilt above the composer; a worker's transcript opens from it |
 | Approvals, stop, retry a failed message, per-chat model | Energy UI | Same |
 | Warm chat session on open | Energy | Same |
 | Attachments | Files | Same: images to the model, other files copied into the agent's workspace |
 | Dictation | Cloud transcription | Same service |
 | Chat history sync, restore, Privacy Mode | Timewarp sync | Same format and service |
-| Built-in browser (tabs, profiles, recent sites, downloads) | Energy browser | Rebuilt on `WebContentsView`; profiles can be created, renamed and removed from the chat's browser and Settings → Browser, and switching reopens the chat's pages in the chosen profile |
+| Built-in browser (tabs, profiles, recent sites, downloads) | Energy browser | Rebuilt on `WebContentsView` with the same tab strip and toolbar; searches go to Google and pages see a Chrome user agent. Settings → Browser and setup list the Chrome, Edge, Brave and Vivaldi profiles on the computer to import; profiles are renamed and removed in Settings → Browser and chosen from the chat's profile button, which reopens the chat's pages in that profile. Agents link the tabs they open (`timewarp://conversation/…/browser/…`); the link opens the tab in the pane |
 | Agent browser control, agent cursor, take over / hand back | agent-browser and Timewarp cursor | Rebuilt as in-process tools (open, snapshot, click, type, press, scroll, read, screenshot, tabs, back, forward, wait, close, choose from dropdowns, hover, upload from the workspace); cursor in the page; take over supported; works with the pane closed |
 | Files view and previews (PDF, Excel, CSV, Word, images, code, markdown) | Energy UI | Rebuilt; refreshes as the agent works |
 | Vault (sign-ins, cards, secrets, agent access, fill without revealing values) | Energy vault | Rebuilt; cards and secrets need permission each time; address-bar fill; password import from browser CSV exports; card security codes are never stored, as before |
 | Passkeys | Energy (macOS 13.3+) | Not carried over |
-| Memory (notes, imports from ChatGPT / Codex, Claude, Cursor) | Energy memory | Rebuilt on the same files (`memories/user.md`, `memories/imports`). Imports find the same memory files, skills (including skills linked in by skill installers) and MCP servers (Codex `config.toml`, Claude Code, Claude's desktop app, Cursor) on Windows and macOS; a Cursor project folder can be chosen |
+| Memory (notes, imports from ChatGPT / Codex, Claude, Cursor; Enabled, Read only, Write only or None) | Energy memory | Rebuilt on the same files (`memories/user.md`, `memories/imports`). Imports find the same memory files, skills (including skills linked in by skill installers) and MCP servers (Codex `config.toml`, Claude Code, Claude's desktop app, Cursor) on Windows and macOS; a Cursor project folder can be chosen |
 | Skills (list, enable, import, view) | Codex skills | Same; previously connected skill folders stay available |
 | Instructions for every agent | Energy | Same (Codex global `AGENTS.md`) |
 | Automations (schedules, run now, history) | Energy | Rebuilt; previous automations import paused |
 | Connected apps (Composio), per-agent access | Timewarp Composio | Same service and agent tools; sign-in opens in an app window with the default browser profile, as before; access UI rebuilt |
 | MCP servers (URL with sign-in, or local command) | Energy | Rebuilt on the Codex config |
-| Codex plugin catalog | Energy defaults plugin | Not carried over (it shipped Energy's own plugin) |
+| Codex plugin catalog | Listed with connected apps in Tools | Same: Settings → Tools lists the curated Codex plugins (`plugin/list`, local marketplaces) beside Composio apps, with a details dialog that connects them (`plugin/install`) |
 | Windows command sandbox setup | Codex | Same |
 | Suggested tasks | Energy, off for the reference account | Not carried over |
 | Feedback, diagnostics | Timewarp reporting, Energy debug export | Same feedback; diagnostics file rebuilt (no chats or account data) |
 | Conversation trace (Activity) | Energy UI | Rebuilt: turns and events with input, cached and output tokens and timing |
-| Browser sign-in import from Chrome/Edge profiles | Energy | Not carried over: it would read other browsers' protected sign-in data. Saved passwords import from a browser's CSV export (Settings → Browser, the chat's profile menu or the Vault) |
+| Browser profile import from Chrome/Edge | Energy | The same list and Import button; importing makes a Timewarp profile with the profile's name and account (from the browser's profile list only). Sign-ins and cookies are not copied, since that would read other browsers' protected data: sites are signed in to once in Timewarp's browser, and saved passwords import from a CSV export in Vault |
 | Updates | Timewarp feed (Windows) | Same feed and checks |
 
 The interface has the previous app's layout and screens: the sidebar with
 agent groups, activity feed, usage card and account menu; the home screen with
 its composer, tools, agent and model pickers and suggestions; the chat with
-Report, the Activity trace and thread actions; the side pane; and Settings
-(General, Tools, Browser, Vault, Memories, Skills, Organization, Billing, plus
-Automations). It is rebuilt in Timewarp's own React code from screenshots and
-measurements of the running previous app, not copied from Energy's code. The
+Report, the Activity trace and thread actions; the side pane; the search
+dialog and right-click menus on agents and chats; and Settings (General, Tools,
+Browser, Vault, Memories, Skills, Organization, Billing; Automations stays at
+`#/customize/automations`). It is rebuilt in Timewarp's own React code from
+screenshots and measurements of the running previous app, not copied from Energy's code. The
 Timewarp-made screens (sign-in, organization, billing, onboarding) are the same
-files. Engine-only settings (notifications, instructions for every agent,
-command sandbox, setup, diagnostics) are in Settings → General.
+files. Settings → General has the previous app's rows only; reply notifications
+stay on, and diagnostics are in the app log folder.
 
 ### Verified how
 

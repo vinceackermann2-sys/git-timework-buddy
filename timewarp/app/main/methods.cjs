@@ -10,6 +10,18 @@ const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
 const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notifications", "memory"]);
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
+// "hyperframes-cli" → "Hyperframes Cli", as skills without a display name were shown before.
+const skillTitle = name => String(name || "").split(":").pop().split(/[-_\s]+/).filter(Boolean).map(word => word[0].toUpperCase() + word.slice(1)).join(" ") || String(name || "");
+const IMAGE_TYPES = { ".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
+// A small local image (a plugin's icon) as a data address for the interface.
+function imageData(file) {
+  try {
+    const type = file && IMAGE_TYPES[path.extname(file).toLowerCase()];
+    if (!type) return null;
+    const stat = fs.statSync(file);
+    return stat.isFile() && stat.size <= 512 * 1024 ? `data:${type};base64,` + fs.readFileSync(file).toString("base64") : null;
+  } catch { return null; }
+}
 
 // Runs in the page (isolated world): fills the visible password field and the
 // username field before it. Returns whether a password field was found.
@@ -31,12 +43,12 @@ function fillSignIn(username, password) {
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Agent ownership is checked on every call by agents.get().
   const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
   return {
-    "app.info": async () => ({ version, platform: process.platform, codex: client.status, hardwareAcceleration: !fs.existsSync(path.join(profile, "software-rendering")) }),
+    "app.info": async () => ({ version, platform: process.platform, codex: client.status, previousSessionUnclean, hardwareAcceleration: !fs.existsSync(path.join(profile, "software-rendering")) }),
     // Turns graphics hardware acceleration on or off; Timewarp restarts.
     "app.setHardwareAcceleration": ({ enabled }) => {
       const file = path.join(profile, "software-rendering");
@@ -129,6 +141,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "conversations.rename": ({ id, title }) => { signedIn(); return harness.conversations.rename(id, title); },
     "conversations.archive": ({ id, archived = true }) => { signedIn(); return harness.conversations.archive(id, archived); },
     "conversations.markRead": ({ id }) => { signedIn(); return harness.conversations.markRead(id); },
+    "conversations.markUnread": ({ id }) => { signedIn(); return harness.conversations.markUnread(id); },
     "conversations.history": ({ id }) => { signedIn(); return harness.history(id); },
     "conversations.status": ({ id }) => { signedIn(); return harness.conversations.status(id); },
     "conversations.usage": ({ id }) => { signedIn(); return harness.conversations.usage(id); },
@@ -197,6 +210,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "browser.close": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.close(conversationId, tabId); },
     "browser.back": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.back(conversationId, tabId); },
     "browser.forward": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.forward(conversationId, tabId); },
+    "browser.home": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.home(conversationId, tabId); },
     "browser.reload": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.reload(conversationId, tabId); },
     "browser.stop": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.stop(conversationId, tabId); },
     "browser.profiles": () => { signedIn(); store.browserProfiles.ensureDefault(); return store.browserProfiles.list(); },
@@ -223,6 +237,15 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       await browser.removeProfile(id);
       store.browserProfiles.remove(id);
       return store.browserProfiles.list();
+    },
+    // Profiles found in Chrome, Edge and other browsers on this computer.
+    "browser.importable": () => { signedIn(); store.browserProfiles.ensureDefault(); return browserImport ? browserImport.importable() : []; },
+    "browser.importProfile": async ({ browserId, profilePath }) => {
+      signedIn();
+      if (!browserImport) throw fail(404, "Browser profiles can't be imported here.");
+      if (store.browserProfiles.list().length >= 20) throw fail(409, "You can have up to 20 browser profiles.");
+      const result = await browserImport.importProfiles({ selections: [{ browserId: text(browserId, 40), profilePath: text(profilePath, 120) }] });
+      return result.profiles[0];
     },
     "browser.setProfile": ({ conversationId, profileId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setProfile(conversationId, profileId); },
     "browser.takeControl": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setUserControl(conversationId, true); },
@@ -281,12 +304,42 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
         for (const skill of entry.skills || []) {
           if (seen.has(skill.path)) continue;
           seen.add(skill.path);
-          const local = path.resolve(skill.path).startsWith(path.resolve(knowledge.skillsRoot) + path.sep) && !/[\\/]\.system[\\/]/.test(skill.path);
-          skills.push({ name: skill.name, title: skill.interface?.displayName || skill.name, description: skill.interface?.shortDescription || skill.shortDescription || skill.description || "", scope: skill.scope, enabled: skill.enabled !== false, path: skill.path, removable: local });
+          // In Timewarp's own skills folder (which a Windows package can report under another path).
+          const folder = path.basename(path.dirname(skill.path));
+          const local = !/[\\/]\.system[\\/]/.test(skill.path) && (path.resolve(skill.path).startsWith(path.resolve(knowledge.skillsRoot) + path.sep)
+            || (path.basename(path.dirname(path.dirname(skill.path))) === "skills" && folder === skill.name && fs.existsSync(path.join(knowledge.skillsRoot, folder, "SKILL.md"))));
+          skills.push({ name: skill.name, title: skill.interface?.displayName || skillTitle(skill.name), fromApp: /[\\/]plugins[\\/]cache[\\/]/.test(skill.path), description: skill.interface?.shortDescription || skill.shortDescription || skill.description || "", details: skill.description || "", scope: skill.scope, enabled: skill.enabled !== false, path: skill.path, removable: local });
         }
       }
       skills.sort((a, b) => (a.scope === "system") - (b.scope === "system") || a.title.localeCompare(b.title));
       return { skills, errors: [...new Set(errors)] };
+    },
+    // Codex plugins from the curated catalog, shown beside connected apps in Tools.
+    "plugins.list": async () => {
+      signedIn();
+      // Local marketplaces (the curated catalog that ships with Codex), as the previous app listed.
+      const result = await client.request("plugin/list", { marketplaceKinds: ["local"] });
+      const featured = new Set(result.featuredPluginIds || []);
+      const items = [];
+      for (const market of result.marketplaces || []) for (const plugin of market.plugins || []) {
+        if (plugin.availability === "DISABLED_BY_ADMIN" || plugin.installPolicy === "NOT_AVAILABLE") continue;
+        const ui = plugin.interface || {};
+        const remote = /^https:\/\//.test(ui.composerIconUrl || "") ? ui.composerIconUrl : /^https:\/\//.test(ui.logoUrl || "") ? ui.logoUrl : null;
+        items.push({
+          id: plugin.id, name: plugin.name, marketplacePath: market.path || null, marketplace: market.name,
+          title: ui.displayName || plugin.name, description: ui.shortDescription || "", details: ui.longDescription || "",
+          icon: imageData(ui.composerIcon) || imageData(ui.logo) || remote, installed: !!plugin.installed, enabled: !!plugin.enabled, featured: featured.has(plugin.id),
+        });
+      }
+      return items;
+    },
+    // Installs a plugin; apps it needs to sign in to open in the browser.
+    "plugins.install": async ({ marketplacePath, pluginName }) => {
+      signedIn();
+      const result = await client.request("plugin/install", { marketplacePath: marketplacePath ? text(marketplacePath, 2000) : null, pluginName: text(pluginName, 200) });
+      const apps = (result.appsNeedingAuth || []).filter(app => /^https:\/\//.test(app.installUrl || ""));
+      for (const app of apps.slice(0, 3)) await shell.openExternal(app.installUrl);
+      return { installed: true, needsSignIn: apps.map(app => app.name) };
     },
     "skills.setEnabled": async ({ path: file, enabled }) => { signedIn(); await client.request("skills/config/write", { path: text(file, 4000), enabled: !!enabled }); return { enabled: !!enabled }; },
     "skills.create": async input => { signedIn(); const result = knowledge.createSkill({ name: text(input?.name, 200), description: text(input?.description, 1000), instructions: text(input?.instructions, 100000) }); await client.request("skills/list", { forceReload: true }).catch(() => {}); return result; },

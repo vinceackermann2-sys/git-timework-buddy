@@ -30,6 +30,11 @@ const profile = process.env.TIMEWARP_USER_DATA_DIR ? path.resolve(process.env.TI
 const runtimeDir = path.join(profile, "runtime");
 fs.mkdirSync(runtimeDir, { recursive: true });
 appLog = require("./log.cjs").createLog(path.join(runtimeDir, "logs"));
+// A session that didn't end with a normal quit leaves its marker behind; the
+// window then says Timewarp closed unexpectedly, as the previous app did.
+const sessionMarker = path.join(runtimeDir, "session-open");
+const previousSessionUnclean = fs.existsSync(sessionMarker);
+try { fs.writeFileSync(sessionMarker, new Date().toISOString()); } catch {}
 appLog.info("startup", `Timewarp ${VERSION} starting`, { platform: process.platform, arch: process.arch, osRelease: require("node:os").release(), electron: process.versions.electron, packaged: app.isPackaged });
 app.setName("Timewarp");
 app.setPath("userData", profile);
@@ -204,8 +209,10 @@ async function boot() {
     args: async () => {
       await bridgeReady.catch(() => {});
       return [
+        // Each chat picks its provider (codex-funding.cjs): "timewarp" for Timewarp
+        // credits, "openai" for a connected ChatGPT plan. The default stays OpenAI so
+        // Codex reports the connected ChatGPT account (account/read) and its models.
         "-c", `model_providers.timewarp={name="Timewarp",base_url="http://127.0.0.1:${bridge.port}/v1",wire_api="responses",env_key="TIMEWARP_BRIDGE_TOKEN"}`,
-        "-c", 'model_provider="timewarp"',
         // The previous app's guidance on when to use workers.
         "-c", "features.multi_agent_v2.multi_agent_mode_hint_text=" + JSON.stringify(DELEGATION),
       ];
@@ -245,7 +252,11 @@ async function boot() {
 
   async function modelChoices() {
     await services.ready;
-    if (userId() && (await services.funding.current()).source === "chatgpt") return services.chatgpt.models();
+    // A ChatGPT connection that needs signing in again still shows Timewarp's models.
+    if (userId() && (await services.funding.current()).source === "chatgpt") {
+      const choices = await services.chatgpt.models().catch(error => { appLog.warn("models", "ChatGPT models unavailable: " + error.message); return []; });
+      if (choices.length) return choices;
+    }
     return require("../../shared/models.cjs").models();
   }
   async function selectModel(choices) {
@@ -279,15 +290,18 @@ async function boot() {
       return result.response === 0;
     },
   });
+  // Created below, once the harness exists.
+  let automationTools = null;
   // Raised when the dynamic tools change, so chats continue in a thread that has them
-  // (3: browser select, hover and upload; cards without security codes).
-  const TOOLS_VERSION = 3;
+  // (3: browser select, hover and upload; cards without security codes; 4: automations).
+  const TOOLS_VERSION = 4;
   const tools = {
     version: TOOLS_VERSION,
-    specs: () => [...browserTools.specs(), ...vaultTools.specs()],
+    specs: () => [...browserTools.specs(), ...vaultTools.specs(), ...require("./automation-tools.cjs").toolSpecs()],
     call: (conversationId, params, agent) => {
       if (params.namespace === "timewarp_browser") return browserTools.call(conversationId, params, agent);
       if (params.namespace === "timewarp_vault") return vaultTools.call(conversationId, params, agent);
+      if (params.namespace === "timewarp_automations" && automationTools) return automationTools.call(conversationId, params, agent);
       return Promise.reject(Object.assign(new Error("This tool is not available in Timewarp."), { status: 404 }));
     },
     finished: conversationId => browserTools.finished(conversationId),
@@ -303,6 +317,7 @@ async function boot() {
     log: (...args) => console.error("[timewarp]", ...args),
   });
   automations = createAutomations({ store, harness, userId: () => userId(), notify: broadcast, log: (...args) => console.error("[timewarp]", ...args) });
+  automationTools = require("./automation-tools.cjs").createAutomationTools({ automations });
 
   // App and MCP server sign-ins open in an app window that uses the default
   // browser profile, as in the previous app, so a site signed in there is
@@ -338,6 +353,9 @@ async function boot() {
 
   async function registerTools(force = false) {
     if (!userId() || (toolsRegistered && !force)) return;
+    // The bridge may have moved to a free port (the previous app holds the usual
+    // one), so Codex gets the port only once the bridge is listening.
+    await bridgeReady;
     await client.request("config/value/write", { keyPath: "mcp_servers.timewarp_composio", value: { url: `http://127.0.0.1:${bridge.port}/mcp/composio`, enabled: true, bearer_token_env_var: "TIMEWARP_COMPOSIO_TOKEN" }, mergeStrategy: "replace" });
     await client.request("config/mcpServer/reload", undefined);
     toolsRegistered = true;
@@ -388,12 +406,13 @@ async function boot() {
   }
   const defaultAppearance = () => ({ scheme: "system", accent: defaultAccent, radiance: 0.5, texture: { type: "dots", step: 0 } });
   // Browser profile import arrives with the profile importer.
-  const browserImport = { profileManager: { detect: async () => ({ profiles: [], errors: [] }) }, importProfiles: async () => { throw new Error("Browser profile import isn't available yet."); } };
-  onboarding = createOnboarding({ profile, store, services, agents, knowledge, browserImport, dialog, shell, defaultAppearance });
+  const browserImport = require("./browser-import.cjs").createBrowserImport({ store });
+  // Setup can import saved passwords the same way Settings → Vault does.
+  onboarding = createOnboarding({ profile, store, services, agents, knowledge, browserImport, importPasswords: () => methods["vault.importPasswords"](), dialog, shell, defaultAppearance });
 
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();
@@ -433,7 +452,7 @@ async function boot() {
         .then(result => { if (result.response === 0) install(); }).catch(() => {});
     },
   });
-  app.on("will-quit", () => appLog.info("shutdown", "Timewarp quit"));
+  app.on("will-quit", () => { appLog.info("shutdown", "Timewarp quit"); try { fs.rmSync(sessionMarker, { force: true }); } catch {} });
   app.on("before-quit", () => { appLog.info("shutdown", "Quitting"); automations.stop(); browser.destroy(); clearTimeout(executionNotice); guard.stop?.(); history?.stop(); services.close(); bridge.close(); void client.stop(); store.close(); });
 }
 

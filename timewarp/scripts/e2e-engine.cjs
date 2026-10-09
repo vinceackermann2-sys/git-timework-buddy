@@ -178,7 +178,7 @@ async function main() {
     async browser() {
       const id = await chat();
       if (process.env.E2E_PANE) {
-        await app.evaluate(`location.hash = "#/c/${id}"`);
+        await app.evaluate(`location.hash = "#/conversation/${id}"`);
         await pause(2500);
         await app.evaluate(`document.querySelector('[aria-label="Show pane"]')?.click()`);
         await pause(2500);

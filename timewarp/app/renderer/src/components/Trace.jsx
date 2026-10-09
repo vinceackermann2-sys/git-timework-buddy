@@ -68,7 +68,7 @@ export function Trace({ open, onClose, conversation, turns, agent }) {
         <div className="tw-trace-list">
           {view === "tree" ? (
             <>
-              <div className="tw-trace-cols"><span>Agent / event</span><span>Input</span><span>Cached</span><span>Output</span><span>Duration</span></div>
+              <div className="tw-trace-cols"><span>Agent / event</span><span>Input</span><span>Cached</span><span>Output</span><span>Billed</span><span>Duration</span></div>
               {rows.length ? rows.map((turn, index) => {
                 const open = expandAll || expanded.has(turn.id);
                 const counts = byTurn.get(turn.id);
@@ -76,11 +76,11 @@ export function Trace({ open, onClose, conversation, turns, agent }) {
                   <React.Fragment key={turn.id}>
                     <button type="button" className="tw-trace-row" aria-selected={selected === turn.id} onClick={() => { setSelected(turn.id); toggle(turn.id); }}>
                       <span className="tw-ellipsis">{open ? <ChevronDown size={13} /> : <ChevronRight size={13} />} {agent?.name || "Agent"} · Turn {index + 1}</span>
-                      <span>{number(counts?.input)}</span><span>{number(counts?.cached)}</span><span>{number(counts?.output)}</span><span>{duration(turnTime(turn))}</span>
+                      <span>{number(counts?.input)}</span><span>{number(counts?.cached)}</span><span>{number(counts?.output)}</span><span>{number(counts?.billed)}</span><span>{duration(turnTime(turn))}</span>
                     </button>
                     {open ? (turn.items || []).map(item => (
                       <button key={item.id} type="button" className="tw-trace-row child" aria-selected={selected === turn.id + "/" + item.id} onClick={() => setSelected(turn.id + "/" + item.id)}>
-                        <span className="tw-ellipsis">{LABELS[item.type] || item.type} · {itemTitle(item)}</span><span /><span /><span /><span>{duration(item.durationMs)}</span>
+                        <span className="tw-ellipsis">{LABELS[item.type] || item.type} · {itemTitle(item)}</span><span /><span /><span /><span /><span>{duration(item.durationMs)}</span>
                       </button>
                     )) : null}
                   </React.Fragment>

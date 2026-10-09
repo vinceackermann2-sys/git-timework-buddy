@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BookMarked, Download, FolderOpen, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { BookMarked, Download, FolderOpen, Plus, Trash2, X } from "lucide-react";
 import { call } from "../api.js";
 import { Dialog, PageHead, SearchField, Switch, useToast } from "./common.jsx";
 import { Markdown } from "../markdown.jsx";
@@ -71,6 +71,9 @@ export function ImportKnowledge({ category, source, onImported }) {
   );
 }
 
+// Notes as plain text, without markdown headings or comments.
+const notesPreview = notes => String(notes || "").replace(/<!--[\s\S]*?-->/g, " ").replace(/^#+\s.*$/gm, " ").replace(/[*_`>]+/g, "").replace(/\s+/g, " ").trim();
+
 export function Memories() {
   const [memory, setMemory] = useState(null);
   const [notes, setNotes] = useState("");
@@ -83,12 +86,11 @@ export function Memories() {
   const noteMatch = !query.trim() || (memory?.notes || "").toLowerCase().includes(query.trim().toLowerCase()) || "user".includes(query.trim().toLowerCase());
   return (
     <div className="tw-page">
-      <PageHead title="Memories" subtitle="What your agents remember about you and the knowledge you imported.">
-        <button type="button" className="tw-btn" onClick={() => setDialog("import")}><Download size={15} />Import</button>
-      </PageHead>
-      <SearchField value={query} onChange={setQuery} placeholder="Search memories..." shortcut />
+      <PageHead title="Memories" />
+      <SearchField value={query} onChange={setQuery} placeholder="Search memories" shortcut />
+      {memory && !memory.files.length && !memory.notes?.trim() || (!files.length && !noteMatch) ? <div className="tw-empty-box dashed">No memories found.</div> : (
       <div className="tw-memory-cards">
-        {files.length || !query.trim() ? (
+        {files.length ? (
           <button type="button" className="tw-memory-card" onClick={() => setDialog("imports")}>
             <div><strong>Imports</strong><span>{memory ? memory.files.length : "…"}</span></div>
             <span>{memory?.files.length ? "Memory files imported from other assistants." : "Nothing imported yet."}</span>
@@ -97,10 +99,11 @@ export function Memories() {
         {noteMatch ? (
           <button type="button" className="tw-memory-card" onClick={() => setDialog("notes")}>
             <div><strong>User</strong></div>
-            <span className="tw-clamp">{memory?.notes?.trim() ? memory.notes.trim() : "No long-term memory has been saved yet."}</span>
+            <span className="tw-clamp">{notesPreview(memory?.notes) || "No long-term memory has been saved yet."}</span>
           </button>
         ) : null}
       </div>
+      )}
       <Dialog open={dialog === "notes"} onClose={() => { setDialog(null); setNotes(memory?.notes || ""); }} title="User" description="Agents read these notes and add lasting preferences you share. Memory stays on this device.">
         <textarea className="tw-textarea tw-notes" value={notes} onChange={event => setNotes(event.target.value)} maxLength={100000} disabled={!memory} aria-label="Memory notes" placeholder="Preferences, context about your work, how you like replies…" />
         <div className="tw-dialog-actions">
@@ -151,64 +154,93 @@ function CreateSkill({ onCreated, onCancel }) {
   );
 }
 
+// Tabs as in the previous app; Codex scopes: user, repo (workspace), admin and system.
+const SKILL_TABS = [
+  ["yours", "Your skills", skill => skill.scope === "user" && !skill.fromApp],
+  ["all", "All", () => true],
+  ["apps", "From Apps", skill => skill.fromApp],
+  ["workspace", "Workspace", skill => skill.scope === "repo"],
+  ["managed", "Managed", skill => skill.scope === "admin" || skill.scope === "system"],
+];
+
+function SkillDialog({ viewing, onClose, onEnabled, onRemoved }) {
+  const skill = viewing?.skill;
+  return (
+    <Dialog open={!!viewing} onClose={onClose} label={skill?.title} className="tw-skill-dialog">
+      {skill ? (
+        <>
+          <div className="tw-skill-head">
+            <span className="tw-tile-icon"><BookMarked size={20} strokeWidth={1.6} /></span>
+            <div><h2>{skill.title}</h2>{skill.description ? <p>{skill.description}</p> : null}</div>
+            <button type="button" className="tw-icon-button" aria-label="Close" onClick={onClose}><X size={18} /></button>
+          </div>
+          <div className="tw-skill-scroll">
+            <dl className="tw-skill-facts">
+              <dt>Name</dt><dd>{skill.name}</dd>
+              {skill.details ? <><dt>Description</dt><dd><Markdown text={skill.details} /></dd></> : null}
+            </dl>
+            {viewing.text === null ? <p className="tw-hint">Loading skill details...</p> : <div className="tw-skill-text"><Markdown text={viewing.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")} /></div>}
+          </div>
+          <div className="tw-dialog-actions">
+            <label className="tw-check"><Switch label={"Use " + skill.title} checked={skill.enabled} onChange={value => onEnabled(skill, value)} /><span>Use this skill</span></label>
+            <span className="grow" />
+            {skill.removable ? <button type="button" className="tw-btn danger" onClick={() => onRemoved(skill)}><Trash2 size={15} />Remove</button> : null}
+          </div>
+        </>
+      ) : null}
+    </Dialog>
+  );
+}
+
 export function Skills() {
   const [state, setState] = useState(null);
   const [tab, setTab] = useState("yours");
   const [query, setQuery] = useState("");
-  const [dialog, setDialog] = useState(null);
+  const [creating, setCreating] = useState(false);
   const [viewing, setViewing] = useState(null);
   const toast = useToast();
   const load = (reload = false) => call("skills.list", { reload }).then(setState).catch(error => toast(error, "error"));
   useEffect(() => { void load(); }, []);
   const setEnabled = (skill, enabled) => {
     setState(current => ({ ...current, skills: current.skills.map(item => item.path === skill.path ? { ...item, enabled } : item) }));
+    setViewing(current => current && current.skill.path === skill.path ? { ...current, skill: { ...current.skill, enabled } } : current);
     call("skills.setEnabled", { path: skill.path, enabled }).catch(error => { toast(error, "error"); void load(); });
   };
-  const view = skill => call("skills.read", { path: skill.path }).then(value => setViewing({ skill, text: value.text })).catch(error => toast(error, "error"));
+  const view = skill => {
+    setViewing({ skill, text: null });
+    call("skills.read", { path: skill.path }).then(value => setViewing(current => current?.skill.path === skill.path ? { skill, text: value.text } : current)).catch(error => { setViewing(null); toast(error, "error"); });
+  };
+  const remove = skill => {
+    if (!window.confirm(`Remove the ${skill.title} skill from Timewarp?`)) return;
+    call("skills.remove", { name: skill.name }).then(() => { setViewing(null); void load(true); }).catch(error => toast(error, "error"));
+  };
   const all = state?.skills || [];
-  const groups = { yours: all.filter(skill => skill.scope !== "system"), all, builtIn: all.filter(skill => skill.scope === "system") };
+  const filter = (SKILL_TABS.find(item => item[0] === tab) || SKILL_TABS[1])[2];
   const needle = query.trim().toLowerCase();
-  const shown = (groups[tab] || all).filter(skill => !needle || skill.title.toLowerCase().includes(needle) || skill.description.toLowerCase().includes(needle));
+  const shown = all.filter(filter).filter(skill => !needle || skill.title.toLowerCase().includes(needle) || skill.description.toLowerCase().includes(needle));
   return (
     <div className="tw-page">
-      <PageHead title="Skills" subtitle="Skills teach agents how to do specific tasks. Agents use an enabled skill when a request calls for it.">
-        <button type="button" className="tw-btn" onClick={() => setDialog("create")}><Plus size={15} />Create skill</button>
+      <PageHead title="Skills" subtitle="Reusable instructions and workflows for your tasks.">
+        <button type="button" className="tw-btn accent" onClick={() => setCreating(true)}><Plus size={16} />Create skill</button>
       </PageHead>
       <SearchField value={query} onChange={setQuery} placeholder="Search skills..." shortcut />
-      <div className="tw-tabs-row">
-        <div className="tw-tabs" role="group" aria-label="Skills">
-          {[["yours", "Your skills"], ["all", "All"], ["builtIn", "Built in"]].map(([id, label]) => <button key={id} type="button" aria-pressed={tab === id} onClick={() => setTab(id)}>{label} <em>{groups[id].length}</em></button>)}
-        </div>
-        <span className="grow" />
-        <button type="button" className="tw-icon-button" title="Import from other assistants" aria-label="Import from other assistants" onClick={() => setDialog("import")}><Download size={16} /></button>
-        <button type="button" className="tw-icon-button" title="Open skills folder" aria-label="Open skills folder" onClick={() => call("skills.openFolder").catch(error => toast(error, "error"))}><FolderOpen size={16} /></button>
-        <button type="button" className="tw-icon-button" title="Reload" aria-label="Reload skills" onClick={() => load(true)}><RefreshCw size={16} /></button>
+      <div className="tw-tabs" role="group" aria-label="Skills">
+        {SKILL_TABS.map(([id, label]) => <button key={id} type="button" aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}
       </div>
       {state?.errors.length ? <div className="tw-alert">{state.errors.join(" ")}</div> : null}
-      {state === null ? <p className="tw-hint">Loading skills…</p> : shown.length ? (
-        <div className="tw-grid">
+      {state === null ? <p className="tw-loading">Loading skills...</p> : shown.length ? (
+        <div className="tw-grid tw-scroll-grid">
           {shown.map(skill => (
-            <div key={skill.path} className="tw-tile clickable" role="button" tabIndex={0} onClick={() => view(skill)} onKeyDown={event => { if (event.key === "Enter") view(skill); }}>
+            <div key={skill.path} className={"tw-tile clickable" + (skill.enabled ? "" : " off")} role="button" tabIndex={0} onClick={() => view(skill)} onKeyDown={event => { if (event.key === "Enter") view(skill); }}>
               <span className="tw-tile-icon"><BookMarked size={20} strokeWidth={1.6} /></span>
               <div><strong>{skill.title}</strong><span className="desc">{skill.description}</span></div>
-              <span onClick={event => event.stopPropagation()}><Switch label={"Use " + skill.title} checked={skill.enabled} onChange={value => setEnabled(skill, value)} /></span>
             </div>
           ))}
         </div>
-      ) : <div className="tw-empty-box">{needle ? "No skills match your search." : tab === "yours" ? "No skills yet. Create one, or import them from other assistants." : "No skills here."}</div>}
-      <Dialog open={!!viewing} onClose={() => setViewing(null)} title={viewing?.skill.title} description={viewing?.skill.description}>
-        {viewing ? <div className="tw-skill-text"><Markdown text={viewing.text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")} /></div> : null}
-        {viewing?.skill.removable ? (
-          <div className="tw-dialog-actions">
-            <button type="button" className="tw-btn danger" onClick={() => { if (window.confirm(`Remove the ${viewing.skill.title} skill from Timewarp?`)) call("skills.remove", { name: viewing.skill.name }).then(() => { setViewing(null); void load(true); }).catch(error => toast(error, "error")); }}><Trash2 size={15} />Remove</button>
-          </div>
-        ) : null}
-      </Dialog>
-      <Dialog open={dialog === "create"} onClose={() => setDialog(null)} title="Create skill" description="Saved as a skill folder in this profile. Agents use it when a request matches.">
-        {dialog === "create" ? <CreateSkill onCancel={() => setDialog(null)} onCreated={() => { setDialog(null); setTab("yours"); void load(true); }} /> : null}
-      </Dialog>
-      <Dialog open={dialog === "import"} onClose={() => setDialog(null)} title="Import skills" description="Timewarp copies what you select into this profile. The other apps' files aren't changed.">
-        {dialog === "import" ? <ImportKnowledge category="skills" onImported={() => { setDialog(null); void load(true); }} /> : null}
+      ) : <p className="tw-loading">{needle || all.length ? "No skills match your filters." : "No skills yet."}</p>}
+      <SkillDialog viewing={viewing} onClose={() => setViewing(null)} onEnabled={setEnabled} onRemoved={remove} />
+      <Dialog open={creating} onClose={() => setCreating(false)} title="Create skill" description="Saved as a skill folder in this profile. Agents use it when a request matches.">
+        {creating ? <CreateSkill onCancel={() => setCreating(false)} onCreated={() => { setCreating(false); setTab("yours"); void load(true); }} /> : null}
       </Dialog>
     </div>
   );

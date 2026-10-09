@@ -173,8 +173,8 @@ function createStore(db) {
         args.push(pattern, pattern);
       }
       args.push(limit);
-      // The latest message, shown in the sidebar's activity list.
-      const last = "(select substr(m.text, 1, 400) from messages m where m.conversation_id = c.id and coalesce(m.status, '') not in ('failed', 'replaced') order by m.seq desc limit 1)";
+      // The agent's latest reply, shown in the sidebar's activity list.
+      const last = "(select substr(m.text, 1, 400) from messages m where m.conversation_id = c.id and m.author_id = c.agent_id and coalesce(m.status, '') not in ('failed', 'replaced') order by m.seq desc limit 1)";
       return all(`select c.*, ${last} last_text from conversations c where ${where.join(" and ")} order by c.last_activity_at desc limit ?`, ...args).map(conversationOf);
     },
     create(input) {

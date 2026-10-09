@@ -94,3 +94,26 @@ test("disabled automations don't run and other accounts can't see them", async t
   automations.remove(paused.id);
   assert.deepEqual(automations.list(), []);
 });
+
+test("agents create, list, change and remove only their own automations", async t => {
+  const { store, automations } = setup(t);
+  const { createAutomationTools, toolSpecs } = require("../app/main/automation-tools.cjs");
+  store.agents.create({ id: "agent-2", ownerId: "user-1", name: "Nova", workspace: "/w/nova" });
+  const tools = createAutomationTools({ automations });
+  const orbit = store.agents.get("agent-1"), nova = store.agents.get("agent-2");
+  const run = (agent, tool, args = {}) => tools.call("chat-1", { namespace: "timewarp_automations", tool, arguments: args }, agent);
+  assert.deepEqual(toolSpecs()[0].tools.map(tool => tool.name), ["list", "create", "update", "delete", "run_now"]);
+  assert.match((await run(orbit, "list")).contentItems[0].text, /no automations/);
+  const created = await run(orbit, "create", { name: "Inbox check", instructions: "Look for new invoices.", schedule: { kind: "interval", minutes: 30 } });
+  assert.match(created.contentItems[0].text, /Inbox check \| on/);
+  const [item] = automations.list();
+  assert.equal(item.agentId, "agent-1");
+  assert.match((await run(orbit, "list")).contentItems[0].text, /Inbox check/);
+  assert.match((await run(nova, "list")).contentItems[0].text, /no automations/);
+  await assert.rejects(run(nova, "delete", { id: item.id }), /another agent/);
+  await run(orbit, "update", { id: item.id, enabled: false });
+  assert.equal(automations.get(item.id).enabled, false);
+  await assert.rejects(run(orbit, "create", { name: "Bad", instructions: "x", schedule: { kind: "interval", minutes: 5 } }), /15 minutes/);
+  await run(orbit, "delete", { id: item.id });
+  assert.equal(automations.list().length, 0);
+});

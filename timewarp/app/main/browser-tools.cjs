@@ -207,6 +207,8 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
     await pause(ms);
   }
   const text = value => ({ contentItems: [{ type: "inputText", text: String(value) }], success: true });
+  // Chat links to a tab, opened in the pane when the user clicks them.
+  const tabLink = (conversationId, tabId) => `timewarp://conversation/${conversationId}/browser/${tabId}`;
   async function pageText(contents) {
     const result = await contents.executeJavaScript(`(() => ({ title: document.title, url: location.href, text: (document.body?.innerText || "").slice(0, ${MAX_TEXT}) }))()`, true);
     return redact(contents, `${result.title}\n${result.url}\n\n${result.text}`);
@@ -233,7 +235,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
           note(state.id, "Opening " + state.url);
           const { contents } = browser.webContents(conversationId, state.id);
           await settle(contents, 400);
-          return text(`Opened ${contents.getURL()} in tab ${state.id}: ${contents.getTitle()}`);
+          return text(`Opened ${contents.getURL()} in tab ${state.id}: ${contents.getTitle()}\nTab link: ${tabLink(conversationId, state.id)}`);
         }
         case "tabs": {
           const state = browser.state(conversationId);

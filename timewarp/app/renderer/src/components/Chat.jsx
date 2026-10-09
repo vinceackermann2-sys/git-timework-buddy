@@ -1,17 +1,19 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Archive, ArrowDown, ChevronDown, ChevronRight, ChevronUp, EllipsisVertical, FileText, FolderOpen, MessageSquareWarning, PanelRight, Pencil, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, ChevronRight, ChevronUp, Copy, EllipsisVertical, FileText, MessageSquareWarning, PanelRight, Pencil, Reply, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
 import { call, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { ATTACHED, applyEvent, blocksOf, turnsFromMessages, userFiles, userImages, userText } from "../turns.mjs";
 import { ActivityGroup, PlanCard } from "./Activity.jsx";
 import { ApprovalCard } from "./Approval.jsx";
-import { Composer, FundingBanner } from "./Composer.jsx";
+import { Composer, FundingBanner, ReconnectBanner } from "./Composer.jsx";
 import { Trace } from "./Trace.jsx";
 import { TaskActivity } from "./TaskActivity.jsx";
 import { Avatar, Dialog, Menu, useToast } from "./common.jsx";
 
 const baseName = file => String(file).split(/[\\/]/).pop();
 const GAP = 30 * 60;
+// A reply starts with the quoted message.
+const quote = text => String(text).trim().slice(0, 600).split("\n").map(line => "> " + line).join("\n") + "\n\n";
 const stamp = seconds => new Date(seconds * 1000).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 function Title({ conversation, onRename }) {
@@ -22,7 +24,7 @@ function Title({ conversation, onRename }) {
     const commit = () => { setEditing(false); if (value.trim() && value.trim() !== conversation.title) onRename(value.trim()); };
     return <input autoFocus value={value} maxLength={200} aria-label="Conversation name" onChange={event => setValue(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === "Enter") commit(); if (event.key === "Escape") setEditing(false); }} />;
   }
-  return <button type="button" className="title" title="Rename" onClick={() => setEditing(true)}>{conversation.title || "New conversation"}</button>;
+  return <span className="title" onDoubleClick={() => setEditing(true)}>{conversation.title || "New conversation"}</span>;
 }
 
 function UserMessage({ item, failed, onRetry }) {
@@ -41,7 +43,18 @@ function UserMessage({ item, failed, onRetry }) {
   );
 }
 
-function Turn({ turn, agent, onRetry }) {
+// Reply and copy, shown over an agent message on hover.
+function BubbleActions({ text, onReply }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className="tw-bubble-actions">
+      <button type="button" title="Reply" aria-label="Reply to message" onClick={() => onReply(text)}><Reply size={15} strokeWidth={1.7} /></button>
+      <button type="button" title="Copy" aria-label="Copy message" onClick={() => navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}>{copied ? <Check size={15} /> : <Copy size={14} strokeWidth={1.7} />}</button>
+    </span>
+  );
+}
+
+function Turn({ turn, agent, onRetry, onReply }) {
   const blocks = blocksOf(turn);
   const live = turn.status === "inProgress";
   const users = blocks.filter(block => block.kind === "user");
@@ -59,7 +72,7 @@ function Turn({ turn, agent, onRetry }) {
             <PlanCard plan={turn.plan} />
             {side.map(block => block.kind === "activity"
               ? <ActivityGroup key={block.key} items={block.items} live={live} />
-              : <div key={block.key} className="tw-bubble"><Markdown text={block.item.text} streaming={live && block === lastAgent && block.item.status !== "completed"} /></div>)}
+              : <div key={block.key} className="tw-bubble"><Markdown text={block.item.text} streaming={live && block === lastAgent && block.item.status !== "completed"} />{block.item.text && !live ? <BubbleActions text={block.item.text} onReply={onReply} /> : null}</div>)}
             {live && !replied ? <span className="tw-thinking"><span className="tw-dots"><span /><span /><span /></span>{agent?.name || "Your agent"} is working</span> : null}
             {(turn.reviews || []).map(review => (
               <div key={review.id} className="tw-review" data-status={review.status}>
@@ -136,8 +149,8 @@ export function FeedbackDialog({ open, onClose }) {
   const toast = useToast();
   useEffect(() => { if (open) setText(""); }, [open]);
   return (
-    <Dialog open={open} onClose={onClose} title="Send feedback" description="Tell us what happened or what could be better. Your report, app version, and platform will be sent to Timewarp support.">
-      <textarea className="tw-textarea" autoFocus value={text} maxLength={5000} onChange={event => setText(event.target.value)} placeholder="What happened? What did you expect?" aria-label="Feedback" />
+    <Dialog open={open} onClose={onClose} className="tw-feedback" title="Send feedback" description="Tell us what happened or what could be better. Your report, app version, and platform will be sent to Timewarp support.">
+      <textarea className="tw-textarea" rows={2} autoFocus value={text} maxLength={5000} onChange={event => setText(event.target.value)} placeholder="What happened? What did you expect?" aria-label="Feedback" />
       <button type="button" className="tw-btn primary tw-wide" disabled={busy || !text.trim()} onClick={() => {
         setBusy(true);
         call("feedback.submit", { description: text, category: "general" }).then(() => { toast("Thanks, your feedback was sent."); onClose(); }).catch(error => toast(error, "error")).finally(() => setBusy(false));
@@ -146,7 +159,8 @@ export function FeedbackDialog({ open, onClose }) {
   );
 }
 
-export function Chat({ conversation, agent, account, models, funding, onChanged, paneOpen, onTogglePane, onEditAgent, onSettings, initialMessage, onInitialSent }) {
+export function Chat({ conversation, agent, account, models, funding, onChanged, paneOpen, onTogglePane, onEditAgent, onNewTask, onSettings, initialMessage, onInitialSent }) {
+  const [reply, setReply] = useState(null);
   const [turns, setTurns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -258,20 +272,17 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
     <>
       <header className="tw-chat-header">
         <div className="tw-crumbs-chat">
-          <button type="button" className="agent" title={"Edit " + agent.name} onClick={() => onEditAgent(agent)}><Avatar agent={agent} size="small" /><span>{agent.name}</span></button>
+          <a className="agent" href="#/" onClick={event => { event.preventDefault(); onNewTask(agent.id); }}><Avatar agent={agent} size="small" /><span>{agent.name}</span></a>
           <ChevronRight size={16} />
           <Title conversation={conversation} onRename={title => call("conversations.rename", { id, title }).then(onChanged).catch(error => toast(error, "error"))} />
         </div>
-        <button type="button" className="tw-head-btn muted" onClick={() => setDialog("feedback")}><MessageSquareWarning size={17} strokeWidth={1.6} />Report</button>
-        <button type="button" className="tw-head-btn" onClick={() => setDialog("trace")}>Activity</button>
-        <Menu align="right" width={260} trigger={({ toggle, open }) => <button type="button" className="tw-icon-button" aria-label="Thread actions" aria-expanded={open} onClick={toggle}><EllipsisVertical size={18} /></button>}>
+        <button type="button" className="tw-head-btn muted" aria-label="Report issue to the team" title="Report issue to the team" onClick={() => setDialog("feedback")}><MessageSquareWarning size={17} strokeWidth={1.6} />Report</button>
+        <button type="button" className="tw-head-btn" aria-label="View task activity" title="View task activity" onClick={() => setDialog("trace")}>Activity</button>
+        <Menu align="right" width={224} trigger={({ toggle, open }) => <button type="button" className="tw-icon-button" aria-label="Thread actions" aria-expanded={open} onClick={toggle}><EllipsisVertical size={18} /></button>}>
           <button type="button" className="tw-menu-item" data-close onClick={() => onEditAgent(agent)}><Pencil size={16} /><span className="grow">Edit agent</span></button>
           <button type="button" className="tw-menu-item" data-close onClick={() => setFinding(true)}><Search size={16} /><span className="grow">Search conversation</span><kbd className="tw-kbd">{window.tw?.platform === "darwin" ? "⌘F" : "Ctrl F"}</kbd></button>
-          <button type="button" className="tw-menu-item" data-close onClick={() => call("agents.openWorkspace", { id: agent.id }).catch(error => toast(error, "error"))}><FolderOpen size={16} /><span className="grow">Open workspace folder</span></button>
-          <div className="tw-menu-sep" />
-          <button type="button" className="tw-menu-item" data-close onClick={() => call("conversations.archive", { id }).then(() => onChanged?.({ archived: true })).catch(error => toast(error, "error"))}><Archive size={16} /><span className="grow">Archive conversation</span></button>
         </Menu>
-        <button type="button" className="tw-icon-button" title={paneOpen ? "Hide pane" : "Show pane"} aria-label={paneOpen ? "Hide pane" : "Show pane"} aria-pressed={!!paneOpen} onClick={onTogglePane}><PanelRight size={18} strokeWidth={1.6} /></button>
+        {paneOpen ? null : <button type="button" className="tw-icon-button" title="Show pane" aria-label="Show pane" onClick={onTogglePane}><PanelRight size={18} strokeWidth={1.6} /></button>}
       </header>
       {finding ? <FindBar root={thread} onClose={() => setFinding(false)} /> : null}
       <div className="tw-messages" ref={scroller} onScroll={event => { const node = event.currentTarget; const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; pinned.current = bottom; setAtBottom(bottom); }}>
@@ -286,7 +297,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
             const at = turn.startedAt || null;
             const separator = at && (previous === null || at - previous > GAP) ? <div className="tw-date">{stamp(at)}</div> : null;
             if (at) previous = at;
-            return <React.Fragment key={turn.id}>{separator}<Turn turn={turn} agent={agent} onRetry={running ? null : retry} /></React.Fragment>;
+            return <React.Fragment key={turn.id}>{separator}<Turn turn={turn} agent={agent} onRetry={running ? null : retry} onReply={setReply} /></React.Fragment>;
           })}
           {approvals.map(approval => <ApprovalCard key={approval.id} approval={approval} />)}
         </div>
@@ -296,8 +307,9 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
       <Composer
         autoFocusKey={id} running={running} models={chatModels} onModel={chooseModel}
         placeholder="Send another message..." disabled={loading && !initialMessage}
-        banner={<FundingBanner funding={funding} onOptions={() => onSettings("billing")} />}
-        onSend={message => send(message)}
+        banner={<><ReconnectBanner /><FundingBanner funding={funding} onOptions={() => onSettings("billing")} /></>}
+        reply={reply} onClearReply={() => setReply(null)}
+        onSend={message => send(reply ? { ...message, text: quote(reply) + message.text } : message).then(() => setReply(null))}
         onStop={() => call("conversations.interrupt", { id }).catch(error => toast(error, "error"))}
       />
       <FeedbackDialog open={dialog === "feedback"} onClose={() => setDialog(null)} />

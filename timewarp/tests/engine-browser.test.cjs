@@ -9,7 +9,7 @@ test("the built-in browser opens web pages only and turns plain words into a sea
   assert.equal(safeUrl("https://example.com/a?b=1"), "https://example.com/a?b=1");
   assert.equal(safeUrl("localhost:3000/app"), "http://localhost:3000/app");
   assert.equal(safeUrl("example.com:8443/x"), "https://example.com:8443/x");
-  assert.equal(safeUrl("best pizza near me"), "https://duckduckgo.com/?q=best%20pizza%20near%20me");
+  assert.equal(safeUrl("best pizza near me"), "https://www.google.com/search?q=best%20pizza%20near%20me");
   assert.equal(safeUrl("about:blank"), "about:blank");
   for (const blocked of ["file:///C:/Windows/win.ini", "javascript:alert(1)", "chrome://settings", "app://app/index.html", "https://user:pass@example.com/"]) {
     assert.throws(() => safeUrl(blocked), /web pages|credentials/, blocked);

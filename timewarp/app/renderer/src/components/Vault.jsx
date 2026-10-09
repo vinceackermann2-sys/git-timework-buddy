@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { Copy, CreditCard, Eye, EyeOff, KeyRound, LockKeyhole, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { Copy, CreditCard, Download, Eye, EyeOff, KeyRound, LockKeyhole, Pencil, Plus, Trash2 } from "lucide-react";
 import { call } from "../api.js";
-import { Avatar, Dialog, PageHead, Switch, useToast } from "./common.jsx";
+import { Dialog, PageHead, useToast } from "./common.jsx";
 
 const KINDS = [{ value: "password", label: "Sign-in" }, { value: "card", label: "Card" }, { value: "secret", label: "Secret" }];
 const icon = kind => kind === "card" ? <CreditCard size={20} strokeWidth={1.6} /> : kind === "secret" ? <LockKeyhole size={20} strokeWidth={1.6} /> : <KeyRound size={20} strokeWidth={1.6} />;
@@ -69,23 +69,18 @@ function Editor({ item, kind: initialKind, onSaved, onCancel }) {
 }
 
 const SECTIONS = [
-  { kind: "password", title: "Passwords", empty: "No saved passwords yet.", add: "Add" },
-  { kind: "card", title: "Credit cards", empty: "No saved cards yet.", add: "Add card" },
-  { kind: "secret", title: "Secrets and passkeys", empty: "No saved secrets yet.", add: "Add secret" },
+  { kind: "password", title: "Passwords", description: "Saved logins stay encrypted in your vault and fill only matching websites.", empty: "No passwords saved.", add: "Add" },
+  { kind: "card", title: "Credit cards", empty: "No credit cards saved.", add: "Add card" },
+  { kind: "secret", title: "Secrets and passkeys", empty: "No secrets or passkeys saved.", add: "Add secret" },
 ];
 
-export function Vault({ agents }) {
+// Which agents may use the vault is set on each agent (the Agent page in a chat's pane).
+export function Vault() {
   const [state, setState] = useState(null);
   const [editing, setEditing] = useState(null);
-  const [access, setAccess] = useState({});
   const toast = useToast();
   const load = () => call("vault.list").then(setState).catch(error => toast(error, "error"));
   useEffect(() => { void load(); }, []);
-  useEffect(() => { call("agents.list").then(list => setAccess(Object.fromEntries(list.map(agent => [agent.id, !!agent.vaultAccess])))).catch(() => {}); }, [agents]);
-  const toggle = (agent, value) => {
-    setAccess(current => ({ ...current, [agent.id]: value }));
-    call("agents.update", { id: agent.id, vaultAccess: value }).catch(error => { toast(error, "error"); setAccess(current => ({ ...current, [agent.id]: !value })); });
-  };
   const unavailable = state && !state.available;
   const items = state?.items || [];
   const importPasswords = () => call("vault.importPasswords").then(result => {
@@ -95,16 +90,16 @@ export function Vault({ agents }) {
   }).catch(error => toast(error, "error"));
   return (
     <div className="tw-page">
-      <PageHead title="Vault" subtitle="Passwords, cards and secrets stay encrypted on this device. Agents with access fill them in without seeing them." />
+      <PageHead title="Vault" subtitle="Manage your passwords, credit cards, passkeys, and secrets." />
       {unavailable ? <div className="tw-alert">This computer's secure storage is unavailable, so new items can't be saved.</div> : null}
       {SECTIONS.map(section => {
         const list = items.filter(item => item.kind === section.kind);
         return (
           <React.Fragment key={section.kind}>
-            <div className="tw-section-head">
-              <h3>{section.title}</h3>
-              {section.kind === "password" ? <button type="button" className="tw-btn" disabled={unavailable} title="Import a passwords file (CSV) exported from your browser or password manager" onClick={importPasswords}><Upload size={15} />Import</button> : null}
-              <button type="button" className="tw-btn" disabled={unavailable} onClick={() => setEditing({ kind: section.kind })}><Plus size={15} />{section.add}</button>
+            <div className="tw-section-head tw-vault-head">
+              <div><h3>{section.title}</h3>{section.description ? <p>{section.description}</p> : null}</div>
+              {section.kind === "password" ? <button type="button" className="tw-btn" disabled={unavailable} title="Import a passwords file (CSV) exported from your browser or password manager" onClick={importPasswords}><Download size={16} />Import</button> : null}
+              <button type="button" className="tw-btn accent" disabled={unavailable} onClick={() => setEditing({ kind: section.kind })}><Plus size={16} />{section.add}</button>
             </div>
             {state === null ? <div className="tw-empty-box">Opening the vault…</div> : list.length ? (
               <div className="tw-list-panel">
@@ -129,15 +124,6 @@ export function Vault({ agents }) {
           </React.Fragment>
         );
       })}
-      <div className="tw-section-head"><div><h3>Agent access</h3><p>Agents without access can't list or use vault items. Timewarp asks before an agent uses a card or secret.</p></div></div>
-      <div className="tw-rows-card">
-        {agents.map(agent => (
-          <div key={agent.id} className="tw-set-row">
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}><Avatar agent={agent} /><strong>{agent.name}</strong></div>
-            <Switch label={`${agent.name} can use the vault`} checked={!!access[agent.id]} onChange={value => toggle(agent, value)} />
-          </div>
-        ))}
-      </div>
       <Dialog open={!!editing} onClose={() => setEditing(null)} title={editing?.item ? "Edit " + editing.item.label : "Add " + (KINDS.find(kind => kind.value === editing?.kind)?.label.toLowerCase() || "item")}>
         {editing ? <Editor item={editing.item} kind={editing.kind} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} /> : null}
       </Dialog>

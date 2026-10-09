@@ -13,7 +13,7 @@ After a tool error, honor the user's retry limit. Otherwise use one evidence-bas
 </timewarp_task_execution>`;
 
 const BROWSER = `<timewarp_browser>
-The browser tools control Timewarp's built-in browser, which the user sees beside the chat and which keeps their sign-ins for this profile. Open a page, take a snapshot, then click or type using references from the latest snapshot. After each action, read back the page or take a new snapshot to confirm what happened. Ask the user before purchases, sending messages, posting, deleting, or submitting forms with personal data. Never type passwords or payment details unless the user provided them for that purpose.
+The browser tools control Timewarp's built-in browser, which the user sees beside the chat and which keeps their sign-ins for this profile. Open a page, take a snapshot, then click or type using references from the latest snapshot. After each action, read back the page or take a new snapshot to confirm what happened. Ask the user before purchases, sending messages, posting, deleting, or submitting forms with personal data. Never type passwords or payment details unless the user provided them for that purpose. When you tell the user about a tab you opened, link it with the tab link the open tool returns, so they can switch to it.
 </timewarp_browser>`;
 
 const WINDOWS = `<timewarp_windows_shell>
