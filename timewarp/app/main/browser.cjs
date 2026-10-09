@@ -149,11 +149,18 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     contents.on("will-redirect", (event, url) => { try { safeUrl(url); } catch { event.preventDefault(); } });
     contents.on("did-start-loading", () => { tab.loading = true; changed(tab.conversationId); });
     contents.on("did-stop-loading", () => { tab.loading = false; changed(tab.conversationId); });
-    contents.on("page-title-updated", (_event, title) => { tab.title = title; changed(tab.conversationId); });
+    contents.on("page-title-updated", (_event, title) => {
+      tab.title = title;
+      // Recommended sites show the page's title, as before.
+      const url = contents.getURL();
+      if (title && recordable(url)) store.recentSites.record(tab.profileId, tab.conversationId, url, title);
+      changed(tab.conversationId);
+    });
     contents.on("page-favicon-updated", (_event, favicons) => { tab.favicon = favicons.find(icon => /^https:/.test(icon)) || null; changed(tab.conversationId); });
     contents.on("did-navigate", (_event, url) => {
       tab.url = url;
-      if (recordable(url)) store.recentSites.record(tab.profileId, tab.conversationId, url, contents.getTitle());
+      // The title arrives later (page-title-updated); until then the page has none.
+      if (recordable(url)) store.recentSites.record(tab.profileId, tab.conversationId, url, null);
       changed(tab.conversationId);
     });
     contents.on("did-navigate-in-page", (_event, url) => { tab.url = url; changed(tab.conversationId); });

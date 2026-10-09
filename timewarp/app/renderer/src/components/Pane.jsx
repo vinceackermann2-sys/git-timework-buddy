@@ -10,10 +10,14 @@ const host = url => { try { return new URL(url).hostname.replace(/^www\./, ""); 
 const TOOLS = { agent: "Agent", files: "Files" };
 
 // The site's own icon, never a third-party favicon service; a letter otherwise.
-function SiteIcon({ url }) {
+// A page's title, or its address when only that was saved (titles saved before the page had one).
+const siteLabel = site => { const title = String(site.title || "").trim(); const bare = site.url.replace(/^https?:\/\//, ""); return !title || bare.startsWith(title) || title.startsWith(host(site.url) + "/") ? host(site.url) : title; };
+
+function SiteIcon({ url, fallback = "letter" }) {
   const [failed, setFailed] = useState(false);
   let origin = null;
   try { origin = new URL(url).origin; } catch {}
+  if ((failed || !origin) && fallback === "globe") return <Globe size={30} strokeWidth={1.4} className="tw-site-globe" />;
   if (failed || !origin) return <span className="tw-site-letter">{(host(url)[0] || "?").toUpperCase()}</span>;
   return <img src={origin + "/favicon.ico"} alt="" width="32" height="32" onError={() => setFailed(true)} />;
 }
@@ -51,7 +55,7 @@ function Home({ conversation, agent, onOpen, onTool }) {
         <h2>Recommended</h2>
         {sites.length ? (
           <div className="tw-recent">
-            {sites.map(site => <button key={site.url} type="button" title={site.url} onClick={() => onOpen(site.url)}><SiteIcon url={site.url} /><span>{site.title || host(site.url)}</span></button>)}
+            {sites.map(site => <button key={site.url} type="button" title={site.url} onClick={() => onOpen(site.url)}><span className="tw-site-box"><SiteIcon url={site.url} fallback="globe" /></span><strong>{siteLabel(site)}</strong></button>)}
           </div>
         ) : <p className="tw-hint">Your recent websites will appear here.</p>}
       </section>
@@ -86,7 +90,8 @@ function AgentPage({ agent, onEditAgent, onAgentChanged, onSettings, onStart, on
   const [access, setAccess] = useState(undefined);
   const { items } = useApps();
   const toast = useToast();
-  useEffect(() => { call("agents.instructions", { id: agent.id }).then(value => setInstructions(value.instructions || "")).catch(() => setInstructions("")); }, [agent.id]);
+  // Its workspace AGENTS.md, as the previous app showed it.
+  useEffect(() => { call("agents.workspaceInstructions", { id: agent.id }).then(value => setInstructions(value.instructions || "")).catch(() => setInstructions("")); }, [agent.id, agent.name, agent.updatedAt]);
   useEffect(() => { call("integrations.getAccess", { agentId: agent.id }).then(value => setAccess(value.items ?? null)).catch(() => setAccess(null)); }, [agent.id, items]);
   const accounts = (items || []).filter(app => app.accounts?.length).flatMap(app => app.accounts.map(account => ({ app, account })));
   const allowed = entry => access == null || access.some(item => item.integrationId === entry.app.id && item.accountId === entry.account.id);
@@ -97,6 +102,10 @@ function AgentPage({ agent, onEditAgent, onAgentChanged, onSettings, onStart, on
     try { await call("integrations.setAccess", { agentId: agent.id, items: value }); } catch (error) { setAccess(previous); toast(error, "error"); }
   };
   const using = accounts.filter(allowed), other = accounts.filter(entry => !allowed(entry));
+  // Accounts waiting to reconnect are listed too, as before; choosing one reconnects it.
+  const waiting = (items || []).filter(app => app.pendingAccounts?.length).flatMap(app => app.pendingAccounts.map(account => ({ app, account, pending: true })));
+  const rows = [...using, ...waiting].sort((a, b) => a.app.displayName.localeCompare(b.app.displayName));
+  const reconnect = entry => call("integrations.beginConnect", { integrationId: entry.app.id }).then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"));
   const setVault = value => call("agents.update", { id: agent.id, vaultAccess: value }).then(() => onAgentChanged?.()).catch(error => toast(error, "error"));
   return (
     <div className="tw-agent-page">
@@ -123,7 +132,11 @@ function AgentPage({ agent, onEditAgent, onAgentChanged, onSettings, onStart, on
         </Menu>
       </div>
       <div className="tw-agent-card tw-agent-tools">
-        {using.map(entry => (
+        {rows.map(entry => entry.pending ? (
+          <button key={entry.app.id + entry.account.id} type="button" className="tw-agent-tool tw-agent-tool-button" title="Reconnect" onClick={() => void reconnect(entry)}>
+            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc">{entry.account.displayName} (Authentication expired — reconnect)</span>
+          </button>
+        ) : (
           <div key={entry.app.id + entry.account.id} className="tw-agent-tool">
             <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc">{entry.account.displayName}</span>
             <button type="button" className="tw-icon-button" title="Remove" aria-label={`Remove ${entry.app.displayName} ${entry.account.displayName}`} onClick={() => void save(using.filter(item => item !== entry))}><X size={12} /></button>

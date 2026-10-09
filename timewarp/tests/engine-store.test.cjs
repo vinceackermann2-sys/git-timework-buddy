@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { openStore } = require("../app/main/store.cjs");
-const { createAgents } = require("../app/main/agents.cjs");
+const { createAgents, workspaceInstructions } = require("../app/main/agents.cjs");
 
 function tempStore(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-store-"));
@@ -45,21 +45,37 @@ test("nested transactions roll back only their own work", t => {
   assert.equal(store.settings.get("outer"), null);
 });
 
-test("agents get a workspace with AGENTS.md instructions and a mascot", t => {
+test("agents get a workspace with AGENTS.md instructions and a mascot", async t => {
   const { root, store } = tempStore(t);
   const agents = createAgents({ store, root: path.join(root, "agents"), userId: () => "u1" });
   const agent = agents.create({ name: "  Research   Bot ", instructions: "Cite sources." });
   assert.equal(agent.name, "Research Bot");
   assert.match(path.basename(agent.workspace), /^research-bot-/);
-  assert.equal(fs.readFileSync(path.join(agent.workspace, "AGENTS.md"), "utf8"), "Cite sources.\n");
+  const file = path.join(agent.workspace, "AGENTS.md");
+  // As in the previous app: the agent's name, the workspace conventions and its responsibilities.
+  assert.equal(fs.readFileSync(file, "utf8"), workspaceInstructions("Research Bot", "Cite sources."));
+  assert.match(fs.readFileSync(file, "utf8"), /^# Research Bot\n\nThis repository is your persistent workspace\./);
+  assert.equal(fs.readFileSync(path.join(agent.workspace, "Overview.md"), "utf8"), "# Overview\n");
   assert.match(agent.avatarUrl, /\/mascots\/(orbit|nova|cosmo)\.png$/);
+  // The agent's own notes in AGENTS.md stay when its responsibilities or name change.
+  fs.appendFileSync(file, "\n## Conventions\n\nUse ISO dates.\n");
   agents.update(agent.id, { instructions: "Be brief.", avatar: { mascot: "Nova" }, starred: true });
-  assert.equal(agents.instructions(agent.id), "Be brief.\n");
+  agents.update(agent.id, { name: "Scout" });
+  assert.equal(agents.instructions(agent.id), "Be brief.");
+  const text = fs.readFileSync(file, "utf8");
+  assert.match(text, /^# Scout\n/);
+  assert.match(text, /\nBe brief\.\n/);
+  assert.doesNotMatch(text, /Cite sources/);
+  assert.match(text, /Use ISO dates\./);
+  assert.match(agents.workspaceInstructions(agent.id), /^This repository is your persistent workspace\./);
   assert.match(store.agents.get(agent.id).avatarUrl, /nova\.png$/);
   assert.ok(store.agents.get(agent.id).starredAt);
   assert.throws(() => agents.update(agent.id, { avatar: { imageUrl: "javascript:alert(1)" } }), /PNG, JPEG or WebP/);
   const other = createAgents({ store, root: path.join(root, "agents"), userId: () => "u2" });
   assert.throws(() => other.get(agent.id), /unavailable/);
+  // With Git on the computer, the workspace is a repository the agent can commit to.
+  await agents.settled();
+  if (require("node:child_process").spawnSync("git", ["--version"]).status === 0) assert.ok(fs.existsSync(path.join(agent.workspace, ".git")), "the workspace is a Git repository");
 });
 
 test("browser profiles can be renamed and removed; their chats return to the default", t => {

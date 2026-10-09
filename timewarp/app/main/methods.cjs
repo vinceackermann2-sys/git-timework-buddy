@@ -124,6 +124,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "agents.create": input => { signedIn(); return agents.create({ name: input.name, instructions: text(input.instructions), avatar: input.avatar }); },
     "agents.update": ({ id, ...patch }) => { signedIn(); return agents.update(id, patch); },
     "agents.instructions": ({ id }) => { signedIn(); return { instructions: agents.instructions(id) }; },
+    "agents.workspaceInstructions": ({ id }) => { signedIn(); return { instructions: agents.workspaceInstructions(id) }; },
     "agents.archive": ({ id }) => { signedIn(); return agents.archive(id); },
     "agents.reorder": ({ ids }) => { signedIn(); return agents.reorder(ids); },
     "agents.openWorkspace": async ({ id }) => {

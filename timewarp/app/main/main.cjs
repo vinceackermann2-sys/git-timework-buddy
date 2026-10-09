@@ -381,6 +381,7 @@ async function boot() {
     void connectLegacySkills().catch(() => console.error("[timewarp] Previously connected skill folders are unavailable."));
     await history.sync();
     agents.assignMascots();
+    agents.prepareWorkspaces();
     await selectModel().catch(() => console.error("[timewarp] The default model could not be updated."));
     if (fixture && !process.env.TIMEWARP_FIXTURE_ONBOARDING) await onboarding.skip();
   }

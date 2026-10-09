@@ -85,6 +85,10 @@ async function build() {
   copy(path.join(root, "app/renderer/styles/app.css"), path.join(renderDir, "app.css"));
   const screens = { "auth-ui.js": "auth.js", "organization-gate.js": "organization.js", "native-billing.js": "billing.js", "onboarding-ui.js": "onboarding.js", "auth.css": "auth.css", "billing.css": "billing.css", "onboarding.css": "onboarding.css" };
   for (const [from, to] of Object.entries(screens)) copy(path.join(root, "desktop", from), path.join(renderDir, "screens", to));
+  // The organization screen's styles are the organization rules of Timewarp's appearance.css.
+  const organizationCss = fs.readFileSync(path.join(root, "desktop/appearance.css"), "utf8").split(/\r?\n/).filter(line => line.startsWith(".timewarp-org")).join("\n");
+  if (!organizationCss.includes(".timewarp-org-gate-card")) throw new Error("The organization screen styles are missing from desktop/appearance.css.");
+  fs.writeFileSync(path.join(renderDir, "screens", "organization.css"), organizationCss + "\n");
   copy(path.join(root, "assets/timewarp-logo.svg"), path.join(renderDir, "timewarp-logo.svg"));
   copy(path.join(root, "assets/app-icon.svg"), path.join(renderDir, "app-icon.svg"));
   copy(path.join(root, "assets/mascots"), path.join(renderDir, "mascots"));
