@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { call, useEvent } from "../api.js";
-import { Plus, Trash2 } from "lucide-react";
+import { Download, Plus, Trash2 } from "lucide-react";
 import { Dialog, Segmented, Switch, useToast } from "./common.jsx";
+import { ImportKnowledge } from "./Knowledge.jsx";
 
 const AUTH = { notLoggedIn: "Sign-in needed", oAuth: "Signed in", bearerToken: "Token", unsupported: "", unknown: "" };
 
@@ -58,6 +59,7 @@ function AddServer({ onAdded, onCancel }) {
 export function McpServers({ query = "", onCount }) {
   const [servers, setServers] = useState(null);
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const toast = useToast();
   const load = () => call("mcp.list").then(setServers).catch(error => { setServers([]); toast(error, "error"); });
   useEffect(() => { void load(); }, []);
@@ -70,6 +72,7 @@ export function McpServers({ query = "", onCount }) {
     <>
       <div className="tw-section-head">
         <div><h3>MCP servers</h3><p>Give every agent more tools with Model Context Protocol servers. New chats pick up changes.</p></div>
+        <button type="button" className="tw-btn" onClick={() => setImporting(true)}><Download size={15} />Import</button>
         <button type="button" className="tw-btn" onClick={() => setAdding(true)}><Plus size={15} />Add server</button>
       </div>
       {servers === null ? <div className="tw-empty-box">Loading servers…</div> : shown.length ? (
@@ -89,6 +92,9 @@ export function McpServers({ query = "", onCount }) {
           ))}
         </div>
       ) : <div className="tw-empty-box">{needle ? "No servers match your search." : "No MCP servers yet."}</div>}
+      <Dialog open={importing} onClose={() => setImporting(false)} title="Import MCP servers" description="Servers set up in ChatGPT / Codex, Claude or Cursor on this computer.">
+        {importing ? <ImportKnowledge category="mcp" onImported={() => { setImporting(false); void load(); }} /> : null}
+      </Dialog>
       <Dialog open={adding} onClose={() => setAdding(false)} title="Add MCP server">
         {adding ? <AddServer onCancel={() => setAdding(false)} onAdded={value => { setServers(value); setAdding(false); }} /> : null}
       </Dialog>

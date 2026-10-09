@@ -61,3 +61,39 @@ test("agents get a workspace with AGENTS.md instructions and a mascot", t => {
   const other = createAgents({ store, root: path.join(root, "agents"), userId: () => "u2" });
   assert.throws(() => other.get(agent.id), /unavailable/);
 });
+
+test("browser profiles can be renamed and removed; their chats return to the default", t => {
+  const { store } = tempStore(t);
+  const fallback = store.browserProfiles.ensureDefault();
+  const work = store.browserProfiles.create({ label: "Work" });
+  const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
+  const chat = store.conversations.create({ ownerId: "u1", agentId: agent.id, browserProfileId: work.id });
+  assert.equal(store.browserProfiles.rename(work.id, "Clients").label, "Clients");
+  store.browserProfiles.remove(fallback.id);
+  assert.ok(store.browserProfiles.list().some(profile => profile.id === fallback.id), "The default profile stays");
+  store.browserProfiles.remove(work.id);
+  assert.deepEqual(store.browserProfiles.list().map(profile => profile.label), ["Timewarp"]);
+  assert.equal(store.conversations.get(chat.id).browserProfileId, null);
+});
+
+test("chat lists carry the latest message for the activity feed", t => {
+  const { store } = tempStore(t);
+  const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
+  const chat = store.conversations.create({ ownerId: "u1", agentId: agent.id });
+  assert.equal(store.conversations.list("u1")[0].lastText, null);
+  store.messages.append({ id: "m1", conversationId: chat.id, authorId: "u1", text: "First" });
+  store.messages.append({ id: "m2", conversationId: chat.id, authorId: agent.id, text: "Reply" });
+  store.messages.append({ id: "m3", conversationId: chat.id, authorId: "u1", text: "Lost", status: "failed" });
+  assert.equal(store.conversations.list("u1")[0].lastText, "Reply");
+});
+
+test("turn usage is the growth of the thread's totals", t => {
+  const { store } = tempStore(t);
+  const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
+  const chat = store.conversations.create({ ownerId: "u1", agentId: agent.id });
+  const total = (input, output) => ({ inputTokens: input, cachedInputTokens: 0, outputTokens: output, reasoningOutputTokens: 0, totalTokens: input + output });
+  store.turnUsage.record(chat.id, "thread", "t1", total(100, 10));
+  store.turnUsage.record(chat.id, "thread", "t1", total(150, 20));
+  store.turnUsage.record(chat.id, "thread", "t2", total(400, 50));
+  assert.deepEqual(store.turnUsage.list(chat.id).map(row => [row.turnId, row.input, row.output]), [["t1", 150, 20], ["t2", 250, 30]]);
+});

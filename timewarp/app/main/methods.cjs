@@ -36,7 +36,15 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
   // Agent ownership is checked on every call by agents.get().
   const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
   return {
-    "app.info": async () => ({ version, platform: process.platform, codex: client.status }),
+    "app.info": async () => ({ version, platform: process.platform, codex: client.status, hardwareAcceleration: !fs.existsSync(path.join(profile, "software-rendering")) }),
+    // Turns graphics hardware acceleration on or off; Timewarp restarts.
+    "app.setHardwareAcceleration": ({ enabled }) => {
+      const file = path.join(profile, "software-rendering");
+      if (enabled) fs.rmSync(file, { force: true });
+      else fs.writeFileSync(file, JSON.stringify({ reason: "settings", at: new Date().toISOString() }));
+      setTimeout(() => { app.relaunch(); app.exit(0); }, 100);
+      return { restarting: true };
+    },
     // A support file with versions, states and recent app log lines; no chats,
     // files, account details or secrets.
     "diagnostics.export": async () => {
@@ -183,6 +191,30 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "browser.reload": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.reload(conversationId, tabId); },
     "browser.stop": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.stop(conversationId, tabId); },
     "browser.profiles": () => { signedIn(); store.browserProfiles.ensureDefault(); return store.browserProfiles.list(); },
+    // Separate sets of sign-ins for the built-in browser.
+    "browser.createProfile": ({ label }) => {
+      signedIn();
+      const name = text(label, 60).trim();
+      if (!name) throw fail(400, "Give the profile a name.");
+      if (store.browserProfiles.list().length >= 20) throw fail(409, "You can have up to 20 browser profiles.");
+      return store.browserProfiles.create({ label: name });
+    },
+    "browser.renameProfile": ({ id, label }) => {
+      signedIn();
+      const name = text(label, 60).trim();
+      if (!name) throw fail(400, "Give the profile a name.");
+      if (!store.browserProfiles.list().some(profile => profile.id === id)) throw fail(404, "This browser profile is unavailable.");
+      return store.browserProfiles.rename(id, name);
+    },
+    "browser.removeProfile": async ({ id }) => {
+      signedIn();
+      const profile = store.browserProfiles.list().find(item => item.id === id);
+      if (!profile) throw fail(404, "This browser profile is unavailable.");
+      if (profile.isDefault) throw fail(400, "The default profile can't be removed.");
+      await browser.removeProfile(id);
+      store.browserProfiles.remove(id);
+      return store.browserProfiles.list();
+    },
     "browser.setProfile": ({ conversationId, profileId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setProfile(conversationId, profileId); },
     "browser.takeControl": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setUserControl(conversationId, true); },
     "browser.handBack": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setUserControl(conversationId, false); },
@@ -209,11 +241,27 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "memory.removeImport": ({ path: file }) => { signedIn(); return knowledge.removeImport(file); },
     "memory.openFolder": async () => { signedIn(); fs.mkdirSync(knowledge.memoriesRoot, { recursive: true }); const error = await shell.openPath(knowledge.memoriesRoot); if (error) throw fail(500, error); return { opened: true }; },
     "knowledge.detect": () => { signedIn(); return knowledge.detect(); },
+    // Memory files and skills are copied; MCP servers are added to the
+    // agents' Codex settings.
     "knowledge.import": async ({ items }) => {
       signedIn();
-      const result = knowledge.importItems(items);
+      const list = Array.isArray(items) ? items : [];
+      const servers = list.filter(item => typeof item?.id === "string" && item.id.endsWith(":mcp"));
+      const files = list.filter(item => !servers.includes(item));
+      if (!files.length && !servers.length) throw fail(400, "Select at least one memory, skill or server.");
+      const configs = servers.flatMap(item => (Array.isArray(item.names) ? item.names : []).map(name => ({ name, config: knowledge.mcpServer(item.id.slice(0, -4), name) })));
+      const result = files.length ? knowledge.importItems(files) : { imported: { memoryFiles: 0, skills: 0 } };
       if (result.imported.skills) await client.request("skills/list", { forceReload: true }).catch(() => {});
-      return result;
+      const added = configs.length ? await mcp.importServers(configs) : { imported: [], skipped: [] };
+      return { imported: { ...result.imported, mcpServers: added.imported.length }, skipped: added.skipped };
+    },
+    // A folder with Cursor rules, such as a project, when none were found.
+    "knowledge.chooseCursorFolder": async () => {
+      signedIn();
+      const chosen = await dialog.showOpenDialog({ title: "Choose a Cursor folder", properties: ["openDirectory"] });
+      if (chosen.canceled || !chosen.filePaths[0]) return { cancelled: true };
+      store.settings.set("cursorRoot", chosen.filePaths[0]);
+      return knowledge.detect();
     },
     "skills.list": async ({ reload = false } = {}) => {
       signedIn();

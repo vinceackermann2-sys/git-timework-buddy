@@ -84,12 +84,12 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Attachments | Files | Same: images to the model, other files copied into the agent's workspace |
 | Dictation | Cloud transcription | Same service |
 | Chat history sync, restore, Privacy Mode | Timewarp sync | Same format and service |
-| Built-in browser (tabs, profiles, recent sites, downloads) | Energy browser | Rebuilt on `WebContentsView` |
+| Built-in browser (tabs, profiles, recent sites, downloads) | Energy browser | Rebuilt on `WebContentsView`; profiles can be created, renamed and removed from the chat's browser and Settings → Browser, and switching reopens the chat's pages in the chosen profile |
 | Agent browser control, agent cursor, take over / hand back | agent-browser and Timewarp cursor | Rebuilt as in-process tools; cursor in the page; take over supported |
 | Files view and previews (PDF, Excel, CSV, Word, images, code, markdown) | Energy UI | Rebuilt; refreshes as the agent works |
 | Vault (sign-ins, cards, secrets, agent access, fill without revealing values) | Energy vault | Rebuilt; cards and secrets need permission each time; address-bar fill; password import from browser CSV exports |
 | Passkeys | Energy (macOS 13.3+) | Not carried over |
-| Memory (notes, imports from ChatGPT / Codex, Claude, Cursor) | Energy memory | Rebuilt on the same files (`memories/user.md`, `memories/imports`) |
+| Memory (notes, imports from ChatGPT / Codex, Claude, Cursor) | Energy memory | Rebuilt on the same files (`memories/user.md`, `memories/imports`). Imports find the same memory files, skills (including skills linked in by skill installers) and MCP servers (Codex `config.toml`, Claude Code, Claude's desktop app, Cursor) on Windows and macOS; a Cursor project folder can be chosen |
 | Skills (list, enable, import, view) | Codex skills | Same; previously connected skill folders stay available |
 | Instructions for every agent | Energy | Same (Codex global `AGENTS.md`) |
 | Automations (schedules, run now, history) | Energy | Rebuilt; previous automations import paused |
@@ -100,7 +100,7 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Suggested tasks | Energy, off for the reference account | Not carried over |
 | Feedback, diagnostics | Timewarp reporting, Energy debug export | Same feedback; diagnostics file rebuilt (no chats or account data) |
 | Conversation trace (Activity) | Energy UI | Rebuilt: turns and events with input, cached and output tokens and timing |
-| Browser sign-in import from Chrome/Edge profiles | Energy | Not carried over; saved passwords can be imported from a browser's CSV export instead |
+| Browser sign-in import from Chrome/Edge profiles | Energy | Not carried over: it would read other browsers' protected sign-in data. Saved passwords import from a browser's CSV export (Settings → Browser, the chat's profile menu or the Vault) |
 | Updates | Timewarp feed (Windows) | Same feed and checks |
 
 The interface has the previous app's layout and screens: the sidebar with
@@ -116,7 +116,7 @@ command sandbox, setup, diagnostics) are in Settings → General.
 
 ### Verified how
 
-- 276 tests (`npm test`), of which 45 are engine tests (`npm run test:engine`),
+- 285 tests (`npm test`), of which 54 are engine tests (`npm run test:engine`),
   including a real Codex conversation against a local model.
 - Every feature above was exercised end to end in preview builds: a signed-in
   sample account, the real Codex runtime and a scripted local model, with
@@ -166,6 +166,11 @@ engine's floor is set by Electron 43 (macOS 12); measured with
 | Codex app server, code-mode host, ripgrep | 10.12 | 11.0 |
 | Codex voice host (unused, left out) | 14.0 | 14.0 |
 | Codex zsh build for an experimental feature (unused, left out) | 15.0 | 15.0 |
+
+Older Macs running macOS 12 or later through OpenCore Legacy Patcher use the
+Intel build. If their graphics driver makes Chromium's graphics process fail,
+Timewarp restarts without hardware acceleration and remembers that; it can
+also be turned off in Settings → General.
 
 macOS 11 or older would need Electron 37 or older, which no longer gets
 security fixes; not recommended for an app with a built-in browser.

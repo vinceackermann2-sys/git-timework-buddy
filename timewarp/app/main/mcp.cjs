@@ -29,6 +29,38 @@ function serverConfig(input) {
   throw fail(400, "Choose how Timewarp connects to the server.");
 }
 
+// A server copied from another assistant's settings, limited to the settings
+// Codex understands for MCP servers.
+function importedConfig(input) {
+  const strings = value => Array.isArray(value) ? value.filter(item => typeof item === "string").slice(0, 50).map(item => item.slice(0, 4000)) : undefined;
+  const map = value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const out = {};
+    for (const [key, item] of Object.entries(value)) if (ENV_KEY.test(key) || /^[A-Za-z0-9-]{1,64}$/.test(key)) { if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") out[key] = String(item).slice(0, 4000); }
+    return Object.keys(out).length ? out : undefined;
+  };
+  const seconds = value => Number.isFinite(value) && value > 0 && value <= 3600 ? value : undefined;
+  let config;
+  if (typeof input?.url === "string") {
+    const http = serverConfig({ transport: "http", url: input.url });
+    config = { url: http.url, http_headers: map(input.http_headers), bearer_token_env_var: typeof input.bearer_token_env_var === "string" && ENV_KEY.test(input.bearer_token_env_var) ? input.bearer_token_env_var : undefined };
+  } else if (typeof input?.command === "string" && input.command.trim()) {
+    config = { command: input.command.trim().slice(0, 500), args: strings(input.args), env: map(input.env), env_vars: strings(input.env_vars)?.filter(name => ENV_KEY.test(name)), cwd: typeof input.cwd === "string" ? input.cwd.slice(0, 1000) : undefined };
+  } else throw fail(400, "This server has no command or URL.");
+  config.startup_timeout_sec = seconds(input.startup_timeout_sec);
+  config.tool_timeout_sec = seconds(input.tool_timeout_sec);
+  config.enabled_tools = strings(input.enabled_tools);
+  config.disabled_tools = strings(input.disabled_tools);
+  config.enabled = true;
+  return Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined));
+}
+// Another assistant's server name as a name Timewarp accepts.
+function importedName(name) {
+  let value = String(name || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 40);
+  if (RESERVED.test(value)) value = ("imported-" + value).slice(0, 40);
+  return NAME.test(value) ? value : null;
+}
+
 function createMcp({ client, openExternal, notify = () => {} }) {
   const reload = () => client.request("config/mcpServer/reload", undefined);
   async function configured() {
@@ -64,6 +96,22 @@ function createMcp({ client, openExternal, notify = () => {} }) {
 
   return {
     list,
+    // Copies servers from another assistant; existing names are left alone.
+    async importServers(servers) {
+      const current = await configured();
+      const imported = [], skipped = [];
+      for (const { name, config } of servers) {
+        const target = importedName(name);
+        if (!target) { skipped.push(`${name}: unsupported name`); continue; }
+        if (Object.hasOwn(current, target) || imported.includes(target)) { skipped.push(`${name}: already added`); continue; }
+        try {
+          await client.request("config/value/write", { keyPath: `mcp_servers.${target}`, value: importedConfig(config), mergeStrategy: "replace" });
+          imported.push(target);
+        } catch (error) { skipped.push(`${name}: ${error.message}`); }
+      }
+      if (imported.length) { await reload(); notify("mcp.changed", {}); }
+      return { imported, skipped };
+    },
     async add(input) {
       if (await known(input.name)) throw fail(409, "A server with this name already exists.");
       await write(`mcp_servers.${input.name}`, serverConfig(input));
@@ -88,4 +136,4 @@ function createMcp({ client, openExternal, notify = () => {} }) {
   };
 }
 
-module.exports = { createMcp, serverConfig };
+module.exports = { createMcp, serverConfig, importedConfig, importedName };

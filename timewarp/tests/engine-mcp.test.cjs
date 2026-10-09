@@ -32,3 +32,16 @@ test("Timewarp's own servers stay hidden and protected", async () => {
   await mcp.setEnabled("docs", true);
   assert.deepEqual(writes, [{ keyPath: "mcp_servers.docs.enabled", value: true, mergeStrategy: "replace" }]);
 });
+
+test("servers imported from other assistants keep only settings Codex understands", () => {
+  const { importedConfig, importedName } = require("../app/main/mcp.cjs");
+  assert.equal(importedName("openaiDeveloperDocs"), "openaideveloperdocs");
+  assert.equal(importedName("My Server!"), "my-server");
+  assert.equal(importedName("timewarp_tools"), "imported-timewarp_tools");
+  assert.equal(importedName("***"), null);
+  assert.deepEqual(importedConfig({ command: "node", args: ["a.js", 3], env: { TOKEN: "x", "bad key": "y" }, env_vars: ["PATH", "no good"], startup_timeout_sec: 20, default_tools_approval_mode: "never" }),
+    { command: "node", args: ["a.js"], env: { TOKEN: "x" }, env_vars: ["PATH"], startup_timeout_sec: 20, enabled: true });
+  assert.deepEqual(importedConfig({ url: "https://example.com/mcp", http_headers: { Authorization: "Bearer z" } }), { url: "https://example.com/mcp", http_headers: { Authorization: "Bearer z" }, enabled: true });
+  assert.throws(() => importedConfig({ url: "http://example.com/mcp" }), /HTTPS/);
+  assert.throws(() => importedConfig({}), /no command or URL/);
+});

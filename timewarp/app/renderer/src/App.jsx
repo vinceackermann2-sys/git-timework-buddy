@@ -202,7 +202,7 @@ function Shell({ account, setAccount, settings, setSettings }) {
         <div className="tw-stage">
           <section className="tw-main" aria-label={route.view === "chat" ? opened?.title || "Conversation" : route.view === "settings" ? "Settings" : "Home"}>{main}</section>
           {showPane ? <Pane key={"pane-" + opened.id} conversation={opened} agent={chatAgent} expanded={pane === "full"} onExpand={() => setPane(pane === "full" ? "open" : "full")}
-            onClose={() => setPane("closed")} onEditAgent={agent => setDialog({ open: true, agent })} /> : null}
+            onClose={() => setPane("closed")} onEditAgent={agent => setDialog({ open: true, agent })} onSettings={settingsPage} /> : null}
         </div>
       </div>
       <AgentDialog open={dialog.open} agent={dialog.agent} onClose={() => setDialog({ open: false, agent: null })}

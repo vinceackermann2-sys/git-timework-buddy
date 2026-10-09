@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Globe, KeyRound, LayoutGrid, Monitor, Moon, Plus, Search, SlidersHorizontal, Sun, UserPlus, UserRound } from "lucide-react";
+import { BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Globe, KeyRound, LayoutGrid, Monitor, Moon, Pencil, Plus, Search, SlidersHorizontal, Sun, Trash2, UserPlus, UserRound } from "lucide-react";
 import { presets, hexToAccent } from "../../../../shared/appearance.cjs";
 import { call, initials, request, useEvent } from "../api.js";
 import { Avatar, Dialog, PageHead, Row, SearchField, Select, Switch, useToast } from "./common.jsx";
@@ -145,6 +145,11 @@ function General({ settings, onSetting, models, onModel, agents }) {
         <Row title="Setup" description="Go through the welcome steps again. Your agents, chats and settings stay as they are.">
           <button type="button" className="tw-btn" onClick={() => { if (window.confirm("Run setup again? Your agents, chats and settings stay as they are.")) call("onboarding.restart").then(() => { location.hash = "#/"; location.reload(); }).catch(error => toast(error, "error")); }}>Run setup again</button>
         </Row>
+        {info ? (
+          <Row title="Hardware acceleration" description="Uses the graphics card to draw Timewarp. Turn it off if the window flickers or stays blank, for example on older Macs. Timewarp restarts.">
+            <Switch label="Hardware acceleration" checked={info.hardwareAcceleration !== false} onChange={value => { if (window.confirm("Restart Timewarp now to change hardware acceleration?")) call("app.setHardwareAcceleration", { enabled: value }).catch(error => toast(error, "error")); }} />
+          </Row>
+        ) : null}
         <Row title="Feedback" description="Tell us what happened or what could be better"><button type="button" className="tw-btn" onClick={() => setDialog("feedback")}>Send feedback</button></Row>
         <Row title="Diagnostics" description="Save versions and recent app messages for support. No chats, files or account details.">
           <button type="button" className="tw-btn" onClick={() => call("diagnostics.export").then(result => { if (result.saved) toast("Diagnostics saved."); }).catch(error => toast(error, "error"))}>Save…</button>
@@ -270,17 +275,35 @@ function Tools({ agents }) {
 
 function Browser({ onSection }) {
   const [profiles, setProfiles] = useState([]);
-  useEffect(() => { call("browser.profiles").then(setProfiles).catch(() => {}); }, []);
+  const [editing, setEditing] = useState(null);
+  const [name, setName] = useState("");
+  const toast = useToast();
+  const load = () => call("browser.profiles").then(setProfiles).catch(error => toast(error, "error"));
+  useEffect(() => { void load(); }, []);
+  const save = event => {
+    event.preventDefault();
+    (editing === "new" ? call("browser.createProfile", { label: name }) : call("browser.renameProfile", { id: editing.id, label: name }))
+      .then(() => { setEditing(null); void load(); }).catch(error => toast(error, "error"));
+  };
+  const remove = profile => {
+    if (!window.confirm(`Remove the ${profile.label} profile? Its sign-ins and cookies are deleted from this device, and chats using it switch to the default profile.`)) return;
+    call("browser.removeProfile", { id: profile.id }).then(setProfiles).catch(error => toast(error, "error"));
+  };
+  const importPasswords = () => call("vault.importPasswords").then(result => {
+    if (!result.cancelled) toast(`Imported ${result.imported} sign-in${result.imported === 1 ? "" : "s"} into the Vault${result.duplicates ? `, ${result.duplicates} already saved` : ""}. Delete the exported file now; it isn't encrypted.`);
+  }).catch(error => toast(error, "error"));
   return (
     <div className="tw-page">
       <PageHead title="Browser" subtitle="Manage which accounts Timewarp can use when browsing." />
-      <p className="tw-lead">Browser profiles, cookies, passwords and browser actions stay on this device. The local harness uses the cloud model.</p>
-      <h3 className="tw-sub">Your browser profiles</h3>
+      <p className="tw-lead">Browser profiles, cookies, passwords and browser actions stay on this device. Each chat uses one profile; choose it from the profile button in the chat's browser.</p>
+      <div className="tw-section-head"><h3 className="tw-muted-head">Your browser profiles</h3><button type="button" className="tw-btn" onClick={() => { setName(""); setEditing("new"); }}><Plus size={15} />New profile</button></div>
       <div className="tw-list-panel">
         {profiles.map(profile => (
           <div key={profile.id} className="tw-list-row">
             <span className="tw-face"><UserRound size={20} strokeWidth={1.6} /><img className="tw-face-badge" src="./timewarp-logo.svg" alt="" /></span>
             <div><strong>{profile.label}</strong><span className="desc">{profile.isDefault ? "Timewarp · default" : "Timewarp"}</span></div>
+            <button type="button" className="tw-icon-button" title="Rename" aria-label={"Rename " + profile.label} onClick={() => { setName(profile.label); setEditing(profile); }}><Pencil size={15} /></button>
+            {profile.isDefault ? null : <button type="button" className="tw-icon-button" title="Remove" aria-label={"Remove " + profile.label} onClick={() => remove(profile)}><Trash2 size={15} /></button>}
           </div>
         ))}
       </div>
@@ -288,10 +311,17 @@ function Browser({ onSection }) {
       <div className="tw-list-panel">
         <div className="tw-list-row">
           <span className="tw-face"><KeyRound size={20} strokeWidth={1.6} /></span>
-          <div><strong>Import saved passwords</strong><span className="desc">Export passwords from Chrome, Edge, Safari or a password manager as a CSV file, then import it into the Vault.</span></div>
-          <button type="button" className="tw-btn" onClick={() => onSection("vault")}>Open Vault</button>
+          <div><strong>Import saved passwords</strong><span className="desc" style={{ whiteSpace: "normal" }}>Export passwords from Chrome, Edge, Safari, Firefox or a password manager as a CSV file and import it. Agents fill them in from the Vault without seeing them.</span></div>
+          <button type="button" className="tw-btn" onClick={importPasswords}>Import</button>
         </div>
       </div>
+      <p className="tw-hint tw-inset">To use a site signed in, sign in once in the chat's browser; the profile remembers it. <button type="button" className="tw-link" onClick={() => onSection("vault")}>Open Vault</button></p>
+      <Dialog open={!!editing} onClose={() => setEditing(null)} title={editing === "new" ? "New browser profile" : "Rename profile"} description={editing === "new" ? "A profile keeps its own sign-ins and cookies, separate from your other profiles." : null}>
+        <form className="tw-import" onSubmit={save}>
+          <label className="tw-field"><span>Name</span><input className="tw-input" autoFocus required maxLength={60} value={name} placeholder="Work" onChange={event => setName(event.target.value)} /></label>
+          <div className="tw-dialog-actions"><button type="button" className="tw-btn" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="tw-btn primary" disabled={!name.trim()}>{editing === "new" ? "Create" : "Save"}</button></div>
+        </form>
+      </Dialog>
     </div>
   );
 }

@@ -31,6 +31,21 @@ app.setPath("userData", profile);
 app.setPath("sessionData", profile);
 app.setAppLogsPath(path.join(profile, "logs"));
 if (process.platform === "win32") app.setAppUserModelId(build.appId || "com.timewarp.desktop.dev");
+// Some older Macs (including ones on a newer macOS through OpenCore Legacy
+// Patcher) and older PCs have graphics drivers Chromium can't use. When the
+// graphics process keeps failing, Timewarp restarts without hardware
+// acceleration and remembers that on this device.
+const softwareRendering = path.join(profile, "software-rendering");
+if (fs.existsSync(softwareRendering)) app.disableHardwareAcceleration();
+let graphicsFailures = 0;
+app.on("child-process-gone", (_event, details) => {
+  if (details.type !== "GPU" || ["clean-exit", "killed"].includes(details.reason) || fs.existsSync(softwareRendering)) return;
+  if (++graphicsFailures < 2) return;
+  console.error("[timewarp] The graphics process failed; restarting without hardware acceleration.", details.reason);
+  try { fs.writeFileSync(softwareRendering, JSON.stringify({ reason: details.reason, at: new Date().toISOString() })); } catch { return; }
+  app.relaunch();
+  app.exit(0);
+});
 protocol.registerSchemesAsPrivileged([{ scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, codeCache: true } }]);
 
 const rendererDir = path.join(appRoot, "renderer");
@@ -155,7 +170,7 @@ async function boot() {
   fs.mkdirSync(codexHome, { recursive: true });
   let onboarding = null;
   const knowledge = createKnowledge({
-    runtimeDir, codexHome, cursorRoot: () => onboarding?.service.cursorRoot(),
+    runtimeDir, codexHome, cursorRoot: () => store.settings.get("cursorRoot") || onboarding?.service.cursorRoot(),
     ...(fixture ? { home: fixture.sampleHome(path.join(profile, "preview-home")), env: {} } : {}),
   });
   fs.mkdirSync(path.join(runtimeDir, "codex-app-server-cwd"), { recursive: true });

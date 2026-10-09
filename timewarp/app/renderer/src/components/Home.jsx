@@ -5,7 +5,7 @@ import { Dialog, useToast } from "./common.jsx";
 import { ImportKnowledge } from "./Knowledge.jsx";
 
 const HEADINGS = ["Let's knock something off your to-do list", "Today's forecast: things getting done", "Good to see you"];
-const SOURCES = { "codex-chatgpt": "ChatGPT/Codex", "claude-code": "Claude" };
+const SOURCES = { "codex-chatgpt": "ChatGPT/Codex", "claude-code": "Claude", cursor: "Cursor" };
 const readDismissed = () => { try { return new Set(JSON.parse(localStorage.getItem("tw.dismissed") || "[]")); } catch { return new Set(); } };
 
 function plural(count, word) { return `${count} ${word}${count === 1 ? "" : "s"}`; }
@@ -26,8 +26,9 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, onSta
   });
   const counts = source => {
     const items = (found || []).filter(item => item.source === source);
-    const skills = items.find(item => item.category === "skills")?.names.length || 0, memory = items.find(item => item.category === "memory")?.names.length || 0;
-    return { total: skills + memory, text: [skills ? plural(skills, "skill") : "", memory ? plural(memory, "memory file") : ""].filter(Boolean).join(", ") };
+    const size = category => items.find(item => item.category === category)?.names.length || 0;
+    const skills = size("skills"), memory = size("memory"), servers = size("mcp");
+    return { total: skills + memory + servers, text: [skills ? plural(skills, "skill") : "", memory ? plural(memory, "memory file") : "", servers ? plural(servers, "MCP") : ""].filter(Boolean).join(", ") };
   };
   const suggestions = [];
   if (funding?.subscriptionAllowed && funding.source !== "chatgpt") suggestions.push({
@@ -36,7 +37,7 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, onSta
   });
   for (const source of Object.keys(SOURCES)) {
     const count = counts(source);
-    if (count.total) suggestions.push({ id: "import-" + source, icon: <Icon name={source === "claude-code" ? "claude" : "chatgpt"} />, title: `Import your ${SOURCES[source]} setup`, meta: count.text, action: "Import", run: () => setImporting(source) });
+    if (count.total) suggestions.push({ id: "import-" + source, icon: <Icon name={{ "claude-code": "claude", cursor: "cursor" }[source] || "chatgpt"} />, title: `Import your ${SOURCES[source]} setup`, meta: count.text, action: "Import", run: () => setImporting(source) });
   }
   suggestions.push({ id: "browser-profiles", icon: <span className="tw-icons"><Icon name="edge" /><Icon name="chrome" /></span>, title: "Browser profiles", meta: "Manage profiles on this device", action: "Manage", run: () => onSettings("browser") });
   const visible = suggestions.filter(item => !dismissed.has(item.id));
@@ -67,7 +68,7 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, onSta
         ) : null}
       </div>
       <Dialog open={!!importing} onClose={() => setImporting(null)} title={importing ? `Import your ${SOURCES[importing]} setup` : ""}
-        description="Choose the skills and memory files to copy into Timewarp. The other app's files aren't changed.">
+        description="Choose the skills, memory files and MCP servers to bring into Timewarp. The other app's files aren't changed.">
         {importing ? <ImportKnowledge source={importing} onImported={() => { setImporting(null); dismiss("import-" + importing); }} /> : null}
       </Dialog>
     </div>

@@ -67,3 +67,54 @@ test("skill folders connected by the previous app are found again", t => {
   fs.writeFileSync(path.join(runtimeDir, "setup-import-sync.json"), JSON.stringify({ version: 2, enabledItemIds: ["claude-code:skills", "cursor:skills", "unknown:skills", "claude-code:memory"] }));
   assert.deepEqual(knowledge.legacySkillRoots(), [path.join(home, ".claude", "skills")]);
 });
+
+test("skills linked in by a skill installer are found and copied", t => {
+  const { home, codexHome, knowledge } = setup(t);
+  const shared = path.join(home, ".agents/skills/find-skills");
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(path.join(shared, "SKILL.md"), "---\nname: find-skills\ndescription: Find skills.\n---\n");
+  fs.mkdirSync(path.join(home, ".codex/skills"), { recursive: true });
+  fs.symlinkSync(shared, path.join(home, ".codex/skills/find-skills"), "junction");
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "tw-outside-"));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, "SKILL.md"), "outside\n");
+  fs.symlinkSync(outside, path.join(home, ".codex/skills/elsewhere"), "junction");
+  const items = Object.fromEntries(knowledge.detect().items.map(item => [item.id, item.names]));
+  assert.deepEqual(items["codex-chatgpt:skills"], ["find-skills"], "links outside the user's folders are ignored");
+  knowledge.importItems([{ id: "codex-chatgpt:skills", names: ["find-skills"] }]);
+  const copied = path.join(codexHome, "skills/find-skills");
+  assert.equal(fs.lstatSync(copied).isSymbolicLink(), false);
+  assert.match(fs.readFileSync(path.join(copied, "SKILL.md"), "utf8"), /Find skills/);
+});
+
+test("MCP servers are found in Codex, Claude and Cursor settings on Windows and macOS", t => {
+  for (const platform of ["win32", "darwin"]) {
+    const { root, home, runtimeDir, codexHome } = setup(t);
+    const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
+    write(path.join(home, ".codex/config.toml"), 'model = "x"\n[mcp_servers.docs]\nurl = "https://example.com/mcp"\n\n[mcp_servers.repl]\ncommand = "node"\nargs = ["server.js", "--port", "3000"]\n[mcp_servers.repl.env]\nTOKEN = "abc"\n[mcp_servers.timewarp_composio]\nurl = "http://127.0.0.1:7788/mcp"\n');
+    write(path.join(home, ".claude.json"), JSON.stringify({ mcpServers: { github: { type: "stdio", command: "npx", args: ["-y", "gh-mcp"], env: { GH: "1" } } }, projects: {} }));
+    const desktop = platform === "win32" ? path.join(root, "appdata/Claude/claude_desktop_config.json") : path.join(home, "Library/Application Support/Claude/claude_desktop_config.json");
+    write(desktop, "\uFEFF" + JSON.stringify({ mcpServers: { files: { command: "files-mcp" }, github: { command: "ignored-duplicate" } } }));
+    write(path.join(home, ".cursor/mcp.json"), JSON.stringify({ mcpServers: { linear: { url: "https://mcp.linear.app/sse", headers: { Authorization: "Bearer x" } } } }));
+    const knowledge = createKnowledge({ runtimeDir, codexHome, home, env: { APPDATA: path.join(root, "appdata") }, platform });
+    const items = Object.fromEntries(knowledge.detect().items.map(item => [item.id, item.names]));
+    assert.deepEqual(items["codex-chatgpt:mcp"], ["docs", "repl"], platform);
+    assert.deepEqual(items["claude-code:mcp"], ["files", "github"], platform);
+    assert.deepEqual(items["cursor:mcp"], ["linear"], platform);
+    assert.deepEqual(knowledge.mcpServer("codex-chatgpt", "repl"), { command: "node", args: ["server.js", "--port", "3000"], env: { TOKEN: "abc" } });
+    assert.equal(knowledge.mcpServer("claude-code", "github").command, "npx");
+    assert.deepEqual(knowledge.mcpServer("cursor", "linear"), { url: "https://mcp.linear.app/sse", http_headers: { Authorization: "Bearer x" } });
+    assert.throws(() => knowledge.mcpServer("codex-chatgpt", "timewarp_composio"), /no longer available/);
+  }
+});
+
+test("a chosen Cursor project folder supplies its rules", t => {
+  const { root, home, runtimeDir, codexHome } = setup(t);
+  const project = path.join(root, "project");
+  fs.mkdirSync(path.join(project, ".cursor/rules"), { recursive: true });
+  fs.writeFileSync(path.join(project, ".cursor/rules/api.mdc"), "Use REST.\n");
+  fs.writeFileSync(path.join(project, "AGENTS.md"), "Run tests.\n");
+  const knowledge = createKnowledge({ runtimeDir, codexHome, home, env: {}, cursorRoot: () => project });
+  const items = Object.fromEntries(knowledge.detect().items.map(item => [item.id, item.names]));
+  assert.deepEqual(items["cursor:memory"], [".cursor/rules/api.mdc", "AGENTS.md"]);
+});

@@ -175,10 +175,31 @@ function createBrowser({ window: getWindow, store, notify = () => {}, userAgentS
     forward(conversationId, tabId) { const tab = tabFor(conversationId, tabId); if (tab.view?.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward(); return stateOf(tab); },
     reload(conversationId, tabId) { const tab = tabFor(conversationId, tabId); tab.view?.webContents.reload(); return stateOf(tab); },
     stop(conversationId, tabId) { const tab = tabFor(conversationId, tabId); tab.view?.webContents.stop(); return stateOf(tab); },
+    // The chat's tabs reopen in the chosen profile, with its own sign-ins.
     setProfile(conversationId, profileId) {
       if (!store.browserProfiles.list().some(profile => profile.id === profileId)) throw fail(404, "This browser profile is unavailable.");
       store.conversations.update(conversationId, { browserProfileId: profileId }, { touch: false });
+      const open = [...tabs.values()].filter(tab => tab.conversationId === conversationId && tab.profileId !== profileId).sort((a, b) => a.order - b.order);
+      const active = groups.get(conversationId)?.active;
+      for (const tab of open) {
+        const url = tab.kind === "web" ? (tab.view ? tab.view.webContents.getURL() : tab.url) : null;
+        if (tab.view) { getWindow()?.contentView.removeChildView(tab.view); tab.view.webContents.close(); }
+        tabs.delete(tab.id);
+        let reopened = null;
+        try { reopened = openTab(conversationId, { url: url && recordable(url) ? url : null, profileId, activate: tab.id === active }); } catch {}
+        if (reopened) tabs.get(reopened.id).order = tab.order;
+      }
+      layout();
+      changed(conversationId);
       return groupState(conversationId);
+    },
+    // Signs a removed profile out everywhere by clearing its stored data.
+    async removeProfile(profileId) {
+      for (const [conversationId] of groups) if ([...tabs.values()].some(tab => tab.conversationId === conversationId && tab.profileId === profileId)) {
+        const fallback = store.browserProfiles.ensureDefault().id;
+        this.setProfile(conversationId, fallback);
+      }
+      await sessionFor(profileId).clearStorageData().catch(() => {});
     },
     recent: (conversationId, profileId) => store.recentSites.list(profileId || store.conversations.get(conversationId)?.browserProfileId || store.browserProfiles.ensureDefault().id, conversationId).slice(0, 4),
     // Agent tools act on the conversation's active web tab.

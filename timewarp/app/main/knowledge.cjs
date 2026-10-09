@@ -6,6 +6,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { parseToml } = require("./toml-lite.cjs");
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const NOTES_LIMIT = 100_000, FILE_LIMIT = 16 * 1024 * 1024, MAX_FILES = 500, SKILL_FILES = 2000, SKILL_BYTES = 64 * 1024 * 1024;
@@ -37,18 +38,57 @@ function expand(root, pattern) {
   return fs.readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory() && !entry.name.startsWith(".")).map(entry => [entry.name, ...rest].join("/"));
 }
 
-function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home = os.homedir(), env = process.env }) {
+// Where Claude's desktop app keeps its settings on each platform.
+function claudeDesktopConfig(home, env, platform) {
+  if (platform === "win32") return path.join(env.APPDATA || path.join(home, "AppData", "Roaming"), "Claude", "claude_desktop_config.json");
+  if (platform === "darwin") return path.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  return path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "Claude", "claude_desktop_config.json");
+}
+
+function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home = os.homedir(), env = process.env, platform = process.platform }) {
   const memoriesRoot = path.join(runtimeDir, "entities", "memories");
   const importsRoot = path.join(memoriesRoot, "imports");
   const notesFile = path.join(memoriesRoot, "user.md");
   const skillsRoot = path.join(codexHome, "skills");
 
+  // Each assistant's folder, its memory files and the settings files that
+  // list its MCP servers. The paths are the same on Windows and macOS except
+  // for Claude's desktop app.
   function sources() {
+    const codex = env.CODEX_HOME ? path.resolve(env.CODEX_HOME) : path.join(home, ".codex");
+    const claude = env.CLAUDE_CONFIG_DIR ? path.resolve(env.CLAUDE_CONFIG_DIR) : path.join(home, ".claude");
+    const cursor = cursorRoot() || path.join(home, ".cursor");
     return {
-      "codex-chatgpt": { root: env.CODEX_HOME ? path.resolve(env.CODEX_HOME) : path.join(home, ".codex"), memory: ["AGENTS.md", "memories"] },
-      "claude-code": { root: path.join(home, ".claude"), memory: ["CLAUDE.md", "*/memory"], within: "projects" },
-      "cursor": { root: cursorRoot() || path.join(home, ".cursor"), memory: ["rules", "memories", "AGENTS.md", "MEMORY.md", ".cursorrules"] },
+      "codex-chatgpt": { root: codex, memory: ["AGENTS.md", "memories"], mcp: [{ file: path.join(codex, "config.toml"), format: "toml" }] },
+      "claude-code": {
+        root: claude, memory: ["CLAUDE.md", "*/memory"], within: "projects",
+        mcp: [{ file: env.CLAUDE_CONFIG_DIR ? path.join(claude, ".claude.json") : path.join(home, ".claude.json") }, { file: claudeDesktopConfig(home, env, platform) }],
+      },
+      "cursor": {
+        root: cursor, memory: ["rules", ".cursor/rules", "memories", "AGENTS.md", "MEMORY.md", ".cursorrules"],
+        mcp: [{ file: path.join(cursor, "mcp.json") }, { file: path.join(cursor, ".cursor", "mcp.json") }, ...(cursorRoot() ? [{ file: path.join(home, ".cursor", "mcp.json") }] : [])],
+      },
     };
+  }
+  // MCP servers listed in an assistant's settings, by name.
+  function mcpServers(source) {
+    const servers = new Map();
+    for (const { file, format } of source.mcp || []) {
+      const stat = lstat(file);
+      if (!stat?.isFile() || stat.size > 5 * 1024 * 1024) continue;
+      const text = fs.readFileSync(file, "utf8");
+      const data = format === "toml" ? parseToml(text) : JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+      const listed = format === "toml" ? data.mcp_servers : data.mcpServers;
+      if (!listed || typeof listed !== "object") continue;
+      for (const [name, value] of Object.entries(listed)) {
+        if (servers.has(name) || !value || typeof value !== "object" || /^timewarp/i.test(name)) continue;
+        const config = format === "toml" ? value : value.url || value.serverUrl
+          ? { url: value.url || value.serverUrl, http_headers: value.headers }
+          : { command: value.command, args: value.args, env: value.env, cwd: value.cwd };
+        if (typeof config.url === "string" || typeof config.command === "string") servers.set(name, config);
+      }
+    }
+    return servers;
   }
   function memoryNames(source) {
     const files = [];
@@ -60,12 +100,27 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
     }
     return files;
   }
+  // A skill folder, or a link to one in the user's folders: skill installers
+  // link one copy into each assistant (a junction on Windows, a symbolic link
+  // on macOS).
+  function skillFolder(directory, name) {
+    if (!SKILL_NAME.test(name)) return null;
+    const entry = path.join(directory, name), stat = lstat(entry);
+    if (!stat || (!stat.isDirectory() && !stat.isSymbolicLink())) return null;
+    let real;
+    try { real = fs.realpathSync(entry); } catch { return null; }
+    if (stat.isSymbolicLink()) {
+      let base;
+      try { base = fs.realpathSync(home); } catch { return null; }
+      if (!within(base, real)) return null;
+    }
+    if (!lstat(real)?.isDirectory() || !lstat(path.join(real, "SKILL.md"))?.isFile()) return null;
+    return real;
+  }
   function skillNames(root) {
     const directory = path.join(root, "skills"), stat = lstat(directory);
     if (!stat?.isDirectory()) return [];
-    return fs.readdirSync(directory, { withFileTypes: true })
-      .filter(entry => entry.isDirectory() && SKILL_NAME.test(entry.name) && lstat(path.join(directory, entry.name, "SKILL.md"))?.isFile())
-      .map(entry => entry.name).sort();
+    return fs.readdirSync(directory).filter(name => skillFolder(directory, name)).sort();
   }
 
   function detect() {
@@ -76,6 +131,10 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
         const memory = memoryNames(source), skills = skillNames(source.root);
         if (memory.length) items.push({ id: id + ":memory", category: "memory", source: id, names: memory });
         if (skills.length) items.push({ id: id + ":skills", category: "skills", source: id, names: skills });
+      } catch (error) { errors.push({ message: `${id}: ${error.message}` }); }
+      try {
+        const servers = [...mcpServers(source).keys()].sort();
+        if (servers.length) items.push({ id: id + ":mcp", category: "mcp", source: id, names: servers });
       } catch (error) { errors.push({ message: `${id}: ${error.message}` }); }
     }
     return { items, errors };
@@ -137,7 +196,9 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
           writeAtomic(destination, fs.readFileSync(sourceFile(root, name)));
           imported.memoryFiles++;
         } else {
-          copySkill(sourceFile(path.join(root, "skills"), name), name);
+          const folder = skillFolder(path.join(root, "skills"), name);
+          if (!folder) throw fail(409, "An import selection is no longer available. Refresh and try again.");
+          copySkill(folder, name);
           imported.skills++;
         }
       }
@@ -157,6 +218,13 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
 
   return {
     memoriesRoot, importsRoot, skillsRoot, notesFile, detect, importItems,
+    // The settings of one MCP server found by detect(), for importing.
+    mcpServer(sourceId, name) {
+      const source = sources()[sourceId];
+      const config = source && mcpServers(source).get(name);
+      if (!config) throw fail(409, "An import selection is no longer available. Refresh and try again.");
+      return config;
+    },
     read: () => ({ notes: notes(), files: importedFiles(), folder: memoriesRoot }),
     saveNotes(text) {
       if (typeof text !== "string" || text.length > NOTES_LIMIT) throw fail(400, "Notes must be text under 100,000 characters.");

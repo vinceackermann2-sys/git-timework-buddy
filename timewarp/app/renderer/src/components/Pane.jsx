@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Files as FilesIcon, FolderOpen, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Plus, RotateCw, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Files as FilesIcon, FolderOpen, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Plus, RotateCw, Settings2, Upload, UserRound, X } from "lucide-react";
 import { call, useEvent } from "../api.js";
-import { Avatar, Menu, useToast } from "./common.jsx";
+import { Avatar, Dialog, Menu, useToast } from "./common.jsx";
 import { Files } from "./Files.jsx";
 
 const host = url => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url || ""; } };
@@ -76,12 +76,15 @@ function AgentPanel({ agent, onEditAgent }) {
   );
 }
 
-export function Pane({ conversation, agent, expanded, onExpand, onClose, onEditAgent }) {
+export function Pane({ conversation, agent, expanded, onExpand, onClose, onEditAgent, onSettings }) {
   const [state, setState] = useState({ tabs: [], active: null });
   const [address, setAddress] = useState("");
   const [editing, setEditing] = useState(false);
   const [tool, setTool] = useState(null);
   const [profiles, setProfiles] = useState([]);
+  const [profileId, setProfileId] = useState(null);
+  const [naming, setNaming] = useState(false);
+  const [profileName, setProfileName] = useState("");
   const content = useRef(null);
   const overlay = useOverlayOpen();
   const toast = useToast();
@@ -121,7 +124,7 @@ export function Pane({ conversation, agent, expanded, onExpand, onClose, onEditA
   }, [active?.id, active?.kind, overlay, tool]);
 
   const open = url => { setTool(null); return active ? run("browser.navigate", { tabId: active.id, url }) : run("browser.newTab", { url }); };
-  const profile = profiles.find(item => item.id === (active?.profileId || conversation.browserProfileId)) || profiles.find(item => item.isDefault) || profiles[0];
+  const profile = profiles.find(item => item.id === (profileId || active?.profileId || conversation.browserProfileId)) || profiles.find(item => item.isDefault) || profiles[0];
   return (
     <aside className="tw-pane" aria-label="Browser and files">
       <div className="tw-pane-top">
@@ -164,12 +167,29 @@ export function Pane({ conversation, agent, expanded, onExpand, onClose, onEditA
         <Menu align="right" width={240} trigger={({ toggle }) => <button type="button" className="tw-profile-button" aria-label="Browser profile" title={profile ? "Browser profile: " + profile.label : "Browser profile"} onClick={toggle}><img src="./timewarp-logo.svg" alt="" /></button>}>
           <div className="tw-menu-label">Browser profile</div>
           {profiles.map(item => (
-            <button key={item.id} type="button" className="tw-menu-item" data-close onClick={() => run("browser.setProfile", { profileId: item.id })}>
-              <span className="grow">{item.label}</span>{item.id === profile?.id ? <Check size={15} /> : null}
+            <button key={item.id} type="button" className="tw-menu-item" data-close onClick={() => { if (item.id !== profile?.id) void run("browser.setProfile", { profileId: item.id }).then(() => setProfileId(item.id)); }}>
+              <UserRound size={15} /><span className="grow">{item.label}</span>{item.id === profile?.id ? <Check size={15} /> : null}
             </button>
           ))}
+          <div className="tw-menu-sep" />
+          <button type="button" className="tw-menu-item" data-close onClick={() => { setProfileName(""); setNaming(true); }}><Plus size={15} /><span className="grow">New profile</span></button>
+          <button type="button" className="tw-menu-item" data-close onClick={() => call("vault.importPasswords").then(result => { if (!result.cancelled) toast(`Imported ${result.imported} sign-in${result.imported === 1 ? "" : "s"} into the Vault. Delete the exported file now; it isn't encrypted.`); }).catch(error => toast(error, "error"))}><Upload size={15} /><span className="grow">Import passwords…</span></button>
+          <button type="button" className="tw-menu-item" data-close onClick={() => onSettings?.("browser")}><Settings2 size={15} /><span className="grow">Manage profiles</span></button>
         </Menu>
       </form>}
+      <Dialog open={naming} onClose={() => setNaming(false)} title="New browser profile" description="A profile keeps its own sign-ins and cookies, separate from your other profiles. This chat switches to it.">
+        <form className="tw-import" onSubmit={event => {
+          event.preventDefault();
+          call("browser.createProfile", { label: profileName }).then(created => {
+            setNaming(false);
+            setProfiles(list => [...list, created]);
+            return run("browser.setProfile", { profileId: created.id }).then(() => setProfileId(created.id));
+          }).catch(error => toast(error, "error"));
+        }}>
+          <label className="tw-field"><span>Name</span><input className="tw-input" autoFocus required maxLength={60} value={profileName} placeholder="Work" onChange={event => setProfileName(event.target.value)} /></label>
+          <div className="tw-dialog-actions"><button type="button" className="tw-btn" onClick={() => setNaming(false)}>Cancel</button><button type="submit" className="tw-btn primary" disabled={!profileName.trim()}>Create</button></div>
+        </form>
+      </Dialog>
       <div className="tw-pane-content" ref={content}>
         {tool === "files" ? <Files agent={agent} /> : tool === "agent" ? <AgentPanel agent={agent} onEditAgent={onEditAgent} />
           : !active || active.kind === "home" ? <Home conversation={conversation} agent={agent} onOpen={open} onTool={setTool} /> : null}

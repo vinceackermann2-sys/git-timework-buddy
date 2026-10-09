@@ -5,6 +5,7 @@ import { Dialog, PageHead, SearchField, Switch, useToast } from "./common.jsx";
 import { Markdown } from "../markdown.jsx";
 
 const SOURCES = { "codex-chatgpt": "ChatGPT / Codex", "claude-code": "Claude", cursor: "Cursor" };
+const KINDS = { skills: "Skills", memory: "Memory files", mcp: "MCP servers" };
 
 // Memory files and skills found from other assistants on this computer,
 // optionally from one source or of one kind.
@@ -29,20 +30,29 @@ export function ImportKnowledge({ category, source, onImported }) {
     if (!items.length) { toast("Select something to import.", "error"); return; }
     setBusy(true);
     try {
-      const { imported } = await call("knowledge.import", { items });
-      const parts = [imported.skills ? `${imported.skills} skill${imported.skills === 1 ? "" : "s"}` : "", imported.memoryFiles ? `${imported.memoryFiles} memory file${imported.memoryFiles === 1 ? "" : "s"}` : ""].filter(Boolean);
-      toast(parts.length ? "Imported " + parts.join(" and ") + "." : "Nothing new to import.");
+      const { imported, skipped = [] } = await call("knowledge.import", { items });
+      const count = (value, word) => value ? `${value} ${word}${value === 1 ? "" : "s"}` : "";
+      const parts = [count(imported.skills, "skill"), count(imported.memoryFiles, "memory file"), count(imported.mcpServers, "MCP server")].filter(Boolean);
+      toast((parts.length ? "Imported " + parts.join(", ") + "." : "Nothing new to import.") + (skipped.length ? " Skipped " + skipped.join("; ") + "." : ""));
       onImported?.();
     } catch (error) { toast(error, "error"); }
     finally { setBusy(false); }
   }
+  // Cursor keeps rules in each project; the user can point at one.
+  const chooseCursor = () => call("knowledge.chooseCursorFolder").then(value => { if (!value.cancelled) void detect(); }).catch(error => toast(error, "error"));
+  const cursorButton = !source || source === "cursor" ? <button type="button" className="tw-btn" onClick={chooseCursor}>Choose a Cursor folder…</button> : null;
   if (!found) return <p className="tw-hint">Looking for other assistants on this computer…</p>;
-  if (!found.items.length) return <p className="tw-hint">Nothing to import from {source ? SOURCES[source] : "ChatGPT / Codex, Claude or Cursor"} was found on this computer.</p>;
+  if (!found.items.length) return (
+    <div className="tw-import">
+      <p className="tw-hint">{category === "mcp" ? "No MCP servers were found" : "Nothing to import was found"} in {source ? SOURCES[source] : "ChatGPT / Codex, Claude or Cursor"} on this computer.{cursorButton ? " Cursor keeps rules and servers in each project; choose a project or its .cursor folder to look there." : ""}</p>
+      {cursorButton ? <div className="tw-dialog-actions">{cursorButton}</div> : null}
+    </div>
+  );
   return (
     <div className="tw-import">
       {found.items.map(item => (
         <fieldset key={item.id} className="tw-import-group">
-          <legend>{source ? (item.category === "skills" ? "Skills" : "Memory files") : `${SOURCES[item.source] || item.source} · ${item.category === "skills" ? "skills" : "memory"}`}</legend>
+          <legend>{source ? KINDS[item.category] || item.category : `${SOURCES[item.source] || item.source} · ${(KINDS[item.category] || item.category).toLowerCase()}`}</legend>
           {item.names.slice(0, 200).map(name => (
             <label key={name} className="tw-check"><input type="checkbox" checked={!!selected[item.id]?.has(name)} onChange={() => toggle(item.id, name)} /><span>{name}</span></label>
           ))}
@@ -50,7 +60,10 @@ export function ImportKnowledge({ category, source, onImported }) {
         </fieldset>
       ))}
       {found.errors.length ? <div className="tw-alert">{found.errors.map(error => error.message || error).join(" ")}</div> : null}
+      {found.items.some(item => item.category === "mcp") ? <span className="tw-hint">MCP servers keep their commands and settings, including environment values, and become available to every agent. Only import servers you trust.</span> : null}
       <div className="tw-dialog-actions">
+        {cursorButton}
+        <span className="grow" />
         <button type="button" className="tw-btn" disabled={busy} onClick={detect}>Look again</button>
         <button type="button" className="tw-btn primary" disabled={busy} onClick={run}>{busy ? "Importing…" : "Import selected"}</button>
       </div>

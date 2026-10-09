@@ -293,7 +293,15 @@ function createStore(db) {
       changed("browserProfiles", id);
       return browserProfiles.list().find(item => item.id === id);
     },
-    remove(id) { run("update browser_profiles set deleted_at = ? where id = ? and is_default = 0", now(), id); changed("browserProfiles", id); },
+    rename(id, label) { run("update browser_profiles set label = ? where id = ? and deleted_at is null", label, id); changed("browserProfiles", id); return browserProfiles.list().find(item => item.id === id); },
+    // Chats that used a removed profile go back to the default one.
+    remove(id) {
+      transaction(() => {
+        run("update browser_profiles set deleted_at = ? where id = ? and is_default = 0", now(), id);
+        run("update conversations set browser_profile_id = null where browser_profile_id = ?", id);
+      });
+      changed("browserProfiles", id);
+    },
     ensureDefault() {
       const existing = browserProfiles.list().find(item => item.isDefault);
       return existing || browserProfiles.create({ id: "timewarp:default", label: "Timewarp", isDefault: true });
