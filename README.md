@@ -27,7 +27,7 @@ was made public for the Apple Silicon Mac build. Version 1.1.24 passed native
 startup, packaged contracts, Developer ID signatures, hardened runtime, Apple
 notarization, stapling, and Gatekeeper checks. Installers and checksums are
 published in the separate public
-[downloads repository](https://github.com/vinceackermann2-sys/timewarp-releases/releases/latest) (1.2.0: Apple Silicon and Intel Macs),
+[downloads repository](https://github.com/vinceackermann2-sys/timewarp-releases/releases/latest) (1.2.1: Apple Silicon and Intel Macs),
 so the source can return to private visibility without breaking downloads.
 See [native distribution](docs/native-distribution.md).
 
