@@ -86,8 +86,10 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   };
   const emit = (conversationId, method, params) => notify("conversation.event", { conversationId, method, params });
 
+  // Only a Codex that stopped or failed ends the runs. "starting" is also the
+  // first request starting Codex, whose reply is already being set up here.
   client.on("status", state => {
-    if (state.status === "ready") return;
+    if (state.status === "ready" || state.status === "starting") return;
     loaded.clear();
     workers.clear();
     steered.clear();
@@ -158,8 +160,11 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     const root = threadId === conversation.codexThreadId || starting.get(threadId) === conversationId;
     if (root && method === "turn/started") {
       const entry = active.get(conversationId);
-      if (entry) Object.assign(entry, { threadId: params.threadId, turnId: params.turn.id });
-      else active.set(conversationId, { threadId: params.threadId, turnId: params.turn.id });
+      if (entry) Object.assign(entry, { threadId: params.threadId, turnId: params.turn.id, running: true });
+      else active.set(conversationId, { threadId: params.threadId, turnId: params.turn.id, running: true });
+      // Stop pressed while the reply was starting: Codex runs the turn now, so
+      // the interrupt takes effect (one sent earlier can arrive before the turn runs).
+      if (entry?.stopRequested) sendStop(conversationId, entry);
     }
     if (root && (method === "item/started" || method === "item/completed") && item?.type === "userMessage" && item.clientId) steered.get(params.turnId)?.delete(item.clientId);
     if (root && method === "turn/completed") {
@@ -361,6 +366,15 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       if (active.get(id)?.turnId !== turnId) return false;
     }
   }
+  // A turn asked to stop while it was starting gets an interrupt as soon as
+  // Codex has it, and one more once Codex reports it running: one that reaches
+  // Codex before the turn runs may find nothing to stop.
+  function sendStop(id, entry) {
+    const sent = entry.running ? "stopSentRunning" : "stopSentEarly";
+    if (entry[sent] || !entry.turnId) return;
+    entry[sent] = true;
+    void stopTurn(id, entry.threadId, entry.turnId).catch(error => log("The reply could not be stopped.", error.message));
+  }
   // The turn ended (or another one runs) as the message was steered.
   const turnEnded = error => error.code === "provider-changed" || /no active turn|expected active turn/i.test(error.message || "");
 
@@ -398,8 +412,8 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       const turnId = result.turn?.id || null;
       if (active.get(id) === entry && !entry.turnId) entry.turnId = turnId;
       store.messages.update(userMessage.id, { turnId, status: "sent" });
-      // Stop pressed while the reply was starting.
-      if (entry.stopRequested && turnId) void stopTurn(id, threadId, turnId).catch(error => log("The reply could not be stopped.", error.message));
+      // Stop pressed while the reply was starting (sent again once Codex reports the turn running).
+      if (entry.stopRequested && turnId) { if (!entry.turnId) entry.turnId = turnId; sendStop(id, entry); }
       return { message: store.messages.get(userMessage.id), turnId };
     } catch (error) {
       if (active.get(id) === entry) active.delete(id);

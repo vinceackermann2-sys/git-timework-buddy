@@ -238,3 +238,25 @@ test("idle chats and their workers are unloaded and resume on their next message
   assert.equal(calls.filter(call => call.method === "turn/start" && call.params.threadId === "thread-1").length, 2, "Refused once, then started");
   assert.equal(harness.conversations.status(id).running, true);
 });
+
+test("Codex starting for a chat's first message doesn't end that reply, and Stop pressed meanwhile reaches the turn, again once it runs", async t => {
+  const { harness, client, calls, id } = setup(t, { startDelay: 30 });
+  const sending = harness.send(id, { text: "Research flights", clientId: "m1" });
+  // The first request starts Codex: it reports "starting" while the reply is set up.
+  client.emit("status", { status: "starting" });
+  assert.deepEqual(await harness.interrupt(id), { interrupted: true });
+  const { turnId } = await sending;
+  assert.equal(harness.conversations.status(id).running, true, "The reply is still there");
+  const interrupts = () => calls.filter(call => call.method === "turn/interrupt").map(call => call.params);
+  assert.deepEqual(interrupts(), [{ threadId: "thread-1", turnId }], "Stop is sent as soon as Codex has the turn");
+  // An interrupt can reach Codex before the turn runs; it's sent once more when it does.
+  client.emit("notification", { method: "turn/started", params: { threadId: "thread-1", turn: { id: turnId } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(interrupts(), [{ threadId: "thread-1", turnId }, { threadId: "thread-1", turnId }]);
+  client.emit("notification", { method: "turn/started", params: { threadId: "thread-1", turn: { id: turnId } } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(interrupts().length, 2, "Not more than once each way");
+  // A Codex that stops does end it.
+  client.emit("status", { status: "stopped" });
+  assert.equal(harness.conversations.status(id).running, false);
+});
