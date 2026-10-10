@@ -155,7 +155,7 @@ test("Retry clears a sandbox turned off earlier and a newer Codex is checked aga
 // set up and checked as at start-up (sandbox.cjs); macOS uses Seatbelt.
 let available = false;
 try { available = fs.existsSync(codexExecutable(vendorRoot())); } catch {}
-test("commands run in Codex's sandbox with a chat's permissions", { skip: !available && "Codex runtime is not installed", timeout: 120000 }, async t => {
+test("commands run in Codex's sandbox with a chat's permissions", { skip: !available && "Codex runtime is not installed", timeout: 300000 }, async t => {
   const root = fs.mkdtempSync(path.join(os.homedir(), ".timewarp-sandbox-test-"));
   const workspace = path.join(root, "workspace"), outside = path.join(root, "outside"), home = path.join(root, "codex");
   for (const dir of [workspace, outside, home]) fs.mkdirSync(dir, { recursive: true });
@@ -186,17 +186,21 @@ test("commands run in Codex's sandbox with a chat's permissions", { skip: !avail
   }
   withProfile = true;
   await client.stop();
-  const run = async script => {
-    const command = process.platform === "win32" ? ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script] : ["/bin/sh", "-c", script];
-    return Promise.race([client.request("command/exec", { command, cwd: workspace, permissionProfile: PERMISSIONS, timeoutMs: 30000 }), new Promise((_, reject) => setTimeout(() => reject(new Error("The sandboxed command stalled.")), 40000).unref())]);
+  // cmd starts quickly; PowerShell can take half a minute in the
+  // restricted-token sandbox on small machines. Paths are relative to the
+  // workspace, as cmd doesn't read quoted arguments the way Codex passes them.
+  const run = async line => {
+    const command = process.platform === "win32" ? ["cmd.exe", "/d", "/c", line] : ["/bin/sh", "-c", line];
+    return Promise.race([client.request("command/exec", { command, cwd: workspace, permissionProfile: PERMISSIONS, timeoutMs: 60000 }), new Promise((_, reject) => setTimeout(() => reject(new Error("The sandboxed command stalled.")), 70000).unref())]);
   };
   const inside = path.join(workspace, "inside.txt"), escaped = path.join(outside, "escaped.txt"), url = `http://127.0.0.1:${server.address().port}/`;
   const windows = process.platform === "win32";
-  await run(windows ? `Set-Content -LiteralPath '${inside}' -Value ok` : `printf ok > '${inside}'`);
+  await run(windows ? "echo ok>inside.txt" : "printf ok > inside.txt");
   assert.ok(fs.existsSync(inside), "The command couldn't write in the workspace");
   // Codex's restricted-token sandbox reports the denial as an error.
-  await run(windows ? `Set-Content -LiteralPath '${escaped}' -Value escaped` : `printf escaped > '${escaped}'`).catch(error => { if (!/sandbox denied/.test(error.message)) throw error; });
+  await run(windows ? "echo escaped>..\\outside\\escaped.txt" : "printf escaped > ../outside/escaped.txt").catch(error => { if (!/sandbox denied/.test(error.message)) throw error; });
   assert.ok(!fs.existsSync(escaped), "The command wrote outside the workspace");
-  const fetched = await run(windows ? `(Invoke-WebRequest -UseBasicParsing -Uri '${url}').Content` : `curl -s '${url}'`);
+  assert.deepEqual(fs.readdirSync(workspace), ["inside.txt"], "The write outside landed in the workspace instead");
+  const fetched = await run(`curl -s ${url}`);
   assert.match(fetched.stdout, /timewarp-network-ok/, "The command couldn't reach the network: " + fetched.stderr);
 });
