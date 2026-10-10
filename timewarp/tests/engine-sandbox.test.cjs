@@ -194,7 +194,8 @@ test("commands run in Codex's sandbox with a chat's permissions", { skip: !avail
   const windows = process.platform === "win32";
   await run(windows ? `Set-Content -LiteralPath '${inside}' -Value ok` : `printf ok > '${inside}'`);
   assert.ok(fs.existsSync(inside), "The command couldn't write in the workspace");
-  await run(windows ? `Set-Content -LiteralPath '${escaped}' -Value escaped` : `printf escaped > '${escaped}'`);
+  // Codex's restricted-token sandbox reports the denial as an error.
+  await run(windows ? `Set-Content -LiteralPath '${escaped}' -Value escaped` : `printf escaped > '${escaped}'`).catch(error => { if (!/sandbox denied/.test(error.message)) throw error; });
   assert.ok(!fs.existsSync(escaped), "The command wrote outside the workspace");
   const fetched = await run(windows ? `(Invoke-WebRequest -UseBasicParsing -Uri '${url}').Content` : `curl -s '${url}'`);
   assert.match(fetched.stdout, /timewarp-network-ok/, "The command couldn't reach the network: " + fetched.stderr);
