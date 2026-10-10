@@ -171,11 +171,13 @@ test("values sent by a form are hidden however the form encodes them", async () 
 
 test("the agent is told where its downloads went", async () => {
   const { page, call } = fakePage([[1, "Search", "search"]]);
-  const file = "C:\\agent\\downloads\\report.pdf";
+  // A path of this platform: the report names the file by its base name.
+  const downloads = require("node:path").join(require("node:os").tmpdir(), "agent", "downloads");
+  const file = require("node:path").join(downloads, "report.pdf");
   page.downloads.push({ file, state: "progressing" });
   setTimeout(() => page.downloads.push({ file, state: "completed" }), 300);
-  assert.match(await call("snapshot"), /Downloaded C:\\agent\\downloads\\report\.pdf$/);
-  page.downloads.push({ file: "C:\\agent\\downloads\\big.zip", state: "interrupted" });
+  assert.ok((await call("snapshot")).endsWith("Downloaded " + file));
+  page.downloads.push({ file: require("node:path").join(downloads, "big.zip"), state: "interrupted" });
   assert.match(await call("read"), /download of big\.zip didn't finish \(interrupted\)/);
   assert.doesNotMatch(await call("read"), /download/i, "Each download is reported once");
 });
