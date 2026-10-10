@@ -1,6 +1,16 @@
 "use strict";
 // The only bridge between Timewarp's interface and the main process.
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
+
+// One IPC listener serves every subscriber (the chat, its cards and panels
+// each subscribe), instead of one listener each.
+const subscribers = new Set();
+ipcRenderer.on("tw:event", (_event, name, payload) => {
+  for (const subscriber of [...subscribers]) {
+    if (subscriber.name !== "*" && subscriber.name !== name) continue;
+    try { subscriber.callback(payload, name); } catch (error) { console.error(error); }
+  }
+});
 
 contextBridge.exposeInMainWorld("tw", {
   async call(method, input) {
@@ -9,10 +19,12 @@ contextBridge.exposeInMainWorld("tw", {
     return reply.value;
   },
   on(name, callback) {
-    const listener = (_event, event, payload) => { if (name === "*" || event === name) callback(payload, event); };
-    ipcRenderer.on("tw:event", listener);
-    return () => ipcRenderer.removeListener("tw:event", listener);
+    const subscriber = { name, callback };
+    subscribers.add(subscriber);
+    return () => { subscribers.delete(subscriber); };
   },
+  // The file a dropped or pasted file came from ("" for a pasted image).
+  getPathForFile: file => { try { return webUtils.getPathForFile(file) || ""; } catch { return ""; } },
   platform: process.platform,
 });
 

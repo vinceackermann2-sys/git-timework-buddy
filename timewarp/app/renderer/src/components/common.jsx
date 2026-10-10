@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search, TriangleAlert, X } from "lucide-react";
 import { avatarSrc, errorText } from "../api.js";
 
@@ -34,6 +35,53 @@ export function Dialog({ open, onClose, children, label, title, description, wid
   );
 }
 
+// Arrow keys move between a menu's items, Home and End to the first and last,
+// as before. Keys typed into a field, and keys a menu handles itself, are left alone.
+const MENU_ITEMS = ".tw-menu-item:not(:disabled), [role='menuitem']:not(:disabled), [role='menuitemradio']:not(:disabled)";
+export function menuKeys(event, menu) {
+  if (!menu || event.defaultPrevented || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return false;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target?.tagName || "") || event.target?.isContentEditable) return false;
+  const items = [...menu.querySelectorAll(MENU_ITEMS)].filter(item => item.closest(".tw-menu") === menu && item.getClientRects().length);
+  if (!items.length) return false;
+  const at = items.indexOf(document.activeElement);
+  const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+    : event.key === "ArrowDown" ? (at + 1) % items.length : at < 0 ? items.length - 1 : (at - 1 + items.length) % items.length;
+  event.preventDefault();
+  items[next].focus();
+  return true;
+}
+
+// A short label (and its keyboard shortcut) under a button on hover or
+// keyboard focus, as the previous app's tooltips: <Tip label="Search" keys={["Ctrl", "K"]}>.
+export function Tip({ label, keys = null, side = "bottom", children }) {
+  const [at, setAt] = useState(null);
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const show = target => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      if (!target.isConnected) return;
+      const box = target.getBoundingClientRect();
+      setAt({ x: Math.min(innerWidth - 80, Math.max(80, box.left + box.width / 2)), y: side === "top" ? box.top - 6 : box.bottom + 6 });
+    }, 450);
+  };
+  const hide = () => { clearTimeout(timer.current); setAt(null); };
+  const child = React.Children.only(children);
+  const chain = (name, run) => event => { child.props[name]?.(event); run(event); };
+  return (
+    <>
+      {React.cloneElement(child, {
+        onMouseEnter: chain("onMouseEnter", event => show(event.currentTarget)), onMouseLeave: chain("onMouseLeave", hide),
+        onFocus: chain("onFocus", event => { if (event.currentTarget.matches(":focus-visible")) show(event.currentTarget); }), onBlur: chain("onBlur", hide),
+        onClick: chain("onClick", hide),
+      })}
+      {at ? createPortal(<div className="tw-tip" role="tooltip" data-side={side} style={{ left: at.x, top: at.y }}>{label}{keys ? <span className="tw-tip-keys">{keys.map(item => <kbd key={item}>{item}</kbd>)}</span> : null}</div>, document.body) : null}
+    </>
+  );
+}
+// The platform's modifier for shortcut hints: ⌘ on macOS, Ctrl elsewhere.
+export const modKey = () => window.tw?.platform === "darwin" ? "⌘" : "Ctrl";
+
 // A popover anchored to its trigger; closes on outside click or Escape.
 export function Menu({ trigger, children, align = "left", up = false, width, className = "", onOpenChange }) {
   const [open, setOpenState] = useState(false);
@@ -53,7 +101,7 @@ export function Menu({ trigger, children, align = "left", up = false, width, cla
   }, [open, setOpen]);
   const style = { [align]: 0, ...(up ? { bottom: "calc(100% + 6px)" } : { top: "calc(100% + 6px)" }), ...(width ? { width } : {}) };
   return (
-    <span className="tw-anchor" ref={ref}>
+    <span className="tw-anchor" ref={ref} onKeyDown={event => { if (open) menuKeys(event, ref.current?.querySelector(":scope > .tw-menu")); }}>
       {trigger({ open, toggle: () => setOpen(value => !value), close: () => setOpen(false) })}
       {open ? (
         <div className={"tw-menu " + className} role="menu" style={style} onClick={event => { if (event.target.closest("[data-close]")) setOpen(false); }}>
@@ -76,10 +124,12 @@ export function ContextMenu({ at, onClose, children, width = 176 }) {
     window.addEventListener("blur", onClose);
     return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", escape, true); window.removeEventListener("blur", onClose); };
   }, [at, onClose]);
+  // Opened from the keyboard or the mouse, the arrow keys reach its items.
+  useEffect(() => { if (at && !ref.current?.contains(document.activeElement)) ref.current?.focus({ preventScroll: true }); }, [at]);
   if (!at) return null;
   const style = { position: "fixed", left: Math.max(8, Math.min(at.x, innerWidth - width - 8)), top: Math.max(8, Math.min(at.y, innerHeight - 140)), width };
   return (
-    <div ref={ref} className="tw-menu tw-context-menu" role="menu" style={style} onClick={event => { if (event.target.closest("[data-close]")) onClose(); }}>
+    <div ref={ref} className="tw-menu tw-context-menu" role="menu" tabIndex={-1} style={style} onKeyDown={event => menuKeys(event, ref.current)} onClick={event => { if (event.target.closest("[data-close]")) onClose(); }}>
       {children}
     </div>
   );
@@ -150,6 +200,45 @@ export function PageHead({ title, subtitle, children }) {
       <div><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}</div>
       {children}
     </div>
+  );
+}
+
+// An in-app question before a step that is hard to undo, like the previous
+// app's alert dialogs: `if (!await confirm({ title, body, action, danger })) return;`.
+// Cancel, Escape, the close button or a click outside answer false.
+const ConfirmContext = createContext(async () => false);
+export function useConfirm() { return useContext(ConfirmContext); }
+export function ConfirmProvider({ children }) {
+  const [question, setQuestion] = useState(null);
+  const ref = useRef(null), cancel = useRef(null), pending = useRef(null);
+  const answer = useCallback(value => { const resolve = pending.current; pending.current = null; setQuestion(null); resolve?.(value); }, []);
+  const ask = useCallback(options => new Promise(resolve => { pending.current?.(false); pending.current = resolve; setQuestion({ ...options }); }), []);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (question && !dialog.open) dialog.showModal();
+    if (!question && dialog.open) dialog.close();
+    if (question) cancel.current?.focus();
+  }, [question]);
+  return (
+    <ConfirmContext.Provider value={ask}>
+      {children}
+      <dialog ref={ref} className="tw-dialog tw-confirm" role="alertdialog" aria-label={question?.title} onCancel={event => { event.preventDefault(); answer(false); }}
+        onMouseDown={event => { if (event.target === ref.current) answer(false); }}>
+        {question ? (
+          <div className="tw-dialog-body">
+            <div className="tw-dialog-head">
+              <div><h2>{question.title}</h2>{question.body ? <p>{question.body}</p> : null}</div>
+              <button type="button" className="tw-icon-button" aria-label="Close" onClick={() => answer(false)}><X size={18} /></button>
+            </div>
+            <div className="tw-dialog-actions">
+              <button ref={cancel} type="button" className="tw-btn" onClick={() => answer(false)}>Cancel</button>
+              <button type="button" className={"tw-btn " + (question.danger ? "destructive" : "primary")} onClick={() => answer(true)}>{question.action || "Continue"}</button>
+            </div>
+          </div>
+        ) : null}
+      </dialog>
+    </ConfirmContext.Provider>
   );
 }
 

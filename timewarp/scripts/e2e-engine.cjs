@@ -11,7 +11,8 @@ const net = require("node:net");
 const cp = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
-const appDir = path.join(root, "build", "engine", "app");
+// TIMEWARP_ENGINE_APP checks another build, such as build/engine-<name>/app.
+const appDir = process.env.TIMEWARP_ENGINE_APP ? path.resolve(process.env.TIMEWARP_ENGINE_APP) : path.join(root, "build", "engine", "app");
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const freePort = () => new Promise(resolve => { const server = net.createServer(); server.listen(0, "127.0.0.1", () => { const { port } = server.address(); server.close(() => resolve(port)); }); });
 
@@ -28,6 +29,17 @@ const PAGES = {
     <form onsubmit="event.preventDefault()"><label>Email <input name="username" type="email" autocomplete="username"></label>
     <label>Password <input name="password" type="password" autocomplete="current-password"></label><button>Sign in</button></form>
     <p id="state">empty</p><script>setInterval(()=>{const u=document.querySelector('[name=username]').value,p=document.querySelector('[name=password]').value;document.getElementById('state').textContent=p?'filled as '+u+' with a '+p.length+'-character password':'empty'},200)</script>`,
+  // Dialogs, keys and the browser tools' finer actions (browserDialogs).
+  "/dialogs": `<!doctype html><title>Timewarp test dialogs</title><h1>Dialogs</h1>
+    <button onclick="document.getElementById('out').textContent=confirm('Delete the draft?')?'Deleted':'Kept'">Delete</button>
+    <button onclick="document.getElementById('out').textContent='Renamed to '+prompt('Your name?','Ada')">Rename</button>
+    <button onclick="alert('Saved!');document.getElementById('out').textContent='Alerted'">Save</button>
+    <p id="out">Nothing yet</p>
+    <label>Note <input id="note" value="old text"></label>
+    <label><input type="checkbox" id="agree"> Agree</label>
+    <button ondblclick="document.getElementById('out').textContent='Double-clicked'">Twice</button>
+    <form onsubmit="event.preventDefault();document.getElementById('out').textContent='Sent '+document.getElementById('query').value"><label>Query <input id="query"></label></form>
+    <a href="/form">Greeting form</a>`,
 };
 
 // A minimal MCP server on stdin/stdout with one echo tool.
@@ -44,7 +56,8 @@ async function launch() {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-e2e-"));
   const port = await freePort();
   const electron = require("electron");
-  const child = cp.spawn(electron, [appDir, "--remote-debugging-port=" + port], { env: { ...process.env, TIMEWARP_USER_DATA_DIR: profile }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  // Nobody is there to answer the system dialog that confirms an MCP command.
+  const child = cp.spawn(electron, [appDir, "--remote-debugging-port=" + port], { env: { ...process.env, TIMEWARP_USER_DATA_DIR: profile, TIMEWARP_FIXTURE_CONFIRM: "allow" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let log = "";
   child.stdout.on("data", chunk => { log += chunk; });
   child.stderr.on("data", chunk => { log += chunk; });
@@ -133,7 +146,8 @@ async function main() {
     throw new Error(`No reply to "${text.slice(0, 60)}" within ${timeout / 1000} s.`);
   }
   const chat = async () => (await call("conversations.create", { agentId: agent.id })).id;
-  const script = code => "Run this check.\n```exec\n" + code.trim() + "\n```";
+  // Timewarp's tools are MCP tools; out() reads a result's text.
+  const script = code => "Run this check.\n```exec\nconst out = r => typeof r === \"string\" ? r : (r?.content || []).map(c => c.text || \"\").join(\"\\n\");\n" + code.trim() + "\n```";
   const output = reply => { const match = /```\n([\s\S]*?)\n```/.exec(reply); return match ? match[1] : reply; };
   const json = reply => { const text = output(reply), start = text.indexOf("{"); try { return JSON.parse(text.slice(start, text.lastIndexOf("}") + 1)); } catch { throw new Error("The script printed: " + text.slice(0, 600)); } };
 
@@ -175,6 +189,24 @@ async function main() {
       if (!runs.some(run => /approval review/i.test(run.reason || ""))) throw new Error("The run didn't stop with the review reason: " + JSON.stringify(runs));
       return "the reviewer denied a risky command, it didn't run, and the run stopped with the reason shown";
     },
+    // Commands write in the agent's workspace and use the network, as in the
+    // previous app; without an approval review once Codex can sandbox them (on
+    // Windows, after the command sandbox is set up in Settings → General).
+    async workspaceAccess() {
+      const id = await chat();
+      await app.evaluate(`window.__e2eReviews = []; window.tw.on("conversation.event", event => { if (/autoApprovalReview\\/started/.test(event.method)) window.__e2eReviews.push(event.conversationId); }); true`);
+      const command = process.platform === "win32"
+        ? `Set-Content -Path access.txt -Value written; (Invoke-WebRequest -UseBasicParsing ${site}/form).Content`
+        : `printf written > access.txt && curl -s ${site}/form`;
+      const result = await turn(id, script(`const result = await tools.exec_command({ cmd: ${JSON.stringify(command)} }); text(typeof result === "string" ? result : JSON.stringify(result));`));
+      const reviews = await app.evaluate(`window.__e2eReviews.filter(item => item === ${JSON.stringify(id)}).length`);
+      const listing = JSON.stringify(await call("files.list", { agentId: agent.id }));
+      if (!listing.includes("access.txt")) throw new Error("The command couldn't write in the workspace: " + result.reply.slice(0, 400));
+      if (!/Greeting form/.test(result.reply)) throw new Error("The command couldn't reach the network: " + result.reply.slice(0, 400));
+      const sandboxed = (await call("sandbox.status")).status === "ready";
+      if (reviews && sandboxed) throw new Error(`Writing in the workspace needed ${reviews} approval review(s).`);
+      return "a command wrote in the workspace and fetched a page" + (sandboxed ? " without an approval review" : ` (the command sandbox isn't set up here, so it was reviewed ${reviews} time(s))`);
+    },
     async browser() {
       const id = await chat();
       if (process.env.E2E_PANE) {
@@ -187,30 +219,30 @@ async function main() {
       await turn(id, script(`await tools.exec_command({ cmd: ${JSON.stringify(process.platform === "win32" ? "Set-Content -Path upload.txt -Value hello" : "printf hello > upload.txt")} }); text("ok");`));
       const result = await turn(id, script(`
         const started = Date.now(); const step = label => text(label + " " + (Date.now() - started) + " ms; ");
-        const opened = await tools.timewarp_browser__open({ url: ${JSON.stringify(site + "/form")} }); step("open");
-        const outline = String(await tools.timewarp_browser__snapshot({})); step("snapshot");
+        const opened = await tools.mcp__timewarp_browser__open({ url: ${JSON.stringify(site + "/form")} }); step("open");
+        const outline = out(await tools.mcp__timewarp_browser__snapshot({})); step("snapshot");
         const field = (outline.match(/textbox[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
         const button = (outline.match(/button "Greet"[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
-        await tools.timewarp_browser__type({ ref: field, text: "Ada" }); step("type");
-        const typed = (String(await tools.timewarp_browser__snapshot({})).match(/textbox[^\\n]*/) || [""])[0];
-        await tools.timewarp_browser__click({ ref: button }); step("click");
-        await tools.timewarp_browser__wait({ text: "Hello Ada", seconds: 5 }); step("wait");
-        const page = String(await tools.timewarp_browser__read({})); step("read");
-        const outline2 = String(await tools.timewarp_browser__snapshot({}));
+        await tools.mcp__timewarp_browser__type({ ref: field, text: "Ada" }); step("type");
+        const typed = (out(await tools.mcp__timewarp_browser__snapshot({})).match(/textbox[^\\n]*/) || [""])[0];
+        await tools.mcp__timewarp_browser__click({ ref: button }); step("click");
+        await tools.mcp__timewarp_browser__wait({ text: "Hello Ada", seconds: 5 }); step("wait");
+        const page = out(await tools.mcp__timewarp_browser__read({})); step("read");
+        const outline2 = out(await tools.mcp__timewarp_browser__snapshot({}));
         const size = (outline2.match(/combobox "Size"[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
         const menu = (outline2.match(/button "Menu"[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
         const doc = (outline2.match(/[^\\n]*Document[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
-        await tools.timewarp_browser__select({ ref: size, option: "Large" }); step("select");
-        await tools.timewarp_browser__hover({ ref: menu }); step("hover");
-        await tools.timewarp_browser__upload({ ref: doc, files: ["upload.txt"] }); step("upload");
-        const page2 = String(await tools.timewarp_browser__read({}));
+        await tools.mcp__timewarp_browser__select({ ref: size, option: "Large" }); step("select");
+        await tools.mcp__timewarp_browser__hover({ ref: menu }); step("hover");
+        await tools.mcp__timewarp_browser__upload({ ref: doc, files: ["upload.txt"] }); step("upload");
+        const page2 = out(await tools.mcp__timewarp_browser__read({}));
         const extras = { chose: page2.includes("Size l"), hovered: page2.includes("Menu open"), attached: page2.includes("Attached upload.txt") };
-        await tools.timewarp_browser__scroll({ direction: "down", amount: 2 }); step("scroll");
-        await tools.timewarp_browser__press({ key: "End" }); step("press");
-        const shot = await tools.timewarp_browser__screenshot({}); step("screenshot");
-        await tools.timewarp_browser__open({ url: ${JSON.stringify(site + "/login")}, new_tab: true });
-        const tabs = String(await tools.timewarp_browser__tabs({})); step("tabs");
-        await tools.timewarp_browser__back({}); step("back");
+        await tools.mcp__timewarp_browser__scroll({ direction: "down", amount: 2 }); step("scroll");
+        await tools.mcp__timewarp_browser__press({ key: "End" }); step("press");
+        const shot = await tools.mcp__timewarp_browser__screenshot({}); step("screenshot");
+        await tools.mcp__timewarp_browser__open({ url: ${JSON.stringify(site + "/login")}, new_tab: true });
+        const tabs = out(await tools.mcp__timewarp_browser__tabs({})); step("tabs");
+        await tools.mcp__timewarp_browser__back({}); step("back");
         text(JSON.stringify({ field, button, typed, greeted: page.includes("Hello Ada"), page: page.slice(0, 200), extras, screenshot: !!shot, tabs: (tabs.match(/127\\.0\\.0\\.1/g) || []).length }));
       `));
       const value = json(result.reply);
@@ -221,21 +253,97 @@ async function main() {
       if (state.tabs.length < 2) throw new Error("The pane doesn't show the agent's tabs.");
       return "opened, read, typed, clicked, chose an option, hovered, uploaded a file, waited, scrolled, pressed keys, took a screenshot and used two tabs";
     },
+    // A page's alert, confirm and prompt never stall the agent, which answers
+    // them; key combinations, double clicks, checkboxes, element reads,
+    // background reads and address waits work with the pane closed.
+    async browserDialogs() {
+      const id = await chat();
+      if (process.env.E2E_PANE) {
+        await app.evaluate(`location.hash = "#/conversation/${id}"`);
+        await pause(2500);
+        await app.evaluate(`document.querySelector('[aria-label="Show pane"]')?.click()`);
+        await pause(2500);
+      } else await call("browser.show", { conversationId: id });
+      const result = await turn(id, script(`
+        const r = {}, started = Date.now(), tool = run => args => run(args || {}).then(out);
+        const [open, snapshot, click, read, dialog, press, type, wait, tabs] = [tools.mcp__timewarp_browser__open, tools.mcp__timewarp_browser__snapshot, tools.mcp__timewarp_browser__click, tools.mcp__timewarp_browser__read,
+          tools.mcp__timewarp_browser__dialog, tools.mcp__timewarp_browser__press, tools.mcp__timewarp_browser__type, tools.mcp__timewarp_browser__wait, tools.mcp__timewarp_browser__tabs].map(tool);
+        await open({ url: ${JSON.stringify(site + "/dialogs")} });
+        let outline = await snapshot();
+        const ref = name => (outline.match(new RegExp(name + "[^\\\\n]*\\\\[ref=(e\\\\d+)\\\\]")) || [])[1];
+        r.link = /link "Greeting form" url="http:[^"]+\\/form"/.test(outline);
+        r.confirm = await click({ ref: ref('button "Delete"') });
+        r.blocked = await read();
+        r.accepted = await dialog({ accept: true });
+        r.afterConfirm = (await read()).includes("Deleted");
+        outline = await snapshot();
+        r.prompt = await click({ ref: ref('button "Rename"') });
+        r.answered = await dialog({ accept: true, text: "Grace" });
+        r.afterPrompt = (await read()).includes("Renamed to Grace");
+        outline = await snapshot();
+        r.alert = await click({ ref: ref('button "Save"') });
+        r.afterAlert = (await read()).includes("Alerted");
+        outline = await snapshot();
+        const note = ref('textbox "Note"');
+        await click({ ref: note });
+        await press({ key: "Control+A" });
+        await press({ key: "Backspace" });
+        await type({ text: "new" });
+        r.note = await read({ ref: note, attribute: "value" });
+        await press({ key: "Shift+Tab" });
+        outline = await snapshot();
+        r.checked = await click({ ref: ref('checkbox "Agree"'), checked: true });
+        r.checkedAgain = await click({ ref: ref('checkbox "Agree"'), checked: true });
+        r.twice = await click({ ref: ref('button "Twice"'), double: true });
+        r.afterTwice = (await read()).includes("Double-clicked");
+        outline = await snapshot();
+        await click({ ref: ref('textbox "Query"') });
+        await type({ text: "cats", submit: true });
+        r.submitted = (await read()).includes("Sent cats");
+        const before = (await tabs()).split("\\n").length;
+        r.away = (await read({ url: ${JSON.stringify(site + "/login")} })).includes("Sign in");
+        r.tabsKept = (await tabs()).split("\\n").length === before && (await read()).includes("Dialogs");
+        outline = await snapshot();
+        await click({ ref: ref('link "Greeting form"') });
+        r.waited = await wait({ url: "/form", load: true, seconds: 10 });
+        r.ms = Date.now() - started;
+        text(JSON.stringify(r));
+      `), { timeout: 180000 });
+      const value = json(result.reply);
+      const failures = [];
+      if (!value.link) failures.push("links have no address in the snapshot");
+      if (!/showing a confirm: "Delete the draft\?"/.test(value.confirm) || !/showing a confirm/.test(value.blocked)) failures.push("the confirm wasn't reported: " + value.confirm);
+      if (!/^Accepted the confirm/.test(value.accepted) || !value.afterConfirm) failures.push("accepting the confirm failed: " + value.accepted);
+      if (!/showing a prompt: "Your name\?", suggested answer "Ada"/.test(value.prompt) || !value.afterPrompt) failures.push("answering the prompt failed: " + value.prompt + " / " + value.answered);
+      if (!/The page showed an alert: "Saved!"/.test(value.alert) || !value.afterAlert) failures.push("the alert stalled or wasn't reported: " + value.alert);
+      if (value.note !== "value: new") failures.push("Control+A, Backspace and typing at the focus failed: " + value.note);
+      if (!/^Checked e\d+\.$/.test(value.checked) || !/already checked/.test(value.checkedAgain)) failures.push("checking the box failed: " + value.checked + " / " + value.checkedAgain);
+      if (!value.afterTwice) failures.push("the double click failed: " + value.twice);
+      if (!value.submitted) failures.push("type with submit didn't send the form");
+      if (!value.away || !value.tabsKept) failures.push("reading another address changed the tabs: " + JSON.stringify({ away: value.away, kept: value.tabsKept }));
+      if (!/^Done waiting/.test(value.waited)) failures.push("waiting for the address failed: " + value.waited);
+      if (failures.length) throw new Error(failures.join("; "));
+      return `the agent answered a confirm and a prompt, an alert didn't stall it, and keys, checkboxes, double clicks, background reads and address waits worked in ${value.ms} ms`;
+    },
+    async browserDialogsVisible() {
+      process.env.E2E_PANE = "1";
+      try { return (await scenarios.browserDialogs()) + " with the pane on screen"; } finally { delete process.env.E2E_PANE; }
+    },
     async vault() {
       const id = await chat();
       await call("browser.show", { conversationId: id });
       await call("vault.create", { kind: "password", site: site + "/login", username: "ada@example.com", password: "correct-horse", label: "Test site" });
       await call("agents.update", { id: agent.id, vaultAccess: true });
       const result = await turn(id, script(`
-        await tools.timewarp_browser__open({ url: ${JSON.stringify(site + "/login")} });
-        const outline = String(await tools.timewarp_browser__snapshot({}));
+        await tools.mcp__timewarp_browser__open({ url: ${JSON.stringify(site + "/login")} });
+        const outline = out(await tools.mcp__timewarp_browser__snapshot({}));
         const refs = [...outline.matchAll(/textbox[^\\n]*\\[ref=(e\\d+)\\]/g)].map(match => match[1]);
-        const list = String(await tools.timewarp_vault__list({ site: ${JSON.stringify(site)} }));
+        const list = out(await tools.mcp__timewarp_vault__list({ site: ${JSON.stringify(site)} }));
         const item = (list.match(/^(\\S+) \\| sign-in/m) || [])[1];
-        const filled = await tools.timewarp_vault__fill_sign_in({ item, username_ref: refs[0], password_ref: refs[1] });
-        await tools.timewarp_browser__wait({ text: "filled as", seconds: 5 });
-        const page = String(await tools.timewarp_browser__read({}));
-        text(JSON.stringify({ item: !!item, filled: String(filled).slice(0, 200), page: (page.match(/filled as [^\\n]*/) || [""])[0], leaked: (String(filled) + page + list).includes("correct-horse") }));
+        const filled = await tools.mcp__timewarp_vault__fill_sign_in({ item, username_ref: refs[0], password_ref: refs[1] });
+        await tools.mcp__timewarp_browser__wait({ text: "filled as", seconds: 5 });
+        const page = out(await tools.mcp__timewarp_browser__read({}));
+        text(JSON.stringify({ item: !!item, filled: out(filled).slice(0, 200), page: (page.match(/filled as [^\\n]*/) || [""])[0], leaked: (out(filled) + page + list).includes("correct-horse") }));
       `));
       const value = json(result.reply);
       // The page shows the username it received; the agent sees filled vault
@@ -320,6 +428,41 @@ async function main() {
       for (const deadline = Date.now() + 20000; Date.now() < deadline; await pause(300)) if (!(await call("conversations.status", { id })).running) return "a running reply stopped when asked";
       throw new Error("The reply didn't stop.");
     },
+    // Stop pressed right after sending, before Codex has started the reply.
+    async stopWhileStarting() {
+      const id = await chat();
+      const sent = call("conversations.send", { id, text: "Please run a quick check", images: [], files: [], clientId: crypto.randomUUID() });
+      const stopped = await call("conversations.interrupt", { id });
+      await sent.catch(() => {});
+      if (!stopped.interrupted) throw new Error("Stop wasn't taken while the reply was starting.");
+      for (const deadline = Date.now() + 20000; Date.now() < deadline; await pause(300)) {
+        const [status, history] = await Promise.all([call("conversations.status", { id }), call("conversations.history", { id })]);
+        const last = history.turns?.at(-1);
+        if (!status.running && (!last || last.status !== "inProgress")) {
+          if (last?.status === "completed" && (last.items || []).some(item => item.type === "commandExecution")) throw new Error("The command ran although Stop was pressed.");
+          return `the reply stopped although Stop came before it started (${last ? "turn " + last.status : "no turn"})`;
+        }
+      }
+      throw new Error("The reply didn't stop.");
+    },
+    // A message sent while the agent works joins the running reply.
+    async steer() {
+      const id = await chat();
+      await call("conversations.send", { id, text: script(`await new Promise(resolve => setTimeout(resolve, 5000));\ntext("waited");`), images: [], files: [], clientId: crypto.randomUUID() });
+      for (const deadline = Date.now() + 20000; Date.now() < deadline; await pause(100)) if ((await call("conversations.status", { id })).running) break;
+      await pause(800);
+      const clientId = crypto.randomUUID();
+      await call("conversations.send", { id, text: "Also mention the weather", images: [], files: [], clientId });
+      for (const deadline = Date.now() + 60000; Date.now() < deadline; await pause(400)) {
+        const [status, history] = await Promise.all([call("conversations.status", { id }), call("conversations.history", { id })]);
+        if (status.running) continue;
+        const inputs = (history.turns || []).flatMap(turn => (turn.items || []).filter(item => item.type === "userMessage").map(item => (item.content || []).map(part => part.text || "").join("")));
+        if (!inputs.some(text => text.includes("Also mention the weather"))) throw new Error("The message sent while working never reached the agent.");
+        if ((history.failed || []).length) throw new Error("A message sent while working wasn't delivered.");
+        return `a message sent while the agent worked reached it (${history.turns.length} turn(s))`;
+      }
+      throw new Error("The reply didn't finish.");
+    },
     async browserVisible() {
       process.env.E2E_PANE = "1";
       try { return (await scenarios.browser()) + " with the pane on screen"; } finally { delete process.env.E2E_PANE; }
@@ -332,7 +475,7 @@ async function main() {
       if (!threadId) throw new Error("No worker was started: " + JSON.stringify(result.items.map(item => item.type)) + " " + result.reply.slice(0, 300));
       let worker;
       for (const deadline = Date.now() + 60000; Date.now() < deadline; await pause(1000)) {
-        worker = await call("conversations.worker", { id, threadId });
+        worker = await call("conversations.worker", { id, threadId }).catch(() => worker || { turns: [] });
         if ((worker.turns || []).some(turn => turn.status === "completed" && (turn.items || []).some(item => item.type === "agentMessage" && item.text))) break;
       }
       const reply = (worker.turns || []).flatMap(turn => turn.items || []).find(item => item.type === "agentMessage")?.text || "";
@@ -341,6 +484,33 @@ async function main() {
       const refused = await call("conversations.worker", { id: other, threadId }).then(() => false, () => true);
       if (!refused) throw new Error("Another conversation could read this worker.");
       return `a worker (${worker.name || "unnamed"}) ran its task and can be followed only from its own chat`;
+    },
+    // Workers use the same harness as the chat: the browser, the vault and
+    // connected apps, as the previous app's browser workers did.
+    async workerTools() {
+      const id = await chat();
+      const result = await turn(id, "Please spawn a worker for this\n" + script(`
+        const names = ALL_TOOLS.map(tool => tool.name);
+        const opened = await tools.mcp__timewarp_browser__open({ url: ${JSON.stringify(site + "/form")} });
+        const outline = out(await tools.mcp__timewarp_browser__snapshot({}));
+        text(JSON.stringify({ browser: names.filter(name => /timewarp_browser/.test(name)).length, vault: names.some(name => /timewarp_vault/.test(name)), apps: names.some(name => /composio/i.test(name)), opened: out(opened).slice(0, 200), form: /Greet/.test(outline) }));
+      `));
+      const spawned = result.items.find(item => item.type === "subAgentActivity" && item.agentThreadId) || result.items.find(item => item.type === "collabAgentToolCall" && item.tool === "spawnAgent");
+      const threadId = spawned?.agentThreadId || spawned?.receiverThreadIds?.[0];
+      if (!threadId) throw new Error("No worker was started: " + result.reply.slice(0, 300));
+      let worker;
+      for (const deadline = Date.now() + 90000; Date.now() < deadline; await pause(1000)) {
+        worker = await call("conversations.worker", { id, threadId }).catch(() => worker || { turns: [] });
+        if ((worker.turns || []).some(turn => turn.status !== "inProgress" && (turn.items || []).some(item => item.type === "agentMessage" && item.text))) break;
+      }
+      const reply = (worker.turns || []).flatMap(turn => turn.items || []).filter(item => item.type === "agentMessage").at(-1)?.text || "";
+      let value;
+      try { value = json(reply); } catch { throw new Error("The worker couldn't run its browser script: " + reply.slice(0, 600)); }
+      if (!value.browser || !value.form) throw new Error("The worker can't use the browser: " + JSON.stringify(value));
+      if (!value.vault || !value.apps) throw new Error("The worker lacks the vault or connected apps: " + JSON.stringify(value));
+      const state = await call("browser.state", { conversationId: id });
+      if (!state.tabs.some(tab => /\/form/.test(tab.url || ""))) throw new Error("The worker's tab isn't in the chat's browser.");
+      return `a worker opened and read a page in the chat's browser and has ${value.browser} browser tools, the vault and connected apps`;
     },
     async connectorSignIn() {
       const slack = (await call("integrations.list", {})).items.find(item => /slack/i.test(item.displayName));

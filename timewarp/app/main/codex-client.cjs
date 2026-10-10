@@ -59,6 +59,8 @@ class CodexClient extends EventEmitter {
     readline.createInterface({ input: child.stdout }).on("line", line => this.receive(line));
     const exited = new Promise(resolve => child.once("exit", (code, signal) => resolve({ code, signal })));
     child.once("error", error => this.fail(error));
+    // A write racing Codex's exit fails here instead of as an uncaught EPIPE.
+    child.stdin.on("error", error => { if (this.child === child) this.fail(error); });
     void exited.then(({ code, signal }) => {
       if (this.child !== child) return;
       this.child = null;

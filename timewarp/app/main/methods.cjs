@@ -10,6 +10,11 @@ const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
 const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notifications", "memory"]);
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
+// Programs, scripts and shortcuts never open from Timewarp (a chat card or the
+// Files view): an agent may have written them. Show in folder still works.
+// Windows ignores trailing dots and spaces in a name, so they're ignored here too.
+const RUNNABLE = /\.(exe|com|bat|cmd|ps1|psm1|psd1|ps1xml|psc1|vbs|vbe|vb|js|jse|mjs|cjs|wsf|wsh|ws|wsc|sct|hta|chm|scf|msi|msp|msix|appx|appinstaller|scr|cpl|msc|lnk|url|pif|reg|inf|jar|jnlp|xll|py|pyw|sh|bash|zsh|command|terminal|app|pkg|dmg|scpt|applescript|workflow|desktop|dll|sys|gadget|application|appref-ms|settingcontent-ms|library-ms|search-ms|website|diagcab|xbap)$/i;
+const runnable = file => RUNNABLE.test(path.basename(String(file)).replace(/[.\s]+$/, ""));
 // "hyperframes-cli" → "Hyperframes Cli", as skills without a display name were shown before.
 const skillTitle = name => String(name || "").split(":").pop().split(/[-_\s]+/).filter(Boolean).map(word => word[0].toUpperCase() + word.slice(1)).join(" ") || String(name || "");
 const IMAGE_TYPES = { ".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
@@ -23,10 +28,17 @@ function imageData(file) {
   } catch { return null; }
 }
 
-// Runs in the page (isolated world): fills the visible password field and the
-// username field before it. Returns whether a password field was found.
-function fillSignIn(username, password) {
-  const visible = element => !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length) && !element.disabled && !element.readOnly;
+// Runs in the page (isolated world): fills a sign-in form as the previous app
+// did. The password goes only into a visible password field that isn't for a
+// new password (a sign-up or change-password form); the username into the
+// most username-like field before it in the same form, never a code, search
+// or captcha field. Nothing is filled if the page has moved to another site
+// since it was checked. Returns whether anything was filled.
+function fillSignIn(username, password, origin) {
+  if (location.origin !== origin) return false;
+  const visible = element => !element.hidden && !element.disabled && !element.readOnly && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden";
+  const auto = element => `${element.autocomplete || ""} ${element.getAttribute("autocomplete") || ""}`.toLowerCase();
+  const hints = element => [element.name, element.id, element.placeholder, element.getAttribute("aria-label"), element.title].join(" ").toLowerCase();
   const set = (element, value) => {
     element.focus();
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(element, value);
@@ -34,17 +46,26 @@ function fillSignIn(username, password) {
     element.dispatchEvent(new Event("change", { bubbles: true }));
   };
   const inputs = [...document.querySelectorAll("input")].filter(visible);
-  const secret = inputs.find(element => element.type === "password");
-  const named = inputs.find(element => element.autocomplete === "username" || element.type === "email");
-  const before = secret ? inputs.slice(0, inputs.indexOf(secret)).reverse().find(element => ["text", "email", "tel", ""].includes(element.type)) : null;
-  const user = named || before || (!secret ? inputs.find(element => ["text", "email"].includes(element.type)) : null);
+  const passwords = inputs.filter(element => element.type === "password");
+  const secret = passwords.find(element => !auto(element).includes("new-password"));
+  if (passwords.length && !secret) return false;
+  const usable = element => ["", "text", "email", "tel", "number", "url"].includes(element.type)
+    && !/one-time-code|new-password|otp|2fa|mfa|one[-_\s]?time|verification|captcha|security.?code|\bcode\b|search|query|filter/.test(auto(element) + " " + hints(element));
+  const score = element => (/username|email/.test(auto(element)) ? 100 : 0) + (element.type === "email" ? 80 : 0) + (/email|user|login|account/.test(hints(element)) ? 60 : 0);
+  const scope = secret?.form ? inputs.filter(element => element.form === secret.form) : inputs;
+  // Before the password field; without one (a username-first page), only a field that looks like it's for the username.
+  const candidates = (secret ? scope.slice(0, scope.indexOf(secret)) : scope).map((element, index) => ({ element, index, score: usable(element) ? score(element) : -1 }))
+    .filter(item => item.score > (secret ? -1 : 0)).sort((a, b) => b.score - a.score || b.index - a.index);
+  const user = candidates[0]?.element;
   if (user && username) set(user, username);
   if (secret) set(secret, password);
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
+  // Each agent's workspace, so the skills kept there (Settings → Skills → Workspace) are listed, as before.
+  const skillFolders = () => store.agents.list(services.auth.userId()).filter(agent => !agent.archivedAt && fs.existsSync(agent.workspace)).map(agent => agent.workspace);
   // Agent ownership is checked on every call by agents.get().
   const files = createFiles({ workspaceOf: agentId => { signedIn(); return agents.get(agentId).workspace; } });
   return {
@@ -54,7 +75,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       const file = path.join(profile, "software-rendering");
       if (enabled) fs.rmSync(file, { force: true });
       else fs.writeFileSync(file, JSON.stringify({ reason: "settings", at: new Date().toISOString() }));
-      setTimeout(() => { app.relaunch(); app.exit(0); }, 100);
+      setTimeout(() => { app.relaunch(); app.quit(); }, 100);
       return { restarting: true };
     },
     // A support file with versions, states and recent app log lines; no chats,
@@ -105,26 +126,51 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       return value;
     },
 
+    // The picker reads this each time it opens. A catalog that can't be read
+    // keeps the saved choice and reports the error, so the picker offers Retry.
     "models.list": async () => {
       signedIn();
-      const choices = await modelChoices();
+      let choices;
+      try { choices = await modelChoices(); }
+      catch (error) { return { choices: [], selected: store.settings.get("modelSettings") || null, error: error.message || "Models unavailable." }; }
       return { choices, selected: await selectModel(choices) };
     },
-    "models.select": async ({ name, reasoningEffort }) => {
+    // { name, reasoningEffort, serviceTier }: an effort or speed the model
+    // doesn't offer becomes its default.
+    "models.select": async ({ name, reasoningEffort, serviceTier }) => {
       signedIn();
       const choices = await modelChoices();
-      const choice = choices.find(item => item.id === name);
-      if (!choice) throw fail(400, "This model is not available on your plan.");
-      store.settings.set("modelSettings", { ...store.settings.get("modelSettings"), name, reasoningEffort: reasoningEffort || choice.defaultReasoningEffort || null });
+      store.settings.set("modelSettings", require("./model-catalog.cjs").chooseModel(choices, { name, reasoningEffort, serviceTier }));
       return selectModel(choices);
     },
-    "funding.get": async () => { signedIn(); return services.funding.current(); },
+    // Paid plans also report their monthly included credits, which the sidebar
+    // meters as the previous app did (null when the billing service can't say).
+    "funding.get": async () => {
+      signedIn();
+      const state = await services.funding.current();
+      if (state.subscriptionAllowed) return state;
+      const status = await require("../../desktop/account-compat.cjs").billingStatus(services.cloud).catch(() => null);
+      const allowance = Number(status?.includedCredits?.allowance), left = Number(status?.includedCredits?.balance);
+      const planUsage = status?.plan === state.plan && allowance > 0 && Number.isFinite(left)
+        ? { name: status.plans?.find(item => item.id === state.plan)?.name || state.plan.replace(/^./, c => c.toUpperCase()), allowance, left, resetsAt: typeof status.currentPeriodEnd === "string" ? status.currentPeriodEnd : null }
+        : null;
+      return { ...state, planUsage };
+    },
 
     "agents.list": () => { signedIn(); return agents.list(); },
     "agents.create": input => { signedIn(); return agents.create({ name: input.name, instructions: text(input.instructions), avatar: input.avatar }); },
     "agents.update": ({ id, ...patch }) => { signedIn(); return agents.update(id, patch); },
     "agents.instructions": ({ id }) => { signedIn(); return { instructions: agents.instructions(id) }; },
     "agents.workspaceInstructions": ({ id }) => { signedIn(); return { instructions: agents.workspaceInstructions(id) }; },
+    // The agent page's Instructions editor: AGENTS.md below its title line.
+    "agents.saveWorkspaceInstructions": ({ id, instructions }) => {
+      signedIn();
+      const agent = agents.get(id);
+      if (typeof instructions !== "string" || instructions.length > 50000) throw fail(400, "Instructions must be text under 50,000 characters.");
+      fs.mkdirSync(agent.workspace, { recursive: true });
+      fs.writeFileSync(path.join(agent.workspace, "AGENTS.md"), `# ${agent.name}\n\n${instructions.replace(/\r\n/g, "\n").trim()}\n`);
+      return { instructions: agents.workspaceInstructions(id) };
+    },
     "agents.archive": ({ id }) => { signedIn(); return agents.archive(id); },
     "agents.reorder": ({ ids }) => { signedIn(); return agents.reorder(ids); },
     "agents.openWorkspace": async ({ id }) => {
@@ -145,21 +191,27 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "conversations.markUnread": ({ id }) => { signedIn(); return harness.conversations.markUnread(id); },
     "conversations.history": ({ id }) => { signedIn(); return harness.history(id); },
     "conversations.status": ({ id }) => { signedIn(); return harness.conversations.status(id); },
+    // Chats with a reply in progress, for the sidebar's "Agent is working".
+    "conversations.running": () => { signedIn(); return harness.conversations.list({}).filter(item => harness.conversations.status(item.id).running).map(item => item.id); },
+    // Ctrl/⌘+K search: { conversations: [{ conversation, snippet, highlight }], messages: [{ conversation, messageId, createdAt, snippet, highlight }] }.
+    "conversations.search": ({ query }) => { signedIn(); return store.conversations.search(services.auth.userId(), text(query, 200)); },
     "conversations.usage": ({ id }) => { signedIn(); return harness.conversations.usage(id); },
     "conversations.worker": ({ id, threadId }) => { signedIn(); return harness.conversations.worker(id, threadId); },
-    "conversations.send": ({ id, text: message, images = [], files = [], clientId, retryOf }) => {
+    "conversations.send": ({ id, text: message, images = [], files = [], skills = [], clientId, retryOf }) => {
       signedIn();
       const existing = list => (Array.isArray(list) ? list : []).filter(file => typeof file === "string" && path.isAbsolute(file) && fs.existsSync(file) && fs.statSync(file).isFile()).slice(0, 10);
       const attached = existing(files);
       if (attached.some(file => fs.statSync(file).size > MAX_ATTACHMENT)) throw fail(413, "Attach files smaller than 100 MB.");
-      return harness.send(id, { text: text(message, 200000), images: existing(images).filter(file => IMAGE.test(file)), files: attached, clientId: typeof clientId === "string" ? clientId : undefined, retryOf: typeof retryOf === "string" ? retryOf : undefined });
+      // Skills chosen with @ or $ in the composer: { name, path } of an installed SKILL.md.
+      const chosen = (Array.isArray(skills) ? skills : []).filter(skill => typeof skill?.name === "string" && skill.name.trim() && typeof skill.path === "string" && path.isAbsolute(skill.path) && /^SKILL\.md$/i.test(path.basename(skill.path)) && fs.existsSync(skill.path))
+        .slice(0, 10).map(skill => ({ name: text(skill.name, 200), path: skill.path }));
+      // Sent while the agent works, the message joins its turn (steer).
+      return harness.send(id, { text: text(message, 200000), images: existing(images).filter(file => IMAGE.test(file)), files: attached, ...(chosen.length ? { skills: chosen } : {}), clientId: typeof clientId === "string" ? clientId : undefined, retryOf: typeof retryOf === "string" ? retryOf : undefined }, { steer: true });
     },
     "conversations.warm": ({ id }) => { signedIn(); return harness.warm(id); },
-    "conversations.setModel": async ({ id, name, reasoningEffort }) => {
+    "conversations.setModel": async ({ id, name, reasoningEffort, serviceTier }) => {
       signedIn();
-      const choice = (await modelChoices()).find(item => item.id === name);
-      if (!choice) throw fail(400, "This model is not available on your plan.");
-      return harness.setModel(id, { name, reasoningEffort: reasoningEffort || choice.defaultReasoningEffort || null });
+      return harness.setModel(id, require("./model-catalog.cjs").chooseModel(await modelChoices(), { name, reasoningEffort, serviceTier }));
     },
     "conversations.interrupt": ({ id }) => { signedIn(); return harness.interrupt(id); },
     "approvals.respond": ({ id, response }) => { signedIn(); return harness.respond(id, response); },
@@ -169,6 +221,43 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       signedIn();
       const result = await dialog.showOpenDialog({ title: "Attach files", properties: ["openFile", "multiSelections"] });
       return result.canceled ? [] : result.filePaths.map(file => ({ path: file, image: IMAGE.test(file), size: fs.statSync(file).size }));
+    },
+    // Files dropped or pasted into a chat, described as attachments.choose
+    // describes them. Folders and missing files are left out.
+    "attachments.describe": ({ paths } = {}) => {
+      signedIn();
+      return (Array.isArray(paths) ? paths : []).slice(0, 100).filter(file => typeof file === "string" && path.isAbsolute(file)).flatMap(file => {
+        try { const stat = fs.statSync(file); return stat.isFile() ? [{ path: file, image: IMAGE.test(file), size: stat.size }] : []; } catch { return []; }
+      });
+    },
+    // An image the user sent from elsewhere on this computer, for its
+    // thumbnail in the chat (images in the workspace use files.read).
+    "attachments.preview": ({ conversationId, path: file } = {}) => {
+      signedIn();
+      harness.conversations.get(conversationId);
+      if (typeof file !== "string" || !path.isAbsolute(file) || /^[\\/]{2}/.test(file) || !IMAGE.test(file)) throw fail(400, "Choose an image.");
+      let stat;
+      try { stat = fs.statSync(file); } catch { throw fail(404, "That image no longer exists."); }
+      if (!stat.isFile()) throw fail(404, "That image no longer exists.");
+      if (stat.size > 12 * 1024 * 1024) throw fail(413, "This image is too large to preview.");
+      const type = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif" }[path.extname(file).toLowerCase()];
+      return { dataUrl: `data:${type};base64,${fs.readFileSync(file).toString("base64")}` };
+    },
+    // A pasted file that isn't on disk (a copied image) is saved in the
+    // profile, so it attaches like any other file.
+    "attachments.savePasted": ({ data, type, name } = {}) => {
+      signedIn();
+      const bytes = data instanceof ArrayBuffer ? Buffer.from(data) : ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) : null;
+      if (!bytes?.length) throw fail(400, "Nothing was pasted.");
+      if (bytes.length > MAX_ATTACHMENT) throw fail(413, "Attach files smaller than 100 MB.");
+      const raw = text(name, 200), given = path.extname(raw).toLowerCase();
+      const extension = /^\.[a-z0-9]{1,15}$/.test(given) ? given : { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif" }[text(type, 100).toLowerCase()] || "";
+      const stem = path.basename(raw, path.extname(raw)).replace(/[^\w.-]+/g, "-").replace(/^[-.]+|-+$/g, "").slice(0, 80) || "pasted";
+      const folder = path.join(profile, "attachments", new Date().toISOString().slice(0, 10), require("node:crypto").randomUUID());
+      fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+      const file = path.join(folder, stem + extension);
+      fs.writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+      return { path: file, image: IMAGE.test(file), size: bytes.length };
     },
 
     "integrations.list": input => { signedIn(); return services.integrations.list(input); },
@@ -213,6 +302,8 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "browser.back": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.back(conversationId, tabId); },
     "browser.forward": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.forward(conversationId, tabId); },
     "browser.home": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.home(conversationId, tabId); },
+    // Pinned tabs come first and keep their pages open (tab menu: Pin tab / Unpin tab).
+    "browser.pin": ({ conversationId, tabId, pinned }) => { signedIn(); harness.conversations.get(conversationId); return browser.pin(conversationId, tabId, !!pinned); },
     "browser.reload": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.reload(conversationId, tabId); },
     "browser.stop": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.stop(conversationId, tabId); },
     "browser.profiles": () => { signedIn(); store.browserProfiles.ensureDefault(); return store.browserProfiles.list(); },
@@ -258,7 +349,13 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "files.list": ({ agentId, path: dir }) => files.list(agentId, dir),
     "files.read": ({ agentId, path: file }) => files.read(agentId, file),
     "files.search": ({ agentId, query }) => files.search(agentId, query),
-    "files.open": async ({ agentId, path: file }) => { const error = await shell.openPath(files.absolute(agentId, file)); if (error) throw fail(500, error); return { opened: true }; },
+    "files.open": async ({ agentId, path: file }) => {
+      const target = files.absolute(agentId, file);
+      if (runnable(target)) throw fail(400, "Programs and scripts don't open from Timewarp. Use Show in folder.");
+      const error = await shell.openPath(target);
+      if (error) throw fail(500, error);
+      return { opened: true };
+    },
     "files.reveal": ({ agentId, path: file }) => { shell.showItemInFolder(files.absolute(agentId, file)); return { shown: true }; },
 
     // Codex's Windows command sandbox. Setup runs only when the user asks for it.
@@ -299,7 +396,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     },
     "skills.list": async ({ reload = false } = {}) => {
       signedIn();
-      const result = await client.request("skills/list", { forceReload: !!reload });
+      const result = await client.request("skills/list", { forceReload: !!reload, cwds: skillFolders() });
       const seen = new Set(), skills = [], errors = [];
       for (const entry of result.data || []) {
         errors.push(...(entry.errors || []).map(error => error.message));
@@ -310,7 +407,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
           const folder = path.basename(path.dirname(skill.path));
           const local = !/[\\/]\.system[\\/]/.test(skill.path) && (path.resolve(skill.path).startsWith(path.resolve(knowledge.skillsRoot) + path.sep)
             || (path.basename(path.dirname(path.dirname(skill.path))) === "skills" && folder === skill.name && fs.existsSync(path.join(knowledge.skillsRoot, folder, "SKILL.md"))));
-          skills.push({ name: skill.name, title: skill.interface?.displayName || skillTitle(skill.name), fromApp: /[\\/]plugins[\\/]cache[\\/]/.test(skill.path), description: skill.interface?.shortDescription || skill.shortDescription || skill.description || "", details: skill.description || "", scope: skill.scope, enabled: skill.enabled !== false, path: skill.path, removable: local });
+          skills.push({ name: skill.name, title: skill.interface?.displayName || skillTitle(skill.name), fromApp: /[\\/]plugins[\\/]cache[\\/]/.test(skill.path), description: skill.description || skill.interface?.shortDescription || skill.shortDescription || "", details: skill.description || "", scope: skill.scope, enabled: skill.enabled !== false, path: skill.path, removable: local });
         }
       }
       // One entry per skill name and scope: a copy in Timewarp's own folder wins over the same
@@ -325,40 +422,12 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       const list = [...unique.values()].sort((a, b) => (a.scope === "system") - (b.scope === "system") || (sortKey(a) < sortKey(b) ? -1 : sortKey(a) > sortKey(b) ? 1 : 0));
       return { skills: list, errors: [...new Set(errors)] };
     },
-    // Codex plugins from the curated catalog, shown beside connected apps in Tools.
-    "plugins.list": async () => {
-      signedIn();
-      // Local marketplaces (the curated catalog that ships with Codex), as the previous app listed.
-      const result = await client.request("plugin/list", { marketplaceKinds: ["local"] });
-      // Featured ids name the remote catalog ("asana@openai-curated-remote"); local plugins match by name.
-      const featured = new Set((result.featuredPluginIds || []).map(id => String(id).split("@")[0]));
-      const items = [];
-      for (const market of result.marketplaces || []) for (const plugin of market.plugins || []) {
-        if (plugin.availability === "DISABLED_BY_ADMIN" || plugin.installPolicy === "NOT_AVAILABLE") continue;
-        const ui = plugin.interface || {};
-        const remote = /^https:\/\//.test(ui.composerIconUrl || "") ? ui.composerIconUrl : /^https:\/\//.test(ui.logoUrl || "") ? ui.logoUrl : null;
-        items.push({
-          id: plugin.id, name: plugin.name, marketplacePath: market.path || null, marketplace: market.name,
-          title: ui.displayName || plugin.name, description: ui.shortDescription || "", details: ui.longDescription || "",
-          icon: imageData(ui.composerIcon) || imageData(ui.logo) || remote, installed: !!plugin.installed, enabled: !!plugin.enabled, featured: featured.has(plugin.name),
-        });
-      }
-      return items;
-    },
-    // Installs a plugin; apps it needs to sign in to open in the browser.
-    "plugins.install": async ({ marketplacePath, pluginName }) => {
-      signedIn();
-      const result = await client.request("plugin/install", { marketplacePath: marketplacePath ? text(marketplacePath, 2000) : null, pluginName: text(pluginName, 200) });
-      const apps = (result.appsNeedingAuth || []).filter(app => /^https:\/\//.test(app.installUrl || ""));
-      for (const app of apps.slice(0, 3)) await shell.openExternal(app.installUrl);
-      return { installed: true, needsSignIn: apps.map(app => app.name) };
-    },
     "skills.setEnabled": async ({ path: file, enabled }) => { signedIn(); await client.request("skills/config/write", { path: text(file, 4000), enabled: !!enabled }); return { enabled: !!enabled }; },
     "skills.create": async input => { signedIn(); const result = knowledge.createSkill({ name: text(input?.name, 200), description: text(input?.description, 1000), instructions: text(input?.instructions, 100000) }); await client.request("skills/list", { forceReload: true }).catch(() => {}); return result; },
     "skills.remove": async ({ name }) => { signedIn(); const result = knowledge.removeSkill(name); await client.request("skills/list", { forceReload: true }).catch(() => {}); return result; },
     "skills.read": async ({ path: file }) => {
       signedIn();
-      const listed = await client.request("skills/list", {});
+      const listed = await client.request("skills/list", { cwds: skillFolders() });
       const known = (listed.data || []).flatMap(entry => entry.skills || []).some(skill => skill.path === file);
       if (!known || path.basename(String(file)) !== "SKILL.md") throw fail(404, "That skill isn't available.");
       return { text: fs.readFileSync(file, "utf8").slice(0, 200000) };
@@ -408,9 +477,12 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "vault.fillPage": async ({ conversationId, tabId, id }) => {
       signedIn(); harness.conversations.get(conversationId);
       const { contents } = browser.webContents(conversationId, tabId);
-      const item = vault.secret(id);
-      if (item.kind !== "password" || !vault.signInsFor(contents.getURL()).some(entry => entry.id === id)) throw fail(403, "This sign-in isn't saved for this site.");
-      const filled = await contents.executeJavaScriptInIsolatedWorld(1007, [{ code: `(${fillSignIn})(${JSON.stringify(item.username || "")}, ${JSON.stringify(item.password)})` }], true);
+      const url = contents.getURL(), item = vault.secret(id);
+      if (item.kind !== "password" || !vault.signInsFor(url).some(entry => entry.id === id)) throw fail(403, "This sign-in isn't saved for this site.");
+      // Hidden from the chat's browser tools, as a password an agent fills is,
+      // so an agent can't read it back from the page.
+      browserTools?.rememberFilled(conversationId, item.password, "password");
+      const filled = await contents.executeJavaScriptInIsolatedWorld(1007, [{ code: `(${fillSignIn})(${JSON.stringify(item.username || "")}, ${JSON.stringify(item.password)}, ${JSON.stringify(new URL(url).origin)})` }], true);
       if (!filled) throw fail(404, "Timewarp couldn't find a sign-in form on this page.");
       return { filled: true };
     },
@@ -436,12 +508,88 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       return { text: String(value.text || "").trim() };
     },
     "onboarding.status": async () => ({ done: await onboarding.done() }),
+    // { installed, configured } for the home screen's "Set up 1Password".
+    "setup.onePassword": () => { signedIn(); return require("./one-password.cjs").onePasswordSetup(); },
 
-    "feedback.submit": input => services.submitFeedback(input),
+    // A report carries the app's version and platform, and the chat it was sent from.
+    "feedback.submit": input => {
+      let conversationId = null;
+      try { if (typeof input?.conversationId === "string") conversationId = harness.conversations.get(input.conversationId).id; } catch {}
+      return services.submitFeedback({ description: input?.description, route: text(input?.route, 2000) || null, conversationId, environment: { app: "desktop", appVersion: version, platform: process.platform } });
+    },
     "links.open": ({ url }) => services.openExternal(url),
     "app.quit": () => { app.quit(); return { quitting: true }; },
     "profile.path": () => ({ profile }),
+
+    // Chat cards: files and images an agent shows in a chat, and what the
+    // user did with its cards. Paths are resolved against the chat agent's
+    // workspace; only files inside it are read or opened from a chat.
+    ...(() => {
+      const NETWORK_PATH = /^[\\/]{2}/;
+      const within = (root, target) => {
+        const [base, value] = process.platform === "win32" ? [root.toLowerCase(), target.toLowerCase()] : [root, target];
+        return value === base || value.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
+      };
+      function cardFile(conversationId, file) {
+        signedIn();
+        const agent = agents.get(harness.conversations.get(conversationId).agentId);
+        const raw = text(file, 4000).trim();
+        if (!raw || raw.includes("\0")) throw fail(400, "Choose a file.");
+        fs.mkdirSync(agent.workspace, { recursive: true });
+        const root = fs.realpathSync(agent.workspace);
+        let target = path.resolve(root, raw);
+        // Network and device paths (\\server\share, \\?\…) outside the
+        // workspace are refused before any lookup: reaching one would send the
+        // user's Windows sign-in to whatever computer an agent's message names.
+        if (NETWORK_PATH.test(target) && !within(root, target)) throw fail(400, "Files on other computers don't open from a chat.");
+        try { target = fs.realpathSync(target); } catch {}
+        const inside = within(root, target);
+        return { agent, root, target, inside, relative: inside ? path.relative(root, target).split(path.sep).join("/") : null };
+      }
+      const stateKey = conversationId => { signedIn(); harness.conversations.get(conversationId); return "chatCards:" + conversationId; };
+      return {
+        // Whether a file exists, and its workspace path for files.read.
+        "cards.resolve": ({ conversationId, path: file }) => {
+          const { agent, target, inside, relative } = cardFile(conversationId, file);
+          let stat = null;
+          try { stat = fs.statSync(target); } catch {}
+          return { agentId: agent.id, inside, relative, exists: !!stat, isFile: !!stat?.isFile(), name: path.basename(target), size: stat?.isFile() ? stat.size : null, modifiedAt: stat ? stat.mtime.toISOString() : null };
+        },
+        "cards.openFile": async ({ conversationId, path: file }) => {
+          const { target, inside } = cardFile(conversationId, file);
+          if (!inside) throw fail(403, "Only files in the agent's workspace open from a chat. Use Show in folder.");
+          if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw fail(404, "That file no longer exists.");
+          if (runnable(target)) throw fail(400, "Programs and scripts don't open from a chat. Use Show in folder.");
+          const error = await shell.openPath(target);
+          if (error) throw fail(500, error);
+          return { opened: true };
+        },
+        // Shows the file in its folder, also outside the workspace; nothing is opened.
+        "cards.revealFile": ({ conversationId, path: file }) => {
+          const { target } = cardFile(conversationId, file);
+          if (!fs.existsSync(target)) throw fail(404, "That file no longer exists.");
+          shell.showItemInFolder(target);
+          return { shown: true };
+        },
+        // Answers, sent drafts and connections, kept on this device per chat.
+        "cards.state": ({ conversationId }) => store.settings.get(stateKey(conversationId), {}) || {},
+        "cards.saveState": ({ conversationId, key, value }) => {
+          const name = stateKey(conversationId);
+          if (typeof key !== "string" || !/^[\w.:/-]{1,200}$/.test(key)) throw fail(400, "Unknown card.");
+          const json = JSON.stringify(value ?? null);
+          if (json.length > 20000) throw fail(413, "This card's answer is too long.");
+          const states = { ...(store.settings.get(name, {}) || {}) };
+          delete states[key];
+          states[key] = JSON.parse(json);
+          // Past 500 the oldest go, but never a sent draft or button: it could be sent again.
+          const extra = Object.keys(states).length - 500;
+          if (extra > 0) for (const old of Object.keys(states).filter(other => other !== key && !states[other]?.sent).slice(0, extra)) delete states[old];
+          store.settings.set(name, states);
+          return states[key];
+        },
+      };
+    })(),
   };
 }
 
-module.exports = { createMethods, SETTING_KEYS };
+module.exports = { createMethods, SETTING_KEYS, fillSignIn };

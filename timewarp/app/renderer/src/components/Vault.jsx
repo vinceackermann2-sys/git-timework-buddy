@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Copy, CreditCard, Download, Eye, EyeOff, KeyRound, LockKeyhole, Pencil, Plus, Trash2 } from "lucide-react";
 import { call } from "../api.js";
-import { Dialog, PageHead, useToast } from "./common.jsx";
+import { Dialog, PageHead, useConfirm, useToast } from "./common.jsx";
 
 const KINDS = [{ value: "password", label: "Sign-in" }, { value: "card", label: "Card" }, { value: "secret", label: "Secret" }];
 const icon = kind => kind === "card" ? <CreditCard size={20} strokeWidth={1.6} /> : kind === "secret" ? <LockKeyhole size={20} strokeWidth={1.6} /> : <KeyRound size={20} strokeWidth={1.6} />;
@@ -79,7 +79,15 @@ export function Vault() {
   const [state, setState] = useState(null);
   const [editing, setEditing] = useState(null);
   const toast = useToast();
+  const confirm = useConfirm();
   const load = () => call("vault.list").then(setState).catch(error => toast(error, "error"));
+  // Asked as in the previous app: "Delete password?", "Delete credit card?", "Delete vault entry?".
+  const remove = async item => {
+    const title = item.kind === "password" ? "Delete password?" : item.kind === "card" ? "Delete credit card?" : "Delete vault entry?";
+    const body = item.kind === "password" && item.origin ? `This deletes the saved password for ${item.origin.replace(/^https:\/\//, "")}. It can't be undone.` : `This deletes ${item.label} from the vault. It can't be undone.`;
+    if (!await confirm({ title, body, action: "Delete", danger: true })) return;
+    call("vault.remove", { id: item.id }).then(load).catch(error => toast(error, "error"));
+  };
   useEffect(() => { void load(); }, []);
   const unavailable = state && !state.available;
   const items = state?.items || [];
@@ -104,19 +112,26 @@ export function Vault() {
             {state === null ? <div className="tw-empty-box">Opening the vault…</div> : list.length ? (
               <div className="tw-list-panel">
                 {list.map(item => (
-                  <div key={item.id} className="tw-list-row">
+                  <div key={item.id} className={"tw-list-row" + (item.damaged ? " damaged" : "")}>
                     <span className="tw-face">{icon(item.kind)}</span>
                     <div>
                       <strong>{item.label}</strong>
-                      <span className="desc">
-                        {item.kind === "password" ? [item.origin.replace(/^https:\/\//, ""), item.username].filter(Boolean).join(" · ")
-                          : item.kind === "card" ? `${item.brand} ending ${item.last4} · expires ${String(item.expMonth).padStart(2, "0")}/${String(item.expYear).slice(-2)}${item.cardholder ? " · " + item.cardholder : ""}` : "Secret"}
-                        {item.createdByAgent ? " · saved by an agent" : ""}
-                      </span>
+                      {/* An item that failed its integrity check can only be removed. */}
+                      {item.damaged ? <span className="desc tw-alert">Can't be read on this computer. Remove it and save it again.</span> : (
+                        <span className="desc">
+                          {item.kind === "password" ? [String(item.origin || "").replace(/^https:\/\//, ""), item.username].filter(Boolean).join(" · ")
+                            : item.kind === "card" ? [[item.brand, item.last4 ? "ending " + item.last4 : ""].filter(Boolean).join(" "), item.expMonth && item.expYear ? `expires ${String(item.expMonth).padStart(2, "0")}/${String(item.expYear).slice(-2)}` : "", item.cardholder || ""].filter(Boolean).join(" · ") || "Card" : "Secret"}
+                          {item.createdByAgent ? " · saved by an agent" : ""}
+                        </span>
+                      )}
                     </div>
-                    <Hidden id={item.id} field={item.kind === "password" ? "password" : item.kind === "card" ? "number" : "value"} label={item.kind === "card" ? "card number" : item.kind === "secret" ? "secret" : "password"} />
-                    <button type="button" className="tw-icon-button" title="Edit" aria-label={"Edit " + item.label} onClick={() => setEditing({ item })}><Pencil size={15} /></button>
-                    <button type="button" className="tw-icon-button" title="Delete" aria-label={"Delete " + item.label} onClick={() => { if (window.confirm(`Delete ${item.label} from the vault? This can't be undone.`)) call("vault.remove", { id: item.id }).then(load).catch(error => toast(error, "error")); }}><Trash2 size={15} /></button>
+                    {item.damaged ? null : <>
+                      <Hidden id={item.id} field={item.kind === "password" ? "password" : item.kind === "card" ? "number" : "value"} label={item.kind === "card" ? "card number" : item.kind === "secret" ? "secret" : "password"} />
+                      <button type="button" className="tw-icon-button" title="Edit" aria-label={"Edit " + item.label} onClick={() => setEditing({ item })}><Pencil size={15} /></button>
+                    </>}
+                    {item.damaged
+                      ? <button type="button" className="tw-btn" aria-label={"Remove " + item.label} onClick={() => void remove(item)}>Remove</button>
+                      : <button type="button" className="tw-icon-button" title="Delete" aria-label={"Delete " + item.label} onClick={() => void remove(item)}><Trash2 size={15} /></button>}
                   </div>
                 ))}
               </div>

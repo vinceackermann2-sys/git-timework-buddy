@@ -15,28 +15,42 @@ function outputText(output) {
   if (Array.isArray(value)) return value.map(part => typeof part === "string" ? part : part?.text || "").join("");
   return typeof value === "string" ? value : JSON.stringify(value ?? "");
 }
+// The user's messages, and the task a worker receives from its parent agent.
+const isRequest = item => (item.type === "message" && item.role === "user") || item.type === "agent_message";
 function textOf(input) {
-  return (input || []).filter(item => item.type === "message" && item.role === "user")
-    .flatMap(item => (item.content || []).map(part => part.text || "")).join("\n");
+  return (input || []).filter(isRequest)
+    .flatMap(item => (item.content || []).map(part => part.text || part.encrypted_content || "")).join("\n");
 }
 
 // Scripted Responses API: "run" asks for a shell command, everything else gets
 // a markdown reply that names what the user wrote.
+let dumped = 0;
 function scriptedResponse(body) {
   const id = "resp_" + crypto.randomUUID(), message = "msg_" + crypto.randomUUID();
   const usage = { input_tokens: 40, input_tokens_details: { cached_tokens: 0 }, output_tokens: 30, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 70 };
   // Tool results of the current turn only: those after the latest user message.
   const inputs = body.input || [];
-  const lastUser = inputs.findLastIndex(item => item.type === "message" && item.role === "user");
+  const lastUser = inputs.findLastIndex(isRequest);
   const outputs = inputs.slice(lastUser + 1).filter(item => item.type === "function_call_output" || item.type === "custom_tool_call_output");
   const latest = textOf(body.input).split("\n").filter(Boolean).at(-1) || "";
   const tool = (body.tools || []).find(item => item.type === "function" && item.name === "exec_command");
   // Code mode exposes the tools through one "exec" JavaScript tool.
   const codeMode = (body.input || []).filter(item => item.type === "additional_tools").flatMap(item => item.tools || [])
     .flatMap(item => item.type === "namespace" ? item.tools || [] : [item]).some(item => item.type === "custom" && item.name === "exec");
-  if (process.env.TIMEWARP_FIXTURE_DUMP) require("node:fs").writeFileSync(process.env.TIMEWARP_FIXTURE_DUMP, JSON.stringify(body, null, 1));
+  // "%n" in the dump path numbers each request.
+  if (process.env.TIMEWARP_FIXTURE_DUMP) require("node:fs").writeFileSync(process.env.TIMEWARP_FIXTURE_DUMP.replace("%n", String(++dumped)), JSON.stringify(body, null, 1));
   if (process.env.TIMEWARP_FIXTURE_LOG) console.error("[timewarp] fixture request", JSON.stringify({ latest, codeMode, tools: (body.tools || []).map(item => item.name || item.type), inputs: (body.input || []).map(item => item.type + ":" + (item.role || "")), outputs: outputs.length }));
   const events = [{ type: "response.created", response: { id } }];
+  // Background jobs (memory-writer.cjs) answer in JSON: a title from the
+  // first words of the chat, and nothing new to remember.
+  // Codex sends base instructions as instructions or a developer message, by model.
+  const job = /<timewarp_background task=\\?"(\w+)\\?">/.exec(JSON.stringify([body.instructions || "", ...inputs.filter(item => item.role === "developer")]))?.[1];
+  if (job) {
+    const words = (/User: ([^\n]*)/.exec(textOf(inputs))?.[1] || "Preview chat").replace(/[^\p{L}\p{N} ]+/gu, " ").trim().split(/\s+/).slice(0, 5).join(" ");
+    const text = JSON.stringify(job === "title" ? { title: words || "Preview chat" } : { notes: null, log: null, summary: null });
+    events.push({ type: "response.output_item.done", output_index: 0, item: { type: "message", role: "assistant", id: message, content: [{ type: "output_text", text }] } }, { type: "response.completed", response: { id, usage } });
+    return new Response(sse(events), { status: 200, headers: { "content-type": "text/event-stream" } });
+  }
   // Codex's automatic approval reviewer asks for a JSON verdict. The preview
   // allows ordinary commands and denies deleting files.
   const reviewing = body.text?.format?.name === "codex_output_schema" && /APPROVAL REQUEST START/.test(textOf(body.input));
@@ -48,10 +62,13 @@ function scriptedResponse(body) {
   // Tests drive any tool through the code tool: a message with an ```exec
   // block runs that script, and the reply quotes its output.
   const script = !reviewing && lastUser >= 0 ? /```exec\n([\s\S]*?)```/.exec(textOf([inputs[lastUser]]))?.[1] : null;
-  // "spawn a worker" starts a worker through the collaboration tools.
-  const spawn = !reviewing && /\bspawn a worker\b/i.test(latest);
+  // "spawn a worker" starts a worker through the collaboration tools. An
+  // ```exec block in the same message becomes the worker's script.
+  const request = lastUser >= 0 ? textOf([inputs[lastUser]]) : "";
+  const spawn = !reviewing && /\bspawn a worker\b/i.test(request);
   if (spawn && !outputs.length) {
-    const call = { type: "function_call", id: "fc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "spawn_agent", namespace: "collaboration", arguments: JSON.stringify({ task_name: "helper", message: "Say hello from the worker", fork_turns: "none" }) };
+    const assignment = /```exec\n[\s\S]*?```/.exec(request)?.[0];
+    const call = { type: "function_call", id: "fc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "spawn_agent", namespace: "collaboration", arguments: JSON.stringify({ task_name: "helper", message: assignment ? "Run this script:\n" + assignment : "Say hello from the worker", fork_turns: "none" }) };
     events.push({ type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
   } else if (codeMode && script && !outputs.length) {
     const call = { type: "custom_tool_call", id: "ctc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "exec", input: script };
@@ -60,9 +77,10 @@ function scriptedResponse(body) {
     // "browse and click <url>" also clicks the first control on the page.
     const url = /https?:\/\/\S+/.exec(latest)?.[0] || "https://example.com/";
     const click = /\bclick\b/i.test(latest)
-      ? `\nconst ref = (String(outline).match(/\\[ref=(e\\d+)\\]/) || [])[1];\nconst clicked = ref ? await tools.timewarp_browser__click({ ref }) : "Nothing to click.";\ntext(String(clicked));`
+      ? `\nconst ref = (out(outline).match(/\\[ref=(e\\d+)\\]/) || [])[1];\nconst clicked = ref ? await tools.mcp__timewarp_browser__click({ ref }) : "Nothing to click.";\ntext(out(clicked));`
       : "";
-    const script = `const opened = await tools.timewarp_browser__open({ url: ${JSON.stringify(url)} });\nconst outline = await tools.timewarp_browser__snapshot({});\ntext(String(opened) + "\\n" + String(outline).slice(0, 600));${click}`;
+    // The browser tools are MCP tools; out() reads a result's text.
+    const script = `const out = r => typeof r === "string" ? r : (r?.content || []).map(c => c.text || "").join("\\n");\nconst opened = await tools.mcp__timewarp_browser__open({ url: ${JSON.stringify(url)} });\nconst outline = await tools.mcp__timewarp_browser__snapshot({});\ntext(out(opened) + "\\n" + out(outline).slice(0, 600));${click}`;
     const call = { type: "custom_tool_call", id: "ctc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "exec", input: script };
     events.push({ type: "response.output_item.added", output_index: 0, item: { ...call, input: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
   } else if ((tool || codeMode) && runCommand && !outputs.length) {
@@ -96,15 +114,15 @@ function scriptedResponse(body) {
 
 // Same shape as the billing service's status response, with sample values.
 function billingStatus() {
-  const plans = [["free", "Free", 0, 0], ["pro", "Pro", 20, 100], ["max", "Max", 50, 250], ["ultra", "Ultra", 100, 500]]
+  const plans = [["free", "Free", 0, 0], ["max", "Max", 50, 700], ["ultra", "Ultra", 100, 1400]]
     .map(([id, name, monthlyUsd, monthlyCredits]) => ({ id, name, monthlyUsd, monthlyCredits, available: true }));
   return {
-    plan: "pro", workspaceId: null, role: "owner", canManage: true, isPersonal: true, subscriptionStatus: "active", cancelAtPeriodEnd: false,
+    plan: "max", workspaceId: null, role: "owner", canManage: true, isPersonal: true, subscriptionStatus: "active", cancelAtPeriodEnd: false,
     currentPeriodEnd: new Date(Date.now() + 20 * 86400000).toISOString(), hasSubscription: true,
-    monthlyCreditAddons: [0, 50, 100, 200].map(credits => ({ credits, monthlyUsd: credits * 0.2 })), monthlyExtraCredits: 0, monthlyUsd: 20, canOpenPortal: false,
-    includedCredits: { allowance: 100, balance: 72 }, purchasedCredits: { balance: 20 }, credits: { balance: 92 },
-    usage: { plan: "pro", periodStart: new Date(Date.now() - 10 * 86400000).toISOString() }, plans,
-    creditPacks: [{ id: "pack-50", credits: 50, priceUsd: 15 }, { id: "pack-100", credits: 100, priceUsd: 30 }],
+    monthlyCreditAddons: [0, 15, 30, 45].map(monthlyUsd => ({ credits: monthlyUsd * 14, monthlyUsd })), monthlyExtraCredits: 0, monthlyUsd: 50, canOpenPortal: false,
+    includedCredits: { allowance: 700, balance: 504 }, purchasedCredits: { balance: 20 }, credits: { balance: 92 },
+    usage: { plan: "max", periodStart: new Date(Date.now() - 10 * 86400000).toISOString() }, plans,
+    creditPacks: [{ id: "pack-180", credits: 180, priceUsd: 15 }, { id: "pack-360", credits: 360, priceUsd: 30 }],
   };
 }
 
@@ -141,12 +159,19 @@ function createFixture() {
     if (name === "product.images.beginUpload") throw Object.assign(new Error("Pictures can't be uploaded in preview mode."), { status: 400 });
     return null;
   };
-  async function cloud(route, payload) {
+  // Live evaluations (scripts/eval-engine.cjs) answer with a real model: model
+  // requests go to a proxy on this computer that holds a test account's
+  // sign-in. Everything else stays preview data.
+  const liveModel = /^http:\/\/127\.0\.0\.1:\d+\/v1$/.test(process.env.TIMEWARP_FIXTURE_MODEL_URL || "") ? process.env.TIMEWARP_FIXTURE_MODEL_URL : null;
+  async function cloud(route, payload, method = "POST") {
     if (!signedIn) return json({ error: "Sign in to Timewarp." }, 401);
+    if (liveModel && /^\/v1\/(responses|models)$/.test(route)) {
+      return fetch(liveModel + route.slice(3), { method, headers: { "content-type": "application/json" }, ...(payload === undefined || method === "GET" ? {} : { body: JSON.stringify(payload) }) });
+    }
     if (route === "/v1/responses") return scriptedResponse(payload || {});
     if (route === "/v1/models") return json({ object: "list", data: [{ id: "openai/gpt-5.6-sol", object: "model" }, { id: "openai/gpt-5.6-luna", object: "model" }] });
     if (route === "/account") return json({ image: null, activeOrganization: { ...ORGANIZATION }, organizations: [{ ...ORGANIZATION }] });
-    if (route === "/billing") return json({ plan: "pro", included: 72, purchased: 20, monthlyIncluded: 100, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
+    if (route === "/billing") return json({ plan: "max", included: 504, purchased: 20, monthlyIncluded: 700, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
     if (route === "/billing/service") return json(billingStatus());
     if (route === "/billing/history") return json({ events: [{ id: "e1", kind: "usage", description: "AI usage", credits: -3.2, createdAt: new Date(Date.now() - 3600000).toISOString() }, { id: "e2", kind: "purchase", description: "Extra credits", credits: 20, createdAt: new Date(Date.now() - 86400000).toISOString() }] });
     if (route === "/history") return json(payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });

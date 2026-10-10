@@ -19,9 +19,11 @@ function createLog(directory, { now = () => new Date() } = {}) {
   }
   function write(level, tag, message, data) {
     if (failed) return;
-    let line = `${now().toISOString()} [${level}] [${tag}] ${String(message).replace(/\s+/g, " ").slice(0, 2000)}`;
+    // Every line is cleaned here, whatever wrote it (Codex's own output and
+    // renderer errors included): addresses cut to their origin, secrets removed.
+    let line = `${now().toISOString()} [${level}] [${tag}] ${clean(String(message).replace(/\s+/g, " ")).slice(0, 2000)}`;
     if (data !== undefined) {
-      try { line += " " + JSON.stringify(data).slice(0, 2000); } catch {}
+      try { line += " " + clean(JSON.stringify(data)).slice(0, 2000); } catch {}
     }
     line += "\n";
     try {
@@ -45,4 +47,38 @@ function createLog(directory, { now = () => new Date() } = {}) {
   };
 }
 
-module.exports = { createLog };
+// Web addresses cut to their origin: a page's path and query can hold a
+// search, a reset link or other personal details.
+const originsOnly = text => String(text).replace(/\b(?:https?|wss?):\/\/[^\s"'`<>]+/gi, address => { try { return new URL(address).origin; } catch { return "[address]"; } });
+// Tokens and keys that tools sometimes print: bearer tokens, JWTs, API keys and
+// key=value secrets.
+const SECRETS = [
+  [/\b(Bearer|Basic)\s+[\w.~+/=-]{8,}/gi, "$1 [redacted]"],
+  [/\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g, "[redacted]"],
+  [/\b(?:sk|pk|rk|ghp|gho|ghs|github_pat|xox[abpr])[-_][\w-]{16,}/g, "[redacted]"],
+  [/\b((?:access|refresh|id|session|api|auth|client)?[_-]?(?:token|key|secret|password))(["']?\s*[:=]\s*["']?)[^\s"'&,;]{6,}/gi, "$1$2[redacted]"],
+];
+const redact = text => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), String(text));
+const clean = text => redact(originsOnly(text));
+
+// Console warnings and errors go to the log (and `recent`, for diagnostics),
+// and so do process warnings, which Node would print through console.error:
+// Electron reports a page that didn't load as one, with its full address.
+function captureConsole({ console, process, recent, log }) {
+  for (const level of ["error", "warn"]) {
+    const original = console[level].bind(console);
+    console[level] = (...args) => {
+      let line;
+      try { line = args.map(value => value instanceof Error ? value.message : typeof value === "string" ? value : JSON.stringify(value)).join(" "); } catch { line = String(args[0]); }
+      line = clean(line);
+      recent.push(`${new Date().toISOString()} ${level} ${line.slice(0, 500)}`);
+      if (recent.length > 300) recent.shift();
+      log()?.[level](/^\[timewarp\]/.test(line) ? "timewarp" : "console", line.replace(/^\[timewarp\]\s*/, ""));
+      original(...args);
+    };
+  }
+  process.removeAllListeners("warning");
+  process.on("warning", warning => console.warn(originsOnly(`(${warning?.name || "Warning"}) ${warning?.message ?? warning}`)));
+}
+
+module.exports = { createLog, originsOnly, redact, captureConsole };

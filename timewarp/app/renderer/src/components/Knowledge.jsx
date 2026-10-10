@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { BookMarked, Download, FolderOpen, Plus, Trash2, X } from "lucide-react";
-import { call } from "../api.js";
-import { Dialog, PageHead, SearchField, Switch, useToast } from "./common.jsx";
+import { call, errorText } from "../api.js";
+import { Dialog, PageHead, SearchField, Switch, useConfirm, useToast } from "./common.jsx";
 import { Markdown } from "../markdown.jsx";
 
-const SOURCES = { "codex-chatgpt": "ChatGPT / Codex", "claude-code": "Claude", cursor: "Cursor" };
+// Where imported memory came from; "timewarp-previous" is the previous Timewarp app's (knowledge.cjs).
+const SOURCES = { "codex-chatgpt": "ChatGPT / Codex", "claude-code": "Claude", cursor: "Cursor", "timewarp-previous": "Previous Timewarp app" };
 const KINDS = { skills: "Skills", memory: "Memory files", mcp: "MCP servers" };
 
 // Memory files and skills found from other assistants on this computer,
@@ -198,8 +199,11 @@ export function Skills() {
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [viewing, setViewing] = useState(null);
+  const [error, setError] = useState("");
   const toast = useToast();
-  const load = (reload = false) => call("skills.list", { reload }).then(setState).catch(error => toast(error, "error"));
+  const confirm = useConfirm();
+  // A list that couldn't load shows why, with Retry; a reload that fails keeps the list.
+  const load = (reload = false) => call("skills.list", { reload }).then(value => { setState(value); setError(""); }).catch(failure => { setError(errorText(failure)); if (state) toast(failure, "error"); });
   useEffect(() => { void load(); }, []);
   const setEnabled = (skill, enabled) => {
     setState(current => ({ ...current, skills: current.skills.map(item => item.path === skill.path ? { ...item, enabled } : item) }));
@@ -210,8 +214,8 @@ export function Skills() {
     setViewing({ skill, text: null });
     call("skills.read", { path: skill.path }).then(value => setViewing(current => current?.skill.path === skill.path ? { skill, text: value.text } : current)).catch(error => { setViewing(null); toast(error, "error"); });
   };
-  const remove = skill => {
-    if (!window.confirm(`Remove the ${skill.title} skill from Timewarp?`)) return;
+  const remove = async skill => {
+    if (!await confirm({ title: `Remove ${skill.title}?`, body: "The skill is removed from Timewarp, and agents no longer use it.", action: "Remove", danger: true })) return;
     call("skills.remove", { name: skill.name }).then(() => { setViewing(null); void load(true); }).catch(error => toast(error, "error"));
   };
   const all = state?.skills || [];
@@ -224,11 +228,12 @@ export function Skills() {
         <button type="button" className="tw-btn accent" onClick={() => setCreating(true)}><Plus size={16} />Create skill</button>
       </PageHead>
       <SearchField value={query} onChange={setQuery} placeholder="Search skills..." shortcut />
-      <div className="tw-tabs" role="group" aria-label="Skills">
+      <div className="tw-tabs secondary" role="group" aria-label="Skills">
         {SKILL_TABS.map(([id, label]) => <button key={id} type="button" aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}
       </div>
       {state?.errors.length ? <div className="tw-alert">{state.errors.join(" ")}</div> : null}
-      {state === null ? <p className="tw-loading">Loading skills...</p> : shown.length ? (
+      {state === null && error ? <div className="tw-error-box" role="alert"><span>{error}</span><button type="button" className="tw-btn" onClick={() => { setError(""); void load(true); }}>Retry</button></div>
+        : state === null ? <p className="tw-loading">Loading skills...</p> : shown.length ? (
         <div className="tw-grid tw-scroll-grid">
           {shown.map(skill => (
             <div key={skill.path} className={"tw-tile clickable" + (skill.enabled ? "" : " off")} role="button" tabIndex={0} onClick={() => view(skill)} onKeyDown={event => { if (event.key === "Enter") view(skill); }}>

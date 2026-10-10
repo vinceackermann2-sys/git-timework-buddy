@@ -14,6 +14,8 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
   let oauthServer = null, callbackOpening = null, providersPromise = null;
   const providersFile = path.join(profile, "auth-providers.json");
   const appWindows = () => BrowserWindow.getAllWindows().filter(window => !window.isDestroyed() && window.webContents.getURL().startsWith("app://app/"));
+  // Screens that list connected apps reload on this.
+  const integrationsChanged = () => { for (const window of appWindows()) window.webContents.send("tw:event", "integrations.changed", {}); };
   const focusApp = () => { for (const window of appWindows()) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } };
 
   const accountChanged = async ({ changedUser }) => {
@@ -48,7 +50,7 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
     callbackOpening = (async () => {
       const server = callbackServer(code => auth.completeOAuth(code), async () => focusApp(), 17654, async () => {
         const result = await integrations.callback();
-        for (const window of appWindows()) window.webContents.send("tw:event", "integrations.changed", {});
+        integrationsChanged();
         focusApp();
         return result;
       });
@@ -72,6 +74,9 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
     getAgent: id => agentsFor().get(id), listAgents: owner => agentsFor().listActiveByOwner(owner),
     ensureCallback, onChanged: async () => { focusApp(); }, mcpToken,
   });
+  // A removed account disappears everywhere, as a new one appears.
+  const disconnect = integrations.disconnect;
+  integrations.disconnect = async input => { const result = await disconnect(input); integrationsChanged(); return result; };
   const sendFeedback = require("../../desktop/reporting.cjs").createReporting({ config, auth });
   // Start after every service exists: sign-in changes notify them.
   const ready = auth.init().then(async () => { if (auth.hasPendingFlow()) await ensureCallback().catch(() => {}); });

@@ -67,8 +67,10 @@ function detectProfiles({ platform = process.platform, env = process.env, home =
       // Profile folders are plain names inside the browser's own folder.
       if (!/^[\w .-]{1,80}$/.test(directory) || directory.startsWith(".") || !fs.existsSync(path.join(root, directory))) continue;
       const name = text(info?.name) || directory, email = text(info?.user_name, 200);
+      const active = Number(info?.active_time);
       profiles.push({
         label: email ? `${name} (${email})` : name, name, email: email || null,
+        lastActiveMs: Number.isFinite(active) && active > 0 ? Math.round(active * 1000) : null,
         accountName: text(info?.gaia_name) || null,
         picture: email ? picture(path.join(root, directory)) : null,
         browser: browser.name,
@@ -76,6 +78,9 @@ function detectProfiles({ platform = process.platform, env = process.env, home =
       });
     }
   }
+  // Most recently used first, then by name, as the previous app listed them.
+  profiles.sort((a, b) => a.lastActiveMs !== null && b.lastActiveMs !== null ? b.lastActiveMs - a.lastActiveMs
+    : a.lastActiveMs !== null ? -1 : b.lastActiveMs !== null ? 1 : (a.name || a.label).localeCompare(b.name || b.label));
   return { profiles, errors };
 }
 

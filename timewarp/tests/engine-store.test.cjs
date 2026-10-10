@@ -33,6 +33,43 @@ test("agents, conversations and messages are scoped, ordered and searchable", t 
   assert.deepEqual(store.conversations.list("u1", { archivedOnly: true }).map(c => c.title), ["Taxes"]);
 });
 
+test("search finds chat names and messages from three characters, with the match highlighted", t => {
+  const { store } = tempStore(t);
+  const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
+  const trip = store.conversations.create({ ownerId: "u1", agentId: agent.id, title: "Trip to Zürich" });
+  const notes = store.conversations.create({ ownerId: "u1", agentId: agent.id, title: "Notes" });
+  const old = store.conversations.create({ ownerId: "u1", agentId: agent.id, title: "Old zurich plans", archivedAt: new Date().toISOString() });
+  store.messages.append({ id: "m1", conversationId: notes.id, authorId: "u1", text: "When you have a moment, please book the hotel near the main station in Zurich before Friday, and check the  trains to the airport." });
+  store.messages.append({ id: "m2", conversationId: notes.id, authorId: "u1", text: "zurich again", status: "failed" });
+  store.messages.append({ id: "m3", conversationId: old.id, authorId: "u1", text: "zurich archived" });
+  assert.deepEqual(store.conversations.search("u1", "zu"), { conversations: [], messages: [] }, "Two characters aren't enough");
+  const found = store.conversations.search("u1", "zurich");
+  assert.deepEqual(found.conversations.map(item => item.conversation.id), [trip.id], "Accents and case are ignored; archived chats are left out");
+  assert.equal(found.conversations[0].snippet, "Trip to Zürich");
+  assert.deepEqual(found.conversations[0].highlight, { start: 8, end: 14 });
+  assert.deepEqual(found.messages.map(item => item.messageId), ["m1"], "Undelivered messages are left out");
+  const [message] = found.messages;
+  assert.equal(message.conversation.id, notes.id);
+  assert.equal(message.snippet.slice(message.highlight.start, message.highlight.end), "Zurich");
+  assert.match(message.snippet, /^\.\.\..+\.\.\.$/, "Cut text is marked");
+  assert.doesNotMatch(message.snippet, / {2}/);
+  assert.equal(store.conversations.search("u2", "zurich").messages.length, 0);
+  assert.equal(store.conversations.search("u1", "100%").messages.length, 0, "% is literal");
+  store.messages.append({ id: "m4", conversationId: trip.id, authorId: agent.id, text: "**Packing list** for [the trip](https://example.com): `passport`" });
+  const [packing] = store.conversations.search("u1", "packing list").messages;
+  assert.equal(packing.snippet, "Packing list for the trip: passport", "Snippets read as text, without Markdown");
+  assert.equal(packing.snippet.slice(packing.highlight.start, packing.highlight.end), "Packing list");
+});
+
+test("search snippets keep whole characters", () => {
+  const { snippetOf } = require("../app/main/store.cjs");
+  const text = "😀".repeat(30) + " needle " + "😀".repeat(30);
+  const { snippet, highlight } = snippetOf(text, "NEEDLE", 10);
+  assert.equal(snippet.slice(highlight.start, highlight.end), "needle");
+  assert.doesNotMatch(snippet, /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+  assert.deepEqual(snippetOf("short text", "absent"), { snippet: "short text", highlight: null });
+});
+
 test("nested transactions roll back only their own work", t => {
   const { store } = tempStore(t);
   store.transaction(() => {

@@ -44,7 +44,7 @@ function Table({ rows }) {
   const width = Math.max(1, ...rows.map(row => row.length));
   return (
     <div className="tw-preview-scroll">
-      <table className="tw-sheet">
+      <table className="tw-grid-table">
         <tbody>{rows.slice(0, 1000).map((row, index) => <tr key={index}><th>{index + 1}</th>{Array.from({ length: width }, (_, cell) => <td key={cell}>{row[cell] ?? ""}</td>)}</tr>)}</tbody>
       </table>
       {rows.length > 1000 ? <p className="tw-hint">Showing the first 1,000 of {rows.length} rows.</p> : null}

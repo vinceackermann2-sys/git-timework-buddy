@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { call, useEvent } from "../api.js";
 import { Download, Plug, Plus, Trash2 } from "lucide-react";
-import { Dialog, Segmented, Switch, useToast } from "./common.jsx";
+import { Dialog, Segmented, Switch, useConfirm, useToast } from "./common.jsx";
 import { ImportKnowledge } from "./Knowledge.jsx";
 
 const AUTH = { notLoggedIn: "Sign-in needed", oAuth: "Signed in", bearerToken: "Token", unsupported: "", unknown: "" };
@@ -64,11 +64,18 @@ const serverTarget = server => server.transport === "http" ? server.url : [serve
 // One server: what it offers, sign-in, on or off, remove.
 function ServerDetails({ server, onRun, onClose }) {
   const toast = useToast();
-  const status = [server.error ? server.error : server.tools !== null ? `${server.tools} tool${server.tools === 1 ? "" : "s"}` : "", AUTH[server.authStatus] || ""].filter(Boolean).join(" · ");
+  const confirm = useConfirm();
+  const remove = async () => {
+    if (!await confirm({ title: `Remove ${serverTitle(server)}?`, body: "Agents can no longer use this server. New chats pick up the change.", action: "Remove", danger: true })) return;
+    if (await onRun("mcp.remove", { name: server.name })) onClose();
+  };
+  // A sign-in that ran out (mcp.cjs reauthenticationRequired) asks to sign in again.
+  const expired = !!server.reauthenticationRequired;
+  const status = [expired ? "Its sign-in has expired." : server.error ? server.error : server.tools !== null ? `${server.tools} tool${server.tools === 1 ? "" : "s"}` : "", expired ? "" : AUTH[server.authStatus] || ""].filter(Boolean).join(" · ");
   if (server.builtIn) return <p className="tw-plugin-text">Built into Timewarp: your connected apps reach agents through this server.{status ? " " + status + "." : ""}</p>;
   return (
     <>
-      {status ? <p className="tw-plugin-text">{status}</p> : null}
+      {status ? <p className={"tw-plugin-text" + (expired ? " tw-alert" : "")}>{status}</p> : null}
       <div className="tw-list-panel">
         <div className="tw-list-row compact">
           <div className="grow"><strong>Use this server</strong><span className="desc">New chats pick up changes.</span></div>
@@ -76,8 +83,8 @@ function ServerDetails({ server, onRun, onClose }) {
         </div>
       </div>
       <div className="tw-dialog-actions">
-        <button type="button" className="tw-btn danger" onClick={() => { if (window.confirm(`Remove the ${server.name} server?`)) void onRun("mcp.remove", { name: server.name }).then(onClose); }}><Trash2 size={15} />Remove</button>
-        {server.authStatus === "notLoggedIn" ? <button type="button" className="tw-btn primary" onClick={() => onRun("mcp.signIn", { name: server.name }).then(() => toast("Finish signing in in your browser."))}>Sign in</button> : null}
+        <button type="button" className="tw-btn danger" onClick={() => void remove()}><Trash2 size={15} />Remove</button>
+        {expired || server.authStatus === "notLoggedIn" ? <button type="button" className="tw-btn primary" onClick={() => onRun("mcp.signIn", { name: server.name }).then(ok => { if (ok) toast("Finish signing in in your browser."); })}>{expired ? "Sign in again" : "Sign in"}</button> : null}
       </div>
     </>
   );
@@ -96,7 +103,8 @@ export function McpServers({ query = "", onCount }) {
   useEffect(() => { if (servers) onCount?.(servers.length); }, [servers]);
   useEvent("mcp.changed", event => { if (event?.success === false) toast(event.error || "Sign-in didn't finish.", "error"); void load(); });
   // Changes return the user's servers; the list reloads to keep Timewarp's own.
-  const run = (method, input) => call(method, input).then(() => load()).catch(error => toast(error, "error"));
+  // Resolves whether the change worked; a failure shows as a toast.
+  const run = (method, input) => call(method, input).then(() => load()).then(() => true, error => { toast(error, "error"); return false; });
   const needle = query.trim().toLowerCase();
   const shown = (servers || []).filter(server => !needle || serverTitle(server).toLowerCase().includes(needle) || String(serverTarget(server)).toLowerCase().includes(needle));
   const detail = open && (servers || []).find(server => server.name === open);
@@ -108,6 +116,7 @@ export function McpServers({ query = "", onCount }) {
             <button key={server.name} type="button" className={"tw-tile clickable" + (server.enabled ? "" : " off")} onClick={() => setOpen(server.name)}>
               <span className="tw-mcp-icon"><Plug size={24} strokeWidth={1.75} /></span>
               <div><strong>{serverTitle(server)}</strong><span className="desc">{serverTarget(server)}</span></div>
+              {server.reauthenticationRequired ? <span className="tw-tile-reconnect">Sign in again</span> : null}
             </button>
           ))}
           {needle ? null : <button type="button" className="tw-add-tile" onClick={() => setAdding(true)}><Plus size={24} strokeWidth={1.75} />Add MCP server</button>}
@@ -130,13 +139,18 @@ export function SharedInstructions({ onDone }) {
   const [saved, setSaved] = useState(null);
   const [text, setText] = useState("");
   const toast = useToast();
+  const confirm = useConfirm();
+  const clear = async () => {
+    if (!await confirm({ title: "Clear instructions?", body: "The instructions for every agent are removed. New chats use the change.", action: "Clear", danger: true })) return;
+    call("instructions.save", { text: "" }).then(value => { setSaved(value.text); setText(value.text); toast("Instructions cleared."); }).catch(error => toast(error, "error"));
+  };
   useEffect(() => { call("instructions.get").then(value => { setSaved(value.text); setText(value.text); }).catch(error => toast(error, "error")); }, []);
   return (
     <>
       <textarea className="tw-textarea tw-notes" value={text} maxLength={20000} disabled={saved === null} onChange={event => setText(event.target.value)} aria-label="Instructions for every agent" placeholder="For example: Answer in British English. Ask before sending email on my behalf." />
       <span className="tw-hint">Each agent's own instructions apply on top. New chats use the latest version.</span>
       <div className="tw-dialog-actions">
-        {saved ? <button type="button" className="tw-btn" onClick={() => { if (window.confirm("Clear the instructions for every agent?")) call("instructions.save", { text: "" }).then(value => { setSaved(value.text); setText(value.text); toast("Instructions cleared."); }).catch(error => toast(error, "error")); }}>Clear</button> : null}
+        {saved ? <button type="button" className="tw-btn" onClick={() => void clear()}>Clear</button> : null}
         <button type="button" className="tw-btn primary" disabled={saved === null || text === saved} onClick={() => call("instructions.save", { text }).then(value => { setSaved(value.text); setText(value.text); toast("Instructions saved."); onDone?.(); }).catch(error => toast(error, "error"))}>Save</button>
       </div>
     </>

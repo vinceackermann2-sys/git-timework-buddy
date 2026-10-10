@@ -3,24 +3,34 @@
 // screens (desktop/*-ui.js), which call window.timewarp.request(action, input).
 const BILLING_ROUTES = new Set(["/billing", "/billing/service", "/billing/history"]);
 
-function createLegacyRequests({ services, harness, guard, version, selectModel, registerTools, historyStatus, onboarding = null, openConnector = null }) {
+// onFundingChanged tells the interface to reload the models and funding, as
+// after a ChatGPT connection, when the AI funding source or plan changes.
+function createLegacyRequests({ services, harness, guard, version, selectModel, onFundingChanged = () => {}, registerTools, historyStatus, onboarding = null, openConnector = null }) {
   const { auth, chatgpt, funding, integrations } = services;
   return async function request(action, input = {}) {
     switch (action) {
       case "state": return { user: auth.user(), passwordRecovery: auth.passwordRecovery(), version, privacy: "Vaults and payment details stay on this device." };
       case "historyStatus": return historyStatus();
+      // Only the signed-in user's own chats (harness.conversations.get checks
+      // the owner, as the previous app checked the chat's creator); a chat
+      // that is missing or someone else's has no status.
       case "executionStatus": {
-        const conversation = harness.conversations.get(input.conversationId);
-        return guard.snapshot(conversation.codexThreadId ? [conversation.codexThreadId] : []) || [];
+        const id = typeof input.conversationId === "string" ? input.conversationId : "";
+        let conversation = null;
+        try { conversation = id ? harness.conversations.get(id) : null; } catch { conversation = null; }
+        return conversation?.codexThreadId ? guard.snapshot([conversation.codexThreadId]) || [] : [];
       }
       case "browserAgent": return null;
       case "chatgptDetails": { const state = await funding.current(); if (!state.subscriptionAllowed) await chatgpt.refresh(); return { ...chatgpt.details(), funding: state, login: chatgpt.currentBrowserLogin() }; }
       case "verifyChatgpt": await funding.requireFree(); return chatgpt.verifyAccess();
       case "connectChatgpt": { await auth.accessToken(); await funding.requireFree(); const result = await chatgpt.startBrowserLogin(input); await services.openExternal(result.authUrl); return { status: result.status }; }
       case "cancelChatgpt": return chatgpt.cancelLogin();
-      case "disconnectChatgpt": { const result = await chatgpt.disconnect(); await selectModel().catch(() => {}); return result; }
+      // The default model follows the new catalog (Timewarp's models after a
+      // disconnect); open pickers and the composer reload.
+      case "disconnectChatgpt": { const result = await chatgpt.disconnect(); await selectModel().catch(() => {}); onFundingChanged(); return result; }
       case "selectChatgpt": await funding.requireFree(); return chatgpt.selectAccount(input.id);
-      case "refreshAiFunding": await selectModel(); return funding.current();
+      // After a plan change in Billing.
+      case "refreshAiFunding": await selectModel().catch(() => {}); onFundingChanged(); return funding.current();
       case "refreshTools": integrations.invalidate(); await registerTools(true); return { ready: true };
       case "openConnectorBrowser": await services.ensureCallback(); if (openConnector) { openConnector(input.url); return { ownerId: null, external: false }; } await services.openExternal(input.url); return { ownerId: null, external: true };
       case "closeConnectorBrowser": return { closed: true };

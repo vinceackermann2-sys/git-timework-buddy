@@ -53,13 +53,50 @@ test("imports refuse selections that were not detected", t => {
   assert.throws(() => knowledge.importItems([]), /Select at least one/);
 });
 
-test("notes feed the agent instructions unless memory is off", t => {
+test("notes reach each turn in full unless memory is off; the instructions stay the same", t => {
   const { knowledge } = setup(t);
   assert.match(knowledge.instructions("enabled"), /memories[\\/]user\.md/);
-  knowledge.saveNotes("Prefers metric units.");
-  assert.match(knowledge.instructions("enabled"), /<user_notes>\nPrefers metric units\.\n<\/user_notes>/);
+  const before = knowledge.instructions("enabled");
+  assert.equal(knowledge.context("enabled"), null, "Nothing to carry yet");
+  const long = "Prefers metric units.\n" + "Detail. ".repeat(2000);
+  knowledge.saveNotes(long);
+  assert.equal(knowledge.instructions("enabled"), before, "Notes don't change the thread's instructions");
+  assert.ok(knowledge.context("enabled").includes("<user_notes>\n" + long.trim() + "\n</user_notes>"), "The whole file, not the first 8,000 characters");
+  assert.match(knowledge.context("read"), /metric/);
+  assert.equal(knowledge.context("disabled"), null);
+  assert.equal(knowledge.context("write"), null);
   assert.doesNotMatch(knowledge.instructions("disabled"), /metric/);
   assert.throws(() => knowledge.saveNotes("x".repeat(100001)), /under 100,000/);
+});
+
+test("the memory context has today's log and the latest days' summaries, the previous app's included", t => {
+  const { runtimeDir, knowledge } = setup(t);
+  const logs = path.join(runtimeDir, "entities/memories/daily-logs"), previous = path.join(runtimeDir, "entities/memories/imports/timewarp-previous/daily-logs");
+  fs.mkdirSync(logs, { recursive: true }); fs.mkdirSync(previous, { recursive: true });
+  fs.writeFileSync(path.join(logs, "2026-10-10.md"), "---\nsummary: Booked the dentist.\n---\n# 2026-10-10\n- Booked the dentist for Friday.\n");
+  fs.writeFileSync(path.join(logs, "2026-10-09.md"), "---\nsummary: \"Planned the Rome trip.\"\n---\n- Long details.\n");
+  fs.writeFileSync(path.join(previous, "2026-10-01.md"), "# 2026-10-01\nSent the invoice to Avery.\n");
+  for (let day = 11; day <= 20; day++) fs.writeFileSync(path.join(previous, `2026-09-${day}.md`), `---\nsummary: Day ${day}.\n---\n`);
+  const context = knowledge.context("enabled", new Date(2026, 9, 10, 12));
+  assert.match(context, /Today's log \(.*2026-10-10\.md\):\n---\nsummary: Booked the dentist\.[\s\S]*Friday/);
+  assert.match(context, /- 2026-10-09 \(.*\): Planned the Rome trip\./);
+  assert.match(context, /- 2026-10-01 \(.*timewarp-previous.*\): Sent the invoice to Avery\./);
+  assert.equal((context.match(/^- \d{4}-/gm) || []).length, 7, "The latest seven earlier days");
+  assert.doesNotMatch(context, /Day 11\./);
+});
+
+test("placeholder notes are replaced by imported notes, keeping setup's blocks", t => {
+  const { runtimeDir, knowledge } = setup(t);
+  const notes = path.join(runtimeDir, "entities/memories/user.md");
+  fs.mkdirSync(path.dirname(notes), { recursive: true });
+  fs.writeFileSync(notes, "# User\n\n_No long-term memory has been saved yet._\n\n<!-- timewarp:onboarding-name -->\nPreferred name: \"Vi\".\n<!-- /timewarp:onboarding-name -->\n");
+  assert.equal(knowledge.notesArePlaceholder(), true);
+  assert.match(knowledge.context("enabled"), /Preferred name/, "Setup's names still reach the agent");
+  knowledge.adoptNotes("# User\n\n- Works at Halden.\n");
+  const text = fs.readFileSync(notes, "utf8");
+  assert.match(text, /^# User\n\n- Works at Halden\.\n\n<!-- timewarp:onboarding-name -->\nPreferred name: "Vi"\.\n<!-- \/timewarp:onboarding-name -->\n$/);
+  assert.equal(knowledge.notesArePlaceholder(), false);
+  assert.throws(() => knowledge.saveImport("timewarp-previous", "../user.md", "x"), /outside/);
 });
 
 test("skill folders connected by the previous app are found again", t => {

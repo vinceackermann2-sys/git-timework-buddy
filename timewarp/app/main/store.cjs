@@ -43,6 +43,38 @@ const SCHEMA = [
 
 const now = () => new Date().toISOString();
 const json = value => value === undefined || value === null ? null : JSON.stringify(value);
+// Search ignores case and accents, as before ("cafe" finds "Café").
+const fold = value => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const SEARCH_MIN = 3, SNIPPET_ROOM = 40;
+const plainText = value => String(value || "").replace(/```[\w+-]*/g, " ").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>~|]+/g, "");
+// One line around the first match, with "..." where text was cut, and where
+// the match is within it ({ start, end }, or null when it isn't in the text).
+function snippetOf(text, query, room = SNIPPET_ROOM) {
+  const source = String(text || "").replace(/\s+/g, " ").trim();
+  let folded = "";
+  const at = [];
+  for (let index = 0; index < source.length;) {
+    const character = String.fromCodePoint(source.codePointAt(index));
+    const piece = fold(character);
+    folded += piece;
+    for (let count = 0; count < piece.length; count++) at.push(index);
+    index += character.length;
+  }
+  at.push(source.length);
+  const needle = fold(String(query || "").trim());
+  const found = needle ? folded.indexOf(needle) : -1;
+  // Cuts never split a character made of two UTF-16 units.
+  const whole = index => index > 0 && index < source.length && /[\udc00-\udfff]/.test(source[index]) ? index - 1 : index;
+  if (found < 0) {
+    const end = whole(Math.min(source.length, room * 2));
+    return { snippet: source.slice(0, end) + (end < source.length ? "..." : ""), highlight: null };
+  }
+  const start = at[found], end = at[found + needle.length];
+  const from = whole(Math.max(0, start - room)), to = whole(Math.min(source.length, end + room));
+  const lead = from > 0 ? "..." : "";
+  const offset = lead.length + start - from;
+  return { snippet: lead + source.slice(from, to) + (to < source.length ? "..." : ""), highlight: { start: offset, end: offset + end - start } };
+}
 const parse = value => { if (value === null || value === undefined) return null; try { return JSON.parse(value); } catch { return null; } };
 
 function openStore(file) {
@@ -83,6 +115,9 @@ function openStore(file) {
       thread_total integer not null, updated_at text not null)`,
     "create index turn_usage_conversation on turn_usage(conversation_id)",
   ]);
+  // Files and images a message carried, for messages that have no Codex
+  // transcript to show them (chats from the previous app).
+  migrate(5, ["alter table messages add column attachments text"]);
   return createStore(db);
 }
 
@@ -90,6 +125,9 @@ function createStore(db) {
   const events = new EventEmitter();
   events.setMaxListeners(100);
   const changed = (kind, id, extra = {}) => events.emit("change", { kind, id, ...extra });
+  // Accent-insensitive search needs SQLite user functions (Node 22.13 and later).
+  const folding = typeof db.function === "function";
+  if (folding) db.function("tw_fold", { deterministic: true }, value => typeof value === "string" ? fold(value) : value);
   const one = (sql, ...args) => db.prepare(sql).get(...args) || null;
   const all = (sql, ...args) => db.prepare(sql).all(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
@@ -126,10 +164,18 @@ function createStore(db) {
     createdAt: row.created_at, updatedAt: row.updated_at, lastActivityAt: row.last_activity_at,
     ...(row.last_text !== undefined ? { lastText: row.last_text ? String(row.last_text).slice(0, 200) : null } : {}),
   };
+  // images: paths (or names, when the file is gone); files: paths or names.
+  const attachmentsOf = value => {
+    const parsed = parse(value);
+    const list = key => Array.isArray(parsed?.[key]) ? parsed[key].filter(item => typeof item === "string" && item) : [];
+    return parsed ? { images: list("images"), files: list("files") } : {};
+  };
   const messageOf = row => row && {
     id: row.id, conversationId: row.conversation_id, seq: row.seq, authorId: row.author_id,
     createdAt: row.created_at, text: row.text, turnId: row.turn_id, status: row.status,
+    ...(row.attachments ? attachmentsOf(row.attachments) : {}),
   };
+  const attachmentsJson = ({ images, files } = {}) => (images?.length || files?.length) ? JSON.stringify({ images: images || [], files: files || [] }) : null;
 
   const agents = {
     get: id => agentOf(one("select * from agents where id = ?", id)),
@@ -174,7 +220,7 @@ function createStore(db) {
       }
       args.push(limit);
       // The chat's latest message (from either side; not ones that failed), shown in the sidebar's activity list.
-      const last = "(select substr(m.text, 1, 400) from messages m where m.conversation_id = c.id and coalesce(m.status, '') not in ('failed', 'replaced') order by m.seq desc limit 1)";
+      const last = "(select substr(m.text, 1, 400) from messages m where m.conversation_id = c.id and coalesce(m.status, '') not in ('failed', 'replaced') and m.text not like '<agent-introduction>%' order by m.seq desc limit 1)";
       return all(`select c.*, ${last} last_text from conversations c where ${where.join(" and ")} order by c.last_activity_at desc limit ?`, ...args).map(conversationOf);
     },
     create(input) {
@@ -200,6 +246,30 @@ function createStore(db) {
       return conversations.get(id);
     },
     remove(id) { run("delete from conversations where id = ?", id); changed("conversation", id, { removed: true }); },
+    // Search (Ctrl/⌘+K), from three characters as before: chats whose name
+    // matches, then messages that match, newest first, each with a snippet.
+    // Archived chats and messages that weren't delivered are left out.
+    search(ownerId, query, { limit = 50 } = {}) {
+      const text = String(query || "").trim();
+      if ([...text].length < SEARCH_MIN) return { conversations: [], messages: [] };
+      const pattern = "%" + fold(text).replace(/[\\%_]/g, "\\$&") + "%";
+      // Text with accents or other non-ASCII letters is folded before matching;
+      // plain text is matched by SQLite directly, which is much faster.
+      const matches = column => folding
+        ? `(${column} like :pattern escape '\\' or (${column} glob :wide and tw_fold(${column}) like :pattern escape '\\'))`
+        : `${column} like :pattern escape '\\'`;
+      const args = { owner: ownerId, pattern, limit, ...(folding ? { wide: "*[^" + String.fromCharCode(1) + "-~]*" } : {}) };
+      const titles = db.prepare(`select c.* from conversations c where c.owner_id = :owner and c.archived_at is null and c.title is not null and ${matches("c.title")}
+        order by c.last_activity_at desc limit :limit`).all(args);
+      const found = db.prepare(`select c.*, m.id message_id, m.created_at message_at, m.text message_text from messages m join conversations c on c.id = m.conversation_id
+        where c.owner_id = :owner and c.archived_at is null and coalesce(m.status, '') not in ('failed', 'replaced') and ${matches("m.text")}
+        order by m.created_at desc, m.seq desc limit :limit`).all(args);
+      return {
+        conversations: titles.map(row => ({ conversation: conversationOf(row), ...snippetOf(row.title, text) })),
+        // Snippets read as text: no Markdown marks, links as their words.
+        messages: found.map(row => ({ conversation: conversationOf(row), messageId: row.message_id, createdAt: row.message_at, ...snippetOf(plainText(row.message_text), text) })),
+      };
+    },
   };
 
   const messages = {
@@ -211,8 +281,8 @@ function createStore(db) {
         if (one("select 1 from messages where id = ?", id)) return messages.get(id);
         const seq = (one("select max(seq) seq from messages where conversation_id = ?", input.conversationId)?.seq || 0) + 1;
         const at = input.createdAt || now();
-        run(`insert into messages(id, conversation_id, seq, author_id, created_at, text, turn_id, status) values (?,?,?,?,?,?,?,?)`,
-          id, input.conversationId, seq, input.authorId, at, input.text, input.turnId || null, input.status || null);
+        run(`insert into messages(id, conversation_id, seq, author_id, created_at, text, turn_id, status, attachments) values (?,?,?,?,?,?,?,?,?)`,
+          id, input.conversationId, seq, input.authorId, at, input.text, input.turnId || null, input.status || null, attachmentsJson(input));
         run("update conversations set last_activity_at = max(last_activity_at, ?), updated_at = ? where id = ?", at, now(), input.conversationId);
         changed("conversation", input.conversationId, { message: id });
         return messages.get(id);
@@ -221,7 +291,8 @@ function createStore(db) {
     update(id, patch) {
       const current = messages.get(id);
       if (!current) return null;
-      run("update messages set text = ?, status = ?, turn_id = ? where id = ?", patch.text ?? current.text, patch.status ?? current.status, patch.turnId ?? current.turnId, id);
+      run("update messages set text = ?, status = ?, turn_id = ?, attachments = ? where id = ?", patch.text ?? current.text, patch.status ?? current.status, patch.turnId ?? current.turnId,
+        attachmentsJson(patch.images || patch.files ? { images: patch.images ?? current.images, files: patch.files ?? current.files } : current), id);
       changed("conversation", current.conversationId, { message: id });
       return messages.get(id);
     },
@@ -267,6 +338,14 @@ function createStore(db) {
     runs: {
       list: (automationId, limit = 30) => all("select * from automation_runs where automation_id = ? order by started_at desc limit ?", automationId, limit).map(runOf),
       byTurn: turnId => runOf(one("select * from automation_runs where turn_id = ? order by started_at desc limit 1", turnId)),
+      get: id => runOf(one("select * from automation_runs where id = ?", id)),
+      // A run that didn't start leaves no record; it is tried again (automations.cjs).
+      remove(id) {
+        const current = runOf(one("select * from automation_runs where id = ?", id));
+        if (!current) return;
+        run("delete from automation_runs where id = ?", id);
+        changed("automation", current.automationId, { run: id, removed: true });
+      },
       create(input) {
         const id = input.id || crypto.randomUUID();
         run(`insert into automation_runs(id, automation_id, conversation_id, turn_id, trigger, status, error, started_at, finished_at) values (?,?,?,?,?,?,?,?,?)`,
@@ -351,4 +430,4 @@ function createStore(db) {
   };
 }
 
-module.exports = { openStore, createStore };
+module.exports = { openStore, createStore, snippetOf };

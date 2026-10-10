@@ -8,7 +8,12 @@ const path = require("node:path");
 const cp = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
-const out = path.join(root, "build", "engine", "app");
+// TIMEWARP_ENGINE_OUT_NAME builds into build/engine-<name>/app instead, so
+// several builds can exist side by side.
+const outName = process.env.TIMEWARP_ENGINE_OUT_NAME || "";
+if (outName && !/^[a-z0-9-]{1,32}$/.test(outName)) throw new Error("TIMEWARP_ENGINE_OUT_NAME takes lowercase letters, numbers and dashes.");
+const outRoot = path.join(root, "build", outName ? "engine-" + outName : "engine");
+const out = path.join(outRoot, "app");
 const dev = process.argv.includes("--dev");
 const release = process.argv.includes("--release");
 const launch = process.argv.includes("--launch");
@@ -25,7 +30,7 @@ const identity = store ? { profile: "Timewarp Energy", appId: process.env.TIMEWA
 
 function clean(directory) {
   if (!fs.existsSync(directory)) return;
-  const expected = path.join(fs.realpathSync(path.join(root, "build")), "engine", "app");
+  const expected = path.join(fs.realpathSync(path.join(root, "build")), path.basename(outRoot), "app");
   if (fs.realpathSync(directory) !== expected || fs.lstatSync(directory).isSymbolicLink()) throw new Error("Unsafe engine build path.");
   fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
@@ -78,6 +83,7 @@ async function build() {
   });
   copy(path.join(path.dirname(require.resolve("pdfjs-dist/package.json")), "build/pdf.worker.min.mjs"), path.join(out, "renderer/pdf.worker.min.mjs"));
   copy(path.join(root, "app/preload/preload.cjs"), path.join(out, "preload/preload.cjs"));
+  copy(path.join(root, "app/preload/browser-page.cjs"), path.join(out, "preload/browser-page.cjs"));
   if (fixture) copy(path.join(root, "app/main/fixture.cjs"), path.join(out, "main/fixture.cjs"));
 
   const renderDir = path.join(out, "renderer");
@@ -93,6 +99,8 @@ async function build() {
   copy(path.join(root, "assets/app-icon.svg"), path.join(renderDir, "app-icon.svg"));
   copy(path.join(root, "assets/mascots"), path.join(renderDir, "mascots"));
   copy(path.join(root, "assets/onboarding-icons"), path.join(renderDir, "onboarding-icons"));
+  // Timewarp's display font (titles and headings), as in the previous app.
+  copy(path.join(root, "store-assets/fonts/quadrant-text-regular.ttf"), path.join(renderDir, "fonts/quadrant-text-regular.ttf"));
   for (const name of ["orbit", "nova", "cosmo"]) copy(path.join(root, "assets/mascots", name + ".png"), path.join(renderDir, "assets", `timewarp-mascot-${name}.png`));
   for (const file of ["app-icon.ico", "app-icon.png", "app-icon.svg", "timewarp-logo.svg", "auth-bridge.css"]) copy(path.join(root, "assets", file), path.join(out, "assets", file));
   copy(path.join(root, "assets/mascots"), path.join(out, "assets/mascots"));
@@ -107,7 +115,7 @@ async function build() {
   const sections = notices([main.metafile, renderer.metafile]);
   // Every source file that went into the bundles, for the independence audit.
   const inputs = [...new Set([...Object.keys(main.metafile.inputs), ...Object.keys(renderer.metafile.inputs)])].sort();
-  fs.writeFileSync(path.join(root, "build", "engine", "inputs.json"), JSON.stringify(inputs, null, 1));
+  fs.writeFileSync(path.join(outRoot, "inputs.json"), JSON.stringify(inputs, null, 1));
   fs.writeFileSync(path.join(out, "THIRD_PARTY_NOTICES.txt"), `Timewarp desktop includes the following open-source software.\n\n${sections.join("\n\n\n")}\n`);
   const size = file => (fs.statSync(path.join(out, file)).size / 1024).toFixed(0) + " KB";
   console.log(`Timewarp ${version} built at ${out} (main ${size("main/main.cjs")}, interface ${size("renderer/app.js")}, ${sections.length} open-source notices).`);

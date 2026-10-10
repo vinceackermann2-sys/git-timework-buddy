@@ -1,15 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, ChevronUp, GitBranch } from "lucide-react";
 import { call, request, useEvent } from "../api.js";
-import { Markdown } from "../markdown.jsx";
-import { blocksOf } from "../turns.mjs";
-import { ActivityGroup } from "./Activity.jsx";
-import { Dialog } from "./common.jsx";
+import { threadEntries, threadState, toolRow, workerState } from "../turns.mjs";
 
 // The previous app's task panel: run limits and stop reasons, tool and token
-// counts, and the workers an agent started, each of which can be followed.
-const LABELS = { running: "Working", pendingInit: "Starting", completed: "Finished", errored: "Failed", failed: "Failed", interrupted: "Stopped", shutdown: "Finished", notFound: "Unavailable", paused: "Needs input" };
-const nameOf = (path, fallback) => String(path || "").split("/").filter(Boolean).pop() || fallback || "Worker";
+// counts, and the subagents an agent started, each of which can be followed.
+const LABELS = { running: "Working", paused: "Needs input", interrupted: "Stopped", failed: "Failed", completed: "Finished" };
+const nameOf = (path, fallback) => String(path || "").split("/").filter(Boolean).pop() || fallback || null;
 const short = (text, length = 140) => { const value = String(text || "").replace(/\s+/g, " ").trim(); return value.length > length ? value.slice(0, length - 1) + "…" : value; };
 
 // Workers announced on the main thread: spawn calls and their activity.
@@ -31,91 +28,133 @@ export function workersFrom(turns, live) {
   return [...workers.values()];
 }
 
-// Live worker events (their own threads) reduced to name, status and step.
+// Live worker events (their own threads) reduced to name, state and the
+// latest note, result or tool.
 export function liveWorker(current = {}, method, params) {
   if (method === "thread/started") return { ...current, name: params.thread?.agentNickname || params.thread?.name || nameOf(params.thread?.agentRole, current.name) };
-  if (method === "turn/started") return { ...current, status: "running" };
-  if (method === "turn/completed") return { ...current, status: params.turn?.status === "failed" ? "failed" : params.turn?.status === "interrupted" ? "interrupted" : "completed", detail: params.turn?.error?.message || current.detail };
+  if (method === "thread/status/changed") {
+    const status = params.status || {};
+    if (status.type === "systemError") return { ...current, status: "failed" };
+    if (status.type !== "active") return current;
+    const flags = status.activeFlags || [];
+    return { ...current, status: flags.length ? "paused" : "running", reason: flags.length ? (flags.includes("waitingOnApproval") ? "Waiting for approval" : "Waiting for input") : null };
+  }
+  if (method === "turn/started") return { ...current, status: "running", reason: null };
+  if (method === "turn/completed") return { ...current, status: params.turn?.status === "failed" ? "failed" : params.turn?.status === "interrupted" ? "interrupted" : "completed", error: params.turn?.error?.message || null, reason: null };
   if (method === "item/started") {
-    const item = params.item || {};
-    if (item.type === "commandExecution") return { ...current, detail: "Running " + short(item.command, 80) };
-    if (item.type === "dynamicToolCall" || item.type === "mcpToolCall") return { ...current, detail: "Using " + (item.tool || "a tool") };
-    if (item.type === "webSearch") return { ...current, detail: "Searching the web" };
+    const row = toolRow(params.item);
+    if (row) return { ...current, detail: row.title || row.detail };
   }
   if (method === "item/completed" && params.item?.type === "agentMessage" && params.item.text) return { ...current, detail: short(params.item.text) };
   return current;
 }
 
-function WorkerDialog({ conversationId, worker, onClose }) {
-  const [state, setState] = useState(null);
-  useEffect(() => {
-    if (!worker) return;
-    setState(null);
-    call("conversations.worker", { id: conversationId, threadId: worker.threadId }).then(setState).catch(error => setState({ error: error.message }));
-  }, [worker?.threadId]);
-  return (
-    <Dialog open={!!worker} onClose={onClose} title={state?.name || worker?.name || "Worker"} description={worker?.task ? short(worker.task, 300) : LABELS[worker?.status] || null}>
-      <div className="tw-worker-thread">
-        {state === null ? <p className="tw-hint">Loading the worker's activity…</p> : state.error ? <p className="tw-alert">{state.error}</p> : state.turns.length ? state.turns.map(turn => (
-          <div key={turn.id} className="tw-agent-stack">
-            {blocksOf(turn).map(block => block.kind === "activity" ? <ActivityGroup key={block.key} items={block.items} live={turn.status === "inProgress"} />
-              : block.kind === "agent" ? <div key={block.key} className="tw-bubble"><Markdown text={block.item.text} /></div>
-                : <div key={block.key} className="tw-user-message">{(block.item.content || []).map(part => part.text).filter(Boolean).join("\n")}</div>)}
-            {turn.error ? <div className="tw-turn-error">{turn.error.message}</div> : null}
-          </div>
-        )) : <p className="tw-hint">This worker hasn't recorded any steps yet.</p>}
-      </div>
-    </Dialog>
-  );
+// A worker's own transcript reduced to its name, state and latest step.
+export function workerSnapshot(value) {
+  const turns = value?.turns || [];
+  const state = threadState(turns, value?.status);
+  const latest = threadEntries(turns, { worker: true }).reverse().find(entry => entry.kind !== "input");
+  const snapshot = {
+    name: value?.name, reason: state.reason, error: state.status === "failed" ? state.error.message : null,
+    status: !turns.length ? "starting" : state.status,
+    detail: latest ? (latest.text ? short(latest.text) : latest.tool.title || latest.tool.detail) : null,
+  };
+  return Object.fromEntries(Object.entries(snapshot).filter(([, entry]) => entry != null));
 }
+const working = status => ["running", "paused", "starting"].includes(workerState(status));
 
-export function TaskActivity({ conversationId, turns }) {
-  const [runs, setRuns] = useState([]);
+// The chat's subagents, from its turns and their live events. Codex doesn't
+// always send a worker's own events, so working subagents are also read
+// again every few seconds for their name, state and latest step.
+export function useWorkers(conversationId, turns) {
   const [live, setLive] = useState(() => new Map());
-  const [expanded, setExpanded] = useState(true);
-  const [following, setFollowing] = useState(null);
-  const refresh = () => request("executionStatus", { conversationId }).then(value => setRuns(Array.isArray(value) ? value : [])).catch(() => {});
-  useEffect(() => { setRuns([]); setLive(new Map()); void refresh(); }, [conversationId]);
-  useEvent("execution.changed", () => void refresh());
+  const snapshots = useRef(new Map());
+  const [version, setVersion] = useState(0);
+  useEffect(() => { setLive(new Map()); snapshots.current = new Map(); }, [conversationId]);
   useEvent("conversation.event", ({ conversationId: id, method, params }) => {
     if (id !== conversationId || !params?.subAgent || !params.threadId && !params.thread?.id) return;
     const threadId = params.threadId || params.thread.id;
     setLive(current => { const next = new Map(current); next.set(threadId, liveWorker(current.get(threadId), method, params)); return next; });
   });
-  const workers = useMemo(() => workersFrom(turns, live), [turns, live]);
-  const tools = runs.reduce((count, run) => count + (run.toolCalls || 0), 0);
+  const announced = useMemo(() => workersFrom(turns, live), [turns, live]);
+  const key = announced.map(worker => worker.threadId + ":" + worker.status).join(" ");
+  useEffect(() => {
+    let alive = true, timer = null;
+    const poll = async () => {
+      // Read each subagent once, again when the chat reports a change, and
+      // every few seconds while both say it's working. A new worker's thread
+      // can take a moment to exist; a few misses are tried again.
+      const due = announced.filter(worker => {
+        const seen = snapshots.current.get(worker.threadId);
+        return !seen || seen.announced !== worker.status || (seen.misses ? seen.misses < 5 : working(worker.status) && working(seen.value.status));
+      });
+      for (const worker of due) {
+        const value = await call("conversations.worker", { id: conversationId, threadId: worker.threadId }).catch(() => null);
+        if (!alive) return;
+        const seen = snapshots.current.get(worker.threadId);
+        snapshots.current.set(worker.threadId, value ? { announced: worker.status, value: workerSnapshot(value) }
+          : { announced: worker.status, value: seen?.value || {}, misses: (seen?.announced === worker.status ? seen.misses || 0 : 0) + 1 });
+      }
+      if (!due.length) return;
+      setVersion(current => current + 1);
+      timer = setTimeout(poll, 3000);
+    };
+    void poll();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [conversationId, key]);
+  return useMemo(() => announced.map(worker => ({ ...worker, ...snapshots.current.get(worker.threadId)?.value })), [announced, version]);
+}
+
+function detailOf(worker) {
+  const state = workerState(worker.status);
+  // A failed spawn's state message is its error.
+  if (state === "failed") return worker.error || (worker.status === "errored" ? worker.detail : null) || "Open worker for error details";
+  if (state === "paused") return worker.reason || "Waiting for input";
+  return short(worker.detail || worker.task) || "Open to follow its steps and results";
+}
+
+export function TaskActivity({ conversationId, workers, onOpenThread }) {
+  const [runs, setRuns] = useState([]);
+  const [expanded, setExpanded] = useState(true);
+  // While Codex restarts, as when the previous app lost its activity feed.
+  const [offline, setOffline] = useState(false);
+  const refresh = () => request("executionStatus", { conversationId }).then(value => setRuns(Array.isArray(value) ? value : [])).catch(() => {});
+  useEffect(() => { setRuns([]); void refresh(); }, [conversationId]);
+  useEvent("execution.changed", () => void refresh());
+  useEvent("codex.status", ({ status }) => setOffline(status !== "ready" && status !== "starting"));
   if (!workers.length && !runs.some(run => run.toolCalls || run.reason)) return null;
-  const active = workers.filter(worker => ["running", "pendingInit"].includes(worker.status));
-  const failed = workers.filter(worker => ["errored", "failed"].includes(worker.status));
-  const stopped = runs.some(run => run.stopped);
-  const summary = workers.length
-    ? stopped ? (active.length ? "Stopping…" : "Stopped") : active.length ? `${active.length} working` : failed.length ? `${failed.length} failed` : workers.every(worker => ["completed", "shutdown"].includes(worker.status)) ? "Finished" : "Starting"
-    : stopped ? "Stopped" : `${tools} tool call${tools === 1 ? "" : "s"}`;
-  const sum = key => runs.reduce((count, run) => count + (run[key] || 0), 0);
+  const states = workers.map(worker => workerState(worker.status));
+  const count = state => states.filter(value => value === state).length;
+  const sum = key => runs.reduce((total, run) => total + (run[key] || 0), 0);
+  // "1 tool call", "2 tool calls".
+  const counted = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+  const summary = offline ? "Reconnecting to activity…"
+    : runs.some(run => run.stopped) ? (count("running") ? "Stopping…" : "Stopped")
+      : count("running") ? `${count("running")} working` : count("paused") ? "Needs input" : count("failed") ? `${count("failed")} failed`
+        : count("interrupted") ? "Stopped" : states.every(state => state === "completed") ? "Finished" : "Starting";
   return (
-    <section className="tw-task" aria-label="Task and worker activity">
+    <section className="tw-task" aria-label="Task and subagent activity">
       <button type="button" className="tw-task-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
         <GitBranch size={16} />
-        <strong>{workers.length ? `Workers (${workers.length})` : "Task activity"}</strong>
-        <span role="status">{summary}</span>
+        <strong>{workers.length ? `Subagents (${workers.length})` : "Task activity"}</strong>
+        <span role="status">{workers.length ? summary : counted(sum("toolCalls"), "tool call")}</span>
         {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
       </button>
       {expanded ? (
         <div className="tw-task-body">
           {runs.filter(run => run.reason).map(run => <p key={run.id} className="tw-task-limit" role="alert">{run.reason}</p>)}
-          {runs.length ? <p className="tw-task-note">{sum("toolCalls")} tool calls · {sum("failures")} errors · {sum("inputTokens").toLocaleString()} input tokens ({sum("cachedTokens").toLocaleString()} cached) · {sum("outputTokens").toLocaleString()} output{runs.some(run => run.usagePartial) ? " · partial usage" : ""}</p> : null}
-          {workers.map(worker => (
-            <button key={worker.threadId} type="button" className="tw-task-worker" data-status={worker.status || "pendingInit"} aria-label={"Follow " + (worker.name || "worker")} onClick={() => setFollowing(worker)}>
+          {runs.length ? <p className="tw-task-note">{counted(sum("toolCalls"), "tool call")} · {counted(sum("failures"), "error")} · {sum("inputTokens").toLocaleString()} input tokens ({sum("cachedTokens").toLocaleString()} cached). {runs.some(run => run.usagePartial) ? "Partial usage for this session." : "Current session."}</p> : null}
+          {workers.map((worker, index) => (
+            <button key={worker.threadId} type="button" className="tw-task-worker" data-status={states[index]} aria-label={"Follow " + (worker.name || "Subagent")} onClick={event => onOpenThread(worker.threadId, event.currentTarget)}>
               <i aria-hidden="true" />
-              <span><strong>{worker.name || "Worker"}</strong><small>{short(worker.detail || worker.task) || "Open to follow its steps and results"}</small></span>
-              <em>{LABELS[worker.status] || "Starting"}</em>
+              <span><strong>{worker.name || "Subagent"}</strong><small>{detailOf(worker)}</small></span>
+              <em>{offline ? "Disconnected" : LABELS[states[index]] || "Starting"}</em>
               <ChevronRight size={15} />
             </button>
           ))}
           {workers.length ? <p className="tw-task-note">Follow a worker to see its tools and results. Finished means its run ended; the main agent verifies the task outcome.</p> : null}
         </div>
       ) : null}
-      <WorkerDialog conversationId={conversationId} worker={following} onClose={() => setFollowing(null)} />
     </section>
   );
 }

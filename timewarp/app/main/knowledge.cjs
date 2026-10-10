@@ -12,8 +12,40 @@ const fail = (status, message) => Object.assign(new Error(message), { status });
 const NOTES_LIMIT = 100_000, FILE_LIMIT = 16 * 1024 * 1024, MAX_FILES = 500, SKILL_FILES = 2000, SKILL_BYTES = 64 * 1024 * 1024;
 const MEMORY_FILE = /\.(md|mdc|txt)$/i;
 const SKILL_NAME = /^[A-Za-z0-9][\w.-]{0,99}$/;
-const PROMPT_NOTES = 8000, PROMPT_FILES = 40;
+const PROMPT_FILES = 40;
+// The memory context each turn carries, as the previous app gave it: the whole
+// notes file, today's daily log and the latest daily logs' summaries.
+const CONTEXT_DAILY_LOGS = 7, CONTEXT_TODAY = 6000, SUMMARY = 400;
+const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.md$/;
+// The previous app's memory: its folder name under imports/ (legacy-memory.cjs).
+const PREVIOUS_APP = "timewarp-previous";
 
+// The notes file the previous app created before anything was remembered, and
+// the blocks setup writes into it (the user's chosen names, imported sources).
+const PLACEHOLDER = "_No long-term memory has been saved yet._";
+const MANAGED_BLOCK = /<!-- (timewarp:onboarding-name|setup-import:[\w:.-]+) -->[\s\S]*?<!-- \/\1 -->\n?/g;
+function managedBlocks(text) { return String(text || "").match(MANAGED_BLOCK) || []; }
+// Notes with nothing the user or an agent wrote: empty, or only the heading,
+// the placeholder line and setup's blocks.
+function placeholderNotes(text) {
+  const rest = String(text || "").replace(MANAGED_BLOCK, "").replace(PLACEHOLDER, "").replace(/^#\s*User\s*$/m, "");
+  return !rest.trim();
+}
+// A daily log's one-line summary: its front matter's summary, else its first lines.
+function logSummary(text) {
+  const value = String(text || "");
+  const front = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(value);
+  const declared = front && /^summary:\s*(.+)$/m.exec(front[1])?.[1].trim().replace(/^(["'])(.*)\1$/, "$2");
+  const body = (front ? value.slice(front[0].length) : value).split("\n").filter(line => line.trim() && !/^#/.test(line.trim())).join(" ");
+  const line = (declared || body).replace(/\s+/g, " ").trim();
+  return line.length > SUMMARY ? line.slice(0, SUMMARY - 1) + "…" : line;
+}
+const today = (now = new Date()) => [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(part => String(part).padStart(2, "0")).join("-");
+
+// The memory setting's mode: enabled, read (read only), write (write only) or
+// none. The previous app saved "read-only" and "write-only"; "disabled" is none.
+const MEMORY_MODES = { enabled: "enabled", read: "read", "read-only": "read", write: "write", "write-only": "write", none: "none", disabled: "none" };
+const memoryMode = mode => MEMORY_MODES[mode] || "enabled";
 const within = (base, target) => target === base || target.startsWith(base + path.sep);
 function lstat(file) { try { return fs.lstatSync(file); } catch { return null; } }
 
@@ -49,6 +81,8 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
   const memoriesRoot = path.join(runtimeDir, "entities", "memories");
   const importsRoot = path.join(memoriesRoot, "imports");
   const notesFile = path.join(memoriesRoot, "user.md");
+  // Dated logs of what happened each day (memory-writer.cjs), YYYY-MM-DD.md.
+  const dailyLogsRoot = path.join(memoriesRoot, "daily-logs");
   const skillsRoot = path.join(codexHome, "skills");
 
   // Each assistant's folder, its memory files and the settings files that
@@ -62,7 +96,7 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       "codex-chatgpt": { root: codex, memory: ["AGENTS.md", "memories"], mcp: [{ file: path.join(codex, "config.toml"), format: "toml" }] },
       "claude-code": {
         root: claude, memory: ["CLAUDE.md", "*/memory"], within: "projects",
-        mcp: [{ file: env.CLAUDE_CONFIG_DIR ? path.join(claude, ".claude.json") : path.join(home, ".claude.json") }, { file: claudeDesktopConfig(home, env, platform) }],
+        mcp: [{ file: env.CLAUDE_CONFIG_DIR ? path.join(claude, ".claude.json") : path.join(home, ".claude.json") }, { file: path.join(claude, ".mcp.json") }, { file: claudeDesktopConfig(home, env, platform) }],
       },
       "cursor": {
         root: cursor, memory: ["rules", ".cursor/rules", "memories", "AGENTS.md", "MEMORY.md", ".cursorrules"],
@@ -82,9 +116,10 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       if (!listed || typeof listed !== "object") continue;
       for (const [name, value] of Object.entries(listed)) {
         if (servers.has(name) || !value || typeof value !== "object" || /^timewarp/i.test(name)) continue;
-        const config = format === "toml" ? value : value.url || value.serverUrl
+        // type (such as "sse") and whether it's off there decide how it's imported (mcp.cjs).
+        const config = format === "toml" ? value : { ...(value.url || value.serverUrl
           ? { url: value.url || value.serverUrl, http_headers: value.headers }
-          : { command: value.command, args: value.args, env: value.env, cwd: value.cwd };
+          : { command: value.command, args: value.args, env: value.env, cwd: value.cwd }), ...Object.fromEntries(["type", "disabled", "enabled"].filter(key => value[key] !== undefined).map(key => [key, value[key]])) };
         if (typeof config.url === "string" || typeof config.command === "string") servers.set(name, config);
       }
     }
@@ -208,6 +243,17 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
   }
 
   function notes() { try { return fs.readFileSync(notesFile, "utf8"); } catch { return ""; } }
+  const readText = file => { try { return lstat(file)?.isFile() ? fs.readFileSync(file, "utf8") : ""; } catch { return ""; } };
+  // Daily logs, newest first: Timewarp's own, then the previous app's imported
+  // ones for days Timewarp has no log of.
+  function dailyLogs() {
+    const days = new Map();
+    for (const folder of [dailyLogsRoot, path.join(importsRoot, PREVIOUS_APP, "daily-logs")]) {
+      if (!lstat(folder)?.isDirectory()) continue;
+      for (const name of fs.readdirSync(folder)) if (DAY_FILE.test(name) && !days.has(name)) days.set(name, path.join(folder, name));
+    }
+    return [...days].sort(([a], [b]) => b.localeCompare(a)).map(([name, file]) => ({ day: name.slice(0, 10), file }));
+  }
   function importedFiles() {
     const files = [];
     if (lstat(importsRoot)?.isDirectory()) collect(importsRoot, "", files);
@@ -269,25 +315,70 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
         .map(id => path.join(all[id.slice(0, -7)].root, "skills"))
         .filter(directory => lstat(directory)?.isDirectory());
     },
-    // The memory section of an agent's instructions.
-    // Modes: enabled, read (read only), write (write only) and none.
-    instructions(mode) {
-      if (mode === "disabled" || mode === "none") return "Memory is turned off. Don't read or write the user's memory files.";
+    dailyLogsRoot,
+    // The memory section of an agent's instructions, for a mode memoryMode() knows.
+    // Stable for a thread: the notes themselves come with each turn (context()).
+    instructions(setting) {
+      const mode = memoryMode(setting);
+      if (mode === "none") return "Memory is turned off. Don't read or write the user's memory files.";
       if (mode === "write") return `Your memory about the user is in ${notesFile}. When the user shares a lasting preference or fact, or asks you to remember something, add it to that file briefly. Don't read the file or use what it says. Never store passwords, keys or payment details there.`;
-      const text = notes().trim(), files = importedFiles();
+      const files = importedFiles();
       const lines = [
         mode === "read"
-          ? `Your memory about the user is in ${notesFile}. Use it, but don't change that file.`
-          : `Your memory about the user is in ${notesFile}. When the user shares a lasting preference or fact, or asks you to remember something, update that file briefly. Never store passwords, keys or payment details there.`,
+          ? `Your memory about the user is in ${notesFile}, with a log of each day in ${dailyLogsRoot}. Each message brings the current notes and the latest days' summaries. Use them, but don't change those files.`
+          : `Your memory about the user is in ${notesFile}, with a log of each day in ${dailyLogsRoot}. Each message brings the current notes and the latest days' summaries. When the user shares a lasting preference or fact, or asks you to remember something, update the notes briefly; Timewarp also updates them after a chat. Never store passwords, keys or payment details there.`,
       ];
-      if (text) lines.push("Current notes:\n<user_notes>\n" + (text.length > PROMPT_NOTES ? text.slice(0, PROMPT_NOTES) + "\n…" : text) + "\n</user_notes>");
       if (files.length) {
-        lines.push(`Knowledge the user imported from other assistants is in ${importsRoot}. Read a file when it would help:`);
+        lines.push(`Knowledge the user imported from other assistants (and from the previous Timewarp app, in ${PREVIOUS_APP}) is in ${importsRoot}. Read a file when it would help:`);
         lines.push(...files.slice(0, PROMPT_FILES).map(file => "- " + file.path), ...(files.length > PROMPT_FILES ? [`- …and ${files.length - PROMPT_FILES} more`] : []));
       }
       return lines.join("\n");
     },
+    // The memory a turn carries while memory may be read: the whole notes file,
+    // today's log and the latest days' summaries. Null when there is none. It
+    // changes only when the files do, so Codex adds it again only then.
+    context(setting, now = new Date()) {
+      const mode = memoryMode(setting);
+      if (mode !== "enabled" && mode !== "read") return null;
+      const parts = [];
+      const text = notes().trim();
+      // Setup's blocks (the user's chosen names) count; the bare placeholder doesn't.
+      if (text.replace(PLACEHOLDER, "").replace(/^#\s*User\s*$/m, "").trim()) parts.push(`Notes (${notesFile}, full file):\n<user_notes>\n${text.length > NOTES_LIMIT ? text.slice(0, NOTES_LIMIT) + "\n…" : text}\n</user_notes>`);
+      const logs = dailyLogs(), day = today(now);
+      const current = logs.find(log => log.day === day && log.file.startsWith(dailyLogsRoot + path.sep));
+      if (current) {
+        const body = readText(current.file).trim();
+        if (body) parts.push(`Today's log (${current.file}):\n${body.length > CONTEXT_TODAY ? body.slice(0, CONTEXT_TODAY) + "\n…" : body}`);
+      }
+      const earlier = logs.filter(log => log !== current).slice(0, CONTEXT_DAILY_LOGS)
+        .map(log => ({ ...log, summary: logSummary(readText(log.file)) })).filter(log => log.summary);
+      if (earlier.length) parts.push("Earlier days (summaries; the full logs are in those files):\n" + earlier.map(log => `- ${log.day} (${log.file}): ${log.summary}`).join("\n"));
+      return parts.length ? parts.join("\n\n") : null;
+    },
+    // Whether the notes hold nothing anyone wrote (empty or the previous app's placeholder).
+    notesArePlaceholder: () => placeholderNotes(notes()),
+    // Replaces placeholder notes with text, keeping setup's blocks (names, imported sources).
+    adoptNotes(text) {
+      const kept = managedBlocks(notes());
+      writeAtomic(notesFile, [String(text || "").trimEnd(), ...kept.map(block => block.trimEnd())].filter(Boolean).join("\n\n") + "\n");
+    },
+    // A file another app's memory held, copied under imports/<source>/.
+    saveImport(source, relative, data) {
+      const base = path.join(importsRoot, source), destination = path.resolve(base, String(relative || ""));
+      if (!/^[a-z0-9-]+$/.test(source) || !within(base, destination) || destination === base || !MEMORY_FILE.test(destination)) throw fail(400, "An imported file is outside its folder.");
+      writeAtomic(destination, data);
+    },
+    // A day's log for the memory writer: { day, file, text }.
+    dailyLog(day = today()) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw fail(400, "Choose a day.");
+      const file = path.join(dailyLogsRoot, day + ".md");
+      return { day, file, text: readText(file) };
+    },
+    saveDailyLog(day, text) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || typeof text !== "string" || text.length > NOTES_LIMIT) throw fail(400, "A daily log must be text under 100,000 characters.");
+      writeAtomic(path.join(dailyLogsRoot, day + ".md"), text.trimEnd() + "\n");
+    },
   };
 }
 
-module.exports = { createKnowledge };
+module.exports = { createKnowledge, memoryMode, placeholderNotes, logSummary, PREVIOUS_APP };
