@@ -150,8 +150,9 @@ test("Retry clears a sandbox turned off earlier and a newer Codex is checked aga
 });
 
 // The bundled Codex with a chat's permission profile: it writes in the
-// workspace, can't write elsewhere and reaches the network. On Windows it runs
-// where Windows offers its own sandbox; macOS uses Seatbelt with no setup.
+// workspace, can't write elsewhere and reaches the network. On Windows the
+// sandbox is Windows' own where it has one, otherwise Codex's unelevated one,
+// set up and checked as at start-up (sandbox.cjs); macOS uses Seatbelt.
 let available = false;
 try { available = fs.existsSync(codexExecutable(vendorRoot())); } catch {}
 test("commands run in Codex's sandbox with a chat's permissions", { skip: !available && "Codex runtime is not installed", timeout: 120000 }, async t => {
@@ -162,9 +163,12 @@ test("commands run in Codex's sandbox with a chat's permissions", { skip: !avail
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const vendor = vendorRoot();
   const permissions = Object.entries(THREAD_CONFIG).filter(([key]) => /^permissions\.|^default_permissions$/.test(key)).flatMap(([key, value]) => ["-c", `${key}=${JSON.stringify(value)}`]);
+  // The chat's profile is Codex's default only for the commands: with it,
+  // Codex never finishes a Windows sandbox setup.
+  let withProfile = false;
   const client = new CodexClient({
     executable: codexExecutable(vendor), cwd: workspace,
-    args: [...CODEX_FEATURES, ...(process.platform === "win32" ? WINDOWS_SANDBOX_FEATURES : [])].flatMap(setting => ["-c", setting]).concat(permissions),
+    args: () => [...CODEX_FEATURES, ...(process.platform === "win32" ? WINDOWS_SANDBOX_FEATURES : [])].flatMap(setting => ["-c", setting]).concat(withProfile ? permissions : []),
     env: { CODEX_HOME: home, ...codexEnv(vendor) }, clientInfo: { name: "timewarp", title: "Timewarp", version: "0.0.0-test" },
   });
   t.after(async () => {
@@ -172,9 +176,16 @@ test("commands run in Codex's sandbox with a chat's permissions", { skip: !avail
     try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); } catch (error) { console.warn("cleanup:", error.message); }
   });
   if (process.platform === "win32") {
-    const { status } = await client.request("windowsSandbox/readiness", {});
-    if (status !== "ready") { t.skip("Windows offers no sandbox without setup here (" + status + ")"); return; }
+    const values = {};
+    const sandbox = createSandbox({ client, settings: { get: key => values[key], set: (key, value) => { values[key] = value; } }, cwd: workspace, restart: () => client.stop(), codexVersion: "test" });
+    const before = (await sandbox.status()).status;
+    const state = await sandbox.ensure({ setup: true });
+    if (state.status === "unavailable") { t.skip("The Windows sandbox can't run commands here, so it is turned off: " + state.error); return; }
+    assert.equal(state.status, "ready");
+    t.diagnostic("Windows sandbox: " + (before === "ready" ? "Windows' own, no setup" : "Codex's unelevated one, set up (" + before + " before)"));
   }
+  withProfile = true;
+  await client.stop();
   const run = async script => {
     const command = process.platform === "win32" ? ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script] : ["/bin/sh", "-c", script];
     return Promise.race([client.request("command/exec", { command, cwd: workspace, permissionProfile: PERMISSIONS, timeoutMs: 30000 }), new Promise((_, reject) => setTimeout(() => reject(new Error("The sandboxed command stalled.")), 40000).unref())]);
