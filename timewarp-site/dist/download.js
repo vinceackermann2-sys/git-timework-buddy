@@ -15,6 +15,19 @@
     return null;
   }
 
+  // The Mac build is Apple Silicon only, but every Mac browser reports "Intel Mac OS X".
+  // The GPU name tells them apart: Intel Macs (OpenCore Legacy Patcher ones included)
+  // have Intel, AMD or NVIDIA graphics. Safari reports "Apple GPU" either way, so it stays unknown.
+  function detectIntelMac(documentLike) {
+    try {
+      const gl = documentLike.createElement('canvas').getContext('webgl');
+      if (!gl) return false;
+      const info = gl.getExtension('WEBGL_debug_renderer_info');
+      const renderer = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
+      return !/Apple M\d/i.test(renderer) && /\b(Intel|AMD|ATI|Radeon|NVIDIA|GeForce)\b/i.test(renderer);
+    } catch { return false; }
+  }
+
   const downloads = window.TIMEWARP_DOWNLOADS || {};
   function downloadURL(platform) {
     const candidate = downloads[platform];
@@ -25,6 +38,8 @@
   const other = platform => platform === 'windows' ? 'mac' : 'windows';
 
   const detected = detectPlatform(navigator);
+  const intelMac = detected === 'mac' && detectIntelMac(document);
+  window.TIMEWARP_INTEL_MAC = intelMac; // app.js reads this for the #dl-mac row
   const dialog = document.getElementById('download-dialog');
   const title = document.getElementById('dialog-title');
   const message = document.getElementById('platform-message');
@@ -33,11 +48,14 @@
 
   function selectPlatform(platform) {
     options.forEach(option => option.setAttribute('aria-pressed', String(option.dataset.platform === platform)));
-    const url = downloadURL(platform);
-    title.textContent = url ? 'Timewarp for ' + platformName(platform) + '.' : platformName(platform) + ' download coming soon.';
-    message.textContent = url ? (platform === 'mac' ? 'For Apple Silicon Macs running macOS 12 or later.' : 'Your installer is ready.') : 'The official download link isn’t live yet. Check back soon.';
+    const url = downloadURL(platform), intel = platform === 'mac' && intelMac;
+    title.textContent = !url ? platformName(platform) + ' download coming soon.' : intel ? 'Timewarp needs an Apple Silicon Mac.' : 'Timewarp for ' + platformName(platform) + '.';
+    message.textContent = !url ? 'The official download link isn’t live yet. Check back soon.'
+      : intel ? 'This Mac appears to have an Intel processor. Timewarp for Mac runs on Apple Silicon (M1 or later) with macOS 12 or later, so Intel Macs, including ones running OpenCore Legacy Patcher, can’t run it.'
+      : platform === 'mac' ? 'For Apple Silicon Macs (M1 or later) running macOS 12 or later. Intel Macs aren’t supported.' : 'Your installer is ready.';
     link.hidden = !url;
-    if (url) { link.href = url; link.textContent = 'Download for ' + platformName(platform); } else link.removeAttribute('href');
+    // Keep the link on Intel too, in case the GPU check misread an Apple Silicon Mac.
+    if (url) { link.href = url; link.textContent = intel ? 'Download anyway' : 'Download for ' + platformName(platform); } else link.removeAttribute('href');
   }
   function openChooser(platform) {
     if (platform) selectPlatform(platform);
@@ -55,7 +73,7 @@
     action.querySelector('.download-label').textContent = detected ? 'Download for ' + platformName(detected) : 'Get Timewarp';
     const icon = action.querySelector('.os-icon');
     if (icon) icon.innerHTML = icons[detected || 'generic'];
-    const url = detected && downloadURL(detected);
+    const url = detected && !intelMac && downloadURL(detected);
     if (url) { action.href = url; return; }
     action.addEventListener('click', event => { event.preventDefault(); openChooser(detected); });
   });
