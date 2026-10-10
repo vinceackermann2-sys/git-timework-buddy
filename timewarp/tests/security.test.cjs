@@ -7,6 +7,29 @@ test('payment details are rejected before cloud transport, including tool result
   for (const value of [{ prompt: 'my card is 4111 1111 1111 1111' }, { nested: { cvc: '123' } }, { input: [{ type: 'function_call_output', output: 'CVV: 123' }] }, { password: 'private' }]) assert.throws(() => assertCloudSafe(value), /device/);
   assert.doesNotThrow(() => assertCloudSafe({ prompt: 'Create a weekly plan', requestId: '71119008-0000-4000-8000-111110011101' }));
 });
+test('dates, timestamps and tool parameter names are not taken for payment details', () => {
+  for (const value of ['4111-1111-1111-1111', '4111111111111111', '3782 822463 10005', '5555 5555 5555 4444']) assert.throws(() => assertCloudSafe({ input: value }), /device/, value);
+  // About one pair of dates in ten passes the card checksum; a chat holding
+  // one was refused on every later turn.
+  let pairs = 0;
+  for (let month = 1; month <= 12; month++) for (let day = 1; day <= 28; day++) {
+    const dates = `2024-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')} 2024-02-20`;
+    assert.doesNotThrow(() => assertCloudSafe({ input: dates }), dates);
+    pairs++;
+  }
+  assert.equal(pairs, 336);
+  assert.doesNotThrow(() => assertCloudSafe({ input: 'Order 1791464160360 shipped; call +46 70 123 45 67' }));
+  // A tool's "password" parameter is a name in its schema, not a password.
+  const tools = [{ type: 'function', name: 'save_sign_in', parameters: { type: 'object', properties: { site: { type: 'string' }, password: { type: 'string' } }, required: ['site', 'password'] } }];
+  assert.doesNotThrow(() => assertCloudSafe({ tools, input: 'Save the sign-in' }));
+  assert.throws(() => assertCloudSafe({ tools, input: [{ password: 'hunter2' }] }), /device/);
+  assert.throws(() => assertCloudSafe({ type: 'object', properties: { note: '4111 1111 1111 1111' } }), /device/);
+});
+test('the cloud copy of the payment check matches the device copy', () => {
+  const read = file => require('node:fs').readFileSync(require('node:path').join(__dirname, '..', file), 'utf8');
+  const body = text => text.slice(text.indexOf('const secretKeys'), text.indexOf('module.exports') >= 0 ? text.indexOf('module.exports') : text.indexOf('export {'));
+  assert.equal(body(read('cloud/privacy.ts')), body(read('shared/privacy.cjs')));
+});
 test('local card storage removes verification codes without changing non-card credentials', () => {
   const secret = JSON.stringify({ number: '4111111111111111', cardholder: 'Test', cvc: '123', expiryYear: '2030' });
   const stored = JSON.parse(sanitizeCard({ kind: 'credit-card' }, secret));
@@ -18,10 +41,12 @@ test('response telemetry is discarded before cloud transport without exempting s
   let forwarded;
   const server=createBridge({authorize:async()=>true},async(_route,input)=>{forwarded=input;return Response.json({});},0);
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();server.close();});
-  // This real-shaped timestamp passes Luhn and used to block guardian reviews.
-  const telemetry={'x-codex-turn-metadata':JSON.stringify({turn_started_at_unix_ms:1791463223381})};
+  // This real-shaped timestamp passes Luhn and used to block guardian reviews;
+  // no card number starts like a timestamp, so it's no longer flagged.
   let stamp=1791463223381;while(!require('../shared/privacy.cjs').luhn(String(stamp)))stamp++;
-  telemetry['x-codex-turn-metadata']=JSON.stringify({turn_started_at_unix_ms:stamp});
+  assert.doesNotThrow(()=>assertCloudSafe({client_metadata:{'x-codex-turn-metadata':JSON.stringify({turn_started_at_unix_ms:stamp})}}));
+  // Telemetry is dropped before the check even when it looks like a card.
+  const telemetry={'x-codex-turn-metadata':JSON.stringify({trace:'4111111111111111'})};
   assert.throws(()=>assertCloudSafe({client_metadata:telemetry}),/device/);
   const send=input=>fetch(`http://127.0.0.1:${server.address().port}/v1/responses`,{method:'POST',body:JSON.stringify(input)});
   assert.equal((await send({input:'Read the visible page',client_metadata:telemetry,prompt_cache_key:'stable'})).status,200);

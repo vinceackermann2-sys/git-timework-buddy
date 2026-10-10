@@ -133,7 +133,8 @@
 .tw-load-error .tw-button { margin-top: 8px; }
 .tw-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 @keyframes tw-billing-pulse { to { background-position: -200% 0; } }
-@container timewarp-billing (min-width: 640px) { .tw-plan-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+/* One column per plan: three, or four while a retired plan is someone's current plan. */
+@container timewarp-billing (min-width: 640px) { .tw-plan-grid { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); } }
 @container timewarp-billing (max-width: 430px) {
   .tw-billing .tw-panel { padding: 16px; }
   .tw-panel-heading { flex-wrap: wrap; }

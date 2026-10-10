@@ -1,5 +1,8 @@
 "use strict";
 const fail=(status,message)=>Object.assign(Error(message),{status});
+// Codex keeps a loaded thread's provider when it is resumed again, so a chat
+// whose funding changed is unloaded; the caller resumes it and tries once more.
+const providerChanged=()=>Object.assign(fail(409,'Your AI funding changed. Send your message again to continue on your current plan.'),{code:'provider-changed'});
 // Preserve the native tools, approvals, history and streaming. Change only the
 // provider. A selected Codex account never falls back to paid inference.
 function bindCodexFunding({client,chatgpt,funding,userId,cloudProvider='timewarp',backgroundRole='timewarp-memory-writer'}){
@@ -32,7 +35,7 @@ function bindCodexFunding({client,chatgpt,funding,userId,cloudProvider='timewarp
       if(!previous||previous.provider!==mapped.modelProvider){
         if(method==='turn/steer')throw fail(409,'Your AI funding changed. Start a new request to use the current plan.');
         const resumed=await raw('thread/resume',{threadId:params.threadId,modelProvider:mapped.modelProvider,model:mapped.model,config:{model_provider:mapped.modelProvider},excludeTurns:true});
-        if(resumed.thread.modelProvider!==mapped.modelProvider)throw fail(502,'Codex did not confirm the selected AI funding provider.');
+        if(resumed.thread.modelProvider!==mapped.modelProvider){await raw('thread/unsubscribe',{threadId:params.threadId}).catch(()=>{});threads.delete(params.threadId);throw providerChanged();}
         if(who!==userId())throw fail(401,'The active Timewarp account changed.');
         threads.set(params.threadId,{owner:who,provider:mapped.modelProvider,role});
       }
@@ -49,13 +52,17 @@ function bindCodexFunding({client,chatgpt,funding,userId,cloudProvider='timewarp
     delete mapped.effort;
     if(who!==userId())throw fail(401,'The active Timewarp account changed.');
     const result=await raw(method,mapped);if(who!==userId())throw fail(401,'The active Timewarp account changed.');
-    if(result.thread.modelProvider!==mapped.modelProvider)throw fail(502,'Codex did not confirm the selected AI funding provider.');
+    if(result.thread.modelProvider!==mapped.modelProvider){
+      if(method!=='thread/resume')throw fail(502,'Codex did not confirm the selected AI funding provider.');
+      await raw('thread/unsubscribe',{threadId:result.thread.id}).catch(()=>{});threads.delete(result.thread.id);throw providerChanged();
+    }
     threads.set(result.thread.id,{owner:who,provider:mapped.modelProvider,role});return result;
   };
   client.on('notification',event=>{
     const previous=threads.get(event.params?.threadId);
     if(previous?.role===backgroundRole&&event.method==='error'&&!event.params?.willRetry)backgroundBackoff.set(previous.owner,Date.now()+60000);
   });
+  client.on('notification',event=>{if(event.method==='thread/closed')threads.delete(event.params?.threadId);});
   client.on('status',state=>{if(['stopped','failed'].includes(state.status)){threads.clear();backgroundBackoff.clear();}});
   return client;
 }

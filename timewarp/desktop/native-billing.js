@@ -220,9 +220,9 @@ window.timewarpMountBilling = host => {
         allowance.textContent=item.id==='free'?'Use your ChatGPT / Codex plan':number(item.monthlyCredits+extra)+' credits / month';
         choose.querySelector('span').textContent = isCurrent ? extra===savedExtra?'Current plan':'Update plan' : item.id === 'free' ? data.canOpenPortal ? 'Manage cancellation' : 'Free plan' : upgrade ? 'Upgrade' : 'Switch plan';
         choose.disabled = isCurrent&&extra===savedExtra||item.id==='free'&&!data.canOpenPortal;
-        addonDetail.textContent = item.id==='free'?'Buy extra credits below':addon?money(addon.monthlyUsd)+' added each month':'Renews monthly';
+        addonDetail.textContent = item.id==='free'?'Buy extra credits below':item.retired?'No longer offered to new subscribers':addon?money(addon.monthlyUsd)+' added each month':'Renews monthly';
       };
-      picker.select.addEventListener('change', updateSelection); updateSelection(); picker.select.disabled = item.id==='free'||!monthlyAddons.length;
+      picker.select.addEventListener('change', updateSelection); updateSelection(); picker.select.disabled = item.id==='free'||item.retired||!monthlyAddons.length;
       card.append(choose); cards.append(card);
     }
     plans.append(cards); content.append(plans);

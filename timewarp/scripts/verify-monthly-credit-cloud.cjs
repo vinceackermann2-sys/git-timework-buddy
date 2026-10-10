@@ -10,16 +10,16 @@ async function run(){
   adminToken=keys();const owner=await fixture({save:false});users.push(owner);const other=await fixture({save:false});users.push(other);
   const ownerToken=await token(owner),otherToken=await token(other);
   const status=ok(await request(base,{action:'status'},ownerToken),'Live billing status');
-  pass('monthlyCatalogIsLive',status.monthlyCreditAddons.some(addon=>addon.credits===100&&addon.monthlyUsd===20)&&status.monthlyExtraCredits===0);
-  for(const [plan,extra,amount] of [['pro',0,2000],['pro',100,4000],['max',100,7000],['ultra',200,14000]]){
+  pass('monthlyCatalogIsLive',status.monthlyCreditAddons.some(addon=>addon.credits===420&&addon.monthlyUsd===30)&&status.monthlyExtraCredits===0);
+  for(const [plan,extra,amount] of [['max',0,5000],['max',420,8000],['ultra',840,16000]]){
     const checkout=ok(await request(base,{action:'checkout',plan,monthlyExtraCredits:extra},ownerToken),'Recurring checkout');sessions.push({id:checkout.sessionId,token:ownerToken});
     pass(plan+'Plus'+extra+'MonthlyPrice',checkout.amountTotal===amount&&checkout.currency==='usd'&&new URL(checkout.url).hostname==='checkout.stripe.com');report.monthlyAmounts[plan+'+'+extra]=amount/100;
     pass(plan+'Plus'+extra+'UnpaidDoesNotGrant',(await request(base,{action:'sync-checkout',sessionId:checkout.sessionId},ownerToken)).data.pending===true);
     pass(plan+'Plus'+extra+'OwnershipProtected',(await request(base,{action:'sync-checkout',sessionId:checkout.sessionId},otherToken)).status===403);
     ok(await request(base,{action:'cancel-checkout',sessionId:checkout.sessionId},ownerToken),'Expire checkout');
   }
-  pass('unknownMonthlyAdditionRejected',(await request(base,{action:'checkout',plan:'pro',monthlyExtraCredits:123},ownerToken)).status===400);
-  const pack=ok(await request(base,{action:'buy-credits',packCredits:100},ownerToken),'Standalone credit checkout');sessions.push({id:pack.sessionId,token:ownerToken});
+  pass('unknownMonthlyAdditionRejected',(await request(base,{action:'checkout',plan:'max',monthlyExtraCredits:123},ownerToken)).status===400);
+  const pack=ok(await request(base,{action:'buy-credits',packCredits:360},ownerToken),'Standalone credit checkout');sessions.push({id:pack.sessionId,token:ownerToken});
   pass('standalonePriceRemainsSeparate',pack.amountTotal===3000&&pack.currency==='usd');
   const after=ok(await request(base,{action:'status'},ownerToken),'Unpaid status');pass('unpaidSessionsNeverActivatePlan',after.plan==='free'&&after.monthlyExtraCredits===0&&after.includedCredits.allowance===0&&after.purchasedCredits.balance===0);
   report.passed=true;

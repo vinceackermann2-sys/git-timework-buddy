@@ -36,10 +36,10 @@ module.exports.init=(options={})=>{
     pass('noBillingTransportError',!text.includes('Error invoking remote method')&&!text.includes('This feature uses the local desktop harness.'));
     fs.writeFileSync(path.join(root,'reports/billing-desktop.png'),(await window.webContents.capturePage()).toPNG());
     const cloud=await window.webContents.executeJavaScript("window.timewarp.request('cloud',{route:'/billing/service',data:{action:'status'}}).then(x=>({plan:x.plan,prices:x.plans.map(p=>p.monthlyUsd),allowance:x.includedCredits.allowance,included:x.includedCredits.balance,purchased:x.purchasedCredits.balance,monthlyExtraCredits:x.monthlyExtraCredits,monthlyUsd:x.monthlyUsd,monthlyCreditAddons:x.monthlyCreditAddons}))");
-    pass('billingUsesProductionAccount',cloud.prices.join(',')==='0,20,50,100'&&Number.isFinite(cloud.included)&&Number.isFinite(cloud.purchased));
+    pass('billingUsesProductionAccount',cloud.prices.join(',')==='0,50,100'&&Number.isFinite(cloud.included)&&Number.isFinite(cloud.purchased));
     const balancesMatch=await window.webContents.executeJavaScript("document.querySelector('.tw-active-credit-value strong').textContent==="+JSON.stringify(cloud.purchased.toLocaleString(undefined,{maximumFractionDigits:2})));
     pass('displayedBalancesMatchProduction',balancesMatch);
-    pass('monthlyCreditCatalogUsesLivePrices',cloud.monthlyCreditAddons.some(p=>p.credits===100&&p.monthlyUsd===20));
+    pass('monthlyCreditCatalogUsesLivePrices',cloud.monthlyCreditAddons.some(p=>p.credits===420&&p.monthlyUsd===30));
     pass('currentMonthlyAdditionRendered',ui.plans.find(p=>p.id===cloud.plan).addon===String(cloud.monthlyExtraCredits||0));
     const providerUsage=await window.webContents.executeJavaScript("window.timewarp.request('chatgptDetails').then(x=>({available:x.status==='available',used:x.rateLimits?.primary?.usedPercent}))");
     const expected=cloud.allowance>0?(cloud.allowance-cloud.included)/cloud.allowance*100:null;

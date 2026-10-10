@@ -10,15 +10,16 @@ async function ok(r,name){pass(name,r.status===200);return r.data;}
 async function run(){
   adminToken=keys();owner=JSON.parse(fs.readFileSync(path.join(root,'reports/billing-fixture.private.json'),'utf8'));other=await fixture({save:false});
   const ownerToken=await token(owner),otherToken=await token(other);
-  const before=await ok(await request(base+'/billing/service',{action:'status'},ownerToken),'billingStatusIsLive');pass('fourPlansAndMarginConversion',before.plans.map(p=>p.monthlyUsd).join(',')==='0,20,50,100'&&before.credits.markup===2.5);
-  for(const [plan,cents] of [['pro',2000],['max',5000],['ultra',10000]]){
+  const before=await ok(await request(base+'/billing/service',{action:'status'},ownerToken),'billingStatusIsLive');pass('levelPlansAndMarginConversion',before.plans.map(p=>p.monthlyUsd).join(',')==='0,50,100'&&before.plans.every(p=>p.monthlyCredits===p.monthlyUsd*14)&&before.credits.markup===2.5);
+  pass('retiredProCannotBeBought',(await request(base+'/billing/service',{action:'checkout',plan:'pro'},ownerToken)).status===400);
+  for(const [plan,cents] of [['max',5000],['ultra',10000]]){
     const checkout=await ok(await request(base+'/billing/service',{action:'checkout',plan},ownerToken),'realStripeCheckout'+plan);sessions.push({id:checkout.sessionId,token:ownerToken});
     pass('correctStripePrice'+plan,checkout.amountTotal===cents&&checkout.currency==='usd'&&new URL(checkout.url).hostname==='checkout.stripe.com');report.checkoutAmounts[plan]=checkout.amountTotal/100;
     pass('unpaidCheckoutDoesNotGrant'+plan,(await request(base+'/billing/service',{action:'sync-checkout',sessionId:checkout.sessionId},ownerToken)).data.pending===true);
     pass('checkoutCannotBeClaimedByAnotherAccount'+plan,(await request(base+'/billing/service',{action:'sync-checkout',sessionId:checkout.sessionId},otherToken)).status===403);
     await ok(await request(base+'/billing/service',{action:'cancel-checkout',sessionId:checkout.sessionId},ownerToken),'checkoutExpires'+plan);
   }
-  for(const [credits,cents] of [[50,1500],[1000,12500]]){
+  for(const [credits,cents] of [[180,1500],[1500,12500]]){
     const checkout=await ok(await request(base+'/billing/service',{action:'buy-credits',packCredits:credits},ownerToken),'realCreditPackCheckout'+credits);sessions.push({id:checkout.sessionId,token:ownerToken});pass('correctCreditPackAmount'+credits,checkout.amountTotal===cents&&checkout.currency==='usd');
     await request(base+'/billing/service',{action:'cancel-checkout',sessionId:checkout.sessionId},ownerToken);
   }

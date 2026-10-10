@@ -13,7 +13,7 @@ BEGIN
   INSERT INTO auth.users(id,email,raw_user_meta_data,raw_app_meta_data,created_at,updated_at)
   VALUES(fixture_user,'timewarp-ledger-'||fixture_user::text||'@example.invalid','{}','{}',now(),now());
   FOREACH plan_name IN ARRAY ARRAY['pro','max','ultra'] LOOP
-    allowance := CASE plan_name WHEN 'pro' THEN 100 WHEN 'max' THEN 250 ELSE 500 END;
+    allowance := CASE plan_name WHEN 'pro' THEN 280 WHEN 'max' THEN 700 ELSE 1400 END;
     PERFORM public.timewarp_upsert_subscription(
       p_workspace_id=>null,p_owner_user_id=>fixture_user,
       p_stripe_customer_id=>'acceptance_'||fixture_user::text,
@@ -31,12 +31,12 @@ BEGIN
     DELETE FROM public.timewarp_ai_cost_events WHERE user_id=fixture_user;
     DELETE FROM public.timewarp_agent_ai_reservations WHERE user_id=fixture_user;
   END LOOP;
-  -- Ultra has 500 included credits; charge 490, then cross into purchased credits.
+  -- Ultra has 1400 included credits; charge 1390, then cross into purchased credits.
   PERFORM public.timewarp_grant_credits(null,fixture_user,20,'purchase','acceptance-'||fixture_user::text,fixture_user);
   PERFORM public.timewarp_grant_credits(null,fixture_user,20,'purchase','acceptance-'||fixture_user::text,fixture_user);
   reservation := gen_random_uuid();
-  IF public.timewarp_reserve_agent_ai(reservation,fixture_user,490) IS DISTINCT FROM true THEN RAISE EXCEPTION 'Could not reserve first split call'; END IF;
-  PERFORM public.timewarp_energy_finish_ai(reservation,fixture_user,'openai/gpt-5.6-sol',100,20,24.5,'settled');
+  IF public.timewarp_reserve_agent_ai(reservation,fixture_user,1390) IS DISTINCT FROM true THEN RAISE EXCEPTION 'Could not reserve first split call'; END IF;
+  PERFORM public.timewarp_energy_finish_ai(reservation,fixture_user,'openai/gpt-5.6-sol',100,20,69.5,'settled');
   reservation := gen_random_uuid();
   IF public.timewarp_reserve_agent_ai(reservation,fixture_user,20) IS DISTINCT FROM true THEN RAISE EXCEPTION 'Could not reserve split call'; END IF;
   result := public.timewarp_energy_finish_ai(reservation,fixture_user,'openai/gpt-5.6-sol',100,20,1,'settled');

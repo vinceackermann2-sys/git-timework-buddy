@@ -149,7 +149,8 @@ test('durable subscription checkout and billing failure recovery', async t => {
       Request, Response, Date, Error, TextEncoder, Uint8Array, crypto: webcrypto, console: { error() {} },
       Deno: { serve: fn => { handler = fn; }, env: { get: () => 'fixture' } }, createClient: () => admin,
       authenticateRequest: async () => ({ user: { id: options.user || owner, email: 'fixture@example.invalid' } }),
-      isPlanId: plan => ['free', 'pro', 'max', 'ultra'].includes(plan), canManageBilling: () => true,
+      // Checkout durability is independent of which plans are currently sold.
+      isPlanId: plan => ['free', 'pro', 'max', 'ultra'].includes(plan), isOfferedPlan: () => true, canManageBilling: () => true,
       getPlanPriceId: plan => 'price_' + plan, monthlyPlanPrice: async (_stripe, plan) => 'price_' + plan,
       monthlyExtraCredits: () => 0, planSubscriptionExtras: () => 0,
       getStripe: () => stripe, getSiteUrl: () => 'https://fixture.invalid', corsHeaders: {},
