@@ -10,6 +10,7 @@
     const companion=el('aside',null,'tw-companion'),mascot=el('img');mascot.src='./assets/timewarp-mascot-orbit.png';mascot.alt='Your Timewarp agent';companion.append(mascot,el('span','Your agent','tw-companion-name'));view.append(companion);
     const content=el('div',null,'tw-journey-content'),error=el('p',null,'tw-journey-error');error.setAttribute('role','alert');view.append(content,error);
     let state={},busy=false,detection=null,detecting=false,disposed=false,typing=null,poll=null,frame=null,epoch=0,planAudience='individual';
+    let security=null,securityRow=null,securityLoading=false,securityPending=false,securityStarted=false,securityError=null;
     const spoken=new Set();
     const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
     const icon=name=>{const img=el('img');img.src='./onboarding-icons/'+name+'.svg';img.alt='';img.className='tw-service-icon';return img;};
@@ -47,7 +48,29 @@
       for(const child of content.children){if(!child.matches('.tw-chat-history,.tw-journey-heading,.tw-journey-subtitle')){child.classList.add('tw-chat-response');child.inert=view.dataset.speaking==='true';}}
       if(state.step!=='agent')requestAnimationFrame(()=>content.querySelector('.tw-journey-heading')?.scrollIntoView({block:'start',behavior:reduced?'instant':'smooth'}));
     }
+    // Windows: Codex's command sandbox, set up here as the previous app did,
+    // without administrator rights. The row updates in place as setup runs.
+    function renderSecurity(){
+      if(security&&!security.supported)return;
+      securityRow=el('section',null,'tw-journey-security');securityRow.hidden=true;content.append(securityRow);paintSecurity();
+      if(!security&&!securityLoading){securityLoading=true;request('sandboxStatus').then(data=>{security=data},()=>{security={supported:false}}).finally(()=>{securityLoading=false;paintSecurity()});}
+    }
+    function paintSecurity(){
+      const row=securityRow;if(disposed||!row?.isConnected)return;
+      if(!security?.supported){row.hidden=true;return;}
+      row.hidden=false;
+      const failed=securityPending?null:securityError||(security.status==='unavailable'?security.error||'Windows security setup is unavailable.':null),ready=!securityPending&&!failed&&security.status==='ready';
+      const text=el('div',null,'tw-journey-security-text'),detail=el('p',failed||(ready?'Ready to work safely in the folders you choose':'Setting up isolated access to your work'));if(failed)detail.className='failed';text.append(el('h2','Protect work with Windows security'),detail);
+      let trailing;
+      if(ready)trailing=el('span','✓ Ready','tw-journey-button quiet');
+      else if(failed){trailing=el('button','Retry','tw-journey-button secondary');trailing.type='button';trailing.onclick=()=>setUpSecurity(true);}
+      else{trailing=el('span',null,'tw-journey-spinner');trailing.setAttribute('role','status');trailing.setAttribute('aria-label','Setting up Windows security');}
+      row.replaceChildren(icon('shield'),text,trailing);
+      if(!securityStarted&&['notConfigured','updateRequired'].includes(security.status)){securityStarted=true;setUpSecurity(false);}
+    }
+    function setUpSecurity(retry){securityPending=true;securityError=null;paintSecurity();request('sandboxSetup',{retry}).then(data=>{security=data},failure=>{securityError=failure.message||'Windows security setup failed.'}).finally(()=>{securityPending=false;paintSecurity()});}
     function renderKnowledge(){
+      renderSecurity();
       const list=el('div',null,'tw-journey-import-grid');content.append(list);const note=el('p','Selected browser sessions and saved logins are copied into Timewarp on this device. Memory and skills stay local.','tw-journey-fineprint');content.append(note);
       footer('user',button(Object.keys(state.imports||{}).length?'Continue →':'Skip for now →',()=>advance('knowledge-done')));
       if(!detection){list.append(el('p','Looking for profiles and local knowledge…','tw-journey-subtitle'));if(!detecting){detecting=true;const version=epoch;request('onboardingDetect').then(data=>{detection=data;if(!disposed&&version===epoch)render()}).catch(failure=>{if(version===epoch){list.replaceChildren(el('p',failure.message),button('Try again',async()=>{detection=await request('onboardingDetect');render()},'secondary'));}}).finally(()=>detecting=false);}return;}

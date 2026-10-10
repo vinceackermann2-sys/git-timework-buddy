@@ -62,7 +62,7 @@ function fillSignIn(username, password, origin) {
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Each agent's workspace, so the skills kept there (Settings → Skills → Workspace) are listed, as before.
   const skillFolders = () => store.agents.list(services.auth.userId()).filter(agent => !agent.archivedAt && fs.existsSync(agent.workspace)).map(agent => agent.workspace);
@@ -358,13 +358,10 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     },
     "files.reveal": ({ agentId, path: file }) => { shell.showItemInFolder(files.absolute(agentId, file)); return { shown: true }; },
 
-    // Codex's Windows command sandbox. Setup runs only when the user asks for it.
-    "sandbox.status": () => process.platform === "win32" ? client.request("windowsSandbox/readiness", {}) : { status: "ready" },
-    "sandbox.setup": ({ mode }) => {
-      signedIn();
-      if (process.platform !== "win32") return { started: false };
-      return client.request("windowsSandbox/setupStart", { mode: mode === "unelevated" ? "unelevated" : "elevated" });
-    },
+    // Codex's command sandbox (sandbox.cjs): setup in onboarding, as before,
+    // and again from there after it was turned off on this PC.
+    "sandbox.status": () => sandbox.status(),
+    "sandbox.setup": () => { signedIn(); return sandbox.ensure({ setup: true, retry: true }); },
 
     // Memory, knowledge imported from other assistants, and skills.
     "memory.get": () => { signedIn(); return knowledge.read(); },

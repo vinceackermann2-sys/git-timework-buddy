@@ -5,7 +5,7 @@ const BILLING_ROUTES = new Set(["/billing", "/billing/service", "/billing/histor
 
 // onFundingChanged tells the interface to reload the models and funding, as
 // after a ChatGPT connection, when the AI funding source or plan changes.
-function createLegacyRequests({ services, harness, guard, version, selectModel, onFundingChanged = () => {}, registerTools, historyStatus, onboarding = null, openConnector = null }) {
+function createLegacyRequests({ services, harness, guard, version, selectModel, onFundingChanged = () => {}, registerTools, historyStatus, onboarding = null, openConnector = null, sandbox = null }) {
   const { auth, chatgpt, funding, integrations } = services;
   return async function request(action, input = {}) {
     switch (action) {
@@ -56,6 +56,9 @@ function createLegacyRequests({ services, harness, guard, version, selectModel, 
       case "onboardingState": return onboarding ? onboarding.read() : { done: true };
       case "onboardingDetect": if (!onboarding) throw new Error("Setup is unavailable."); return onboarding.detect();
       case "onboardingAction": if (!onboarding) throw new Error("Setup is unavailable."); return onboarding.run(input.action, input);
+      // Setup's "Protect work with Windows security" row (sandbox.cjs).
+      case "sandboxStatus": return sandbox ? sandbox.status() : { supported: false, status: "ready" };
+      case "sandboxSetup": if (!auth.user()) throw new Error("Sign in to Timewarp."); return sandbox ? sandbox.ensure({ setup: true, retry: !!input.retry }) : { supported: false, status: "ready" };
       case "cloud": if (!BILLING_ROUTES.has(input.route)) throw new Error("Invalid route."); return services.cloudJson(input.route, input.data || {});
       default: throw new Error("Unknown action.");
     }

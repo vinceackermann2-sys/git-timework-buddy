@@ -44,7 +44,7 @@ From `timewarp`:
 
     npm run engine:dev               # build and open (separate "Timewarp Dev" profile)
     npm run engine:preview           # signed-in sample account, scripted model, real Codex
-    npm run engine:e2e               # end-to-end harness check in a preview build (21 scenarios)
+    npm run engine:e2e               # end-to-end harness check in a preview build (25 scenarios)
     npm run test:engine              # engine tests, including a real Codex conversation
     npm run engine:audit             # build and check the engine contains nothing from Energy
     npm run engine:package:draft     # unsigned Windows installer (build/engine-installer-draft)
@@ -99,9 +99,9 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Cards in agent messages (connect an app or MCP server, file, choices, buttons, email and chat drafts with Send, tabs, secure secret input, sources, links to files, tabs and workers) | Energy widgets | Rebuilt (`cards.mjs`, `widgets.jsx`), described to agents in `widget-instructions.cjs`; code blocks and tables have Copy. A draft's Send posts the edited draft as the user's go-ahead; secrets are saved in the vault. Files open in a preview dialog rather than the side pane |
 | Messages | Hover time, day and time separators, long messages folded with Show more, Not Delivered · Retry, reply to a message, send while the agent works; the user's own messages as Markdown; attachments that open; a draft kept per chat | Same: a message sent while the agent works joins the running reply (`turn/steer`), and one the agent didn't take before a Stop shows Not Delivered · Retry; Retry resends attached files too; clicking a reply's quote scrolls to the quoted message; the user's messages render as Markdown with reference chips; sent images show as thumbnails and files as chips that open a preview; each chat (and Home) keeps its unsent draft; Copy leaves out card markup; long chats show the latest 100 rows with Load older messages; Report (Ctrl/⌘+Alt+F) sends the chat, app version and platform and shows the feedback ID. Agent text keeps a safe subset of HTML (line breaks, details, kbd, sub/sup, images), footnotes and `data:` images, and model citation markers are removed |
 | Composer | @ for people, skills and files, $ for skills; prompt history; large pastes as a clipboard chip | Same: @ offers the organization's members, skills and the agent's files, $ offers skills, with arrow keys, Enter or Tab and Escape; skills go to Codex as skill items and files and people as references; Up/Down for earlier prompts; a paste over 10 lines becomes a "Clipboard (N lines)" chip; the previous labels ("Add photos & files", "Send message", "Stop response", "Dictate") |
-| Agent working rules (base prompt, task execution contract, delegation, Windows shell) | The previous app's system prompt plus Timewarp's harness instructions and patches | A Timewarp base prompt (`base-instructions.cjs`, in Timewarp's own words, with Codex's open-source guidance on commands, files and plans adapted under Apache-2.0) replaces Codex's own on every thread and worker, whatever the funding source. It carries the previous app's rules: short colleague-like replies without em dashes, a ⚠️ line when the result differs from what the user expected, a user's request authorizes the action including sending or submitting (purchases always need a go-ahead), no citation markers, Google links through the account chooser, writing to others in the user's style, signing in to sites the task needs without asking, connected apps before the browser and no browser fallback for an account that needs reconnecting, bounded automations that stay quiet when nothing changed, and an introduction in a new chat. Each message carries its send time, the user's account and connected accounts (marking those that need reconnecting) and the memory as turn context. On Windows files are written with PowerShell rather than apply_patch, which stalls in Codex's Windows sandbox there; on macOS a protected-data rule applies and commands get the login shell's PATH. The previous app's worker guidance replaces Codex's default "only delegate on request" hint; up to 4 agents at once; workers run on the chat's model and don't start workers of their own. Chat titles come from the first message, then a short title from the small model after the first reply, as before |
+| Agent working rules (base prompt, task execution contract, delegation, Windows shell) | The previous app's system prompt plus Timewarp's harness instructions and patches | A Timewarp base prompt (`base-instructions.cjs`, in Timewarp's own words, with Codex's open-source guidance on commands, files and plans adapted under Apache-2.0) replaces Codex's own on every thread and worker, whatever the funding source. It carries the previous app's rules: short colleague-like replies without em dashes, a ⚠️ line when the result differs from what the user expected, a user's request authorizes the action including sending or submitting (purchases always need a go-ahead), no citation markers, Google links through the account chooser, writing to others in the user's style, signing in to sites the task needs without asking, connected apps before the browser and no browser fallback for an account that needs reconnecting, bounded automations that stay quiet when nothing changed, and an introduction in a new chat. Each message carries its send time, the user's account and connected accounts (marking those that need reconnecting) and the memory as turn context. On Windows agents edit files with apply_patch, as before, once the command sandbox has run a command in the current Codex run; where it can't, files are written with PowerShell, since apply_patch stalls there; on macOS a protected-data rule applies and commands get the login shell's PATH. The previous app's worker guidance replaces Codex's default "only delegate on request" hint; up to 4 agents at once; workers run on the chat's model and don't start workers of their own. Chat titles come from the first message, then a short title from the small model after the first reply, as before |
 | Workers' tools | Browser workers drove the browser through a shell command; workers had the connected apps | Workers have the same tools as the chat's agent: the browser, the vault, automations, chat search, connected apps and MCP servers; a worker's browser actions happen in the chat's browser, each worker in its own background tab so workers running at once don't navigate each other's pages (`workerTools` end-to-end check) |
-| Agent settings (permissions, reasoning) | Workspace permission profile with network access; detailed reasoning summaries, concise replies; skills described to the agent | Same, through a `timewarp` permission profile that extends Codex's `:workspace` (this Codex treats the older `workspace-write` setting as read-only). On Windows, commands run without an approval review once the command sandbox is set up |
+| Agent settings (permissions, reasoning) | Workspace permission profile with network access; detailed reasoning summaries, concise replies; skills described to the agent | Same, through a `timewarp` permission profile that extends Codex's `:workspace` (this Codex treats the older `workspace-write` setting as read-only). Commands in the agent's folders run without an approval review in Codex's command sandbox (next rows) |
 | ChatGPT apps, Codex plugin suggestions, remote plugins, goals, Codex's own browser and computer use | Off | Off: agents use Timewarp's tools and the user's connected apps |
 | Run limits (200 tool calls, 20 minutes, stop after 3 identical failures or on the first error when asked; Stop ends workers too) | Timewarp execution guard | Same guard, counting the official app server's tool items |
 | Approvals for extra access (commands outside the workspace, network, MCP tools) | Automatic review by a reviewer agent; a denial stops the run | Same (Codex's automatic reviewer); a denied review shows in the chat, all reviews in the agent's thread sheet |
@@ -127,7 +127,8 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Connected apps (Composio), per-agent access | Timewarp Composio | Same service and agent tools; the calling agent is worked out from its chat thread, so an agent can't use another agent's accounts; reconnecting an account keeps its agents' access; sign-in opens in an app window with the default browser profile, its title bar naming the site, as before; access UI rebuilt. Accounts that need signing in again show above the composer, and Skip removes the account, as before (the previous app also listed them a second time through the agent, without Skip; the engine lists each once) |
 | MCP servers (URL with sign-in, or local command) | Energy | Rebuilt on the Codex config. Removing a server signs it out; a server whose sign-in expired shows Sign in again; servers the previous app added with names such as "GitHub" can be managed; imports keep a server's off switch, keep `${VAR}` placeholders as environment references and skip SSE-only servers; plain HTTP is allowed on the local network; a local command is confirmed in a system dialog showing the command before it runs |
 | Codex's plugin catalog | Not offered (the previous app listed its own bundled catalog) | Not offered: Settings → Tools lists the user's connected apps and MCP servers |
-| Windows command sandbox setup | Codex; set up automatically (unelevated) in onboarding | Not set up by the engine: `sandbox.status` and `sandbox.setup` exist but nothing in the interface calls them. Profiles from the previous app keep the setup they had; new users' commands are reviewed (see Open) |
+| Windows command sandbox | Codex's unelevated sandbox, set up without administrator rights by the onboarding row "Protect work with Windows security" (Energy's onboarding step; Timewarp's own setup screens replaced it, and the previous app's profiles on the reference PC never had it set up) | Set up in setup's knowledge step with the same row, wording, Ready and Retry (`sandbox.cjs`); accounts that finished setup get it at their next start. Codex uses Windows' own app container sandbox (MXC) instead where Windows offers it, as Codex's own app does, which needs no setup. The official Codex applies a setup only after a restart (the engine restarts it once no chat is replying) and never finishes one without a folder. Every Codex start runs one sandboxed command: where it fails or stalls (security software can stall every sandboxed command), the sandbox is turned off for that Codex version and commands are reviewed instead of hanging; Retry tries again |
+| macOS command sandbox | Codex's Seatbelt sandbox, no setup | Same (a test runs the chat's permission profile on the macOS CI runners: writes in the workspace, none elsewhere, network allowed) |
 | Suggested tasks | Energy, off for the reference account | Not carried over |
 | Feedback, diagnostics | Timewarp reporting, Energy debug export | Same feedback (Ctrl/⌘+Alt+F); Settings → General → Diagnostics opens the log folder and exports a diagnostics file (no chats or account data) |
 | Conversation trace (Activity) | Energy UI | Rebuilt: turns with input, cached and output tokens and timing, events with approximate tokens, workers nested under the step that started them, older turns and events loaded on request. Billed cost and cache writes aren't recorded locally, so they show as "—" |
@@ -168,7 +169,7 @@ prompts. Menus can be used with the arrow keys. Invitations to another organizat
   an added MCP server, files, automations, workers, connector sign-in, the log
   file and diagnostics, automatic approval review allowing and denying, and
   asking the user, workers using the browser, vault and connected apps, and
-  workspace and network access for commands, Stop pressed before a reply starts, a message sent while the agent works, and page dialogs, key combinations, checkboxes, double clicks, background reads and address waits with the pane hidden and on screen (23 scenarios, all passing).
+  workspace and network access for commands, a sandboxed command kept out of other folders without a review, apply_patch file edits, Stop pressed before a reply starts, a message sent while the agent works, and page dialogs, key combinations, checkboxes, double clicks, background reads and address waits with the pane hidden and on screen (25 scenarios, all passing).
 - 497 tests (`npm test`), including the engine tests (`npm run test:engine`)
   and a real Codex conversation against a local model.
 - On 10 October the previous app's code (its bundle and Timewarp's patches)
@@ -231,10 +232,17 @@ Open:
   request's size as cache writes plus 16,384 output tokens: 11–16 credits on
   Sol). With less than that left a call fails with "Not enough unreserved AI
   credits", and a failed review stops the run.
-- Without the Windows command sandbox set up (the default), every command
-  waits for an approval review (one more request, 2–4 s). Codex's sandbox
-  itself (restricted token) stalled on the reference PC, which runs Acronis
-  Active Protection; check on another PC before setting it up for users.
+- On the reference PC (Windows 11 build 26300, Acronis Active Protection)
+  Codex's restricted-token sandbox stalls every command, inside and outside
+  the Claude app's container and with Codex 0.160.1 and 0.162; Windows' app
+  container sandbox runs them in about 0.5 s. A PC without the app container
+  sandbox whose restricted-token sandbox stalls falls back to reviews: each
+  command then waits for one (one more request, 2–4 s), and files are written
+  with PowerShell. GitHub's Windows runner has no app container sandbox:
+  there the restricted-token one sets up, passes the check, keeps writes in
+  the workspace and reaches the network, but PowerShell took 7 to over 30 s
+  to start in it. Not yet tried on a real PC without the app container
+  sandbox.
 - Agents rarely link the browser tabs they open, though told to.
 - The Timewarp base prompt, turn context and background memory writer (10
   October) haven't been through the live model evaluation yet: run it on Luna
@@ -268,9 +276,9 @@ scans the new files.
 | Platform | Package | Minimum | Status |
 | --- | --- | --- | --- |
 | Windows x64 | NSIS installer (`engine:package`) | Windows 10 | Draft built and smoke tested; signed release needs `release.json` and signing |
-| Windows x64 | Microsoft Store MSIX (`engine:package:store`) | Windows 10 1809 | Built and checked; a submission needs a version above 1.1.25 |
-| macOS Apple Silicon | DMG (`package-engine-mac`, `engine-mac` workflow) | macOS 12 | Script and CI ready; not yet run on a Mac |
-| macOS Intel (incl. OpenCore Legacy Patcher Macs) | DMG | macOS 12 | Script and CI ready; not yet run on a Mac |
+| Windows x64 | Microsoft Store MSIX (`engine:package:store`) | Windows 10 1809 | Built and checked with the Store identity; versions in `store.json` |
+| macOS Apple Silicon | DMG (`package-engine-mac`, `engine-mac` workflow) | macOS 12 | Signed, notarized and smoke tested on GitHub's runners; not yet run on a physical Mac |
+| macOS Intel (incl. OpenCore Legacy Patcher Macs) | DMG | macOS 12 | Signed, notarized and smoke tested on GitHub's runners; not yet run on a physical Mac |
 
 The previous Mac build was Apple Silicon only with a macOS 15 floor. The
 engine's floor is set by Electron 43 (macOS 12); measured with
@@ -299,11 +307,8 @@ security fixes; not recommended for an app with a built-in browser.
    Include the live model evaluation (`engine:eval`, Luna and Sol) for the
    new base prompt, turn context and background memory writer, and an upgrade
    from a profile of the previous app with memory, automations and vault items.
-2. Decide on setting up the Windows command sandbox in onboarding, as the
-   previous app did (see Open).
-3. Run the `engine-mac` workflow (previews on macOS 14, 15 and Intel), then
-   a signed build; try it on an Intel Mac.
-4. Signed Windows release: `release.json` and signing; Store: bump the version.
-5. Update the website's Mac download dialog, which still tells Intel visitors
-   the app is Apple Silicon only.
-6. After cutover, remove `timewarp-runtime` and the patch pipeline.
+2. Try the Windows command sandbox on a PC where Windows' app container
+   sandbox isn't available (Codex then uses its restricted-token sandbox), and
+   the signed Mac builds on a real Apple Silicon and Intel Mac.
+3. Signed Windows release: `release.json` and signing.
+4. After cutover, remove `timewarp-runtime` and the patch pipeline.

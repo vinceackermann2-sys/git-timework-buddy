@@ -19,6 +19,13 @@ const CODEX_FEATURES = [
   "agents.max_depth=1",
 ];
 
+// On Windows, commands run in Windows' own app container sandbox (MXC)
+// wherever Windows offers it, as in Codex's own app; it needs no setup.
+// Elsewhere Codex uses its unelevated sandbox, which onboarding sets up as the
+// previous app did (sandbox.cjs). Left out once the sandbox has been turned off
+// on a PC where it couldn't run commands.
+const WINDOWS_SANDBOX_FEATURES = ["features.prefer_mxc=true"];
+
 // Each chat's permissions, as the previous app started them: its workspace
 // profile (write access to the agent's folder; this Codex treats the older
 // workspace-write sandbox setting as read-only) with network access for
@@ -75,4 +82,4 @@ function toolServers(port) {
 // browser and vault tools and memory instructions replace them.
 const REPLACED_SKILLS = ["browser-use", "vault", "memory-write-skill"];
 
-module.exports = { CODEX_FEATURES, PERMISSIONS, THREAD_CONFIG, agentThreadConfig, workspaceRoots, toolServers, REPLACED_SKILLS };
+module.exports = { CODEX_FEATURES, WINDOWS_SANDBOX_FEATURES, PERMISSIONS, THREAD_CONFIG, agentThreadConfig, workspaceRoots, toolServers, REPLACED_SKILLS };

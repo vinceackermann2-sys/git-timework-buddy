@@ -187,7 +187,7 @@ async function boot() {
   const { createServices } = require("./services.cjs");
   const { createHistoryAdapter } = require("./history-adapter.cjs");
   const { engineInstructions, workerInstructions, DELEGATION, WORKER } = require("./instructions.cjs");
-  const { CODEX_FEATURES, PERMISSIONS, agentThreadConfig, workspaceRoots, toolServers, REPLACED_SKILLS } = require("./codex-config.cjs");
+  const { CODEX_FEATURES, WINDOWS_SANDBOX_FEATURES, PERMISSIONS, agentThreadConfig, workspaceRoots, toolServers, REPLACED_SKILLS } = require("./codex-config.cjs");
   // Timewarp's base prompt, in place of Codex's own.
   const { BASE_INSTRUCTIONS } = require("./base-instructions.cjs");
   const { createToolServer } = require("./tool-server.cjs");
@@ -198,6 +198,7 @@ async function boot() {
   const { createKnowledge } = require("./knowledge.cjs");
   const { createOnboarding } = require("./onboarding.cjs");
   const { createAutomations } = require("./automations.cjs");
+  const { createSandbox } = require("./sandbox.cjs");
   const { createMcp } = require("./mcp.cjs");
   const { createVault, safeStorageCipher } = require("./vault.cjs");
   const { createVaultTools } = require("./vault-tools.cjs");
@@ -296,6 +297,8 @@ async function boot() {
         // Codex reports the connected ChatGPT account (account/read) and its models.
         "-c", `model_providers.timewarp={name="Timewarp",base_url="http://127.0.0.1:${bridge.port}/v1",wire_api="responses",env_key="TIMEWARP_BRIDGE_TOKEN"}`,
         ...CODEX_FEATURES.flatMap(setting => ["-c", setting]),
+        // Windows' own sandbox where available (sandbox.cjs).
+        ...(sandbox.useAppContainer() ? WINDOWS_SANDBOX_FEATURES.flatMap(setting => ["-c", setting]) : []),
         // The previous app's guidance on when to use workers.
         "-c", "features.multi_agent_v2.multi_agent_mode_hint_text=" + JSON.stringify(DELEGATION),
         // What workers are told, as the previous app's worker roles were (each
@@ -329,6 +332,26 @@ async function boot() {
     if (method === "error" && !params.willRetry) appLog.warn("turn", "Turn error", { thread: String(params.threadId || "").slice(0, 8), info: params.error?.codexErrorInfo || null });
   });
   client.on("notification", ({ method, params }) => { if (method === "windowsSandbox/setupCompleted") broadcast("sandbox.changed", params); });
+  // Codex's command sandbox (sandbox.cjs): set up and checked once signed in.
+  // A change applies when Codex restarts, which waits until no chat is
+  // replying (urgent: a minute at most, when sandboxed commands stall).
+  let codexVersion = null;
+  try { codexVersion = JSON.parse(fs.readFileSync(path.join(vendor, "codex-package.json"), "utf8")).version || null; } catch {}
+  async function restartCodex({ urgent = false } = {}) {
+    for (const end = Date.now() + (urgent ? 60000 : Infinity); harness?.busy() && Date.now() < end;) await new Promise(resolve => setTimeout(resolve, 1000));
+    appLog.info("codex:app-server", "Restarting Codex");
+    await client.stop().catch(() => {});
+    harness?.reset();
+    toolsRegistered = false;
+    if (userId()) toolsReady = registerTools().catch(error => appLog.warn("tools", "Agent tools are pending. " + error.message));
+    else await client.start().catch(() => {});
+  }
+  fs.mkdirSync(path.join(runtimeDir, "agents"), { recursive: true });
+  const sandbox = createSandbox({
+    client, settings: store.settings, cwd: path.join(runtimeDir, "agents"), restart: restartCodex, codexVersion,
+    log: (level, message, data) => appLog[level === "warn" ? "warn" : "info"]("sandbox", message, data),
+  });
+  const sandboxChanged = state => { broadcast("sandbox.changed", state); return state; };
   let executionNotice = null;
   const executionChanged = () => {
     if (executionNotice) return;
@@ -357,7 +380,7 @@ async function boot() {
     ];
     if (account?.name) lines.push(`The user's name is ${account.name}.`);
     if (account?.email) lines.push(`The user's email address is ${account.email}. Use it to sign in to sites the user's tasks need.`);
-    return lines.join("\n") + "\n\n" + knowledge.instructions(store.settings.get("memory")?.mode) + "\n\n" + engineInstructions() + "\n\n" + WIDGETS;
+    return lines.join("\n") + "\n\n" + knowledge.instructions(store.settings.get("memory")?.mode) + "\n\n" + engineInstructions({ patchFiles: sandbox.verified() }) +"\n\n" + WIDGETS;
   }
 
   // Each message's context (harness turnContext): when it was sent, the user's
@@ -585,13 +608,17 @@ async function boot() {
     agents.prepareWorkspaces();
     await selectModel().catch(() => console.error("[timewarp] The default model could not be updated."));
     if (fixture && !process.env.TIMEWARP_FIXTURE_ONBOARDING) await onboarding.skip();
+    // Accounts past setup get the sandbox setup they would have had in it;
+    // others get it in setup's knowledge step, as before.
+    void onboarding.done().then(done => sandbox.ensure({ setup: done })).then(sandboxChanged)
+      .catch(error => appLog.warn("sandbox", "The Windows sandbox couldn't be set up: " + error.message));
   }
 
   async function diagnostics() {
     let codexVersion = null;
     try { codexVersion = JSON.parse(fs.readFileSync(path.join(vendor, "codex-package.json"), "utf8")).version || null; } catch {}
     const owner = userId();
-    const sandbox = process.platform === "win32" ? await client.request("windowsSandbox/readiness", {}).catch(error => ({ error: error.message })) : null;
+    const sandboxState = process.platform === "win32" ? await sandbox.status().catch(error => ({ error: error.message })) : null;
     const servers = owner ? await mcp.list().catch(() => []) : [];
     return {
       createdAt: new Date().toISOString(),
@@ -599,7 +626,7 @@ async function boot() {
       runtime: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node, codex: codexVersion },
       system: { platform: process.platform, arch: process.arch, release: require("node:os").release(), memoryGb: Math.round(require("node:os").totalmem() / 1e9) },
       state: {
-        signedIn: !!owner, codex: client.status, history: historyStatus.state, sandbox: sandbox?.status || sandbox?.error || null,
+        signedIn: !!owner, codex: client.status, history: historyStatus.state, sandbox: sandboxState?.status || sandboxState?.error || null,
         agents: owner ? store.agents.list(owner).length : 0, conversations: owner ? store.conversations.list(owner).length : 0,
         automations: owner ? store.automations.list(owner).length : 0,
         mcpServers: servers.map(server => ({ transport: server.transport, enabled: server.enabled, tools: server.tools, failed: !!server.error })),
@@ -615,7 +642,7 @@ async function boot() {
 
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();
@@ -638,7 +665,7 @@ async function boot() {
     void Promise.resolve(harness?.unloadIdle?.()).catch(error => appLog.warn("funding", "Chats could not be reloaded: " + error.message));
     broadcast("funding.changed", {});
   }
-  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, onFundingChanged: fundingChanged, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service, openConnector });
+  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, onFundingChanged: fundingChanged, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service, openConnector, sandbox });
   const trusted = event => event.senderFrame && event.senderFrame === event.sender.mainFrame && event.senderFrame.url.startsWith("app://app/");
   ipcMain.handle("tw:call", async (event, method, input) => {
     if (!trusted(event)) return { ok: false, error: { message: "Untrusted window.", status: 403 } };

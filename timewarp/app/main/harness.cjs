@@ -586,6 +586,8 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       return { answered: true };
     },
     pendingApprovals: () => [...approvals.values()],
+    // Whether any chat is replying (Codex restarts only when none is).
+    busy: () => active.size > 0,
     // The chat a Codex thread belongs to, including its workers' threads.
     conversationFor: threadId => conversationForThread(threadId),
     reset() { active.clear(); approvals.clear(); loaded.clear(); threadOwner.clear(); workers.clear(); steered.clear(); },
