@@ -84,10 +84,12 @@ function scriptedResponse(body) {
     const call = { type: "custom_tool_call", id: "ctc_" + crypto.randomUUID(), call_id: "call_" + crypto.randomUUID(), name: "exec", input: script };
     events.push({ type: "response.output_item.added", output_index: 0, item: { ...call, input: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
   } else if ((tool || codeMode) && runCommand && !outputs.length) {
-    const callId = "call_" + crypto.randomUUID();
+    // The command asks to run outside the sandbox, so it is reviewed (or the
+    // user is asked) whether or not the command sandbox is set up.
+    const callId = "call_" + crypto.randomUUID(), args = { cmd: command, sandbox_permissions: "require_escalated", justification: "Preview check" };
     const call = codeMode
-      ? { type: "custom_tool_call", id: "ctc_" + crypto.randomUUID(), call_id: callId, name: "exec", input: `const result = await tools.exec_command({ cmd: ${JSON.stringify(command)} });\ntext(typeof result === "string" ? result : JSON.stringify(result));` }
-      : { type: "function_call", id: "fc_" + crypto.randomUUID(), call_id: callId, name: "exec_command", arguments: JSON.stringify({ cmd: command }) };
+      ? { type: "custom_tool_call", id: "ctc_" + crypto.randomUUID(), call_id: callId, name: "exec", input: `const result = await tools.exec_command(${JSON.stringify(args)});\ntext(typeof result === "string" ? result : JSON.stringify(result));` }
+      : { type: "function_call", id: "fc_" + crypto.randomUUID(), call_id: callId, name: "exec_command", arguments: JSON.stringify(args) };
     events.push({ type: "response.output_item.added", output_index: 0, item: codeMode ? { ...call, input: "" } : { ...call, arguments: "" } }, { type: "response.output_item.done", output_index: 0, item: call });
   } else {
     const plan = reviewing ? textOf([inputs[lastUser]]) : "";

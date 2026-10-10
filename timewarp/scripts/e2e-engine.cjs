@@ -191,7 +191,7 @@ async function main() {
     },
     // Commands write in the agent's workspace and use the network, as in the
     // previous app; without an approval review once Codex can sandbox them (on
-    // Windows, after the command sandbox is set up in Settings → General).
+    // Windows, in Windows' own sandbox or once it is set up: sandbox.cjs).
     async workspaceAccess() {
       const id = await chat();
       await app.evaluate(`window.__e2eReviews = []; window.tw.on("conversation.event", event => { if (/autoApprovalReview\\/started/.test(event.method)) window.__e2eReviews.push(event.conversationId); }); true`);
@@ -206,6 +206,34 @@ async function main() {
       const sandboxed = (await call("sandbox.status")).status === "ready";
       if (reviews && sandboxed) throw new Error(`Writing in the workspace needed ${reviews} approval review(s).`);
       return "a command wrote in the workspace and fetched a page" + (sandboxed ? " without an approval review" : ` (the command sandbox isn't set up here, so it was reviewed ${reviews} time(s))`);
+    },
+    // In the command sandbox a command can't write outside the agent's
+    // folders, and isn't reviewed for trying (sandbox.cjs).
+    async sandboxIsolation() {
+      const state = await call("sandbox.status");
+      if (state.status !== "ready") return `skipped: the command sandbox is ${state.status} here${state.error ? " (" + state.error + ")" : ""}`;
+      const outside = fs.mkdtempSync(path.join(os.homedir(), ".timewarp-e2e-outside-")), target = path.join(outside, "escaped.txt");
+      try {
+        const id = await chat();
+        await app.evaluate(`window.__e2eReviews = []; window.tw.on("conversation.event", event => { if (/autoApprovalReview\\/started/.test(event.method)) window.__e2eReviews.push(event.conversationId); }); true`);
+        const command = process.platform === "win32" ? `Set-Content -LiteralPath '${target}' -Value escaped` : `printf escaped > '${target}'`;
+        const result = await turn(id, script(`const result = await tools.exec_command({ cmd: ${JSON.stringify(command)} }); text(typeof result === "string" ? result : JSON.stringify(result));`));
+        const reviews = await app.evaluate(`window.__e2eReviews.filter(item => item === ${JSON.stringify(id)}).length`);
+        if (fs.existsSync(target)) throw new Error("A sandboxed command wrote outside the agent's folders: " + result.reply.slice(0, 300));
+        if (reviews || result.approvals.length) throw new Error("The sandboxed command was reviewed or asked about.");
+        return "a command couldn't write outside the agent's folders, without a review";
+      } finally { fs.rmSync(outside, { recursive: true, force: true }); }
+    },
+    // Codex's file edits (apply_patch), which stalled in the restricted-token
+    // Windows sandbox on some PCs.
+    async filePatch() {
+      const id = await chat(), started = Date.now();
+      const patch = "*** Begin Patch\n*** Add File: patched.txt\n+written by apply_patch\n*** End Patch\n";
+      const result = await turn(id, script(`const result = await tools.apply_patch(${JSON.stringify(patch)}); text(typeof result === "string" ? result : JSON.stringify(result));`), { timeout: 120000 });
+      const listing = JSON.stringify(await call("files.list", { agentId: agent.id }));
+      if (!listing.includes("patched.txt")) throw new Error("apply_patch didn't write the file: " + result.reply.slice(0, 400));
+      const change = result.items.some(item => item.type === "fileChange");
+      return `apply_patch wrote a file in ${((Date.now() - started) / 1000).toFixed(1)} s${change ? ", shown as a file change" : ""}`;
     },
     async browser() {
       const id = await chat();

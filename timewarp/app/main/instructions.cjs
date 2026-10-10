@@ -16,10 +16,12 @@ const BROWSER = `<timewarp_browser>
 The browser tools control Timewarp's built-in browser, which the user sees beside the chat and which keeps their sign-ins for this profile. Open a page, take a snapshot, then click or type using references from the latest snapshot. After each action, read back the page or take a new snapshot to confirm what happened. The user's request covers the steps it needs, including sending, posting or submitting a form when they asked for that; ask first only before purchases or before such actions they didn't ask for. Never type passwords or payment details unless the user provided them for that purpose. When you tell the user about a tab you opened, link it with the tab link the open tool returns, so they can switch to it.
 </timewarp_browser>`;
 
-const WINDOWS = `<timewarp_windows_shell>
-On Windows the default shell may be Windows PowerShell 5. Do not use &&, ||, or bash backslash line continuations there. Issue one command per shell call, or use an explicit if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } guard between sequential commands.
-Create and change files with PowerShell commands, such as Set-Content -Encoding utf8 with a here-string, not apply_patch: apply_patch can stall in the Windows sandbox.
-</timewarp_windows_shell>`;
+// The previous app's Windows shell rule. Where the command sandbox doesn't
+// work (sandbox.cjs), apply_patch stalls in it, so files are written with
+// PowerShell there instead.
+const WINDOWS_SHELL = "On Windows the default shell may be Windows PowerShell 5. Do not use &&, ||, or bash backslash line continuations there. Issue one command per shell call, or use an explicit if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } guard between sequential commands.";
+const WINDOWS_FILES = "Create and change files with PowerShell commands, such as Set-Content -Encoding utf8 with a here-string, not apply_patch: apply_patch can stall in the Windows sandbox.";
+const windows = patchFiles => ["<timewarp_windows_shell>", WINDOWS_SHELL, patchFiles ? "" : WINDOWS_FILES, "</timewarp_windows_shell>"].filter(Boolean).join("\n");
 
 const DELEGATION = "Delegate when independent work justifies it or the user requests it. Prefer a small number of focused workers and reuse them for related steps. After spawning, continue independent work, then use wait_agent to await completion. Do not poll list_agents or use shell sleeps. Inspect worker evidence and finish the parent task before sending the user a completion message. Respect explicit no-delegation and stop-on-error constraints. For short browser tasks, operate the browser directly; delegate substantial independent browser research when useful.";
 
@@ -40,8 +42,10 @@ function workerInstructions(agent) {
   return `${WORKER}\nYou work for the Timewarp agent ${JSON.stringify(agent.name || "Agent")}. Its agent ID is ${agent.id}: use it whenever a connected-app tool asks for the current agent or assistant ID.`;
 }
 
-function engineInstructions({ platform = process.platform } = {}) {
-  return [EXECUTION, BROWSER, platform === "win32" ? WINDOWS : "", platform === "darwin" ? MACOS : ""].filter(Boolean).join("\n\n");
+// patchFiles: on Windows, the command sandbox ran a command in this Codex
+// run, so agents edit files with apply_patch, as before.
+function engineInstructions({ platform = process.platform, patchFiles = false } = {}) {
+  return [EXECUTION, BROWSER, platform === "win32" ? windows(patchFiles) : "", platform === "darwin" ? MACOS : ""].filter(Boolean).join("\n\n");
 }
 
 module.exports = { engineInstructions, workerInstructions, DELEGATION, WORKER };
