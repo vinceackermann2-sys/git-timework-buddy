@@ -25,7 +25,9 @@ function render(navigatorLike, downloads = { windows:null, mac:null }, gpu = nul
   const elements = { '.dialog-close':new Element(), '.availability-note':new Element() };
   const selectors = { '[data-platform]':platforms, '.download-action':actions, '.alt-download':alts };
   const location = { href:'about:blank' };
-  const webgl = gpu && { RENDERER:0x1F01, getExtension:name => name === 'WEBGL_debug_renderer_info' ? { UNMASKED_RENDERER_WEBGL:0x9246 } : null, getParameter:key => key === 0x9246 ? gpu : 'WebKit WebGL' };
+  // gpu: the renderer name, or { renderer, astc } for Safari's "Apple GPU" with or without ASTC textures.
+  const renderer = typeof gpu === 'string' ? gpu : gpu && gpu.renderer, astc = !!(gpu && gpu.astc);
+  const webgl = gpu && { RENDERER:0x1F01, getExtension:name => name === 'WEBGL_debug_renderer_info' ? { UNMASKED_RENDERER_WEBGL:0x9246 } : name === 'WEBGL_compressed_texture_astc' && astc ? {} : null, getParameter:key => key === 0x9246 ? renderer : 'WebKit WebGL' };
   const createElement = tag => ({ getContext:type => tag === 'canvas' && type === 'webgl' ? webgl : null });
   const window = { TIMEWARP_DOWNLOADS:downloads, location };
   const context = { navigator:navigatorLike, window, document:{ querySelector:selector => elements[selector], querySelectorAll:selector => selectors[selector] || [], getElementById:get, createElement }, URL };
@@ -70,7 +72,7 @@ for (const invalid of ['javascript:alert(1)','http://downloads.example.test/setu
   page.actions[0].events.click({preventDefault(){}});
   assert.equal(page.get('platform-download').hidden,true);
 }
-// The Mac build is Apple Silicon only: Intel GPUs get the explanatory dialog, with a fallback link.
+// With an Apple Silicon build only: Intel GPUs get the explanatory dialog, with a fallback link.
 const intelGPUs = ['ANGLE (Intel Inc., Intel(R) Iris(TM) Plus Graphics 655, OpenGL 4.1)','ANGLE (ATI Technologies Inc., AMD Radeon Pro 5500M OpenGL Engine, OpenGL 4.1)','ANGLE (NVIDIA Corporation, NVIDIA GeForce GT 750M OpenGL Engine, OpenGL 4.1)','Intel(R) HD Graphics 400, or similar'];
 for (const gpu of intelGPUs) {
   const page = render(mac,officialURLs,gpu);
@@ -95,6 +97,38 @@ intelWindows.actions.forEach(action => assert.equal(action.href,officialURLs.win
 const macChoice = render(windows,officialURLs);
 macChoice.platforms[1].events.click();
 assert.match(macChoice.get('platform-message').textContent,/Apple Silicon Macs \(M1 or later\).*Intel Macs aren’t supported/);
+
+// With both Mac builds: each Mac gets its own; one whose chip is unknown chooses in the dialog.
+const bothBuilds = {...officialURLs, macIntel:'https://downloads.example.test/Timewarp-x64.dmg'};
+for (const gpu of intelGPUs) {
+  const page = render(mac,bothBuilds,gpu);
+  page.actions.forEach(action => assert.equal(action.href,bothBuilds.macIntel,gpu));
+  assert.equal(page.elements['.availability-note'].textContent,'Available for Windows & macOS. Mac: Apple Silicon and Intel, macOS 12+.');
+}
+for (const gpu of ['ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)','Apple M3 Pro',{renderer:'Apple GPU',astc:true}]) {
+  const page = render(mac,bothBuilds,gpu);
+  page.actions.forEach(action => assert.equal(action.href,bothBuilds.mac,JSON.stringify(gpu)));
+}
+for (const gpu of [{renderer:'Apple GPU',astc:false},null]) {
+  const page = render(mac,bothBuilds,gpu);
+  page.actions.forEach(action => assert.equal(action.href,'#download'));
+  page.actions[0].events.click({preventDefault(){}});
+  assert.equal(page.get('dialog-title').textContent,'Timewarp for macOS.');
+  assert.match(page.get('platform-message').textContent,/Choose the build for your Mac/);
+  assert.equal(page.get('platform-download').href,bothBuilds.mac);
+  assert.equal(page.get('platform-download').textContent,'Download for Apple Silicon');
+  assert.equal(page.get('platform-download-alt').href,bothBuilds.macIntel);
+  assert.equal(page.get('platform-download-alt').hidden,false);
+}
+const intelChoice = render(mac,bothBuilds,intelGPUs[0]);
+intelChoice.platforms[1].events.click();
+assert.equal(intelChoice.get('platform-download').href,bothBuilds.macIntel);
+assert.equal(intelChoice.get('platform-download').textContent,'Download for Intel');
+assert.equal(intelChoice.get('platform-download-alt').href,bothBuilds.mac);
+const windowsToMac = render(windows,bothBuilds);
+windowsToMac.alts[0].events.click();
+assert.equal(windowsToMac.location.href,'about:blank','Someone on Windows chooses their Mac build in the dialog');
+assert.equal(windowsToMac.get('download-dialog').open,true);
 
 const mobilePage = render(cases[5][0],officialURLs);
 mobilePage.actions[0].events.click({preventDefault(){}});

@@ -398,6 +398,8 @@ dialog h2{font-size:28px;margin-bottom:18px}
 .platform-message{margin-top:16px;font-size:14px;color:var(--muted);min-height:1.5em}
 #platform-download{margin-top:14px}
 #platform-download[hidden]{display:none}
+.dialog-alt{display:block;margin-top:12px;font-size:13px;color:var(--muted);text-decoration:underline;text-underline-offset:3px}
+.dialog-alt[hidden]{display:none}
 
 /* Responsive */
 @media (max-width:1060px){

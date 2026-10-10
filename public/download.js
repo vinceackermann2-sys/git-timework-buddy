@@ -15,17 +15,21 @@
     return null;
   }
 
-  // The Mac build is Apple Silicon only, but every Mac browser reports "Intel Mac OS X".
-  // The GPU name tells them apart: Intel Macs (OpenCore Legacy Patcher ones included)
-  // have Intel, AMD or NVIDIA graphics. Safari reports "Apple GPU" either way, so it stays unknown.
-  function detectIntelMac(documentLike) {
+  // Every Mac browser reports "Intel Mac OS X", so the GPU tells the chips apart:
+  // Apple Silicon reports "Apple M…", Intel Macs (OpenCore Legacy Patcher ones
+  // included) Intel, AMD or NVIDIA graphics. Safari says "Apple GPU" on both; only
+  // Apple Silicon GPUs offer ASTC textures, so that marks Apple Silicon there.
+  // Anything else stays unknown and the visitor chooses.
+  function detectMacChip(documentLike) {
     try {
       const gl = documentLike.createElement('canvas').getContext('webgl');
-      if (!gl) return false;
+      if (!gl) return null;
       const info = gl.getExtension('WEBGL_debug_renderer_info');
       const renderer = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
-      return !/Apple M\d/i.test(renderer) && /\b(Intel|AMD|ATI|Radeon|NVIDIA|GeForce)\b/i.test(renderer);
-    } catch { return false; }
+      if (/Apple M\d/i.test(renderer)) return 'arm';
+      if (/\b(Intel|AMD|ATI|Radeon|NVIDIA|GeForce)\b/i.test(renderer)) return 'intel';
+      return gl.getExtension('WEBGL_compressed_texture_astc') ? 'arm' : null;
+    } catch { return null; }
   }
 
   const downloads = window.TIMEWARP_DOWNLOADS || {};
@@ -38,17 +42,42 @@
   const other = platform => platform === 'windows' ? 'mac' : 'windows';
 
   const detected = detectPlatform(navigator);
-  const intelMac = detected === 'mac' && detectIntelMac(document);
-  window.TIMEWARP_INTEL_MAC = intelMac; // app.js reads this for the #dl-mac row
+  const macChip = detected === 'mac' ? detectMacChip(document) : null;
+  // With an Intel build, each Mac gets its own; without one, Intel Macs are told it needs Apple Silicon.
+  const intelBuild = !!downloadURL('macIntel');
+  const macURL = chip => chip === 'intel' ? downloadURL('macIntel') : downloadURL('mac');
+  // app.js reads these for the #dl-mac row.
+  window.TIMEWARP_MAC_CHIP = macChip;
+  window.TIMEWARP_INTEL_MAC = macChip === 'intel';
   const dialog = document.getElementById('download-dialog');
   const title = document.getElementById('dialog-title');
   const message = document.getElementById('platform-message');
   const link = document.getElementById('platform-download');
+  const altLink = document.getElementById('platform-download-alt');
   const options = [...document.querySelectorAll('[data-platform]')];
 
+  function showAlt(url, text) {
+    if (!altLink) return;
+    altLink.hidden = !url;
+    if (url) { altLink.href = url; altLink.textContent = text; } else altLink.removeAttribute('href');
+  }
   function selectPlatform(platform) {
     options.forEach(option => option.setAttribute('aria-pressed', String(option.dataset.platform === platform)));
-    const url = downloadURL(platform), intel = platform === 'mac' && intelMac;
+    showAlt(null);
+    if (platform === 'mac' && intelBuild && downloadURL('mac')) {
+      // Both builds: the one for this Mac first, the other beside it.
+      const chip = macChip === 'intel' ? 'intel' : 'arm';
+      title.textContent = 'Timewarp for macOS.';
+      message.textContent = macChip === 'intel' ? 'For Intel Macs running macOS 12 or later, including ones on OpenCore Legacy Patcher.'
+        : macChip === 'arm' ? 'For Apple Silicon Macs (M1 or later) running macOS 12 or later.'
+        : 'Choose the build for your Mac. Both run on macOS 12 or later.';
+      link.hidden = false;
+      link.href = macURL(chip);
+      link.textContent = chip === 'intel' ? 'Download for Intel' : 'Download for Apple Silicon';
+      showAlt(macURL(chip === 'intel' ? 'arm' : 'intel'), chip === 'intel' ? 'Apple Silicon Mac? Download for Apple Silicon' : 'Intel Mac? Download for Intel');
+      return;
+    }
+    const url = downloadURL(platform), intel = platform === 'mac' && macChip === 'intel';
     title.textContent = !url ? platformName(platform) + ' download coming soon.' : intel ? 'Timewarp needs an Apple Silicon Mac.' : 'Timewarp for ' + platformName(platform) + '.';
     message.textContent = !url ? 'The official download link isn’t live yet. Check back soon.'
       : intel ? 'This Mac appears to have an Intel processor. Timewarp for Mac runs on Apple Silicon (M1 or later) with macOS 12 or later, so Intel Macs, including ones running OpenCore Legacy Patcher, can’t run it.'
@@ -65,15 +94,22 @@
       options.forEach(option => option.setAttribute('aria-pressed', 'false'));
       link.hidden = true;
       link.removeAttribute('href');
+      showAlt(null);
     }
     dialog.showModal();
   }
 
+  // The direct download for this computer, or null when the visitor should choose.
+  function directURL(platform) {
+    if (platform !== 'mac') return platform ? downloadURL(platform) : null;
+    if (intelBuild) return macChip ? macURL(macChip) : null;
+    return macChip === 'intel' ? null : downloadURL('mac');
+  }
   document.querySelectorAll('.download-action').forEach(action => {
     action.querySelector('.download-label').textContent = detected ? 'Download for ' + platformName(detected) : 'Get Timewarp';
     const icon = action.querySelector('.os-icon');
     if (icon) icon.innerHTML = icons[detected || 'generic'];
-    const url = detected && !intelMac && downloadURL(detected);
+    const url = directURL(detected);
     if (url) { action.href = url; return; }
     action.addEventListener('click', event => { event.preventDefault(); openChooser(detected); });
   });
@@ -83,7 +119,8 @@
     button.hidden = false;
     button.textContent = target ? 'Also for ' + platformName(target) : 'Windows & macOS';
     button.addEventListener('click', () => {
-      const url = target && downloadURL(target);
+      // With two Mac builds, someone on another computer chooses theirs in the dialog.
+      const url = target && !(target === 'mac' && intelBuild) && downloadURL(target);
       if (url) { window.location.href = url; return; }
       openChooser(target);
     });
@@ -100,6 +137,6 @@
   const note = document.querySelector('.availability-note');
   if (note) {
     const live = ['windows', 'mac'].filter(downloadURL);
-    note.textContent = live.length ? 'Available for ' + live.map(platformName).join(' & ') + (live.includes('mac') ? '. Mac: Apple Silicon, macOS 12+.' : '') : 'Download links coming soon';
+    note.textContent = live.length ? 'Available for ' + live.map(platformName).join(' & ') + (live.includes('mac') ? (intelBuild ? '. Mac: Apple Silicon and Intel, macOS 12+.' : '. Mac: Apple Silicon, macOS 12+.') : '') : 'Download links coming soon';
   }
 })();
