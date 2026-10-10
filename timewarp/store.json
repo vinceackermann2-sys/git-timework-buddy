@@ -6,7 +6,7 @@
   "packageFamilyName": "TimeWarpDev.TimeWarpDev_m60bgk3k2x9p0",
   "applicationId": "TimeWarp",
   "displayName": "TimeWarp Dev",
-  "version": "1.2.0",
-  "previousPackageVersion": "1.1.25.0",
+  "version": "1.2.1",
+  "previousPackageVersion": "1.2.0.0",
   "minimumWindowsVersion": "10.0.17763.0"
 }
