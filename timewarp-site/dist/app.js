@@ -212,11 +212,18 @@
   }
 
   /* ---------- Download rows: link straight to the official installers ---------- */
-  /* (Intel Macs get the dialog instead: the Mac build is Apple Silicon only) */
+  /* (A Mac whose chip download.js can't tell gets the dialog to choose Apple Silicon or Intel;
+     without an Intel build, Intel Macs get the dialog explaining it needs Apple Silicon) */
   const links = window.TIMEWARP_DOWNLOADS || {};
   const safe = value => { try { const u = new URL(value); return u.protocol === 'https:' ? u.href : null; } catch { return null; } };
+  const macLink = () => {
+    const chip = window.TIMEWARP_MAC_CHIP, intelBuild = typeof links.macIntel === 'string' && safe(links.macIntel);
+    if (intelBuild) return chip === 'intel' ? links.macIntel : chip === 'arm' ? links.mac : null;
+    return chip === 'intel' ? null : links.mac;
+  };
   [['windows', 'dl-windows'], ['mac', 'dl-mac']].forEach(([platform, id]) => {
-    const row = $(id), href = typeof links[platform] === 'string' && !(platform === 'mac' && window.TIMEWARP_INTEL_MAC) && safe(links[platform]);
+    const value = platform === 'mac' ? macLink() : links[platform];
+    const row = $(id), href = typeof value === 'string' && safe(value);
     if (href) { row.href = href; row.rel = 'noopener'; }
     else row.addEventListener('click', e => { e.preventDefault(); const opt = document.querySelector('[data-platform="' + platform + '"]'); $('download-dialog').showModal(); opt && opt.click(); });
   });
