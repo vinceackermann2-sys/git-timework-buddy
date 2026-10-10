@@ -238,7 +238,11 @@ Open:
   container sandbox runs them in about 0.5 s. A PC without the app container
   sandbox whose restricted-token sandbox stalls falls back to reviews: each
   command then waits for one (one more request, 2–4 s), and files are written
-  with PowerShell. Not yet seen on a PC without the app container sandbox.
+  with PowerShell. GitHub's Windows runner has no app container sandbox:
+  there the restricted-token one sets up, passes the check, keeps writes in
+  the workspace and reaches the network, but PowerShell took 7 to over 30 s
+  to start in it. Not yet tried on a real PC without the app container
+  sandbox.
 - Agents rarely link the browser tabs they open, though told to.
 - The Timewarp base prompt, turn context and background memory writer (10
   October) haven't been through the live model evaluation yet: run it on Luna
