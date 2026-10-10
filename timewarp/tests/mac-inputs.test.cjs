@@ -2,6 +2,16 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {hash}=require('../scripts/upstream.cjs');
 const {verifyMacInputs,copyMacResources}=require('../scripts/mac-inputs.cjs');
+const {inputSource}=require('../scripts/prepare-mac-inputs.cjs');
+test('the pinned Mac input downloads only from Timewarp-controlled HTTPS storage',()=>{
+  assert.throws(()=>inputSource({}),/TIMEWARP_MAC_UPSTREAM_URL/);
+  for(const location of ['http://inputs.example.com/mac.dmg','https://user:secret@inputs.example.com/mac.dmg','https://static.getenergy.com/desktop/alpha/arm64/0.8.20/arm64.dmg','https://getenergy.com/mac.dmg','not a url'])
+    assert.throws(()=>inputSource({TIMEWARP_MAC_UPSTREAM_URL:location}),/Invalid Mac input location/,location);
+  const open=inputSource({TIMEWARP_MAC_UPSTREAM_URL:'https://inputs.example.com/mac.dmg'});
+  assert.equal(open.url.href,'https://inputs.example.com/mac.dmg');assert.equal(open.headers.authorization,undefined);
+  const privateStore=inputSource({TIMEWARP_MAC_UPSTREAM_URL:'https://api.github.com/repos/o/r/releases/assets/1',TIMEWARP_MAC_UPSTREAM_TOKEN:'token'});
+  assert.equal(privateStore.headers.authorization,'Bearer token');assert.equal(privateStore.headers.accept,'application/octet-stream');
+});
 function fixture(t){
   const base=fs.mkdtempSync(path.join(os.tmpdir(),'timewarp-mac-input-'));t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
   fs.writeFileSync(path.join(base,'app.asar'),'reviewed archive');fs.mkdirSync(path.join(base,'tool'));fs.writeFileSync(path.join(base,'tool/native'),'reviewed native program');

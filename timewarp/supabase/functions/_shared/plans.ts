@@ -34,12 +34,25 @@ export const canManageBilling = (role: unknown): boolean =>
 // Monthly budgets are set from unit economics, not from a headline multiplier:
 // Prices include 25% VAT. The included-credit allowances below are customer
 // facing; provider cost is calculated from the canonical credit conversion.
+//
+// Every paid plan gives the same 14 credits per dollar, so one credit redeems
+// $0.05 of provider cost and a fully used plan spends 70% of its price. That
+// still leaves a margin after 25% VAT and card fees. Pro is no longer sold;
+// existing Pro subscribers keep it at the same rate until they switch.
+export const PLAN_CREDITS_PER_USD = 14;
 const MONTHLY_BUDGET_CREDITS: Record<PlanId, number> = {
   free: 0,
-  pro: 100,
-  max: 250,
-  ultra: 500,
+  pro: 20 * PLAN_CREDITS_PER_USD,
+  max: 50 * PLAN_CREDITS_PER_USD,
+  ultra: 100 * PLAN_CREDITS_PER_USD,
 };
+
+/** Plans a customer can newly choose. Retired plans keep working for their
+ *  existing subscribers but cannot be checked out again. */
+export const OFFERED_PLAN_IDS: readonly PlanId[] = ['free', 'max', 'ultra'];
+
+export const isOfferedPlan = (value: unknown): value is PlanId =>
+  typeof value === 'string' && (OFFERED_PLAN_IDS as readonly string[]).includes(value);
 
 export interface PlanBudget {
   id: PlanId;

@@ -6,19 +6,19 @@ const GOOGLE_OAUTH_MAX_AGE_MS = 10 * 60 * 1000;
 
 export type GoogleOAuthTarget = "web" | "desktop" | "energy-desktop";
 
-export type EnergyDesktopRequest = { state: string; publicKey: string; nonceHash: string };
+export type DesktopHandoffRequest = { state: string; publicKey: string; nonceHash: string };
 
 export type PendingGoogleOAuth = {
   nonce: string;
   next: string;
   target: GoogleOAuthTarget;
   createdAt: number;
-  desktop?: EnergyDesktopRequest;
+  desktop?: DesktopHandoffRequest;
 };
 
-export function validateEnergyDesktopRequest(
-  value: Partial<EnergyDesktopRequest> | undefined,
-): EnergyDesktopRequest {
+export function validateDesktopHandoffRequest(
+  value: Partial<DesktopHandoffRequest> | undefined,
+): DesktopHandoffRequest {
   if (
     !value ||
     !/^[a-f0-9]{64}$/.test(value.state || "") ||
@@ -43,11 +43,11 @@ function toBase64Url(value: Uint8Array): string {
 
 // Encrypt the identity assertion to the initiating device. Only that device
 // holds the private key and raw Google nonce; it performs the Supabase exchange.
-export async function encryptEnergyDesktopHandoff(
+export async function encryptDesktopHandoff(
   idToken: string,
-  request: EnergyDesktopRequest,
+  request: DesktopHandoffRequest,
 ): Promise<string> {
-  const desktop = validateEnergyDesktopRequest(request);
+  const desktop = validateDesktopHandoffRequest(request);
   if (!idToken || idToken.length > 16384)
     throw new Error("Google did not return a valid identity token.");
   const context = new TextEncoder().encode("timewarp-google-desktop-v1");
@@ -135,13 +135,15 @@ export async function beginGoogleOAuth(
   options: {
     target?: GoogleOAuthTarget;
     next?: string;
-    desktop?: EnergyDesktopRequest;
+    desktop?: DesktopHandoffRequest;
   } = {},
 ): Promise<string> {
   const state = randomHex(32);
   const nonce = randomHex(32);
   const desktop =
-    options.target === "energy-desktop" ? validateEnergyDesktopRequest(options.desktop) : undefined;
+    options.target === "energy-desktop"
+      ? validateDesktopHandoffRequest(options.desktop)
+      : undefined;
   if (desktop)
     await crypto.subtle.importKey(
       "spki",
@@ -201,7 +203,7 @@ export function consumePendingGoogleOAuth(state: string): PendingGoogleOAuth | n
       target: pending.target,
       createdAt: pending.createdAt,
       ...(pending.target === "energy-desktop"
-        ? { desktop: validateEnergyDesktopRequest(pending.desktop) }
+        ? { desktop: validateDesktopHandoffRequest(pending.desktop) }
         : {}),
     };
   } catch {

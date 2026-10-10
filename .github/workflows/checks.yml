@@ -32,6 +32,9 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: npm run test:portable
+      - run: npm run test:engine
+      - name: Build the engine and audit its independence
+        run: node scripts/build-engine.cjs && node scripts/audit-engine.cjs --report
       - run: npm run verify:cloud-source
       - run: npm run test:email
       - name: Check all cloud entry points with the shared email JSX types

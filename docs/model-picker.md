@@ -1,5 +1,11 @@
 # Timewarp model picker
 
+The engine's picker is `timewarp/app/renderer/src/components/ModelPicker.jsx`,
+ported from the previous app's picker (`timewarp/desktop/model-picker.cjs`) with
+the behaviour below; the catalog and saved choices are in
+`timewarp/app/main/model-catalog.cjs`, and `tests/engine-models.test.cjs` checks
+them. The verification commands at the end check the previous app's build.
+
 The model control shows the selected model and thinking effort. Opening it
 shows a continuous-drag thinking slider, a reset to the model's default effort, and a
 model button. The model list shows every picker-visible model in catalog order,
@@ -16,9 +22,20 @@ On Free with a connected Codex account, the desktop reads every `model/list`
 page. Hidden entries stay hidden, duplicate IDs are removed, and each model's
 reasoning levels, speed tiers and defaults are retained. Timewarp credits keep
 the Sol and Luna catalog with Standard speed. Changing models chooses the new
-model's defaults; changing or resetting effort preserves speed. The speed control
-appears only when the provider advertises extra tiers, using its labels and usage
-descriptions. Native schemas retain opaque effort and tier ids (including Ultra
+model's defaults, except that Fast stays on when the new model offers it;
+changing or resetting effort preserves speed. The speed control appears only
+when the provider advertises extra tiers, using its labels and usage
+descriptions.
+
+The bolt beside the effort is the Fast switch. For a model with a Fast tier
+(Codex lists it as `priority`, named "Fast") it turns Fast on and off, keeping
+the effort; it is lit while Fast is on, and the Speed buttons follow it. The
+trigger shows "⚡ Fast" while it's on and names no speed for Standard. Models
+without a Fast tier, including the Timewarp credits catalog, show the bolt
+dimmed and inert, with a tooltip saying Fast isn't available. The chosen tier is
+sent as `serviceTier` on each `turn/start`; Codex sends `service_tier:
+"priority"` to the model and drops it again when a later turn sends `null`.
+`tests/engine-model-picker.test.cjs` renders the picker and checks this. Native schemas retain opaque effort and tier ids (including Ultra
 and priority), and requests validate saved choices against the current catalog.
 
 All native packages use Codex's account-scoped remote discovery. The previous

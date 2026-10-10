@@ -1,9 +1,10 @@
 ﻿"use strict";
-// Identity + endpoint rewriter for the energy-testv1 repack of Energy 0.8.20.
+// Identity + endpoint rewriter for the Timewarp runtime (base: Energy 0.8.20).
 //
 // Two jobs:
-//   1. Rename every user-visible "Energy" identity string to "energy testv1".
-//   2. Re-point every Energy-owned remote endpoint at the local server.
+//   1. Rename every user-visible "Energy" identity string to "Timewarp".
+//   2. Re-point every Energy-owned remote endpoint at the local Timewarp bridge,
+//      so the app never contacts an Energy server.
 //
 // Deliberately NOT renamed: internal protocol identifiers that the shipped
 // codex agent definitions depend on (energy-worker, energy-task,
@@ -16,7 +17,7 @@ const fs = require("fs");
 const path = require("path");
 
 const TREE = process.argv[2];
-const APP_NAME = process.argv[3] || "energy testv1";
+const APP_NAME = process.argv[3] || "Timewarp";
 const LOCAL = process.argv[4] || "http://127.0.0.1:7788";
 
 const DEV_NAME = `${APP_NAME} Dev`;
@@ -42,8 +43,6 @@ const ENDPOINTS = [
 // ---- identity rewrites -----------------------------------------------------
 // Ordered longest-first so compound phrases win over their substrings.
 const IDENTITY = [
-  // runtime name resolution (this is what app.setName() actually receives)
-  [`"${APP_NAME === "energy testv1" ? "Energy" : APP_NAME} Dev"`, `"${DEV_NAME}"`],
   // agent / task display names
   ["Energy onboarding conversation", `${APP_NAME} onboarding conversation`],
   ["Energy onboarding agent.", `${APP_NAME} onboarding agent.`],
@@ -108,7 +107,7 @@ const EXACT = {
       `F4==="development"?${JSON.stringify(DEV_NAME)}:${JSON.stringify(APP_NAME)}`,
     ],
     ['e==="development"?`${UP} Dev`:UP,e==="development"?"energy-dev":"energy"',
-     'e==="development"?`${UP} Dev`:UP,e==="development"?"energy-testv1-dev":"energy testv1"'],
+     'e==="development"?`${UP} Dev`:UP,e==="development"?"timewarp-dev":"timewarp"'],
     ['const W4=F4==="development"?"Energy Dev":"Energy";',
      `const W4=F4==="development"?${JSON.stringify(DEV_NAME)}:${JSON.stringify(APP_NAME)};`],
     ['title:"Energy"', `title:${JSON.stringify(APP_NAME)}`],
@@ -130,94 +129,6 @@ function walk(dir, out = []) {
 
 const report = [];
 let totalEdits = 0;
-
-// ---- critical: isolate userData ------------------------------------------
-//
-// Electron resolves and caches app.getPath('userData') from the packaged
-// productName *before* any user code runs, so the bundle's later
-// app.setName("energy testv1") does NOT move it. Without this shim the repack
-// silently opens and writes the real Energy profile at
-// %APPDATA%\Energy - which is exactly what happened on the first test run
-// (it read the real session token, got a 401 from the local backend, and
-// deleted account-session.json).
-//
-// bootstrap.js is package.json's "main", so it is the first bundle code to
-// execute and the only safe place to relocate the profile.
-const USERDATA_SHIM = `"use strict";
-// --- energy testv1: data-dir isolation shim -------------------------------
-// Electron latches userData from the packaged productName before user code
-// runs, so app.setName() later in the main bundle is not enough. Relocate
-// every profile path here, before anything reads it.
-(() => {
-  const { app, safeStorage } = require("electron");
-  const path = require("node:path");
-  const fs = require("node:fs");
-  const base = process.env.ETV1_DATA_DIR ||
-    path.join(process.env.APPDATA || path.join(require("node:os").homedir(), "AppData", "Roaming"), "energy testv1");
-  for (const p of [base, path.join(base, "logs"), path.join(base, "Cache"), path.join(base, "Partitions")]) {
-    try { fs.mkdirSync(p, { recursive: true }); } catch {}
-  }
-  app.setName("energy testv1");
-  for (const key of ["userData", "sessionData", "logs", "cache", "userCache", "temp", "downloads"]) {
-    try { app.setPath(key, key === "logs" ? path.join(base, "logs") : base); } catch {}
-  }
-  try { app.setAppLogsPath(path.join(base, "logs")); } catch {}
-  try { process.env.ENERGY_DATA_DIR = path.join(base, "runtime"); } catch {}
-
-  // Diagnostics: record what the profile paths actually resolved to, plus
-  // whether the stored session file is readable, so a misdirected profile is
-  // obvious from the log instead of silent.
-  try {
-    const diag = [];
-    for (const k of ["userData", "sessionData", "logs", "appData"]) {
-      diag.push(k + " = " + app.getPath(k));
-    }
-    // Which session store the bundle will pick: packaged => DPAPI
-    // {encryptedToken,version}, unpackaged => plaintext {token}.
-    diag.push("app.isPackaged = " + app.isPackaged);
-    diag.push("process.defaultApp = " + JSON.stringify(process.defaultApp));
-    diag.push("process.execPath = " + process.execPath);
-    diag.push("process.resourcesPath = " + process.resourcesPath);
-    diag.push("app.getAppPath() = " + app.getAppPath());
-    diag.push("app.getName() = " + app.getName());
-    diag.push("safeStorage.isEncryptionAvailable = " + (() => { try { return safeStorage.isEncryptionAvailable(); } catch (e) { return "threw: " + e.message; } })());
-    const f = path.join(app.getPath("userData"), "account-session.json");
-    diag.push("accountSessionPath = " + f);
-    diag.push("exists = " + fs.existsSync(f));
-    if (fs.existsSync(f)) {
-      const raw = fs.readFileSync(f, "utf8");
-      diag.push("bytes = " + raw.length);
-      diag.push("content = " + JSON.stringify(raw));
-      try {
-        const parsed = JSON.parse(raw);
-        diag.push("jsonKeys = " + JSON.stringify(Object.keys(parsed)));
-        diag.push("version = " + JSON.stringify(parsed.version));
-        diag.push("tokenLen = " + (parsed.encryptedToken || "").length);
-      } catch (err) {
-        diag.push("JSON.parse FAILED: " + err.message);
-      }
-    }
-    fs.writeFileSync(path.join(base, "shim-diag.txt"), diag.join("\\n") + "\\n");
-  } catch (err) {
-    try { fs.appendFileSync(path.join(base, "shim-diag-error.txt"), String(err && err.stack) + "\\n"); } catch {}
-  }
-})();
-// --- end shim --------------------------------------------------------------
-`;
-
-// The original file begins with `"use strict";\n`. Swap that for the shim, which
-// opens with its own `"use strict";` so the module semantics are unchanged.
-function injectShim(rel, text, edits) {
-  if (process.argv.includes('--no-shim')) return text;
-  if (rel !== "out/main/bootstrap.js") return text;
-  const m = /^("use strict";)/.exec(text);
-  if (!m) {
-    report.push(`  ${rel}: SHIM NOT APPLIED (unexpected file head)`);
-    return text;
-  }
-  report.push(`  ${rel}: injected userData isolation shim`);
-  return USERDATA_SHIM + text.slice(m[1].length);
-}
 
 for (const abs of walk(TREE)) {
   const rel = path.relative(TREE, abs).replace(/\\/g, "/");
@@ -262,8 +173,6 @@ for (const abs of walk(TREE)) {
     report.push(`${rel}: ${edits} edits`);
   }
 
-  const injected = injectShim(rel, text, edits);
-  if (injected !== text) fs.writeFileSync(abs, injected);
 }
 
 console.log(report.join("\n"));

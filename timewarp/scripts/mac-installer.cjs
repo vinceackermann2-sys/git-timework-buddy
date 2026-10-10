@@ -18,7 +18,7 @@ async function installer(){
   const output=path.join(root,draft?'build/mac-preview':'build/mac-release');
   const artifacts=await build({projectDir:root,publish:'never',targets:Platform.MAC.createTarget(['dmg'],Arch.arm64),config:{
     appId:draft?'com.timewarp.desktop.preview':config.appId,
-    productName:draft?'Timewarp Preview':'Timewarp',
+    productName:draft?'Timewarp Preview':'Timewarp',copyright:require('./rebrand.cjs').COPYRIGHT,
     electronVersion:require('electron/package.json').version,
     directories:{app:path.join(root,'build/app'),output,buildResources:path.join(root,'assets')},
     npmRebuild:false,forceCodeSigning:!draft,asar:true,asarUnpack:['**/*.node','**/*.dylib'],

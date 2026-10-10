@@ -3,7 +3,7 @@ const crypto=require('node:crypto');
 const {readOwners}=require('./onboarding.cjs');
 const {presets,hexToAccent}=require('../shared/appearance.cjs');
 const steps=['agent','user','knowledge','theme','reaction','plans','finish'];
-function createOnboardingService({storage,userId,native,browsers,cloud,updateProfile,rememberName,openPayment,chooseCursorRoot}){
+function createOnboardingService({storage,userId,native,browsers,cloud,updateProfile,rememberName,openPayment,chooseCursorRoot,importPasswords=null}){
   let pending=Promise.resolve();
   const owner=()=>{const id=userId();if(!id)throw Error('Sign in to Timewarp.');return id};
   const check=id=>{if(id!==userId())throw Error('Your account changed. Reopen setup to continue.')};
@@ -28,6 +28,7 @@ function createOnboardingService({storage,userId,native,browsers,cloud,updatePro
       save(id,{agentId:agent.id,agentName:displayName,step:'user'});
     }else if(action==='user'){
       const userName=name(input.name);await updateProfile(userName);check(id);await rememberName(userName,draft(id).agentName);save(id,{userName,step:'knowledge'});
+    }else if(action==='import-passwords'){if(!importPasswords)throw Error('Password import is unavailable here.');const result=await importPasswords();check(id);return result;
     }else if(action==='cursor-folder'){
       const root=await chooseCursorRoot();check(id);if(root)save(id,{cursorRoot:root});return detect();
     }else if(action==='import'){

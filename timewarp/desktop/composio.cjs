@@ -64,6 +64,18 @@ function createComposio({ cloud, userId, storage, getAgent, listAgents=async()=>
         if (current !== null) database[account][item.agentId] = [...current.filter(existing => existing.accountId !== key), grant(app, connection)];
         save();
       }
+      // A reconnected account keeps its agents: those allowed the account it
+      // replaces may use the new connection. An account guessed (not named)
+      // must be the same sign-in, so no agent gains a different account.
+      const who = connection.email || connection.label || null;
+      const replaced = (item.replaces || []).filter(old => old.named || (who && old.who === who)).map(old => old.id);
+      if (replaced.length) {
+        init(); database[account] ||= {};
+        for (const [agent, items] of Object.entries(database[account])) {
+          if (Array.isArray(items) && items.some(existing => replaced.includes(existing.accountId)) && !items.some(existing => existing.accountId === key)) database[account][agent] = [...items, grant(app, connection)];
+        }
+        save();
+      }
       pending.delete(key); await onChanged();
     }
   }
@@ -87,7 +99,11 @@ function createComposio({ cloud, userId, storage, getAgent, listAgents=async()=>
     const url = new URL(result.redirectUrl || '');
     if (url.protocol !== 'https:' || url.username || url.password || !result.connectionId) throw fail(502, 'Composio returned an invalid connection link.');
     if (account !== userId()) throw fail(401, 'The active account changed.');
-    pending.set(result.connectionId, { owner: account, agentId: id, integrationId: input.integrationId, expires: Date.now() + 900000 });
+    // The account a reconnect replaces: the one named, or else this app's accounts that need reconnecting.
+    const named = input.reconnectAccountId && (app.accounts || []).find(old => old.connectionId === input.reconnectAccountId);
+    const replaces = named ? [{ id: named.connectionId, named: true }]
+      : (app.accounts || []).filter(old => !accountIsActive(old)).map(old => ({ id: old.connectionId, who: old.email || old.label || null }));
+    pending.set(result.connectionId, { owner: account, agentId: id, integrationId: input.integrationId, replaces, expires: Date.now() + 900000 });
     catalogCache = null;
     return { kind: 'redirect', connectUrl: url.href };
   }

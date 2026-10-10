@@ -138,7 +138,7 @@ if (process.versions.electron) {
     const acorn = require('acorn'), cp = require('node:child_process'), { pathToFileURL } = require('node:url');
     const { patchWorkspacePane } = require('./workspace-pane.cjs');
     const asar = await import('@electron/asar');
-    const original = asar.extractFile(path.resolve(root, '../energy-testv1/build/app.asar.pristine'), path.join('out', 'renderer', 'assets', 'mermaid-GHXKKRXX-YWFhvrpV.js')).toString('utf8');
+    const original = asar.extractFile(path.resolve(root, '../timewarp-runtime/build/app.asar.pristine'), path.join('out', 'renderer', 'assets', 'mermaid-GHXKKRXX-YWFhvrpV.js')).toString('utf8');
     const ui = patchWorkspacePane(original);
     assert.throws(() => patchWorkspacePane('changed upstream bundle'), /contract changed/);
     const declarations = acorn.parse(ui, { ecmaVersion: 'latest', sourceType: 'module' }).body.flatMap(node => node.declarations || []);
@@ -187,7 +187,7 @@ if (process.versions.electron) {
     // replaces build/app while this renderer is running.
     const styles = ['index-CgqM7Ghz.css','mermaid-GHXKKRXX-Cl4CJFD3.css'].map(file => {
       const snapshot = path.join(reports, 'workspace-' + file);
-      fs.writeFileSync(snapshot, asar.extractFile(path.resolve(root, '../energy-testv1/build/app.asar.pristine'), path.join('out','renderer','assets',file)));
+      fs.writeFileSync(snapshot, asar.extractFile(path.resolve(root, '../timewarp-runtime/build/app.asar.pristine'), path.join('out','renderer','assets',file)));
       return `<link rel="stylesheet" href="${pathToFileURL(snapshot).href}">`;
     }).concat(['appearance.css','controls.css'].map(file => `<link rel="stylesheet" href="${pathToFileURL(path.join(root,'desktop',file)).href}">`)).join('');
     fs.writeFileSync(path.join(reports, 'workspace-preview.html'), `<!doctype html><html><head><meta charset="utf-8">${styles}<link rel="stylesheet" href="${pathToFileURL(path.join(root,'desktop/workspace.css')).href}"><style>html,body,#preview{height:100%;margin:0}button{font:inherit}.fixture-header-row{display:flex;height:42px;align-items:center;justify-content:space-between;padding:0 12px}.fixture-header-actions{display:flex;align-items:center;gap:8px}.fixture-button{display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:6px;background:transparent;padding:4px;cursor:pointer;color:inherit}.fixture-button:hover{background:var(--color-accent)}.fixture-icon{width:28px;height:28px;flex-shrink:0}.fixture-icon svg{width:15px;height:15px}input{min-width:0;width:100%;color:inherit;background:transparent}input:focus{outline:1px solid var(--color-ring)}.fixture-tool-content{padding:24px;display:flex;flex-direction:column;gap:16px}body{background:var(--color-background);color:var(--color-foreground)}</style><title>Workspace verification preview</title></head><body><div id="preview"></div><script>window.addEventListener('error',event=>console.error(event.error?.stack||event.message));</script><script src="./workspace-preview.js"></script></body></html>`);

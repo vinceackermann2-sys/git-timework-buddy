@@ -6,7 +6,7 @@ let user,auth,admin;const sessions=[];
 const pass=(name,value)=>{assert.ok(value,name);report.checks[name]=true;};
 (async()=>{
   admin=keys();user=await fixture({save:false});auth=await token(user);
-  for(const [name,input,cents] of [['pro',{action:'checkout',plan:'pro'},2000],['credits',{action:'buy-credits',packCredits:50},1500]]){
+  for(const [name,input,cents] of [['max',{action:'checkout',plan:'max'},5000],['credits',{action:'buy-credits',packCredits:180},1500]]){
     const result=await request(base+'/billing/service',input,auth);pass('cardCheckout'+name,result.status===200&&result.data.amountTotal===cents&&result.data.currency==='usd');sessions.push(result.data.sessionId);
     pass('unpaidPurchaseStillPending'+name,(await request(base+'/billing/service',{action:'sync-checkout',sessionId:result.data.sessionId},auth)).data.pending===true);
   }

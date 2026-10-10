@@ -65,7 +65,7 @@ h3{font-size:18px;font-weight:600;color:var(--ink)}
 .hero{padding:84px 0 0}
 .section{padding-top:150px}
 
-/* ---------- App replica (Energy-based Timewarp desktop) ---------- */
+/* ---------- App replica (Timewarp desktop) ---------- */
 .app{display:grid;grid-template-columns:240px 1fr;grid-template-rows:40px 1fr;background:var(--accent-side);border:1px solid #e6d6f7;border-radius:20px;box-shadow:var(--shadow);overflow:hidden;text-align:left}
 .app>*{min-width:0}
 .hero-app{grid-template-columns:1fr;width:min(1040px,calc(100% - 48px));height:640px;margin:56px auto 0}
@@ -358,9 +358,8 @@ h3{font-size:18px;font-weight:600;color:var(--ink)}
 .tabs{display:flex;width:fit-content;margin:36px auto 34px;padding:4px;border-radius:999px;background:var(--soft);border:1px solid var(--line)}
 .tabs button{padding:9px 22px;border-radius:999px;font-size:14.5px;font-weight:500;color:var(--muted);transition:background .2s,color .2s}
 .tabs button[aria-selected=true]{background:var(--ink);color:#fff;font-weight:600}
-.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.plans{display:grid;grid-template-columns:repeat(2,minmax(0,360px));justify-content:center;gap:18px}
 .plans[hidden]{display:none}
-.plans-ent{grid-template-columns:repeat(2,minmax(0,360px));justify-content:center}
 .plans>*{min-width:0}
 .plan{position:relative;display:flex;flex-direction:column;padding:30px;border-radius:26px;border:1px solid var(--line);background:#fff;box-shadow:0 1px 2px rgba(23,32,51,.04),0 20px 40px -32px rgba(23,32,51,.25);transition:transform .2s,box-shadow .2s}
 .plan:hover{transform:translateY(-3px);box-shadow:0 1px 2px rgba(23,32,51,.04),0 28px 50px -30px rgba(23,32,51,.3)}
@@ -413,7 +412,7 @@ dialog h2{font-size:28px;margin-bottom:18px}
   .browser{height:400px}
   .vs,.quad,.download{grid-template-columns:1fr}
   .vs{gap:56px}
-  .plans,.plans-ent{grid-template-columns:1fr;max-width:440px;margin-inline:auto}
+  .plans{grid-template-columns:1fr;max-width:440px;margin-inline:auto}
   .team-card{grid-template-columns:1fr;padding:40px 28px 0;overflow:hidden}
   .team-shot{position:relative;right:auto;top:auto;width:100%;max-width:360px;height:340px;margin:32px auto 0}
   .dl-left h2,.dl-left p{text-align:center;margin-inline:auto}

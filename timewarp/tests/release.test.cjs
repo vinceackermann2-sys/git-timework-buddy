@@ -1,6 +1,7 @@
 "use strict";
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),{EventEmitter}=require('node:events');
 const {validateRelease}=require('../shared/release.cjs');
+const {checkRelease}=require('../scripts/release-config.cjs');
 const {configureUpdates}=require('../desktop/updates.cjs');
 const {verifyManifest}=require('../scripts/verify-release.cjs');
 const {verifyUpstream,copyRuntime}=require('../scripts/upstream.cjs');
@@ -8,8 +9,11 @@ const {verifyInstaller}=require('../shared/authenticode.cjs');
 const release={enabled:true,version:'0.1.0',updateUrl:'https://updates.timewarp.example/windows/',publisherNames:['Timewarp AB']};
 test('public releases reject inherited feeds, credentials, absent publishers and invalid versions',()=>{
   assert.deepEqual(validateRelease({enabled:false}),{enabled:false});assert.deepEqual(validateRelease(release),release);
-  for(const updateUrl of ['http://updates.example.com','https://static.getenergy.com/a','https://proxy.generalwork.ai/','https://localhost/','https://127.0.0.1/','https://u:p@updates.example.com/','https://updates.example.com/?secret=x'])assert.throws(()=>validateRelease({...release,updateUrl}));
-  for(const patch of [{publisherNames:[]},{publisherNames:['The Computer Work Company, Inc.']},{version:'1.2.3-draft.1'},{certificatePassword:'secret'}])assert.throws(()=>validateRelease({...release,...patch}));
+  for(const updateUrl of ['https://static.getenergy.com/a','https://proxy.generalwork.ai/'])assert.throws(()=>checkRelease({...release,updateUrl}),/public Timewarp/);
+  assert.throws(()=>checkRelease({...release,publisherNames:['The Computer Work Company, Inc.']}),/publisher/);
+  assert.deepEqual(checkRelease(release),release);
+  for(const updateUrl of ['http://updates.example.com','https://localhost/','https://127.0.0.1/','https://u:p@updates.example.com/','https://updates.example.com/?secret=x'])assert.throws(()=>validateRelease({...release,updateUrl}));
+  for(const patch of [{publisherNames:[]},{version:'1.2.3-draft.1'},{certificatePassword:'secret'}])assert.throws(()=>validateRelease({...release,...patch}));
 });
 function fixture(feed={provider:'generic',url:release.updateUrl,channel:'latest',publisherName:release.publisherNames}){
   const app=new EventEmitter();Object.assign(app,{isPackaged:true,getVersion:()=>release.version,whenReady:async()=>{}});

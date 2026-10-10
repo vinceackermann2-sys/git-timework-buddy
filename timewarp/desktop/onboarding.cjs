@@ -17,9 +17,5 @@ function bindOnboardingSettings({settings,storage,userId}) {
   };
   settings.timewarpOnboardingBound=true;
 }
-function brandPromptBundle(bundle){
-  const prompts=Object.fromEntries(Object.entries(bundle.prompts).map(([name,text])=>[name,text.replace(/\bEnergy\b/g,'Timewarp').replace('If you already have a ChatGPT plan, connect it to use Timewarp for free!','On the Free plan, you can connect an eligible ChatGPT or Codex subscription to power Timewarp. You can also use Timewarp credits.')]));
-  return {...bundle,prompts};
-}
 function readOwners(storage){const saved=storage.load();if([2,3].includes(saved?.version))return saved.owners||{};return Object.fromEntries((saved?.completedUserIds||[]).map(id=>[id,{done:true,conversationId:null}]));}
-module.exports={bindOnboardingSettings,brandPromptBundle,readOwners};
+module.exports={bindOnboardingSettings,readOwners};

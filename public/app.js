@@ -212,10 +212,11 @@
   }
 
   /* ---------- Download rows: link straight to the official installers ---------- */
+  /* (Intel Macs get the dialog instead: the Mac build is Apple Silicon only) */
   const links = window.TIMEWARP_DOWNLOADS || {};
   const safe = value => { try { const u = new URL(value); return u.protocol === 'https:' ? u.href : null; } catch { return null; } };
   [['windows', 'dl-windows'], ['mac', 'dl-mac']].forEach(([platform, id]) => {
-    const row = $(id), href = typeof links[platform] === 'string' && safe(links[platform]);
+    const row = $(id), href = typeof links[platform] === 'string' && !(platform === 'mac' && window.TIMEWARP_INTEL_MAC) && safe(links[platform]);
     if (href) { row.href = href; row.rel = 'noopener'; }
     else row.addEventListener('click', e => { e.preventDefault(); const opt = document.querySelector('[data-platform="' + platform + '"]'); $('download-dialog').showModal(); opt && opt.click(); });
   });

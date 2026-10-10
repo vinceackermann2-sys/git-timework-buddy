@@ -17,8 +17,9 @@ if (process.versions.electron) {
         for (const plan of ['free', 'pro', 'max', 'ultra']) {
           await mount({ plan, scheme });
           const result = await evaluate(`(() => ({cards:document.querySelectorAll('.tw-plan-card').length,current:document.querySelector('.tw-plan-current').dataset.plan,prices:Array.from(document.querySelectorAll('.tw-plan-price strong'),x=>x.textContent),packs:document.querySelector('.tw-extra-credits select').options.length,usage:document.querySelector('.tw-overview').innerText,active:document.querySelector('.tw-active-credit-value strong').textContent,percent:document.querySelector('.tw-usage-percent').textContent,progress:document.querySelector('.tw-overview [role=progressbar]')?.getAttribute('aria-valuenow'),connect:Array.from(document.querySelectorAll('button')).some(x=>x.textContent==='Connect Codex account'),overflow:document.documentElement.scrollWidth>innerWidth}))()`);
-          assert.equal(result.cards, 4); assert.equal(result.current, plan); assert.deepEqual(result.prices, ['$0', '$20', '$50', '$100']); assert.equal(result.packs, 7); assert.equal(result.connect, plan === 'free'); assert.equal(result.overflow, false);
-          const allowance = { free: 0, pro: 100, max: 250, ultra: 500 }[plan];
+          assert.equal(result.cards, plan === 'pro' ? 4 : 3); assert.equal(result.current, plan); assert.deepEqual(result.prices, plan === 'pro' ? ['$0', '$20', '$50', '$100'] : ['$0', '$50', '$100']); assert.equal(result.packs, 7); assert.equal(result.connect, plan === 'free'); assert.equal(result.overflow, false);
+          const allowance = { free: 0, pro: 280, max: 700, ultra: 1400 }[plan];
+          if (plan === 'pro') assert.deepEqual(await evaluate("(()=>{const card=document.querySelector('[data-plan=pro]');return {disabled:card.querySelector('select').disabled,detail:card.querySelector('.tw-addon-detail').textContent}})()"), { disabled: true, detail: 'No longer offered to new subscribers' });
           assert.equal(result.active, '25'); assert.ok(!result.usage.includes('extra credits'));
           if (plan !== 'free') { assert.equal(result.progress, '40'); assert.equal(result.percent,'40%'); } else { assert.equal(result.percent,'—'); assert.ok(result.usage.includes('no monthly credit allowance')); }
           assert.equal(await evaluate("window.billingFixture.calls.some(x=>x.input.route==='/billing/history')"), false);
@@ -26,7 +27,7 @@ if (process.versions.electron) {
           await waitFor("document.querySelectorAll('.tw-table tbody tr').length===2");
           checks.push({ scheme, plan, ...result });
         }
-        await mount({ plan: 'pro', scheme });
+        await mount({ plan: 'max', scheme });
         const controlStyles = await evaluate(`(() => {
           const select = document.querySelector('.tw-extra-credits select');
           const trigger = getComputedStyle(select), picker = getComputedStyle(select, '::picker(select)');
@@ -54,7 +55,7 @@ if (process.versions.electron) {
         fs.writeFileSync(path.join(reports, 'billing-dropdown-' + scheme + '.png'), (await window.webContents.capturePage()).toPNG());
         window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
         await waitFor("!document.querySelector('.tw-extra-credits select').matches(':open')");
-        assert.equal(await evaluate("document.querySelector('.tw-extra-credits select').value"), '50');
+        assert.equal(await evaluate("document.querySelector('.tw-extra-credits select').value"), '180');
         // Use the real keyboard path, so a styled picker also proves event routing.
         await evaluate("document.querySelector('.tw-extra-credits select').focus()");
         window.webContents.sendInputEvent({type:'keyDown',keyCode:'Down',modifiers:['alt']}); window.webContents.sendInputEvent({type:'keyUp',keyCode:'Down',modifiers:['alt']});
@@ -62,10 +63,10 @@ if (process.versions.electron) {
         window.webContents.sendInputEvent({type:'keyDown',keyCode:'Down'}); window.webContents.sendInputEvent({type:'keyUp',keyCode:'Down'});
         window.webContents.sendInputEvent({type:'keyDown',keyCode:'Return'}); window.webContents.sendInputEvent({type:'keyUp',keyCode:'Return'});
         await waitFor("!document.querySelector('.tw-extra-credits select').matches(':open')");
-        assert.equal(await evaluate("document.querySelector('.tw-extra-credits select').value"), '100');
-        await click('Buy credits'); await waitFor("window.billingFixture.calls.some(x=>x.action==='cloud'&&x.input.data.action==='buy-credits'&&x.input.data.packCredits===100)");
+        assert.equal(await evaluate("document.querySelector('.tw-extra-credits select').value"), '360');
+        await click('Buy credits'); await waitFor("window.billingFixture.calls.some(x=>x.action==='cloud'&&x.input.data.action==='buy-credits'&&x.input.data.packCredits===360)");
         checks.push({scheme, brandedControls: controlStyles, sharedControls, hoverContrast, mousePicker: true, escapeDismissal: true, keyboardSelection: true});
-        await mount({ plan: 'pro', scheme });
+        await mount({ plan: 'max', scheme });
         await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
         fs.writeFileSync(path.join(reports, 'billing-ui-' + scheme + '.png'), (await window.webContents.capturePage()).toPNG());
         await mount({ plan: 'free', scheme, connected: true });
@@ -82,19 +83,19 @@ if (process.versions.electron) {
         window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
       }
       window.setContentSize(1100, 1050);
-      await mount({ plan: 'free', providerError: true }); assert.equal(await evaluate("document.querySelectorAll('.tw-plan-card').length"), 4);
+      await mount({ plan: 'free', providerError: true }); assert.equal(await evaluate("document.querySelectorAll('.tw-plan-card').length"), 3);
       await evaluate('window.billingFixture.options.providerError=false'); await click('Refresh'); await waitFor("document.querySelector('.tw-provider button')?.textContent==='Connect Codex account'");
       await mount({ plan: 'free', historyError: true }); await evaluate("document.querySelector('.tw-activity').open=true"); await waitFor("document.body.innerText.includes('Credit activity is temporarily unavailable.')");
       await evaluate('window.billingFixture.options.historyError=false'); await click('Retry activity'); await waitFor("document.querySelectorAll('.tw-table tbody tr').length===2");
       await mount({ plan: 'free', statusError: true }); assert.equal(await evaluate("document.querySelectorAll('.tw-plan-card').length"), 0);
-      await evaluate('window.billingFixture.options.statusError=false'); await click('Retry billing'); await waitFor("document.querySelectorAll('.tw-plan-card').length===4");
+      await evaluate('window.billingFixture.options.statusError=false'); await click('Retry billing'); await waitFor("document.querySelectorAll('.tw-plan-card').length===3");
       await mount({ plan: 'free' }); await evaluate("document.querySelector('[data-plan=max] button').click()"); await waitFor('window.billingFixture.calls.some(x=>x.action===\'openLink\')');
       let calls = await evaluate('window.billingFixture.calls'); assert.ok(calls.some(x => x.action === 'cloud' && x.input.data.action === 'checkout' && x.input.data.plan === 'max'));
       await mount({ plan: 'free' }); await click('Buy credits'); await waitFor('window.billingFixture.calls.some(x=>x.action===\'openLink\')');
-      calls = await evaluate('window.billingFixture.calls'); assert.ok(calls.some(x => x.action === 'cloud' && x.input.data.action === 'buy-credits' && x.input.data.packCredits === 50));
-      await mount({ plan: 'pro' }); await click('Manage subscription'); await waitFor('window.billingFixture.calls.some(x=>x.action===\'openLink\')');
+      calls = await evaluate('window.billingFixture.calls'); assert.ok(calls.some(x => x.action === 'cloud' && x.input.data.action === 'buy-credits' && x.input.data.packCredits === 180));
+      await mount({ plan: 'max' }); await click('Manage subscription'); await waitFor('window.billingFixture.calls.some(x=>x.action===\'openLink\')');
       calls = await evaluate('window.billingFixture.calls'); assert.ok(calls.some(x => x.action === 'cloud' && x.input.data.action === 'portal'));
-      await mount({ plan: 'free', invalidPayment: true }); await evaluate("document.querySelector('[data-plan=pro] button').click()"); await waitFor("document.body.innerText.includes('invalid payment link')"); assert.equal(await evaluate("window.billingFixture.calls.some(x=>x.action==='openLink')"), false);
+      await mount({ plan: 'free', invalidPayment: true }); await evaluate("document.querySelector('[data-plan=max] button').click()"); await waitFor("document.body.innerText.includes('invalid payment link')"); assert.equal(await evaluate("window.billingFixture.calls.some(x=>x.action==='openLink')"), false);
       await mount({ plan: 'free', connected: true, requestError: true }); await waitFor("document.querySelectorAll('.tw-provider [role=progressbar]').length===2"); assert.equal(await evaluate("document.querySelector('.tw-provider [role=progressbar]').getAttribute('aria-valuenow')"), '75');
       assert.equal(await evaluate("document.querySelector('.tw-usage-percent').textContent"),'—');
       assert.equal(await evaluate("Array.from(document.querySelectorAll('.tw-provider button'),x=>x.textContent).join(',')"), 'Disconnect Codex account');
@@ -108,19 +109,19 @@ if (process.versions.electron) {
       assert.equal(await evaluate("document.querySelectorAll('.tw-provider [role=progressbar]:not([aria-valuenow])').length"), 2);
       await mount({ plan: 'free', reauth: true }); assert.equal(await evaluate("document.querySelectorAll('.tw-provider [role=alert]').length"),1);
       assert.equal(await evaluate("document.querySelector('.tw-provider button').textContent"),'Connect Codex account');
-      await mount({ plan: 'pro', connected: true }); assert.equal(await evaluate("document.querySelector('.tw-usage-percent').textContent"),'40%'); assert.equal(await evaluate("document.querySelectorAll('.tw-provider [role=progressbar]').length"),0);
+      await mount({ plan: 'max', connected: true }); assert.equal(await evaluate("document.querySelector('.tw-usage-percent').textContent"),'40%'); assert.equal(await evaluate("document.querySelectorAll('.tw-provider [role=progressbar]').length"),0);
       await mount({ plan: 'free', purchased: 0 }); assert.equal(await evaluate("document.querySelector('.tw-active-credit-value strong').textContent"),'0');
-      await mount({plan:'free'}); await evaluate("(()=>{const select=document.querySelector('[data-plan=pro] select');select.value='100';select.dispatchEvent(new Event('change'))})()");
-      assert.equal(await evaluate("document.querySelector('[data-plan=pro] .tw-plan-price strong').textContent"),'$40');
-      assert.equal(await evaluate("document.querySelector('[data-plan=pro] .tw-plan-allowance').textContent"),'200 credits / month');
-      await evaluate("document.querySelector('[data-plan=pro] button').click()"); await waitFor("window.billingFixture.calls.some(x=>x.action==='openLink')");
-      calls=await evaluate('window.billingFixture.calls');assert.ok(calls.some(x=>x.action==='cloud'&&x.input.data.action==='checkout'&&x.input.data.monthlyExtraCredits===100&&!Object.hasOwn(x.input.data,'packCredits')));
-      await mount({plan:'pro',monthlyExtraCredits:100});assert.equal(await evaluate("document.querySelector('[data-plan=pro] select').value"),'100');assert.equal(await evaluate("document.querySelector('[data-plan=pro] .tw-plan-price strong').textContent"),'$40');
-      await evaluate("(()=>{const select=document.querySelector('[data-plan=pro] select');select.value='0';select.dispatchEvent(new Event('change'))})()");await click('Update plan');await waitFor("window.billingFixture.calls.some(x=>x.action==='openLink')");
+      await mount({plan:'free'}); await evaluate("(()=>{const select=document.querySelector('[data-plan=max] select');select.value='420';select.dispatchEvent(new Event('change'))})()");
+      assert.equal(await evaluate("document.querySelector('[data-plan=max] .tw-plan-price strong').textContent"),'$80');
+      assert.equal(await evaluate("document.querySelector('[data-plan=max] .tw-plan-allowance').textContent===(1120).toLocaleString()+' credits / month'"),true);
+      await evaluate("document.querySelector('[data-plan=max] button').click()"); await waitFor("window.billingFixture.calls.some(x=>x.action==='openLink')");
+      calls=await evaluate('window.billingFixture.calls');assert.ok(calls.some(x=>x.action==='cloud'&&x.input.data.action==='checkout'&&x.input.data.monthlyExtraCredits===420&&!Object.hasOwn(x.input.data,'packCredits')));
+      await mount({plan:'max',monthlyExtraCredits:420});assert.equal(await evaluate("document.querySelector('[data-plan=max] select').value"),'420');assert.equal(await evaluate("document.querySelector('[data-plan=max] .tw-plan-price strong').textContent"),'$80');
+      await evaluate("(()=>{const select=document.querySelector('[data-plan=max] select');select.value='0';select.dispatchEvent(new Event('change'))})()");await click('Update plan');await waitFor("window.billingFixture.calls.some(x=>x.action==='openLink')");
       calls=await evaluate('window.billingFixture.calls');assert.ok(calls.some(x=>x.action==='cloud'&&x.input.data.action==='checkout'&&x.input.data.monthlyExtraCredits===0));
-      await mount({plan:'free'});await evaluate("(()=>{const select=document.querySelector('.tw-extra-credits select');select.value='100';select.dispatchEvent(new Event('change'))})()");await click('Buy credits');await waitFor("window.billingFixture.calls.some(x=>x.action==='openLink')");
-      calls=await evaluate('window.billingFixture.calls');assert.ok(calls.some(x=>x.action==='cloud'&&x.input.data.action==='buy-credits'&&x.input.data.packCredits===100&&!Object.hasOwn(x.input.data,'monthlyExtraCredits')));
-      await mount({ plan: 'pro', cancelAtPeriodEnd: true }); assert.ok(await evaluate("document.querySelector('.tw-overview').innerText.includes('Plan ends ') && document.querySelector('.tw-overview').innerText.includes('2026')"));
+      await mount({plan:'free'});await evaluate("(()=>{const select=document.querySelector('.tw-extra-credits select');select.value='360';select.dispatchEvent(new Event('change'))})()");await click('Buy credits');await waitFor("window.billingFixture.calls.some(x=>x.action==='openLink')");
+      calls=await evaluate('window.billingFixture.calls');assert.ok(calls.some(x=>x.action==='cloud'&&x.input.data.action==='buy-credits'&&x.input.data.packCredits===360&&!Object.hasOwn(x.input.data,'monthlyExtraCredits')));
+      await mount({ plan: 'max', cancelAtPeriodEnd: true }); assert.ok(await evaluate("document.querySelector('.tw-overview').innerText.includes('Plan ends ') && document.querySelector('.tw-overview').innerText.includes('2026')"));
       await evaluate("document.getElementById('billing-host').remove()"); await new Promise(resolve => setTimeout(resolve, 50));
       checks.push({ independentFailures: true, retryRecovery: true, checkoutRouting: true, packRouting: true, portalRouting: true, invalidPaymentRejected: true, providerUsage: true, simpleConnectionActions: true, connectionRouting: true, planUsageSeparateFromCodex: true, activeExtraCredits: true, unavailableAllowances: true, cancellationDate: true,monthlyPricing: true,monthlyAddonRouting: true,monthlyAddonRemoval: true,separateOneTimePurchase:true });
       fs.writeFileSync(path.join(reports, 'billing-ui-verification.json'), JSON.stringify({ verifiedAt: new Date().toISOString(), passed: true, checks }, null, 2));
@@ -140,7 +141,7 @@ if (process.versions.electron) {
     if(action==='disconnectChatgpt'){o.connected=false;return{};}
     if(action==='chatgptDetails'){if(o.providerError)throw Error('Provider unavailable');return{funding:{plan:o.plan,subscriptionAllowed:o.plan==='free'},accounts:o.connected||o.reauth?[{id:'fixture',email:o.email||'alex@example.com',selected:true}]:[],account:o.connected?{email:o.email||'alex@example.com',planType:'plus'}:null,status:o.connected?'available':o.reauth?'reauth_required':'disconnected',login:{status:o.waiting?'waiting_for_user':'idle'},lastRequestError:o.requestError?{message:'{ "type": "invalid_request_error", "param": "tools" }'}:null,usageUrl:'https://chatgpt.com',usage:o.connected?{since:'2026-10-01',requests:42,inputTokens:18000,outputTokens:4200}:null,rateLimits:o.connected&&!o.limitsUnavailable?{primary:{usedPercent:25,windowDurationMins:300,resetsAt:1791216000},secondary:{usedPercent:60,windowDurationMins:10080,resetsAt:1791820800}}:null};}
     if(action==='cloud'&&input.route==='/billing/history'){if(o.historyError)throw Error('History unavailable');return{events:[{id:'1',kind:'usage',model:'openai/gpt-5.6-sol',occurred_at:'2026-10-05T10:30:00Z',delta_credits:-1.2345},{id:'2',kind:'purchase',occurred_at:'2026-10-04T12:00:00Z',delta_credits:50}]};}
-    if(action==='cloud'&&input.data.action==='status'){if(o.statusError)throw Error('Billing unavailable');const plans=[{id:'free',name:'Free',monthlyUsd:0,monthlyCredits:0},{id:'pro',name:'Pro',monthlyUsd:20,monthlyCredits:100},{id:'max',name:'Max',monthlyUsd:50,monthlyCredits:250},{id:'ultra',name:'Ultra',monthlyUsd:100,monthlyCredits:500}],plan=plans.find(p=>p.id===o.plan),allowance=plan.monthlyCredits+(o.monthlyExtraCredits||0);return{plan:o.plan,plans,monthlyExtraCredits:o.monthlyExtraCredits||0,monthlyUsd:plan.monthlyUsd+(o.monthlyExtraCredits||0)*.2,monthlyCreditAddons:[0,50,100,200,300,500,750,1000].map(credits=>({credits,monthlyUsd:credits*.2})),subscriptionStatus:o.plan==='free'?null:'active',canOpenPortal:o.plan!=='free',cancelAtPeriodEnd:o.cancelAtPeriodEnd,currentPeriodEnd:o.plan==='free'?null:'2026-11-05T00:00:00Z',includedCredits:{allowance,balance:allowance*.6},purchasedCredits:{balance:o.purchased??25},usage:{periodStart:'2026-10-05T00:00:00Z',periodEnd:'2026-11-05T00:00:00Z'},credits:{usedThisPeriod:5,packs:[[50,15],[100,30],[200,45],[300,60],[500,75],[750,100],[1000,125]].map(([credits,usd])=>({credits,usd}))}};}
+    if(action==='cloud'&&input.data.action==='status'){if(o.statusError)throw Error('Billing unavailable');const plans=[{id:'free',name:'Free',monthlyUsd:0,monthlyCredits:0},...(o.plan==='pro'?[{id:'pro',name:'Pro',monthlyUsd:20,monthlyCredits:280,retired:true}]:[]),{id:'max',name:'Max',monthlyUsd:50,monthlyCredits:700},{id:'ultra',name:'Ultra',monthlyUsd:100,monthlyCredits:1400}],addons=[0,15,30,45,60,75,100,125].map(usd=>({credits:usd*14,monthlyUsd:usd})),plan=plans.find(p=>p.id===o.plan),allowance=plan.monthlyCredits+(o.monthlyExtraCredits||0);return{plan:o.plan,plans,monthlyExtraCredits:o.monthlyExtraCredits||0,monthlyUsd:plan.monthlyUsd+(addons.find(a=>a.credits===o.monthlyExtraCredits)?.monthlyUsd||0),monthlyCreditAddons:addons,subscriptionStatus:o.plan==='free'?null:'active',canOpenPortal:o.plan!=='free',cancelAtPeriodEnd:o.cancelAtPeriodEnd,currentPeriodEnd:o.plan==='free'?null:'2026-11-05T00:00:00Z',includedCredits:{allowance,balance:allowance*.6},purchasedCredits:{balance:o.purchased??25},usage:{periodStart:'2026-10-05T00:00:00Z',periodEnd:'2026-11-05T00:00:00Z'},credits:{usedThisPeriod:5,packs:[15,30,45,60,75,100,125].map(usd=>({credits:usd*12,usd}))}};}
     if(action==='cloud')return{url:o.invalidPayment?'https://example.com/payment':input.data.action==='portal'?'https://billing.stripe.com/p/session/fixture':'https://checkout.stripe.com/c/pay/fixture'};
     return{};
   }};`;

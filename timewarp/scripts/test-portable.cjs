@@ -10,7 +10,7 @@ const files = fs.readdirSync(path.join(root, 'tests'))
   .filter(name => name.endsWith('.test.cjs') && !upstreamTests.has(name))
   .sort().map(name => path.join(root, 'tests', name));
 if (!files.length) throw new Error('No portable source tests found.');
-console.log('Upstream-dependent suites are separate: ' + [...upstreamTests].join(', ') + '. Run npm test after supplying and building the Energy runtime.');
+console.log('Upstream-dependent suites are separate: ' + [...upstreamTests].join(', ') + '. Run npm test after supplying the runtime in timewarp-runtime and building it.');
 const result = spawnSync(process.execPath, ['--test', ...files], { cwd: root, stdio: 'inherit', windowsHide: true });
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;

@@ -1,6 +1,6 @@
 "use strict";
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto'), assert = require('node:assert/strict');
-const { validateRelease } = require('../shared/release.cjs');
+const { checkRelease: validateRelease } = require('./release-config.cjs');
 const { requireSignature } = require('./signing.cjs');
 const root = path.resolve(__dirname,'..');
 function verifyManifest(manifest, release, directory) {

@@ -8,14 +8,14 @@ timewarp/build/
 timewarp/design/mascots/render/
 timewarp/reports/
 timewarp/release.json
-# Keep the editable upstream patch tools; runtime binaries and old stubs stay local.
-energy-testv1/*
-!energy-testv1/README.md
-!energy-testv1/package.json
-!energy-testv1/build/
-energy-testv1/build/*
-!energy-testv1/build/patch.js
-!energy-testv1/build/fix-asar-integrity.js
+# Keep the editable runtime patch tools; runtime binaries and old stubs stay local.
+timewarp-runtime/*
+!timewarp-runtime/README.md
+!timewarp-runtime/package.json
+!timewarp-runtime/build/
+timewarp-runtime/build/*
+!timewarp-runtime/build/patch.js
+!timewarp-runtime/build/fix-asar-integrity.js
 *.log
 *.private.*
 *.sqlite*

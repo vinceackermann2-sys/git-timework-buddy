@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, 'dist/download.js'), 'utf8');
 
-function render(navigatorLike, downloads = { windows:null, mac:null }) {
+function render(navigatorLike, downloads = { windows:null, mac:null }, gpu = null) {
   class Element {
     constructor(dataset = {}) { this.dataset = dataset; this.attributes = {}; this.events = {}; this.textContent = ''; this.innerHTML = ''; this.hidden = false; this.children = {}; }
     setAttribute(key,value) { this.attributes[key] = value; }
@@ -25,9 +25,12 @@ function render(navigatorLike, downloads = { windows:null, mac:null }) {
   const elements = { '.dialog-close':new Element(), '.availability-note':new Element() };
   const selectors = { '[data-platform]':platforms, '.download-action':actions, '.alt-download':alts };
   const location = { href:'about:blank' };
-  const context = { navigator:navigatorLike, window:{ TIMEWARP_DOWNLOADS:downloads, location }, document:{ querySelector:selector => elements[selector], querySelectorAll:selector => selectors[selector] || [], getElementById:get }, URL };
+  const webgl = gpu && { RENDERER:0x1F01, getExtension:name => name === 'WEBGL_debug_renderer_info' ? { UNMASKED_RENDERER_WEBGL:0x9246 } : null, getParameter:key => key === 0x9246 ? gpu : 'WebKit WebGL' };
+  const createElement = tag => ({ getContext:type => tag === 'canvas' && type === 'webgl' ? webgl : null });
+  const window = { TIMEWARP_DOWNLOADS:downloads, location };
+  const context = { navigator:navigatorLike, window, document:{ querySelector:selector => elements[selector], querySelectorAll:selector => selectors[selector] || [], getElementById:get, createElement }, URL };
   vm.runInNewContext(source,context);
-  return { actions,alts,platforms,get,elements,location };
+  return { actions,alts,platforms,get,elements,location,window };
 }
 
 const windows = { platform:'Win32',userAgent:'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',maxTouchPoints:0 };
@@ -67,6 +70,32 @@ for (const invalid of ['javascript:alert(1)','http://downloads.example.test/setu
   page.actions[0].events.click({preventDefault(){}});
   assert.equal(page.get('platform-download').hidden,true);
 }
+// The Mac build is Apple Silicon only: Intel GPUs get the explanatory dialog, with a fallback link.
+const intelGPUs = ['ANGLE (Intel Inc., Intel(R) Iris(TM) Plus Graphics 655, OpenGL 4.1)','ANGLE (ATI Technologies Inc., AMD Radeon Pro 5500M OpenGL Engine, OpenGL 4.1)','ANGLE (NVIDIA Corporation, NVIDIA GeForce GT 750M OpenGL Engine, OpenGL 4.1)','Intel(R) HD Graphics 400, or similar'];
+for (const gpu of intelGPUs) {
+  const page = render(mac,officialURLs,gpu);
+  assert.equal(page.window.TIMEWARP_INTEL_MAC,true,gpu);
+  page.actions.forEach(action => { assert.equal(action.href,'#download'); assert.equal(action.querySelector('.download-label').textContent,'Download for macOS'); });
+  page.actions[0].events.click({preventDefault(){}});
+  assert.equal(page.get('download-dialog').open,true);
+  assert.equal(page.get('dialog-title').textContent,'Timewarp needs an Apple Silicon Mac.');
+  assert.match(page.get('platform-message').textContent,/Intel processor.*OpenCore Legacy Patcher/);
+  assert.equal(page.get('platform-download').hidden,false);
+  assert.equal(page.get('platform-download').href,officialURLs.mac);
+  assert.equal(page.get('platform-download').textContent,'Download anyway');
+}
+for (const gpu of ['ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)','Apple M3 Pro','Apple GPU',null]) {
+  const page = render(mac,officialURLs,gpu);
+  assert.equal(page.window.TIMEWARP_INTEL_MAC,false,String(gpu));
+  page.actions.forEach(action => assert.equal(action.href,officialURLs.mac));
+}
+const intelWindows = render(windows,officialURLs,intelGPUs[0]);
+assert.equal(intelWindows.window.TIMEWARP_INTEL_MAC,false);
+intelWindows.actions.forEach(action => assert.equal(action.href,officialURLs.windows));
+const macChoice = render(windows,officialURLs);
+macChoice.platforms[1].events.click();
+assert.match(macChoice.get('platform-message').textContent,/Apple Silicon Macs \(M1 or later\).*Intel Macs aren’t supported/);
+
 const mobilePage = render(cases[5][0],officialURLs);
 mobilePage.actions[0].events.click({preventDefault(){}});
 mobilePage.platforms[1].events.click();
@@ -79,4 +108,4 @@ for (const [,url] of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
   if (/^https?:/.test(url)) continue;
   assert.ok(fs.existsSync(path.join(__dirname,'dist',url)), 'Missing asset ' + url);
 }
-console.log('Verified: 9 OS cases, alternate-platform links, configured Windows/Mac URLs, unavailable/unsafe URL handling, mobile platform selection, and local assets/anchors.');
+console.log('Verified: 9 OS cases, alternate-platform links, configured Windows/Mac URLs, Intel vs Apple Silicon Mac detection, unavailable/unsafe URL handling, mobile platform selection, and local assets/anchors.');

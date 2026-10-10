@@ -13,8 +13,8 @@ function patchLegacyOnboarding(source){
     '{const{done:t,loaded:e}=X3e();return !e?null:t?h.jsx(Ui,{to:"/",replace:!0}):h.jsx("main",{className:"timewarp-onboarding-root",ref:node=>{if(node)window.timewarpMountOnboarding?.(node)}})}');
 }
 function patchOnboardingPrompts(source){
-  source=once(source,'const r=await this.fetchRemote(n),s=Yw(r)','const r=require("./timewarp/desktop/onboarding.cjs").brandPromptBundle(await this.fetchRemote(n)),s=Yw(r)');
-  return once(source,'const a=i??nce(n);return{bundle:a','const a=require("./timewarp/desktop/onboarding.cjs").brandPromptBundle(i??nce(n));return{bundle:a');
+  source=once(source,'const r=await this.fetchRemote(n),s=Yw(r)','const r=require("./timewarp/desktop/inherited-prompts.cjs").brandPromptBundle(await this.fetchRemote(n)),s=Yw(r)');
+  return once(source,'const a=i??nce(n);return{bundle:a','const a=require("./timewarp/desktop/inherited-prompts.cjs").brandPromptBundle(i??nce(n));return{bundle:a');
 }
 function patchCursorImports(source){
   source=once(source,'Ku=["codex-chatgpt:mcp"','Ku=["cursor:memory","cursor:skills","codex-chatgpt:mcp"');

@@ -1,7 +1,7 @@
 "use strict";
 const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process');
 const { build, Platform, Arch } = require('electron-builder');
-const { validateRelease } = require('../shared/release.cjs');
+const { checkRelease: validateRelease } = require('./release-config.cjs');
 const { signFile, requireSignature } = require('./signing.cjs');
 const root = path.resolve(__dirname, '..');
 async function installer() {

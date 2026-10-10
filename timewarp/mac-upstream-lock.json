@@ -3,7 +3,6 @@
   "platform": "darwin",
   "arch": "arm64",
   "productVersion": "0.8.20",
-  "url": "https://static.getenergy.com/desktop/alpha/arm64/0.8.20/arm64.dmg",
   "dmgSha256": "bf55d5006673deb036d7e9be7455343e66fbd58a2796202ca6e3bb02b5484701",
   "archiveSha256": "199f890900d366f8d02caffffab01d6ea6b8baf840e521256e038664dd53ab8c",
   "rendererIndex": "index-DQgmkr9e.js",

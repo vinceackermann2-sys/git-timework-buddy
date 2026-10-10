@@ -1,7 +1,7 @@
 "use strict";
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
 const root = path.resolve(__dirname, '..');
-const inputRoot = () => path.resolve(process.env.TIMEWARP_UPSTREAM_DIR || path.join(root, '../energy-testv1'));
+const inputRoot = () => path.resolve(process.env.TIMEWARP_UPSTREAM_DIR || path.join(root, '../timewarp-runtime'));
 function hash(file) { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
 function inputFile(base, relative) {
   if (typeof relative !== 'string' || !relative || relative.includes('\\') || relative.split('/').some(part => !part || part === '.' || part === '..') || /[:\0]/.test(relative)) throw new Error('Invalid upstream input path.');

@@ -11,10 +11,9 @@
 //
 //   credits = (apiCostUsd × AI_COST_MARKUP) / USD_PER_CREDIT
 //
-// USD_PER_CREDIT is pinned to the best-value pack (1000 credits / $125 =
-// $0.125), so the bulk discount on the packs is real: a 50-pack credit costs
-// $0.30 but buys the same AI as a 1000-pack credit. Margin is therefore ≥33%
-// on every pack and rises as the packs get smaller.
+// USD_PER_CREDIT is the historical $0.125 unit. The desktop surface redeems
+// credits at 2.5x provider cost instead (cloud/nativeBilling.ts and the energy
+// settlement SQL), so there one credit covers $0.05 of provider cost.
 //
 // Worked example (matches the spec): a call costing $0.004 raw →
 // 0.004 × 1.33 = $0.00532 → / 0.125 = 0.04256 credits.
@@ -34,37 +33,39 @@ export const creditsForApiCost = (apiCostUsd: number): number => {
 };
 
 // --- Packs ------------------------------------------------------------------
-// Live products on the TimeWarpDev Stripe account. Price ids can be overridden
-// per pack via STRIPE_PRICE_CREDITS_<N> for a test-mode deploy.
+// One-time packs give 12 credits per dollar at every size: a little below the
+// plans' 14, because purchased credits never expire. At $0.05 of provider cost
+// per credit, a fully used pack spends 60% of its price, which still leaves a
+// margin after 25% VAT and card fees. Each pack's Stripe product and price are
+// created on its first checkout and found again by lookup key
+// (creditPackPrice in _shared/timewarpPricing.ts).
 export interface CreditPack {
   credits: number;
   priceUsd: number;
   priceCents: number;
-  priceId: string;
-  productId: string;
 }
 
-const PACK_DEFAULTS: Array<[number, number, string, string]> = [
-  [50, 15, 'price_1TuBtaGKbzbe9CQLtUqb2mxe', 'prod_UtztRuR6AgJXZJ'],
-  [100, 30, 'price_1TuBtuGKbzbe9CQLB94hLCFS', 'prod_Utztbj6dcjm1mz'],
-  [200, 45, 'price_1TuBuhGKbzbe9CQLHyVtD3vS', 'prod_Utzu2buvQKAeVw'],
-  [300, 60, 'price_1TuBv5GKbzbe9CQLZna5AzWL', 'prod_Utzu9pMukK9zTx'],
-  [500, 75, 'price_1TuBvcGKbzbe9CQLtxpUteui', 'prod_UtzvOHLiRETi6r'],
-  [750, 100, 'price_1TuBvwGKbzbe9CQLvsYGOXj9', 'prod_Utzv9aHPkSyV77'],
-  [1000, 125, 'price_1TuBx9GKbzbe9CQLtYgLHBbq', 'prod_UtzxBo4A6oh0ha'],
-];
+export const PACK_CREDITS_PER_USD = 12;
+const PACK_PRICES_USD = [15, 30, 45, 60, 75, 100, 125];
 
-export const CREDIT_PACKS: CreditPack[] = PACK_DEFAULTS.map(([credits, priceUsd, priceId, productId]) => ({
-  credits,
+export const CREDIT_PACKS: CreditPack[] = PACK_PRICES_USD.map((priceUsd) => ({
+  credits: priceUsd * PACK_CREDITS_PER_USD,
   priceUsd,
-  priceCents: Math.round(priceUsd * 100),
-  priceId: edgeEnv(`STRIPE_PRICE_CREDITS_${credits}`) || priceId,
-  productId,
+  priceCents: priceUsd * 100,
 }));
 
 export const getCreditPack = (credits: unknown): CreditPack | null => {
   const size = Number(credits);
   return CREDIT_PACKS.find((pack) => pack.credits === size) ?? null;
+};
+
+/** The pack an auto-recharge charges. A recharge saved with an older pack size
+ *  gets the smallest current pack holding at least that many credits, which
+ *  never costs more than the pack originally chosen. */
+export const rechargePack = (credits: unknown): CreditPack | null => {
+  const size = Number(credits);
+  if (!Number.isFinite(size) || size <= 0) return null;
+  return getCreditPack(size) ?? CREDIT_PACKS.find((pack) => pack.credits >= size) ?? null;
 };
 
 // --- Auto-recharge ----------------------------------------------------------
@@ -146,7 +147,7 @@ async function fireAutoRecharge(
   rechargeUserId: string,
 ): Promise<void> {
   const key = edgeEnv('STRIPE_SECRET_KEY');
-  const pack = getCreditPack(packCredits);
+  const pack = rechargePack(packCredits);
   if (!key || !pack) {
     await markRechargeFailed(admin, workspaceId, ownerUserId, key ? 'unknown pack' : 'no Stripe key');
     return;

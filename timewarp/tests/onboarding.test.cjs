@@ -1,6 +1,7 @@
 "use strict";
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {bindOnboardingSettings,brandPromptBundle}=require('../desktop/onboarding.cjs');
+const {bindOnboardingSettings}=require('../desktop/onboarding.cjs');
+const {brandPromptBundle}=require('../desktop/inherited-prompts.cjs');
 function fixture(saved=null){
   let owner='alice',value=saved,failure=false;
   const base={appearance:{scheme:'dark'},onboarding:{done:true,conversationId:null}};

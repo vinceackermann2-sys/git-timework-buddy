@@ -48,7 +48,7 @@ jobs:
           if ((Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:INPUT_SHA256) { throw 'Upstream download integrity check failed.' }
           $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
           try { foreach ($entry in $zip.Entries) { if ($entry.FullName -match '(^/|\\|:|(^|/)\.\.(/|$))') { throw 'Invalid bundle path.' } } } finally { $zip.Dispose() }
-          Expand-Archive -LiteralPath $archivePath -DestinationPath (Join-Path $env:GITHUB_WORKSPACE 'energy-testv1')
+          Expand-Archive -LiteralPath $archivePath -DestinationPath (Join-Path $env:GITHUB_WORKSPACE 'timewarp-runtime')
           npm run verify:upstream
       - name: Configure release identity and signing
         if: ${{ inputs.signed && !inputs.store }}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import GoogleAuthScreen from "../components/auth/GoogleAuthScreen";
-import { consumePendingGoogleOAuth, encryptEnergyDesktopHandoff } from "../lib/googleOAuth";
+import { consumePendingGoogleOAuth, encryptDesktopHandoff } from "../lib/googleOAuth";
 import { createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/auth/v1/callback")({ component: GoogleCallback });
@@ -29,7 +29,7 @@ function GoogleCallback() {
       setError(oauthError || "Google did not return a valid identity token.");
       return;
     }
-    void encryptEnergyDesktopHandoff(idToken, pending.desktop)
+    void encryptDesktopHandoff(idToken, pending.desktop)
       .then((code) => {
         const callback = new URL("http://127.0.0.1:17654/oauth-callback");
         callback.searchParams.set("code", code);
