@@ -62,7 +62,7 @@ function fillSignIn(username, password, origin) {
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null, updates = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Each agent's workspace, so the skills kept there (Settings → Skills → Workspace) are listed, as before.
   const skillFolders = () => store.agents.list(services.auth.userId()).filter(agent => !agent.archivedAt && fs.existsSync(agent.workspace)).map(agent => agent.workspace);
@@ -78,6 +78,12 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       setTimeout(() => { app.relaunch(); app.quit(); }, 100);
       return { restarting: true };
     },
+    // Updates (desktop/updates.cjs) for Settings → General and the sidebar's
+    // Update button: checking now (a Store app opens its Store page), and
+    // restarting into a downloaded update, which asks first.
+    "updates.state": () => { if (!updates) throw fail(404, "Updates are unavailable."); return updates.state(); },
+    "updates.check": () => { if (!updates) throw fail(404, "Updates are unavailable."); return updates.check(); },
+    "updates.install": async () => { if (!updates) throw fail(404, "Updates are unavailable."); return { installing: await updates.install() }; },
     // A support file with versions, states and recent app log lines; no chats,
     // files, account details or secrets.
     "diagnostics.export": async () => {

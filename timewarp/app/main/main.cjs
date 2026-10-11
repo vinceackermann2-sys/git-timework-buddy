@@ -645,7 +645,7 @@ async function boot() {
     const servers = owner ? await mcp.list().catch(() => []) : [];
     return {
       createdAt: new Date().toISOString(),
-      app: { version: VERSION, profile: build.profile || null, appId: build.appId || null, releaseUpdates: !!build.release?.enabled, packaged: app.isPackaged },
+      app: { version: VERSION, profile: build.profile || null, appId: build.appId || null, releaseUpdates: !!build.release?.enabled, updates: updates.state(), packaged: app.isPackaged },
       runtime: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node, codex: codexVersion },
       system: { platform: process.platform, arch: process.arch, release: require("node:os").release(), memoryGb: Math.round(require("node:os").totalmem() / 1e9) },
       state: {
@@ -663,12 +663,56 @@ async function boot() {
   // Setup can import saved passwords the same way Settings → Vault does.
   onboarding = createOnboarding({ profile, store, services, agents, knowledge, browserImport, importPasswords: () => methods["vault.importPasswords"](), dialog, shell, defaultAppearance });
 
+  // Restarting into a downloaded update asks first, from the notification or
+  // the Update button. Agents still working are mentioned, so a restart doesn't
+  // cut a run short.
+  let restartQuestion = null;
+  const confirmRestart = install => restartQuestion || (restartQuestion = (async () => {
+    const working = userId() ? store.conversations.list(userId()).filter(item => { try { return harness.conversations.status(item.id).running; } catch { return false; } }).length : 0;
+    const result = await dialog.showMessageBox(mainWindow || undefined, {
+      type: "info", title: "Timewarp update", message: "An update is ready. Restart Timewarp to install it.",
+      detail: working ? "An agent is still working. Restarting stops it." : undefined,
+      buttons: ["Restart and install", "Later"], defaultId: 1, cancelId: 1, noLink: true,
+    });
+    if (result.response !== 0) { updateNotice = null; return false; }
+    install();
+    return true;
+  })().catch(() => false).finally(() => { restartQuestion = null; }));
+  // Updates are known from the start for Settings and the sidebar; checks
+  // begin once the account is ready, as before (startUpdates below).
+  let startUpdates;
+  const updatesReady = new Promise(resolve => { startUpdates = resolve; });
+  const updates = require("../../desktop/updates.cjs").configureUpdates({
+    app, autoUpdater: () => require("electron-updater").autoUpdater, release: build.release || { enabled: false }, macUpdates: build.macUpdates || { enabled: false },
+    logger: { info: (...args) => appLog.info("updater", args.join(" ")), warn: (...args) => appLog.warn("updater", args.join(" ")), error: (...args) => appLog.error("updater", args.map(value => value?.message || value).join(" ")), log: (...args) => appLog.info("updater", args.join(" ")) },
+    readUpdateConfig: () => require("js-yaml").load(fs.readFileSync(path.join(process.resourcesPath, "app-update.yml"), "utf8")),
+    ready: () => updatesReady, onChange: state => broadcast("updates.changed", state), openExternal: url => shell.openExternal(url),
+    // A notification first, as in the previous app; clicking it asks to restart.
+    notify: install => {
+      if (updateNotice) return;
+      if (!Notification.isSupported()) return void confirmRestart(install);
+      updateNotice = new Notification({ title: "Timewarp update ready", body: "Click to restart and install the verified update." });
+      updateNotice.on("click", () => void confirmRestart(install));
+      updateNotice.show();
+    },
+    confirm: confirmRestart,
+  });
+
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();
+  // Preview builds have no updates; debug.updates shows one (such as a ready
+  // update) in Settings and the sidebar, and counts Update clicks.
+  if (fixture) {
+    let shown = null, installs = 0;
+    const { "updates.state": realState, "updates.install": realInstall } = methods;
+    methods["updates.state"] = () => shown || realState();
+    methods["updates.install"] = () => shown ? (installs++, { installing: false }) : realInstall();
+    methods["debug.updates"] = input => { shown = input?.status ? { ...realState(), ...input } : null; broadcast("updates.changed", methods["updates.state"]()); return { installs }; };
+  }
   // The window frame and native dialogs follow a theme change at once; reading
   // a chat clears its reply notification and the unread badge.
   const setSetting = methods["settings.set"], markRead = methods["conversations.markRead"];
@@ -719,28 +763,7 @@ async function boot() {
   trace("account storage ready");
   await accountReady().catch(error => console.error("[timewarp] Account startup failed:", error.message));
   trace("account ready");
-  require("../../desktop/updates.cjs").configureUpdates({
-    app, autoUpdater: require("electron-updater").autoUpdater, release: build.release || { enabled: false },
-    logger: { info: (...args) => appLog.info("updater", args.join(" ")), warn: (...args) => appLog.warn("updater", args.join(" ")), error: (...args) => appLog.error("updater", args.map(value => value?.message || value).join(" ")), log: (...args) => appLog.info("updater", args.join(" ")) },
-    readUpdateConfig: () => require("js-yaml").load(fs.readFileSync(path.join(process.resourcesPath, "app-update.yml"), "utf8")),
-    // A notification first, as in the previous app; clicking it asks to restart.
-    // Agents still working are mentioned, so a restart doesn't cut a run short.
-    notify: install => {
-      if (updateNotice) return;
-      const prompt = () => {
-        const working = userId() ? store.conversations.list(userId()).filter(item => { try { return harness.conversations.status(item.id).running; } catch { return false; } }).length : 0;
-        void dialog.showMessageBox(mainWindow || undefined, {
-          type: "info", title: "Timewarp update", message: "An update is ready. Restart Timewarp to install it.",
-          detail: working ? "An agent is still working. Restarting stops it." : undefined,
-          buttons: ["Restart and install", "Later"], defaultId: 1, cancelId: 1, noLink: true,
-        }).then(result => { if (result.response === 0) install(); else updateNotice = null; }).catch(() => {});
-      };
-      if (!Notification.isSupported()) return prompt();
-      updateNotice = new Notification({ title: "Timewarp update ready", body: "Click to restart and install the verified update." });
-      updateNotice.on("click", prompt);
-      updateNotice.show();
-    },
-  });
+  startUpdates();
   app.on("will-quit", () => { appLog.info("shutdown", "Timewarp quit"); try { fs.rmSync(sessionMarker, { force: true }); } catch {} });
   // Quitting waits (a few seconds at most) for Codex to stop and chat history
   // to save, then closes the database, so nothing writes to it once closed.

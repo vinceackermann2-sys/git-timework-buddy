@@ -106,6 +106,20 @@ export function upcomingAutomations(automations, conversations, now = Date.now()
     .sort((a, b) => time(a.nextRunAt) - time(b.nextRunAt)).slice(0, 5);
 }
 
+// Settings → General → Updates: the status line and the button for an update
+// state (desktop/updates.cjs). The Store updates a Store app; other builds
+// without a feed have no updates.
+export function updateRow(state) {
+  if (!state) return { line: "", button: "Check for updates", disabled: true };
+  if (state.kind === "store") return { line: "Updates are installed by the Microsoft Store.", button: "Check for updates", disabled: false };
+  if (state.kind !== "auto") return { line: "Updates are off in this build.", button: "Check for updates", disabled: true };
+  const lines = {
+    checking: "Checking…", downloading: `Downloading ${state.progress || 0}%`, upToDate: "Timewarp is up to date", error: "Couldn't check for updates",
+    ready: state.available ? `Version ${state.available} is ready to install` : "An update is ready to install",
+  };
+  return { line: lines[state.status] || "", button: state.status === "ready" ? "Restart to update" : "Check for updates", disabled: state.status === "checking" || state.status === "downloading" };
+}
+
 // Invitations: several addresses separated by commas or new lines.
 export const splitEmails = text => String(text || "").split(/[,\n]/).map(item => item.trim()).filter(Boolean);
 

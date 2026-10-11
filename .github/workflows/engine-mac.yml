@@ -2,7 +2,8 @@ name: Engine for macOS
 
 # Builds Timewarp for Mac from Timewarp's own source: Apple Silicon and Intel,
 # macOS 12 Monterey or later. Preview DMGs are ad hoc signed and smoke tested
-# on each runner; the signed release needs the protected Apple identity.
+# on each runner; the signed release needs the protected Apple identity and
+# also makes each architecture's update zip and update file.
 on:
   workflow_dispatch:
     inputs:
@@ -89,8 +90,12 @@ jobs:
           name: timewarp-engine-macos-${{ matrix.arch }}-signed
           if-no-files-found: error
           retention-days: 7
+          # The update for this architecture: its zip and latest-mac-<arch>.yml.
+          # merge-mac-update-info.cjs joins both jobs' files into latest-mac.yml.
           path: |
             timewarp/build/mac-release/*.dmg
+            timewarp/build/mac-release/*-mac.zip
+            timewarp/build/mac-release/latest-mac-*.yml
             timewarp/reports/engine-mac.json
             timewarp/reports/mac-notary.json
             timewarp/reports/mac-release.json

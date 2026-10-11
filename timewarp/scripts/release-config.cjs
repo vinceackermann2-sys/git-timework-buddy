@@ -3,7 +3,7 @@
 // applies, a public Timewarp release must never use the update feed or
 // publisher that Timewarp builds inherited before Timewarp had its own source.
 const fs = require("node:fs");
-const { validateRelease } = require("../shared/release.cjs");
+const { validateRelease, validateMacFeed } = require("../shared/release.cjs");
 
 const INHERITED_HOST = /(?:^|\.)(?:getenergy\.com|generalwork\.ai|newco-trace-ingest\.computerwork\.workers\.dev)$/i;
 const INHERITED_PUBLISHERS = new Set(["The Computer Work Company, Inc."]);
@@ -16,5 +16,10 @@ function checkRelease(value) {
   return release;
 }
 const readRelease = file => checkRelease(JSON.parse(fs.readFileSync(file, "utf8")));
+function checkMacFeed(value) {
+  const feed = validateMacFeed(value);
+  if (feed.enabled && INHERITED_HOST.test(new URL(feed.updateUrl).hostname)) throw new Error("A public Timewarp HTTPS update URL is required.");
+  return feed;
+}
 
-module.exports = { checkRelease, readRelease };
+module.exports = { checkRelease, readRelease, checkMacFeed };

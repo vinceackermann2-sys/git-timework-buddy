@@ -44,7 +44,7 @@ From `timewarp`:
 
     npm run engine:dev               # build and open (separate "Timewarp Dev" profile)
     npm run engine:preview           # signed-in sample account, scripted model, real Codex
-    npm run engine:e2e               # end-to-end harness check in a preview build (25 scenarios)
+    npm run engine:e2e               # end-to-end harness check in a preview build (27 scenarios)
     npm run test:engine              # engine tests, including a real Codex conversation
     npm run engine:audit             # build and check the engine contains nothing from Energy
     npm run engine:package:draft     # unsigned Windows installer (build/engine-installer-draft)
@@ -134,7 +134,7 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Feedback, diagnostics | Timewarp reporting, Energy debug export | Same feedback (Ctrl/⌘+Alt+F); Settings → General → Diagnostics opens the log folder and exports a diagnostics file (no chats or account data) |
 | Conversation trace (Activity) | Energy UI | Rebuilt: turns with input, cached and output tokens and timing, events with approximate tokens, workers nested under the step that started them, older turns and events loaded on request. Billed cost and cache writes aren't recorded locally, so they show as "—" |
 | Browser profile import from Chrome/Edge | Energy | The same list, most recently used first, and Import button; importing makes a Timewarp profile with the profile's name and account (from the browser's profile list only). Sign-ins and cookies are not copied, since that would read other browsers' protected data: sites are signed in to once in Timewarp's browser, and saved passwords import from a CSV export in Vault |
-| Updates | Timewarp feed (Windows); a notification, then a restart prompt | Same feed, checks and prompt; the prompt says when an agent is still working |
+| Updates | Timewarp feed (Windows); a notification, then a restart prompt | Same feed, checks and prompt; the prompt says when an agent is still working. Settings → General → Updates shows the version and where updates stand (checking, downloading, ready, up to date) with Check for updates, or Restart to update once one is downloaded; a downloaded update also shows an Update button in the sidebar. Both restart through the same prompt. Signed Mac builds now update too, from the newest GitHub release (see Platforms). The Microsoft Store app is updated by the Store (Check for updates opens its Store page); development and preview builds have no updates (`desktop/updates.cjs`) |
 | Window and shortcuts | No title bar on Windows (window buttons over the app in its colours); the window follows the app's theme; zoom and full screen from the menu's shortcuts; Ctrl/⌘+W closes what's open in the app | Same; the window can be as small as 520 × 480 |
 | Reply notifications | From the main process: the agent's name and the reply's text; open the chat; cleared once the chat is read; unread badge | Same (`notifications.cjs`), also when the window is closed on macOS |
 | Quitting, damaged data | Waits for the runtime to stop | Same: quitting waits up to a few seconds for chat history to save and Codex to stop, then closes the database. A damaged local database is set aside (kept) and a new one started; chats come back through history sync and the previous app's data is imported again |
@@ -314,8 +314,8 @@ history sync keeps what it knew between launches.
 | --- | --- | --- | --- |
 | Windows x64 | NSIS installer (`engine:package`) | Windows 10 | Draft built and smoke tested; signed release needs `release.json` and signing |
 | Windows x64 | Microsoft Store MSIX (`engine:package:store`) | Windows 10 1809 | Built and checked with the Store identity; versions in `store.json` |
-| macOS Apple Silicon | DMG (`package-engine-mac`, `engine-mac` workflow) | macOS 12 | Signed, notarized and smoke tested on GitHub's runners; not yet run on a physical Mac |
-| macOS Intel (incl. OpenCore Legacy Patcher Macs) | DMG | macOS 12 | Signed, notarized and smoke tested on GitHub's runners; not yet run on a physical Mac |
+| macOS Apple Silicon | DMG and update zip (`package-engine-mac`, `engine-mac` workflow) | macOS 12 | Signed, notarized and smoke tested on GitHub's runners; not yet run on a physical Mac |
+| macOS Intel (incl. OpenCore Legacy Patcher Macs) | DMG and update zip | macOS 12 | Signed, notarized and smoke tested on GitHub's runners; not yet run on a physical Mac |
 
 The previous Mac build was Apple Silicon only with a macOS 15 floor. The
 engine's floor is set by Electron 43 (macOS 12); measured with
@@ -336,6 +336,23 @@ also be turned off in Settings → General.
 macOS 11 or older would need Electron 37 or older, which no longer gets
 security fixes; not recommended for an app with a built-in browser.
 
+Mac updates come from the newest release in
+`vinceackermann2-sys/timewarp-releases`, through GitHub's address for its
+files (`https://github.com/vinceackermann2-sys/timewarp-releases/releases/latest/download/`,
+`updateUrl` in `mac-release.json`). Each signed `engine-mac` job also makes
+its architecture's update: `Timewarp-<version>-<arch>-mac.zip` and
+`latest-mac-<arch>.yml`. `scripts/merge-mac-update-info.cjs` joins the two
+files into `latest-mac.yml`:
+
+    node scripts/merge-mac-update-info.cjs latest-mac-arm64.yml latest-mac-x64.yml --out latest-mac.yml
+
+Every GitHub release then carries both DMGs, both zips and `latest-mac.yml`.
+Macs read the newest release only, so one without these files leaves them at
+"Couldn't check for updates" until the next one. The app downloads the zip
+for its architecture, checks its SHA-512, and Squirrel.Mac installs it only
+if it's signed with Timewarp's Developer ID. Mac builds released before this
+have no updater; their users install the next DMG once.
+
 ## Before shipping
 
 1. Live acceptance with a real account on Windows: sign-in, billing, a
@@ -346,6 +363,7 @@ security fixes; not recommended for an app with a built-in browser.
    from a profile of the previous app with memory, automations and vault items.
 2. Try the Windows command sandbox on a PC where Windows' app container
    sandbox isn't available (Codex then uses its restricted-token sandbox), and
-   the signed Mac builds on a real Apple Silicon and Intel Mac.
+   the signed Mac builds on a real Apple Silicon and Intel Mac, including an
+   update from one signed release to the next.
 3. Signed Windows release: `release.json` and signing.
 4. After cutover, remove `timewarp-runtime` and the patch pipeline.

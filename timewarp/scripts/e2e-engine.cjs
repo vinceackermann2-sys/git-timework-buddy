@@ -605,6 +605,28 @@ async function main() {
       if (!diagnostics.log?.length && !diagnostics.state) throw new Error("Diagnostics are empty.");
       return `diagnostics hold ${diagnostics.log?.length || 0} log lines and no chat or vault content`;
     },
+    // A preview build has no updates; debug.updates shows a ready one, as a
+    // signed build would after downloading it.
+    async updates() {
+      const { version } = await call("app.info");
+      const state = await call("updates.state");
+      if (state.kind !== "none" || state.version !== version || (await call("updates.check")).kind !== "none") throw new Error("A preview build should have no updates: " + JSON.stringify(state));
+      const read = expression => app.evaluate(`(() => { const row = [...document.querySelectorAll(".tw-set-row")].find(item => item.querySelector("strong")?.textContent === "Updates"); const button = document.querySelector("button.tw-update"); return ${expression}; })()`);
+      const until = async (expression, what) => { for (const deadline = Date.now() + 8000; Date.now() < deadline; await pause(200)) if (await read(expression)) return; throw new Error(what + ": " + await read(`(row?.innerText || "") + " | " + (button?.innerText || "")`)); };
+      await app.evaluate(`location.hash = "#/customize/settings"`);
+      await until(`!!row && row.innerText.includes("Timewarp ${version}") && row.innerText.includes("Updates are off in this build.") && row.querySelector("button").disabled && !button`, "Settings didn't say updates are off");
+      try {
+        await call("debug.updates", { kind: "auto", status: "ready", available: "9.9.9", progress: 100 });
+        await until(`row.innerText.includes("Version 9.9.9 is ready to install") && row.querySelector("button").textContent === "Restart to update" && !!button && button.innerText.includes("9.9.9")`, "The ready update didn't show");
+        await read(`button.click()`);
+        let installs = 0;
+        for (const deadline = Date.now() + 5000; !installs && Date.now() < deadline; await pause(200)) ({ installs } = await call("debug.updates", { kind: "auto", status: "ready", available: "9.9.9", progress: 100 }));
+        if (installs !== 1) throw new Error("The Update button didn't ask to install the update.");
+        await call("debug.updates", { kind: "auto", status: "downloading", available: "9.9.9", progress: 42 });
+        await until(`row.innerText.includes("Downloading 42%") && row.querySelector("button").disabled && !button`, "Downloading didn't show");
+      } finally { await call("debug.updates", null); await app.evaluate(`location.hash = "#/"`); }
+      return "Settings says updates are off in a preview build; a ready update shows in Settings and as the sidebar's Update button, which asks to install it";
+    },
   };
 
   for (const [name, run] of Object.entries(scenarios)) {

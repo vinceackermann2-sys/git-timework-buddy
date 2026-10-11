@@ -67,6 +67,11 @@ async function build() {
   const override = process.env.TIMEWARP_APP_VERSION;
   if (override && !/^\d+\.\d+\.\d+$/.test(override)) throw new Error("TIMEWARP_APP_VERSION must be a stable version such as 1.2.0.");
   const version = override || (releaseConfig.enabled ? releaseConfig.version : require("../package.json").version);
+  // Signed Mac releases carry their update feed (mac-release.json's updateUrl,
+  // through TIMEWARP_MAC_UPDATE_URL); the app checks its app-update.yml against it.
+  const macFeed = process.env.TIMEWARP_MAC_UPDATE_URL;
+  if (macFeed && !release) throw new Error("The Mac update feed is for release builds.");
+  const macUpdates = macFeed ? require("./release-config.cjs").checkMacFeed({ enabled: true, version, updateUrl: macFeed }) : { enabled: false };
   clean(out);
   fs.mkdirSync(out, { recursive: true });
   const common = { bundle: true, logLevel: "warning", metafile: true, legalComments: "none", minify: !dev, sourcemap: dev ? "inline" : false };
@@ -110,7 +115,7 @@ async function build() {
     author: { name: "Timewarp" }, license: "UNLICENSED", private: true,
   }, null, 2));
   fs.writeFileSync(path.join(out, "build.json"), JSON.stringify({
-    version, ...identity, release: releaseConfig, ...(fixture ? { fixture: true } : {}),
+    version, ...identity, release: releaseConfig, macUpdates, ...(fixture ? { fixture: true } : {}),
   }, null, 2));
   const sections = notices([main.metafile, renderer.metafile]);
   // Every source file that went into the bundles, for the independence audit.

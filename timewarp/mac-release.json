@@ -1,9 +1,10 @@
 {
-  "version": "1.2.2",
+  "version": "1.2.3",
   "appId": "com.timewarp.desktop",
   "teamId": "6XD78664VT",
   "identity": "Developer ID Application: Vincent Ackermann (6XD78664VT)",
   "certificateSha256": "35b48167357f672c4ff1dc9a14c503ca7c0b7c427a7f455dbe2c15552c30a901",
   "minimumSystemVersion": "12.0",
-  "arch": "arm64"
+  "arch": "arm64",
+  "updateUrl": "https://github.com/vinceackermann2-sys/timewarp-releases/releases/latest/download/"
 }
