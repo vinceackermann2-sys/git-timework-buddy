@@ -14,4 +14,14 @@ describe("App routing", () => {
 
     expect(matches.at(-1)?.routeId).not.toBe(rootRouteId);
   });
+
+  // The desktop app's sign-up form and the account emails link to these.
+  it.each(["/legal/privacy-policy", "/legal/terms-of-service", "/legal/cookie-policy"])(
+    "matches the legal page %s",
+    (path) => {
+      const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+
+      expect(router.matchRoutes(path).at(-1)?.routeId).toBe(path);
+    },
+  );
 });

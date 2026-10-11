@@ -12,6 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthBridgeRouteImport } from './routes/auth.bridge'
 import { Route as AuthGoogleRouteImport } from './routes/auth.google'
+import { Route as LegalCookiePolicyRouteImport } from './routes/legal.cookie-policy'
+import { Route as LegalPrivacyPolicyRouteImport } from './routes/legal.privacy-policy'
+import { Route as LegalTermsOfServiceRouteImport } from './routes/legal.terms-of-service'
 import { Route as AuthV1CallbackRouteImport } from './routes/auth.v1.callback'
 
 const IndexRoute = IndexRouteImport.update({
@@ -29,6 +32,21 @@ const AuthGoogleRoute = AuthGoogleRouteImport.update({
   path: '/auth/google',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LegalCookiePolicyRoute = LegalCookiePolicyRouteImport.update({
+  id: '/legal/cookie-policy',
+  path: '/legal/cookie-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalPrivacyPolicyRoute = LegalPrivacyPolicyRouteImport.update({
+  id: '/legal/privacy-policy',
+  path: '/legal/privacy-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalTermsOfServiceRoute = LegalTermsOfServiceRouteImport.update({
+  id: '/legal/terms-of-service',
+  path: '/legal/terms-of-service',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthV1CallbackRoute = AuthV1CallbackRouteImport.update({
   id: '/auth/v1/callback',
   path: '/auth/v1/callback',
@@ -39,12 +57,18 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/cookie-policy': typeof LegalCookiePolicyRoute
+  '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
+  '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/cookie-policy': typeof LegalCookiePolicyRoute
+  '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
+  '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
 }
 export interface FileRoutesById {
@@ -52,20 +76,48 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/cookie-policy': typeof LegalCookiePolicyRoute
+  '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
+  '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth/bridge' | '/auth/google' | '/auth/v1/callback'
+  fullPaths:
+    | '/'
+    | '/auth/bridge'
+    | '/auth/google'
+    | '/legal/cookie-policy'
+    | '/legal/privacy-policy'
+    | '/legal/terms-of-service'
+    | '/auth/v1/callback'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth/bridge' | '/auth/google' | '/auth/v1/callback'
-  id: '__root__' | '/' | '/auth/bridge' | '/auth/google' | '/auth/v1/callback'
+  to:
+    | '/'
+    | '/auth/bridge'
+    | '/auth/google'
+    | '/legal/cookie-policy'
+    | '/legal/privacy-policy'
+    | '/legal/terms-of-service'
+    | '/auth/v1/callback'
+  id:
+    | '__root__'
+    | '/'
+    | '/auth/bridge'
+    | '/auth/google'
+    | '/legal/cookie-policy'
+    | '/legal/privacy-policy'
+    | '/legal/terms-of-service'
+    | '/auth/v1/callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthBridgeRoute: typeof AuthBridgeRoute
   AuthGoogleRoute: typeof AuthGoogleRoute
+  LegalCookiePolicyRoute: typeof LegalCookiePolicyRoute
+  LegalPrivacyPolicyRoute: typeof LegalPrivacyPolicyRoute
+  LegalTermsOfServiceRoute: typeof LegalTermsOfServiceRoute
   AuthV1CallbackRoute: typeof AuthV1CallbackRoute
 }
 
@@ -92,6 +144,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthGoogleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/legal/cookie-policy': {
+      id: '/legal/cookie-policy'
+      path: '/legal/cookie-policy'
+      fullPath: '/legal/cookie-policy'
+      preLoaderRoute: typeof LegalCookiePolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal/privacy-policy': {
+      id: '/legal/privacy-policy'
+      path: '/legal/privacy-policy'
+      fullPath: '/legal/privacy-policy'
+      preLoaderRoute: typeof LegalPrivacyPolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal/terms-of-service': {
+      id: '/legal/terms-of-service'
+      path: '/legal/terms-of-service'
+      fullPath: '/legal/terms-of-service'
+      preLoaderRoute: typeof LegalTermsOfServiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/auth/v1/callback': {
       id: '/auth/v1/callback'
       path: '/auth/v1/callback'
@@ -106,6 +179,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthBridgeRoute: AuthBridgeRoute,
   AuthGoogleRoute: AuthGoogleRoute,
+  LegalCookiePolicyRoute: LegalCookiePolicyRoute,
+  LegalPrivacyPolicyRoute: LegalPrivacyPolicyRoute,
+  LegalTermsOfServiceRoute: LegalTermsOfServiceRoute,
   AuthV1CallbackRoute: AuthV1CallbackRoute,
 }
 export const routeTree = rootRouteImport
