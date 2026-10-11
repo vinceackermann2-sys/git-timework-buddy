@@ -18,7 +18,7 @@ function setup({ focused = false, enabled = true } = {}) {
     { id: "m2", conversationId: "c1", authorId: "a1", text: "I found **two** flights: [SAS](https://sas.example) and <widget-select>x</widget-select> more.", turnId: "t1" },
   ];
   const store = {
-    conversations: { get: id => id === "c1" ? conversation : null, list: () => [conversation, { id: "c2", read: true }] },
+    conversations: { get: id => id === "c1" ? conversation : null, unreadCount: () => [conversation, { id: "c2", read: true }].filter(item => !item.read).length },
     messages: { list: () => messages },
     agents: { get: () => ({ name: "Tao" }) },
   };
@@ -66,7 +66,7 @@ test("a scheduled run the agent marked as nothing to report doesn't notify, even
   class FakeNotification extends EventEmitter { static isSupported() { return true; } constructor(options) { super(); this.options = options; } show() { shown.push(this); } close() {} }
   const conversation = { id: "c1", ownerId: "u1", agentId: "a1", read: false };
   const store = {
-    conversations: { get: () => conversation, list: () => [conversation] },
+    conversations: { get: () => conversation, unreadCount: () => 1 },
     messages: { list: () => [{ authorId: "a1", text: "No new listings today.", turnId: "t9" }] },
     agents: { get: () => ({ name: "Tao" }) },
   };

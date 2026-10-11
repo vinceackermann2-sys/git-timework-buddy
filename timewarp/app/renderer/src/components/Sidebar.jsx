@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Archive, Bell, BellDot, Blocks, Building2, CalendarClock, ChevronRight, ChevronUp, GripVertical, LoaderCircle, LogOut, MailOpen, Pencil, Plus, Search, Settings2, UserPlus, UserRound } from "lucide-react";
-import { call, relativeTime } from "../api.js";
+import { Archive, Bell, BellDot, Blocks, Building2, CalendarClock, ChevronRight, ChevronUp, CircleFadingArrowUp, GripVertical, LoaderCircle, LogOut, MailOpen, Pencil, Plus, Search, Settings2, UserPlus, UserRound } from "lucide-react";
+import { call, relativeTime, useEvent } from "../api.js";
 import { Avatar, ContextMenu, Dialog, Menu, Tip, menuKeys, modKey, useToast } from "./common.jsx";
 import { PAGE, activityGroups, byActivity, dropSide, moveId, shownCount } from "../shell.mjs";
 
@@ -339,9 +339,12 @@ export function Sidebar({ account, agents, conversations, selectedId, view, home
       </div>
       <Tip label="New Task" keys={[modKey(), "N"]}><button type="button" className="tw-new-task" onClick={() => onNewTask()}><Plus size={18} strokeWidth={1.6} /><span>New Task</span></button></Tip>
       <div className={"tw-side-scroll" + (mode === "activity" ? " feed" : "")}>{body}</div>
+      <UpdateButton />
       {usage}
+      {/* At launch the account's organization is still on its way: its
+          place is kept, empty, rather than showing the user's name first. */}
       <Menu up align="left" width={272} className="tw-account-menu" trigger={({ toggle, open }) => (
-        <button type="button" className="tw-account" aria-expanded={open} onClick={toggle} aria-label="Account">
+        <button type="button" className="tw-account" aria-expanded={open} onClick={toggle} aria-label="Account" style={account?.loading ? { visibility: "hidden" } : undefined}>
           <OrgPicture organization={organization} />
           <span><strong>{organization?.name || account?.user?.name || "Timewarp"}</strong><small>{account?.user?.email || ""}</small></span>
           <ChevronUp size={16} />
@@ -357,6 +360,21 @@ export function Sidebar({ account, agents, conversations, selectedId, view, home
         <button type="button" className="tw-menu-item" data-close onClick={onSignOut}><LogOut size={16} /><span className="grow">Log out</span></button>
       </Menu>
     </aside>
+  );
+}
+
+// Shown once an update is downloaded. Restarting into it asks first, saying
+// when an agent is still working (main process).
+function UpdateButton() {
+  const [state, setState] = useState(null);
+  const toast = useToast();
+  useEffect(() => { call("updates.state").then(setState).catch(() => {}); }, []);
+  useEvent("updates.changed", setState);
+  if (state?.status !== "ready") return null;
+  return (
+    <button type="button" className="tw-update" title={state.available ? `Restart to install Timewarp ${state.available}` : "Restart to install the update"} onClick={() => call("updates.install").catch(error => toast(error, "error"))}>
+      <CircleFadingArrowUp size={16} strokeWidth={1.8} /><span>Update</span>{state.available ? <small>{state.available}</small> : null}
+    </button>
   );
 }
 

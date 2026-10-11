@@ -72,9 +72,20 @@ export function useWorkers(conversationId, turns) {
   useEvent("conversation.event", ({ conversationId: id, method, params }) => {
     if (id !== conversationId || !params?.subAgent || !params.threadId && !params.thread?.id) return;
     const threadId = params.threadId || params.thread.id;
-    setLive(current => { const next = new Map(current); next.set(threadId, liveWorker(current.get(threadId), method, params)); return next; });
+    // Most of a worker's events (its streamed text) change nothing here.
+    setLive(current => {
+      const value = liveWorker(current.get(threadId), method, params);
+      return current.has(threadId) && value === current.get(threadId) ? current : new Map(current).set(threadId, value);
+    });
   });
-  const announced = useMemo(() => workersFrom(turns, live), [turns, live]);
+  // The same list while the chat's turns change in other ways (its reply
+  // streaming), so what shows the workers isn't drawn again.
+  const previous = useRef(null);
+  const announced = useMemo(() => {
+    const list = workersFrom(turns, live), key = JSON.stringify(list);
+    if (previous.current?.key !== key) previous.current = { key, list };
+    return previous.current.list;
+  }, [turns, live]);
   const key = announced.map(worker => worker.threadId + ":" + worker.status).join(" ");
   useEffect(() => {
     let alive = true, timer = null;
@@ -86,15 +97,19 @@ export function useWorkers(conversationId, turns) {
         const seen = snapshots.current.get(worker.threadId);
         return !seen || seen.announced !== worker.status || (seen.misses ? seen.misses < 5 : working(worker.status) && working(seen.value.status));
       });
+      let changed = false;
       for (const worker of due) {
         const value = await call("conversations.worker", { id: conversationId, threadId: worker.threadId }).catch(() => null);
         if (!alive) return;
         const seen = snapshots.current.get(worker.threadId);
-        snapshots.current.set(worker.threadId, value ? { announced: worker.status, value: workerSnapshot(value) }
-          : { announced: worker.status, value: seen?.value || {}, misses: (seen?.announced === worker.status ? seen.misses || 0 : 0) + 1 });
+        const next = value ? { announced: worker.status, value: workerSnapshot(value) }
+          : { announced: worker.status, value: seen?.value || {}, misses: (seen?.announced === worker.status ? seen.misses || 0 : 0) + 1 };
+        if (!seen || JSON.stringify(seen.value) !== JSON.stringify(next.value)) changed = true;
+        snapshots.current.set(worker.threadId, next);
       }
       if (!due.length) return;
-      setVersion(current => current + 1);
+      // Drawn again only when a worker's name, state or latest step changed.
+      if (changed) setVersion(current => current + 1);
       timer = setTimeout(poll, 3000);
     };
     void poll();

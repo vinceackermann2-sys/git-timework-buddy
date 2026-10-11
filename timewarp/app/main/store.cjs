@@ -45,7 +45,18 @@ const now = () => new Date().toISOString();
 const json = value => value === undefined || value === null ? null : JSON.stringify(value);
 // Search ignores case and accents, as before ("cafe" finds "Café").
 const fold = value => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+// What SQLite's LIKE ignores: the case of A-Z only.
+const lowerAscii = value => value.replace(/[A-Z]+/g, letters => letters.toLowerCase());
 const SEARCH_MIN = 3, SNIPPET_ROOM = 40;
+// The search index's query for text containing `needle`: each of its
+// three-character pieces, quoted. Null when the index can't narrow it down.
+function trigramQuery(needle) {
+  const characters = [...needle];
+  if (characters.length < 3 || needle.includes("\0")) return null;
+  const pieces = new Set();
+  for (let index = 0; index + 3 <= characters.length; index++) pieces.add(characters.slice(index, index + 3).join(""));
+  return [...pieces].map(piece => '"' + piece.replace(/"/g, '""') + '"').join(" AND ");
+}
 const plainText = value => String(value || "").replace(/```[\w+-]*/g, " ").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>~|]+/g, "");
 // One line around the first match, with "..." where text was cut, and where
 // the match is within it ({ start, end }, or null when it isn't in the text).
@@ -76,11 +87,18 @@ function snippetOf(text, query, room = SNIPPET_ROOM) {
   return { snippet: lead + source.slice(from, to) + (to < source.length ? "..." : ""), highlight: { start: offset, end: offset + end - start } };
 }
 const parse = value => { if (value === null || value === undefined) return null; try { return JSON.parse(value); } catch { return null; } };
+// The search index needs FTS5 with contentless_delete (SQLite 3.43 and later).
+function fts5(db) {
+  try { db.exec("create virtual table temp.fts5_probe using fts5(x, content='', contentless_delete=1, tokenize='trigram case_sensitive 1', detail='none'); drop table temp.fts5_probe"); return true; }
+  catch { return false; }
+}
 
 function openStore(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
-  db.exec("pragma journal_mode = wal; pragma foreign_keys = on; pragma busy_timeout = 5000;");
+  // With WAL, synchronous = normal syncs at checkpoints instead of at every
+  // commit: a power cut can lose the last commits but never damages the file.
+  db.exec("pragma journal_mode = wal; pragma synchronous = normal; pragma foreign_keys = on; pragma busy_timeout = 5000;");
   db.exec("create table if not exists meta(key text primary key, value text not null)");
   const version = Number(db.prepare("select value from meta where key = 'schema'").get()?.value || 0);
   const migrate = (target, statements) => {
@@ -118,6 +136,41 @@ function openStore(file) {
   // Files and images a message carried, for messages that have no Codex
   // transcript to show them (chats from the previous app).
   migrate(5, ["alter table messages add column attachments text"]);
+  // Every Codex notification finds its chat by thread. History sync keeps what
+  // it knew of each chat, so a launch downloads and uploads only chats that
+  // changed (desktop/local-history.cjs). Triggers count the writes to each chat,
+  // whoever makes them; sync notes the count it has seen through (`settled`).
+  const counted = chats => `insert into history_changed(conversation_id, count) ${chats} on conflict(conversation_id) do update set count = count + 1`;
+  migrate(6, [
+    "create index conversations_thread on conversations(codex_thread_id)",
+    `create table history_sync(
+      conversation_id text primary key references conversations(id) on delete cascade, owner_id text not null,
+      version text, remote_hash text, local_hash text, settled integer)`,
+    `create table history_entries(
+      conversation_id text not null references conversations(id) on delete cascade, entry_id text not null, hash text not null,
+      primary key(conversation_id, entry_id)) without rowid`,
+    "create table history_changed(conversation_id text primary key references conversations(id) on delete cascade, count integer not null) without rowid",
+    `create trigger history_message_insert after insert on messages begin ${counted("values (new.conversation_id, 1)")}; end`,
+    `create trigger history_message_update after update on messages begin ${counted("values (new.conversation_id, 1)")}; end`,
+    // Not for the messages of a chat being deleted.
+    `create trigger history_message_delete after delete on messages when exists (select 1 from conversations where id = old.conversation_id)
+      begin ${counted("values (old.conversation_id, 1)")}; end`,
+    `create trigger history_conversation_update after update on conversations begin ${counted("values (new.id, 1)")}; end`,
+    `create trigger history_agent_update after update of name, owner_id on agents when new.name is not old.name or new.owner_id is not old.owner_id
+      begin ${counted("select id, 1 from conversations where agent_id = new.id")}; end`,
+  ]);
+  // Message search reads a trigram index instead of every message. Triggers
+  // queue each change to a message's text, whoever makes it (an older version
+  // too), and search indexes the queue first. Without FTS5, search scans.
+  if (version < 7 && fts5(db)) migrate(7, [
+    `create virtual table message_search using fts5(folded, lowered, content='', contentless_delete=1,
+      tokenize='trigram case_sensitive 1', detail='none')`,
+    "create table search_pending(id integer primary key)",
+    "create trigger messages_search_insert after insert on messages begin insert or ignore into search_pending(id) values (new.rowid); end",
+    "create trigger messages_search_text after update of text on messages when new.text is not old.text begin insert or ignore into search_pending(id) values (new.rowid); end",
+    "create trigger messages_search_delete after delete on messages begin insert or ignore into search_pending(id) values (old.rowid); end",
+    "insert into search_pending(id) select rowid from messages",
+  ]);
   return createStore(db);
 }
 
@@ -128,9 +181,12 @@ function createStore(db) {
   // Accent-insensitive search needs SQLite user functions (Node 22.13 and later).
   const folding = typeof db.function === "function";
   if (folding) db.function("tw_fold", { deterministic: true }, value => typeof value === "string" ? fold(value) : value);
-  const one = (sql, ...args) => db.prepare(sql).get(...args) || null;
-  const all = (sql, ...args) => db.prepare(sql).all(...args);
-  const run = (sql, ...args) => db.prepare(sql).run(...args);
+  // Statements are prepared once and kept, by their SQL.
+  const statements = new Map();
+  const prepare = sql => { let statement = statements.get(sql); if (!statement) statements.set(sql, statement = db.prepare(sql)); return statement; };
+  const one = (sql, ...args) => prepare(sql).get(...args) || null;
+  const all = (sql, ...args) => prepare(sql).all(...args);
+  const run = (sql, ...args) => prepare(sql).run(...args);
   // Nested transactions become savepoints, so store operations compose.
   let depth = 0;
   const transaction = fn => {
@@ -148,6 +204,38 @@ function createStore(db) {
       throw error;
     }
   };
+  // Messages queued for the search index (see openStore) are indexed before a
+  // search. The index holds each text folded and, where that differs, with only
+  // A-Z lowered: a message search's LIKE matches contains the folded query in
+  // one of the two, so the index finds every message the LIKE would.
+  const indexed = !!one("select 1 from sqlite_master where type = 'table' and name = 'message_search'");
+  // Indexes up to `limit` queued messages in one commit, stopping early once
+  // `ms` have passed; true when more wait.
+  const indexSome = (limit, ms = Infinity) => {
+    const rows = all("select p.id, m.text from search_pending p left join messages m on m.rowid = p.id order by p.id limit ?", limit);
+    if (!rows.length) return false;
+    const until = performance.now() + ms;
+    let done = 0;
+    transaction(() => {
+      for (const { id, text } of rows) {
+        run("delete from message_search where rowid = ?", id);
+        if (typeof text === "string") {
+          const folded = fold(text), lowered = lowerAscii(text);
+          run("insert into message_search(rowid, folded, lowered) values (?, ?, ?)", id, folded, lowered === folded ? null : lowered);
+        }
+        if (++done < rows.length && performance.now() > until) break;
+      }
+      run("delete from search_pending where id <= ?", rows[done - 1].id);
+    });
+    return done < rows.length || rows.length === limit;
+  };
+  const indexPending = () => { while (indexSome(1000)); };
+  // A backlog (an upgrade queues every message) is indexed in the background
+  // from a few seconds after start-up, in commits of a few hundred messages or
+  // about 10 ms, so a search only has what is left; closing the store stops it.
+  let closed = false, backlog = null;
+  const indexLater = delay => { backlog = setTimeout(() => { backlog = null; try { if (!closed && indexSome(400, 10)) indexLater(20); } catch {} }, delay); backlog.unref?.(); };
+  if (indexed && one("select 1 from search_pending limit 1")) indexLater(5000);
 
   const agentOf = row => row && {
     id: row.id, ownerId: row.owner_id, name: row.name, instructions: row.instructions,
@@ -208,6 +296,8 @@ function createStore(db) {
   const conversations = {
     get: id => conversationOf(one("select * from conversations where id = ?", id)),
     byThread: threadId => conversationOf(one("select * from conversations where codex_thread_id = ?", threadId)),
+    // Unread chats among those the sidebar lists (the latest 500 not archived), for the badge.
+    unreadCount: ownerId => one("select count(*) count from (select read from conversations where owner_id = ? and archived_at is null order by last_activity_at desc limit 500) where read = 0", ownerId).count,
     list(ownerId, { agentId, includeArchived = false, archivedOnly = false, search, limit = 500 } = {}) {
       const where = ["c.owner_id = ?"], args = [ownerId];
       if (agentId) { where.push("c.agent_id = ?"); args.push(agentId); }
@@ -252,18 +342,23 @@ function createStore(db) {
     search(ownerId, query, { limit = 50 } = {}) {
       const text = String(query || "").trim();
       if ([...text].length < SEARCH_MIN) return { conversations: [], messages: [] };
-      const pattern = "%" + fold(text).replace(/[\\%_]/g, "\\$&") + "%";
+      const needle = fold(text), pattern = "%" + needle.replace(/[\\%_]/g, "\\$&") + "%";
       // Text with accents or other non-ASCII letters is folded before matching;
       // plain text is matched by SQLite directly, which is much faster.
       const matches = column => folding
         ? `(${column} like :pattern escape '\\' or (${column} glob :wide and tw_fold(${column}) like :pattern escape '\\'))`
         : `${column} like :pattern escape '\\'`;
       const args = { owner: ownerId, pattern, limit, ...(folding ? { wide: "*[^" + String.fromCharCode(1) + "-~]*" } : {}) };
-      const titles = db.prepare(`select c.* from conversations c where c.owner_id = :owner and c.archived_at is null and c.title is not null and ${matches("c.title")}
-        order by c.last_activity_at desc limit :limit`).all(args);
-      const found = db.prepare(`select c.*, m.id message_id, m.created_at message_at, m.text message_text from messages m join conversations c on c.id = m.conversation_id
-        where c.owner_id = :owner and c.archived_at is null and coalesce(m.status, '') not in ('failed', 'replaced') and ${matches("m.text")}
-        order by m.created_at desc, m.seq desc limit :limit`).all(args);
+      const titles = all(`select c.* from conversations c where c.owner_id = :owner and c.archived_at is null and c.title is not null and ${matches("c.title")}
+        order by c.last_activity_at desc limit :limit`, args);
+      // The index narrows messages down to those holding every piece of the
+      // query; the same match as before then decides.
+      const terms = indexed ? trigramQuery(needle) : null;
+      if (terms) indexPending();
+      const found = all(`select c.*, m.id message_id, m.created_at message_at, m.text message_text from
+        ${terms ? "message_search cross join messages m on m.rowid = message_search.rowid" : "messages m"} join conversations c on c.id = m.conversation_id
+        where ${terms ? "message_search match :terms and " : ""}c.owner_id = :owner and c.archived_at is null and coalesce(m.status, '') not in ('failed', 'replaced') and ${matches("m.text")}
+        order by m.created_at desc, m.seq desc limit :limit`, terms ? { ...args, terms } : args);
       return {
         conversations: titles.map(row => ({ conversation: conversationOf(row), ...snippetOf(row.title, text) })),
         // Snippets read as text: no Markdown marks, links as their words.
@@ -423,10 +518,37 @@ function createStore(db) {
     },
   };
 
+  // What chat history sync knew of each chat at its last pass, kept between
+  // launches (desktop/local-history.cjs): the cloud's revision and contents,
+  // the local snapshot the cloud has and each message sent. It goes with the chat.
+  const historySync = {
+    load: ownerId => all("select * from history_sync where owner_id = ?", ownerId)
+      .map(row => ({ id: row.conversation_id, version: row.version, remoteHash: row.remote_hash, localHash: row.local_hash })),
+    // Chats with no write since sync last saw them through (see openStore).
+    settled: ownerId => all(`select s.conversation_id from history_sync s left join history_changed c on c.conversation_id = s.conversation_id
+      where s.owner_id = ? and s.local_hash is not null and s.settled = coalesce(c.count, 0)`, ownerId).map(row => row.conversation_id),
+    // A chat's write count, read before its snapshot: settling notes it as seen.
+    mark: conversationId => one("select count from history_changed where conversation_id = ?", conversationId)?.count ?? 0,
+    settle(conversationId, mark) { run("update history_sync set settled = ? where conversation_id = ?", mark, conversationId); },
+    save(ownerId, conversationId, { version = null, remoteHash = null, localHash = null }) {
+      run(`insert into history_sync(conversation_id, owner_id, version, remote_hash, local_hash) select ?, ?, ?, ?, ? where exists (select 1 from conversations where id = ?)
+        on conflict(conversation_id) do update set owner_id = excluded.owner_id, version = excluded.version, remote_hash = excluded.remote_hash, local_hash = excluded.local_hash`,
+      conversationId, ownerId, version, remoteHash, localHash, conversationId);
+    },
+    entries: conversationId => all("select entry_id, hash from history_entries where conversation_id = ?", conversationId).map(row => [row.entry_id, row.hash]),
+    remember(conversationId, pairs) {
+      if (!pairs.length || !one("select 1 from conversations where id = ?", conversationId)) return;
+      transaction(() => { for (const [entryId, hash] of pairs) run("insert into history_entries(conversation_id, entry_id, hash) values (?, ?, ?) on conflict(conversation_id, entry_id) do update set hash = excluded.hash", conversationId, entryId, hash); });
+    },
+    forget(conversationId) {
+      transaction(() => { run("delete from history_sync where conversation_id = ?", conversationId); run("delete from history_entries where conversation_id = ?", conversationId); });
+    },
+  };
+
   return {
-    db, events, transaction, agents, conversations, messages, settings, automations, browserProfiles, recentSites, turnUsage,
+    db, events, transaction, agents, conversations, messages, settings, automations, browserProfiles, recentSites, turnUsage, historySync,
     on: (name, fn) => events.on(name, fn), off: (name, fn) => events.off(name, fn),
-    close: () => db.close(),
+    close: () => { closed = true; clearTimeout(backlog); db.close(); },
   };
 }
 

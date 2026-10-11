@@ -40,7 +40,16 @@ const PAGES = {
     <button ondblclick="document.getElementById('out').textContent='Double-clicked'">Twice</button>
     <form onsubmit="event.preventDefault();document.getElementById('out').textContent='Sent '+document.getElementById('query').value"><label>Query <input id="query"></label></form>
     <a href="/form">Greeting form</a>`,
+  // What a click sets off after it returns (browserSettle): a reply that
+  // arrives later, and a page the click moves to a moment afterwards.
+  "/settle": `<!doctype html><title>Timewarp test settle</title><h1>Settle</h1>
+    <button onclick="fetch('/slow').then(r=>r.text()).then(t=>{document.getElementById('out').textContent=t})">Load</button>
+    <button onclick="setTimeout(()=>{location.href='/arrived'},80)">Later</button>
+    <p id="out">Nothing yet</p>`,
+  "/arrived": `<!doctype html><title>Timewarp test arrived</title><h1>Arrived</h1>`,
 };
+// Answered after a delay, like a page's request to a slow server.
+const SLOW = { "/slow": [400, "Loaded 42"] };
 
 // A minimal MCP server on stdin/stdout with one echo tool.
 const MCP_SERVER = `const rl = require("readline").createInterface({ input: process.stdin });
@@ -92,6 +101,8 @@ async function launch() {
     socket.close();
     try { cp.execFileSync(process.platform === "win32" ? "taskkill" : "kill", process.platform === "win32" ? ["/pid", String(child.pid), "/T", "/F"] : ["-TERM", String(child.pid)], { stdio: "ignore" }); } catch {}
     await pause(2000);
+    // E2E_KEEP_PROFILE keeps it, with the app's and Codex's logs, to look into a failure.
+    if (process.env.E2E_KEEP_PROFILE) { console.log("Test profile kept: " + profile); return; }
     try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 }); } catch (error) { console.log("Couldn't remove the test profile yet: " + error.message); }
   };
   // Other windows the app opens, such as a connector sign-in.
@@ -109,7 +120,9 @@ async function launch() {
 async function main() {
   const only = new Set(process.argv.slice(2));
   const server = http.createServer((req, res) => {
-    const page = PAGES[new URL(req.url, "http://localhost").pathname];
+    const pathname = new URL(req.url, "http://localhost").pathname;
+    if (SLOW[pathname]) { setTimeout(() => { res.writeHead(200, { "content-type": "text/plain" }); res.end(SLOW[pathname][1]); }, SLOW[pathname][0]); return; }
+    const page = PAGES[pathname];
     res.writeHead(page ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
     res.end(page || "Not found");
   });
@@ -280,6 +293,28 @@ async function main() {
       const state = await call("browser.state", { conversationId: id });
       if (state.tabs.length < 2) throw new Error("The pane doesn't show the agent's tabs.");
       return "opened, read, typed, clicked, chose an option, hovered, uploaded a file, waited, scrolled, pressed keys, took a screenshot and used two tabs";
+    },
+    // A click returns once what it set off has finished: a slow request's
+    // result is on the page, and a page it moves to just after has opened.
+    async browserSettle() {
+      const id = await chat();
+      await call("browser.show", { conversationId: id });
+      const result = await turn(id, script(`
+        await tools.mcp__timewarp_browser__open({ url: ${JSON.stringify(site + "/settle")} });
+        const outline = out(await tools.mcp__timewarp_browser__snapshot({}));
+        const load = (outline.match(/button "Load"[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
+        const later = (outline.match(/button "Later"[^\\n]*\\[ref=(e\\d+)\\]/) || [])[1];
+        await tools.mcp__timewarp_browser__click({ ref: load });
+        const loaded = out(await tools.mcp__timewarp_browser__read({}));
+        const clicked = out(await tools.mcp__timewarp_browser__click({ ref: later }));
+        const arrived = out(await tools.mcp__timewarp_browser__snapshot({}));
+        text(JSON.stringify({ load, later, loaded: loaded.includes("Loaded 42"), clicked: clicked.slice(0, 300), arrived: arrived.slice(0, 200) }));
+      `));
+      const value = json(result.reply);
+      if (!value.load || !value.later) throw new Error("The test page's buttons weren't found: " + JSON.stringify(value));
+      if (!value.loaded) throw new Error("A click returned before its slow request's result showed: " + JSON.stringify(value));
+      if (!/\/arrived/.test(value.clicked) || !/Arrived/.test(value.arrived)) throw new Error("A click returned before the page it moved to opened: " + JSON.stringify(value));
+      return "a click waited for its slow request's result and for the page it moved to";
     },
     // A page's alert, confirm and prompt never stall the agent, which answers
     // them; key combinations, double clicks, checkboxes, element reads,
@@ -569,6 +604,28 @@ async function main() {
       if (/correct-horse|ada@example\.com|Hello Ada/.test(text)) throw new Error("Diagnostics contain chat or vault content.");
       if (!diagnostics.log?.length && !diagnostics.state) throw new Error("Diagnostics are empty.");
       return `diagnostics hold ${diagnostics.log?.length || 0} log lines and no chat or vault content`;
+    },
+    // A preview build has no updates; debug.updates shows a ready one, as a
+    // signed build would after downloading it.
+    async updates() {
+      const { version } = await call("app.info");
+      const state = await call("updates.state");
+      if (state.kind !== "none" || state.version !== version || (await call("updates.check")).kind !== "none") throw new Error("A preview build should have no updates: " + JSON.stringify(state));
+      const read = expression => app.evaluate(`(() => { const row = [...document.querySelectorAll(".tw-set-row")].find(item => item.querySelector("strong")?.textContent === "Updates"); const button = document.querySelector("button.tw-update"); return ${expression}; })()`);
+      const until = async (expression, what) => { for (const deadline = Date.now() + 8000; Date.now() < deadline; await pause(200)) if (await read(expression)) return; throw new Error(what + ": " + await read(`(row?.innerText || "") + " | " + (button?.innerText || "")`)); };
+      await app.evaluate(`location.hash = "#/customize/settings"`);
+      await until(`!!row && row.innerText.includes("Timewarp ${version}") && row.innerText.includes("Updates are off in this build.") && row.querySelector("button").disabled && !button`, "Settings didn't say updates are off");
+      try {
+        await call("debug.updates", { kind: "auto", status: "ready", available: "9.9.9", progress: 100 });
+        await until(`row.innerText.includes("Version 9.9.9 is ready to install") && row.querySelector("button").textContent === "Restart to update" && !!button && button.innerText.includes("9.9.9")`, "The ready update didn't show");
+        await read(`button.click()`);
+        let installs = 0;
+        for (const deadline = Date.now() + 5000; !installs && Date.now() < deadline; await pause(200)) ({ installs } = await call("debug.updates", { kind: "auto", status: "ready", available: "9.9.9", progress: 100 }));
+        if (installs !== 1) throw new Error("The Update button didn't ask to install the update.");
+        await call("debug.updates", { kind: "auto", status: "downloading", available: "9.9.9", progress: 42 });
+        await until(`row.innerText.includes("Downloading 42%") && row.querySelector("button").disabled && !button`, "Downloading didn't show");
+      } finally { await call("debug.updates", null); await app.evaluate(`location.hash = "#/"`); }
+      return "Settings says updates are off in a preview build; a ready update shows in Settings and as the sidebar's Update button, which asks to install it";
     },
   };
 

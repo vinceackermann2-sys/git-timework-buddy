@@ -12,7 +12,8 @@ const fail = (status, message) => Object.assign(new Error(message), { status });
 function createModelCatalog({ ready = () => undefined, funding, chatgpt, settings, userId, timewarpModels = state => require("../../shared/models.cjs").models({ plan: state?.plan }), log = () => {} }) {
   async function modelChoices() {
     await ready();
-    const state = userId() ? await funding.current() : null;
+    // The plan is read fresh: a choice is never refused on a plan that just changed.
+    const state = userId() ? await funding.current({ fresh: true }) : null;
     if (state?.source === "chatgpt") {
       try { return await chatgpt.models(); }
       catch (error) { log("ChatGPT models unavailable: " + error.message); throw error; }

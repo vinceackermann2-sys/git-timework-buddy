@@ -304,8 +304,9 @@ export function FundingBanner({ funding, onOptions }) {
 }
 
 // agentId: the agent whose workspace files "@" offers. draftKey: where an
-// unsent draft is kept (the chat's id, or "home").
-export function Composer({ variant = "compact", disabled, running, models, onModel, onSend, onStop, placeholder, autoFocusKey, historyKey = autoFocusKey, draftKey: draftName = historyKey, agentId = null, tools, banner, reply, onClearReply }) {
+// unsent draft is kept (the chat's id, or "home"). Drawn again only when
+// its own props change, not while the chat above it streams.
+export const Composer = React.memo(function Composer({ variant = "compact", disabled, running, models, onModel, onSend, onStop, placeholder, autoFocusKey, historyKey = autoFocusKey, draftKey: draftName = historyKey, agentId = null, tools, banner, reply, onClearReply }) {
   const [draftOf, setDraftOf] = useState(draftName);
   const [initial] = useState(() => readDraft(draftName));
   const [text, setText] = useState(initial.text);
@@ -604,4 +605,4 @@ export function Composer({ variant = "compact", disabled, running, models, onMod
       {dropping && zone && !disabled ? createPortal(<div className="tw-drop-overlay" aria-hidden="true" />, zone) : null}
     </div>
   );
-}
+});

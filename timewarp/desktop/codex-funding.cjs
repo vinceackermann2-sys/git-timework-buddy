@@ -35,6 +35,7 @@ function bindCodexFunding({client,chatgpt,funding,userId,cloudProvider='timewarp
     if(role===backgroundRole&&(backgroundBackoff.get(who)||0)>Date.now())throw fail(429,'Background memory is cooling down after an AI error. Your chat can continue.');
     if(previous&&previous.owner!==who)throw fail(401,'This chat belongs to another Timewarp account.');
     if(method==='turn/start'||method==='turn/steer'){
+      // Never refused on a cached balance: funding reads it fresh first (ai-funding.cjs).
       if(!state.canFundUsage)throw fail(402,state.source==='chatgpt'?'Reconnect your ChatGPT / Codex account in Billing.':'Connect your ChatGPT / Codex account on Free, or add Timewarp credits in Billing.');
       const mapped=await route(params,state);if(who!==userId())throw fail(401,'The active Timewarp account changed.');
       if(!previous||previous.provider!==mapped.modelProvider){

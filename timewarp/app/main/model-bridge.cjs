@@ -17,7 +17,9 @@ function sameToken(expected, header) {
   return actual.length === wanted.length && crypto.timingSafeEqual(actual, wanted);
 }
 
-function createModelBridge({ token, cloud, funding, chatgpt, integrations, mascots, toolServer = () => null, port = PORT }) {
+// cloudSafe: the privacy check, which tells cloud() a payload was checked so
+// it isn't walked twice (services.cjs).
+function createModelBridge({ token, cloud, cloudSafe = assertCloudSafe, funding, chatgpt, integrations, mascots, toolServer = () => null, port = PORT }) {
   const reply = (res, status, value) => {
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(value));
@@ -82,13 +84,16 @@ function createModelBridge({ token, cloud, funding, chatgpt, integrations, masco
       const input = req.method === "POST" ? await body(req) : undefined;
       // Client telemetry is not model input; drop it before the privacy check.
       if (pathname === "/v1/responses" && input && typeof input === "object") delete input.client_metadata;
-      if (input !== undefined) assertCloudSafe(input);
+      if (input !== undefined) cloudSafe(input);
       const state = await funding.current();
       if (state.source === "chatgpt") {
         if (pathname === "/v1/models" && req.method === "GET") return reply(res, 200, await chatgpt.catalog());
         return fail(res, 409, "Subscription requests use the native Codex provider. Reopen this chat to refresh its provider.");
       }
-      return relay(res, await cloud(pathname, input, req.method));
+      const upstream = await cloud(pathname, input, req.method);
+      // The cloud refused the account, plan or credits: the next check asks it again.
+      if (pathname === "/v1/responses" && [401, 402, 403].includes(upstream.status)) funding.invalidate?.();
+      return relay(res, upstream);
     } catch (error) {
       if (!res.headersSent) fail(res, error.status || 400, error.message || "Request failed.");
       else res.destroy();

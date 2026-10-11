@@ -1,4 +1,4 @@
-import Anthropic from 'npm:@anthropic-ai/sdk@0.128.0';
+import type Anthropic from 'npm:@anthropic-ai/sdk@0.128.0';
 import { reserveAgentAi, responseOutputLimit } from './agentAiReservation.ts';
 import { claudeKey, claudeRoute } from './claudeAgentAi.ts';
 import { assertCloudSafe } from './privacy.ts';
@@ -191,7 +191,10 @@ export function claudeMessages(input: unknown, instructions: unknown, tools: Ret
 // readable summaries (shown as the chat's thinking); effort comes from the
 // picker. A replayed thinking block the API can no longer use is dropped
 // rather than failing the request. The system prompt and the conversation so
-// far are cached.
+// far are cached. Tools and the base instructions (the first system block)
+// are the same in every chat on a model, so they get a breakpoint of their
+// own; the last system block holds the chat's own context. With the
+// conversation's automatic one that is at most 3 of the 4 allowed, all 5-minute.
 export function claudeRequest(route: { model: string; fast: boolean }, body: any, userKey?: string) {
   const tools = claudeTools(body.tools);
   const { system, messages } = claudeMessages(body.input, body.instructions, tools);
@@ -203,7 +206,7 @@ export function claudeRequest(route: { model: string; fast: boolean }, body: any
     thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
     cache_control: { type: 'ephemeral' },
     betas: route.fast ? [THINKING_BINDING, FAST_MODE] : [THINKING_BINDING],
-    ...(system.length ? { system: system.map((text, at) => ({ type: 'text', text, ...(at === system.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}) })) } : {}),
+    ...(system.length ? { system: system.map((text, at) => ({ type: 'text', text, ...(at === 0 || at === system.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}) })) } : {}),
     ...(effort ? { output_config: { effort } } : {}),
     ...(tools.list.length ? { tools: tools.list, tool_choice: body.tool_choice === 'none' ? { type: 'none' } : { type: 'auto', disable_parallel_tool_use: body.parallel_tool_calls !== true } } : {}),
     ...(route.fast ? { speed: 'fast' } : {}),
@@ -360,12 +363,26 @@ export function responsesTranslator(tools: Map<string, ToolRef>, model: string) 
   };
 }
 
+// The SDK loads with the first Claude request, so isolates that only serve
+// GPT start without it.
+let sdk: Promise<typeof import('npm:@anthropic-ai/sdk@0.128.0')> | null = null;
 let client: Anthropic | null = null, clientKey = '';
-function anthropic() {
+async function anthropic() {
   const key = claudeKey();
   if (!key) throw fail(503, 'The cloud AI provider is not configured.');
-  if (!client || clientKey !== key) { client = new Anthropic({ apiKey: key, maxRetries: 2, timeout: 60_000 }); clientKey = key; }
+  const { default: Client } = await (sdk ??= import('npm:@anthropic-ai/sdk@0.128.0').catch(error => { sdk = null; throw error; }));
+  if (!client || clientKey !== key) { client = new Client({ apiKey: key, maxRetries: 2, timeout: 60_000 }); clientKey = key; }
   return client;
+}
+
+// Fast mode that Anthropic turned down, by model: until its retry-after when
+// rate limited, or for a while when it isn't offered. Meanwhile requests run
+// at the standard speed straight away.
+const fastPaused = new Map<string, number>();
+function fastPause(error: any, status: number) {
+  const headers = error?.headers, value = typeof headers?.get === 'function' ? headers.get('retry-after') : headers?.['retry-after'];
+  const seconds = Number(value);
+  return status === 429 ? (Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 600) : 60) * 1000 : 600_000;
 }
 
 // An opaque per-account id, so Anthropic can tell accounts apart without
@@ -387,21 +404,24 @@ const withoutThinking = (messages: Message[]) => messages.map(message => message
   .filter(message => message.content.length);
 
 // Opens Claude's stream with a reservation for its worst-case cost. Fast mode
-// falls back to the standard speed when Anthropic can't serve it, and thinking
-// from another Anthropic account (after a key change) is left out.
-async function openClaude(admin: any, userId: string, body: any) {
+// falls back to the standard speed when Anthropic can't serve it, at once
+// rather than after the SDK's retries, and thinking from another Anthropic
+// account (after a key change) is left out. `allowed`: see reserveAgentAi.
+async function openClaude(admin: any, userId: string, body: any, allowed?: Promise<unknown>) {
   const named = claudeRoute(body.model);
   if (!named) throw fail(400, 'Unknown Claude model.');
-  let route = named;
-  const userKey = await accountKey(userId);
+  let route = named.fast && (fastPaused.get(named.model) || 0) > Date.now() ? { ...named, fast: false, billing: named.id } : named;
+  const [claude, userKey] = await Promise.all([anthropic(), accountKey(userId)]);
   let { params, tools } = claudeRequest(route, body, userKey);
   for (let attempt = 0; ; attempt++) {
-    const reservation = await reserveAgentAi(admin, userId, route.billing, params, { outputTokens: params.max_tokens });
+    const reservation = await reserveAgentAi(admin, userId, route.billing, params, { outputTokens: params.max_tokens, allowed });
     try {
-      const stream = await anthropic().beta.messages.create({ ...params, stream: true } as any, { signal: AbortSignal.timeout(STREAM_LIMIT_MS) });
+      const stream = await claude.beta.messages.create({ ...params, stream: true } as any, { signal: AbortSignal.timeout(STREAM_LIMIT_MS), ...(route.fast ? { maxRetries: 0 } : {}) });
       return { stream: stream as unknown as AsyncIterable<any>, reservation, tools };
     } catch (error) {
-      const status = error instanceof Anthropic.APIError ? error.status : undefined;
+      // The SDK's API errors carry the HTTP status; a connection that failed
+      // or timed out has none, and may have reached the model.
+      const status = (error as any)?.status;
       if (typeof status !== 'number') {
         await reservation.finish('uncertain');
         throw fail(504, 'The AI connection timed out. Usage reconciliation is pending.');
@@ -409,6 +429,7 @@ async function openClaude(admin: any, userId: string, body: any) {
       await reservation.finish('released');
       const message = String((error as any)?.error?.error?.message || (error as Error).message || '');
       if (attempt < 2 && route.fast && (status === 429 || /speed|fast/i.test(message))) {
+        fastPaused.set(route.model, Date.now() + fastPause(error, status));
         route = { ...route, fast: false, billing: route.id };
         ({ params, tools } = claudeRequest(route, body, userKey));
         continue;
@@ -438,8 +459,8 @@ const sse = (events: Block[]) => events.map(event => `event: ${event.type}\ndata
 
 // Streams Claude's reply as Responses events. Claude's stream is read to the
 // end even when the desktop stops listening, so every call is metered.
-export async function claudeStream(admin: any, userId: string, body: any, cors: Record<string, string>) {
-  const { stream, reservation, tools } = await openClaude(admin, userId, body);
+export async function claudeStream(admin: any, userId: string, body: any, cors: Record<string, string>, allowed?: Promise<unknown>) {
+  const { stream, reservation, tools } = await openClaude(admin, userId, body, allowed);
   const translated = responsesTranslator(tools.byClaude, String(body.model));
   const encoder = new TextEncoder();
   let output: ReadableStreamDefaultController<Uint8Array> | null = null, listening = true;
@@ -465,8 +486,8 @@ export async function claudeStream(admin: any, userId: string, body: any, cors: 
 }
 
 // The same reply as one Responses object, for clients that don't stream.
-export async function claudeCall(admin: any, userId: string, body: any) {
-  const { stream, reservation, tools } = await openClaude(admin, userId, body);
+export async function claudeCall(admin: any, userId: string, body: any, allowed?: Promise<unknown>) {
+  const { stream, reservation, tools } = await openClaude(admin, userId, body, allowed);
   const translated = responsesTranslator(tools.byClaude, String(body.model));
   let failed: Block[] = [];
   try {

@@ -51,9 +51,16 @@ const ATTACHED = "[Attached files, saved in your workspace]";
 // additional context; Codex adds an entry again only when it changed, so the
 // cached prompt stays as it was. workspaceRoots(agent, conversation): the
 // folders the chat's commands may write without a review.
-function createHarness({ store, client, userId, instructionsFor, threadConfig = () => ({}), permissions = null, toolsReady = () => null, modelSettings, approvalsReviewer = () => "user", tools = null, notify = () => {}, log = () => {}, baseInstructions = null, turnContext = null, workspaceRoots = null }) {
+// prepareContext(agent): starts loading what an agent's next message needs
+// (its connected apps) when its chat is warmed or about to be written.
+// spareInputs(agent): a fingerprint of the files Codex reads as a thread
+// starts (instructions, settings, skills), for spare threads (prepare).
+function createHarness({ store, client, userId, instructionsFor, threadConfig = () => ({}), permissions = null, toolsReady = () => null, modelSettings, approvalsReviewer = () => "user", tools = null, notify = () => {}, log = () => {}, baseInstructions = null, turnContext = null, workspaceRoots = null, prepareContext = null, spareInputs = () => "" }) {
   const toolsVersion = tools?.version || 0;
   const threadOwner = new Map(); // codex thread id -> root conversation id (includes sub-agent threads)
+  // Threads known not to be a chat's (background jobs, spares): Codex streams
+  // their events too, and each would otherwise be looked up in the store.
+  const notChats = new Set();
   const workers = new Set(); // sub-agent threads seen in this Codex session
   const loaded = new Set(); // threads resumed or started in this Codex session
   // conversation id -> { threadId, turnId, stopRequested, started }; set as a
@@ -93,6 +100,8 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     loaded.clear();
     workers.clear();
     steered.clear();
+    notChats.clear();
+    dropSpares();
     for (const [conversationId] of active) emit(conversationId, "turn/aborted", { reason: "Codex stopped." });
     active.clear();
     for (const [id, pending] of approvals) { approvals.delete(id); notify("approval.resolved", { id, conversationId: pending.conversationId }); }
@@ -101,13 +110,20 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   function conversationForThread(threadId) {
     if (!threadId) return null;
     if (threadOwner.has(threadId)) return threadOwner.get(threadId);
+    if (notChats.has(threadId)) return null;
     const conversation = store.conversations.byThread(threadId);
     if (conversation) threadOwner.set(threadId, conversation.id);
+    else { if (notChats.size >= 2000) notChats.clear(); notChats.add(threadId); }
     return conversation?.id || null;
+  }
+  // A thread that becomes a chat's: its new main thread or one of its workers.
+  function own(threadId, conversationId) {
+    notChats.delete(threadId);
+    threadOwner.set(threadId, conversationId);
   }
   function addWorker(threadId, conversationId) {
     if (!threadId || !conversationId || conversationForThread(threadId)) return;
-    threadOwner.set(threadId, conversationId);
+    own(threadId, conversationId);
     workers.add(threadId);
   }
   // A worker that Codex hasn't announced (multi-agent workers have no
@@ -246,6 +262,10 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     const roots = workspaceRoots?.(agent, conversation);
     return roots?.length ? { runtimeWorkspaceRoots: roots } : {};
   }
+  function prepareAgent(agent) {
+    if (!agent || !prepareContext) return;
+    try { prepareContext(agent); } catch (error) { log("An agent's context could not be prepared.", error.message); }
+  }
   // A message's context, which never holds up sending for long: a part that
   // isn't ready in time is left out of this message.
   async function contextFor(conversation, sentAt) {
@@ -263,24 +283,34 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     finally { clearTimeout(timer); }
   }
 
-  async function ensureThread(conversation, { exceptMessageId } = {}) {
-    await toolsReady();
-    const agent = ownedAgent(conversation.agentId);
-    fs.mkdirSync(agent.workspace, { recursive: true });
-    const base = {
+  // A chat's thread settings, for thread/resume, and with startParams for thread/start.
+  function threadBase(agent, conversation) {
+    return {
       cwd: agent.workspace, approvalPolicy: "on-request", approvalsReviewer: approvalsReviewer(), ...(permissions ? { permissions } : { sandbox: "workspace-write" }),
       ...(baseInstructions ? { baseInstructions: typeof baseInstructions === "function" ? baseInstructions(agent, conversation) : baseInstructions } : {}),
       ...rootsFor(agent, conversation),
       developerInstructions: instructionsFor(agent, conversation), config: threadConfig(agent, conversation),
     };
+  }
+  function startParams(agent, conversation, base = threadBase(agent, conversation)) {
+    const settings = modelSettings();
+    return { ...base, model: settings?.name || null, threadSource: "user", ...(tools?.specs ? { dynamicTools: tools.specs(agent, conversation) } : {}) };
+  }
+
+  async function ensureThread(conversation, { exceptMessageId } = {}) {
+    await toolsReady();
+    const agent = ownedAgent(conversation.agentId);
+    fs.mkdirSync(agent.workspace, { recursive: true });
     const current = conversation.codexThreadId && conversation.toolsVersion >= toolsVersion;
+    // Already open in this Codex session: nothing to build (the instructions read files).
     if (current && loaded.has(conversation.codexThreadId)) return conversation.codexThreadId;
+    const base = threadBase(agent, conversation);
     // A thread Codex unloaded to change its AI funding (provider-changed) resumes once more.
     for (let attempt = 0; current; attempt++) {
       try {
         await client.request("thread/resume", { threadId: conversation.codexThreadId, ...base, excludeTurns: true });
         loaded.add(conversation.codexThreadId);
-        threadOwner.set(conversation.codexThreadId, conversation.id);
+        own(conversation.codexThreadId, conversation.id);
         return conversation.codexThreadId;
       } catch (error) {
         if (error.code === "provider-changed" && !attempt) continue;
@@ -288,13 +318,12 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
         break;
       }
     }
-    const settings = modelSettings();
-    const result = await client.request("thread/start", { ...base, model: settings?.name || null, threadSource: "user", ...(tools?.specs ? { dynamicTools: tools.specs(agent, conversation) } : {}) });
-    const threadId = result.thread.id;
+    const params = startParams(agent, conversation, base);
+    const threadId = await adoptSpare(agent, params) || (await client.request("thread/start", params)).thread.id;
     starting.set(threadId, conversation.id);
     try {
       loaded.add(threadId);
-      threadOwner.set(threadId, conversation.id);
+      own(threadId, conversation.id);
       const history = historyItems(conversation, exceptMessageId);
       if (history.length) await client.request("thread/inject_items", { threadId, items: history }).catch(error => log("Earlier messages could not be added to the new thread.", error.message));
       const previousThreadIds = conversation.codexThreadId ? [...conversation.previousThreadIds, conversation.codexThreadId] : conversation.previousThreadIds;
@@ -310,6 +339,65 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     const pending = ensureThread(store.conversations.get(conversationId), options).finally(() => preparing.delete(conversationId));
     preparing.set(conversationId, pending);
     return pending;
+  }
+
+  // A spare thread for the agent whose new chat the user is writing on the
+  // home screen (prepare): the agent's next new chat takes it instead of
+  // waiting for Codex to start one. It's taken only when it started with
+  // exactly what that chat would start with, the files Codex reads then
+  // included (spareInputs); otherwise, or after a few minutes, it's closed.
+  // Codex saves a thread only with its first turn: an unused one leaves nothing.
+  const SPARE_MS = 3 * 60 * 1000;
+  const spares = new Map(); // agent id -> { owner, session, at, key, ready (thread id or null), timer }
+  let session = 0; // Codex runs; a spare belongs to the one it started in
+  const spareKey = (agent, params) => JSON.stringify(params) + "\n" + spareInputs(agent);
+  async function closeThread(threadId) {
+    await client.request("thread/unsubscribe", { threadId }).catch(() => {});
+    await client.request("thread/delete", { threadId }).catch(() => {});
+  }
+  function closeSpare(agentId, entry) {
+    if (spares.get(agentId) === entry) spares.delete(agentId);
+    clearTimeout(entry.timer);
+    void entry.ready.then(threadId => { if (threadId && entry.session === session) return closeThread(threadId); });
+  }
+  // Codex stopped: its threads are gone with it.
+  function dropSpares() {
+    session++;
+    for (const entry of spares.values()) clearTimeout(entry.timer);
+    spares.clear();
+  }
+  function spareThread(agent) {
+    const who = owner();
+    for (const [agentId, entry] of spares) if (agentId !== agent.id || entry.owner !== who || Date.now() - entry.at > SPARE_MS) closeSpare(agentId, entry);
+    if (spares.has(agent.id)) return;
+    const entry = { owner: who, session, at: Date.now(), key: null };
+    entry.ready = (async () => {
+      await toolsReady();
+      fs.mkdirSync(agent.workspace, { recursive: true });
+      const params = startParams(agent, null);
+      entry.key = spareKey(agent, params);
+      return (await client.request("thread/start", params)).thread.id;
+    })().catch(error => {
+      if (spares.get(agent.id) === entry) { spares.delete(agent.id); clearTimeout(entry.timer); }
+      log("A thread for the next chat could not be prepared.", error.message);
+      return null;
+    });
+    entry.timer = setTimeout(() => closeSpare(agent.id, entry), SPARE_MS);
+    entry.timer.unref?.();
+    spares.set(agent.id, entry);
+  }
+  // The agent's spare for a chat about to start a thread with params, or null.
+  async function adoptSpare(agent, params) {
+    const entry = spares.get(agent.id);
+    if (!entry) return null;
+    spares.delete(agent.id);
+    clearTimeout(entry.timer);
+    const threadId = await entry.ready;
+    if (!threadId || entry.session !== session) return null;
+    if (entry.owner === userId() && Date.now() - entry.at <= SPARE_MS && entry.key === spareKey(agent, params)) return threadId;
+    log("The prepared thread no longer matched the chat's settings; starting a new one.");
+    void closeThread(threadId);
+    return null;
   }
 
   // Files other than images are copied into the agent's workspace and named
@@ -448,6 +536,11 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       markUnread(id) { const c = ownedConversation(id); return c.read ? store.conversations.update(id, { read: false }, { touch: false }) : c; },
       messages: id => { ownedConversation(id); return store.messages.list(id); },
       status: id => { ownedConversation(id); return { running: active.has(id), approvals: [...approvals.values()].filter(item => item.conversationId === id) }; },
+      // The account's chats (not archived) with a reply in progress.
+      running: () => {
+        const who = owner();
+        return [...active.keys()].filter(id => { const conversation = store.conversations.get(id); return conversation?.ownerId === who && !conversation.archivedAt; });
+      },
       usage: id => { ownedConversation(id); return store.turnUsage.list(id); },
       // A worker's transcript, for following it from the chat. The worker
       // must belong to this conversation.
@@ -504,10 +597,22 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     // Opens the chat's thread ahead of the first message so sending starts at once.
     async warm(id) {
       const conversation = ownedConversation(id);
+      prepareAgent(store.agents.get(conversation.agentId));
       if (active.has(id) || (conversation.codexThreadId && conversation.toolsVersion >= toolsVersion && loaded.has(conversation.codexThreadId))) return { ready: true };
       await threadFor(id);
       return { ready: true };
     },
+    // An agent's next new chat, while the user writes its first message on
+    // the home screen: what its message needs starts loading, and with thread
+    // a spare thread starts for it.
+    prepare(agentId, { thread = false } = {}) {
+      const agent = ownedAgent(agentId);
+      prepareAgent(agent);
+      if (thread) spareThread(agent);
+      return { prepared: true };
+    },
+    // Settings Codex reads as a thread starts changed (tools, MCP servers).
+    discardSpares() { for (const [agentId, entry] of spares) closeSpare(agentId, entry); },
     // settings: { name, reasoningEffort, serviceTier } (serviceTier null is Standard).
     setModel(id, settings) {
       ownedConversation(id);
@@ -570,6 +675,8 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     // Unloads the chats that aren't replying, with their workers, so their
     // next message resumes them (on the current AI funding source).
     async unloadIdle() {
+      // A spare's AI funding is set as it starts, as a chat's is.
+      for (const [agentId, entry] of spares) closeSpare(agentId, entry);
       const busy = new Set(active.keys());
       const threads = [...loaded, ...workers].filter(threadId => !busy.has(conversationForThread(threadId)));
       for (const threadId of threads) { loaded.delete(threadId); workers.delete(threadId); }
@@ -590,7 +697,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     busy: () => active.size > 0,
     // The chat a Codex thread belongs to, including its workers' threads.
     conversationFor: threadId => conversationForThread(threadId),
-    reset() { active.clear(); approvals.clear(); loaded.clear(); threadOwner.clear(); workers.clear(); steered.clear(); },
+    reset() { active.clear(); approvals.clear(); loaded.clear(); threadOwner.clear(); notChats.clear(); workers.clear(); steered.clear(); dropSpares(); },
   };
 }
 

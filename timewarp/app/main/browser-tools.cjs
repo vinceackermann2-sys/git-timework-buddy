@@ -184,6 +184,39 @@ const KEY_IN_PAGE = `(spec => {
   target.dispatchEvent(new KeyboardEvent("keyup", init));
   return true;
 })`;
+// A page is quiet once its document hasn't changed for this long.
+const QUIET = 150;
+// Resolves true once the document hasn't changed for `still` ms, or false
+// after `ms` (a page that never stops changing, such as a ticker).
+const QUIET_IN_PAGE = (still, ms) => `new Promise(resolve => {
+  let timer = 0, limit = 0;
+  const finish = value => { observer.disconnect(); clearTimeout(timer); clearTimeout(limit); resolve(value); };
+  const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(finish, ${still}, true); });
+  observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+  timer = setTimeout(finish, ${still}, true);
+  limit = setTimeout(finish, ${Math.max(0, Math.round(ms))}, false);
+})`;
+// Whether the text the read tool gives (title, address and the start of the
+// page's text) has the text, now or within ms. It's looked for again as the
+// document changes (at most every 100 ms, or 5 times as long as a look takes
+// on a big page) and every 400 ms; a newer wait in the page ends this one.
+const TEXT_IN_PAGE = (wanted, ms) => `new Promise(resolve => {
+  const token = globalThis.__timewarpWait = {};
+  let timer = 0, last = 0, spent = 0;
+  const has = () => (document.title + "\\n" + location.href + "\\n\\n" + (document.body?.innerText || "").slice(0, ${MAX_TEXT})).includes(${JSON.stringify(String(wanted))});
+  const finish = value => { observer.disconnect(); clearTimeout(timer); clearInterval(poll); clearTimeout(limit); resolve(value); };
+  const look = () => {
+    timer = 0;
+    if (globalThis.__timewarpWait !== token) return finish(false);
+    const begun = performance.now(), found = has();
+    last = performance.now(); spent = last - begun;
+    if (found) finish(true);
+  };
+  const observer = new MutationObserver(() => { if (!timer) timer = setTimeout(look, Math.max(0, last + Math.max(100, spent * 5) - performance.now())); });
+  observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+  const poll = setInterval(() => { if (!timer) look(); }, 400), limit = setTimeout(() => finish(false), ${Math.max(0, Math.round(ms))});
+  look();
+})`;
 const quote = value => JSON.stringify(String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 300));
 // What the agent hears about a dialog a page is showing.
 const dialogText = item => item.forAgent
@@ -246,11 +279,16 @@ function cursorScript(x, y, label) {
     (document.body || document.documentElement).append(host);
     parts = host.__timewarp = { box, name, timer: 0 };
   }
+  // How far it glides, and whether it appears (new, or faded out).
+  const at = [${Math.round(x)}, ${Math.round(y)}], moved = parts.at ? Math.hypot(at[0] - parts.at[0], at[1] - parts.at[1]) : 0;
+  const appeared = !parts.at || parts.box.style.opacity !== "1";
+  parts.at = at;
   parts.name.textContent = ${JSON.stringify(label)};
   parts.box.style.opacity = "1";
   parts.box.style.transform = "translate(${Math.round(x) - 3}px, ${Math.round(y) - 2}px)";
   clearTimeout(parts.timer);
   parts.timer = setTimeout(() => { parts.box.style.opacity = "0"; }, 6000);
+  return { moved, appeared };
 })()`;
 }
 
@@ -518,11 +556,110 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
   // Whether Chromium draws the page, so it takes mouse input: a window other
   // apps cover entirely isn't drawn.
   const drawn = async contents => (await cdp(contents, "Runtime.evaluate", { expression: "document.visibilityState", returnByValue: true }).catch(() => null))?.result?.value !== "hidden";
-  async function settle(contents, ms = 600) {
+
+  // What each page the agent works in is doing, from its events: how many
+  // times its main frame started loading another page, when it last started
+  // loading, and its requests under way (Network domain; kinds that may never
+  // finish, such as event streams, media and pings, aren't counted).
+  const activity = new WeakMap(); // webContents -> { navigations, loadingAt, requests: Map(request id -> started), sleepers: Set, network }
+  const FETCHES = new Set(["Document", "Stylesheet", "Script", "XHR", "Fetch"]);
+  function activityOf(contents) {
+    let state = activity.get(contents);
+    if (!state) {
+      state = { navigations: 0, loadingAt: 0, requests: new Map(), sleepers: new Set(), network: false };
+      activity.set(contents, state);
+      const wake = () => { for (const sleeper of [...state.sleepers]) sleeper(); };
+      if (typeof contents.on === "function") {
+        contents.on("did-start-navigation", (details, _url, isInPlace, isMainFrame) => { if ((details?.isMainFrame ?? isMainFrame) && !(details?.isSameDocument ?? isInPlace)) state.navigations++; wake(); });
+        contents.on("did-start-loading", () => { state.loadingAt = Date.now(); wake(); });
+        for (const name of ["did-stop-loading", "did-navigate", "did-navigate-in-page", "dom-ready"]) contents.on(name, wake);
+      }
+      if (typeof contents.debugger?.on === "function") {
+        contents.debugger.on("message", (_event, method, params, session) => {
+          if (session) return;
+          if (method === "Network.requestWillBeSent" && FETCHES.has(params?.type)) {
+            state.requests.set(params.requestId, Date.now());
+            // Requests a page abandoned without a word are forgotten after a minute.
+            if (state.requests.size > 200) for (const [id, started] of state.requests) if (Date.now() - started > 60000) state.requests.delete(id);
+          } else if ((method === "Network.loadingFinished" || method === "Network.loadingFailed") && state.requests.delete(params?.requestId)) wake();
+        });
+        contents.debugger.on("detach", () => { state.network = false; state.requests.clear(); });
+      }
+    }
+    // Response bodies aren't kept: only the requests' coming and going matters.
+    if (!state.network && contents.debugger) { state.network = true; cdp(contents, "Network.enable", { maxTotalBufferSize: 0, maxResourceBufferSize: 0 }).catch(() => { state.network = false; }); }
+    return state;
+  }
+  // A page's activity from just before an action, for settle to compare with.
+  const markOf = contents => { const state = activityOf(contents); return { state, at: Date.now(), loading: !!contents.isLoading?.(), navigations: state.navigations }; };
+  const fetching = mark => [...mark.state.requests.values()].some(started => started >= mark.at);
+  // Sleeps up to ms, or until ready() holds (or throws, as for a closed
+  // page): checked on the page's events and every 50 ms.
+  function sleep(state, ms, ready = () => false) {
+    const holds = () => { try { return ready(); } catch { return true; } };
+    return new Promise(resolve => {
+      if (ms <= 0 || holds()) return resolve();
+      const check = () => { if (holds()) done(); };
+      const done = () => { clearTimeout(timer); clearInterval(poll); state.sleepers.delete(check); resolve(); };
+      const timer = setTimeout(done, ms), poll = setInterval(check, 50);
+      state.sleepers.add(check);
+    });
+  }
+  // Runs a script that returns a promise in the page's own isolated world,
+  // which the page can't see or change, and gives its answer. The debugger
+  // rejects it when the page goes away (executeJavaScript would never answer).
+  const mainFrames = new WeakMap(); // webContents -> main frame id
+  async function awaitInPage(contents, expression) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        if (!mainFrames.has(contents)) mainFrames.set(contents, (await cdp(contents, "Page.getFrameTree")).frameTree.frame.id);
+        const { executionContextId } = await cdp(contents, "Page.createIsolatedWorld", { frameId: mainFrames.get(contents), worldName: "timewarp-settle" });
+        const { result, exceptionDetails } = await cdp(contents, "Runtime.evaluate", { expression, contextId: executionContextId, awaitPromise: true, returnByValue: true });
+        if (exceptionDetails) throw new Error(exceptionDetails.exception?.description || exceptionDetails.text);
+        return result?.value;
+      } catch (error) { mainFrames.delete(contents); if (attempt) throw error; }
+    }
+  }
+  // Until the page is quiet: the requests made since the mark are done and
+  // its document hasn't changed for `still` ms. It ends early when the main
+  // frame starts loading another page, and at `end` (a page that never goes
+  // quiet). A page that can't be watched gets the whole time, as before.
+  async function quiet(contents, mark, end, navigations, still) {
+    const away = () => mark.state.navigations > navigations;
+    for (;;) {
+      if (away() || Date.now() >= end) return;
+      if (fetching(mark)) { await sleep(mark.state, end - Date.now(), () => away() || !fetching(mark)); continue; }
+      let over = false;
+      const answer = await Promise.race([
+        awaitInPage(contents, QUIET_IN_PAGE(still, end - Date.now())).catch(() => null),
+        sleep(mark.state, end - Date.now(), () => over || away()).then(() => "away"),
+      ]);
+      over = true;
+      if (answer === null) return sleep(mark.state, end - Date.now(), away);
+      // A request that started meanwhile is waited for, and then quiet again.
+      if (answer !== true || !fetching(mark)) return;
+    }
+  }
+  // Waits for an action's effects: a page it started loading has loaded,
+  // the requests it made are done and the document has stopped changing.
+  // Each wait ends where the fixed waits used to: 150 ms plus ms, or, for a
+  // page that loads, the load (at most 8 s) plus ms. mark: taken just before
+  // the action. still: how long the document must stay unchanged.
+  async function settle(contents, ms = 600, mark = markOf(contents), still = QUIET) {
     const started = Date.now();
-    await pause(150);
-    while (contents.isLoading() && Date.now() - started < 8000) await pause(150);
-    await pause(ms);
+    let end = started + 150 + ms, navigations = mark.navigations, first = true;
+    for (;;) {
+      await quiet(contents, mark, end, navigations, still);
+      if (contents.isDestroyed?.() || Date.now() - started >= 8000) return;
+      // Another page, or, as before, loading that began by 150 ms after the action.
+      const navigated = mark.state.navigations > navigations;
+      const loading = first && contents.isLoading() && (mark.loading || (mark.state.loadingAt >= mark.at && mark.state.loadingAt <= started + 150));
+      if (!navigated && !loading) return;
+      first = false;
+      navigations = mark.state.navigations;
+      await sleep(mark.state, started + 8000 - Date.now(), () => !contents.isLoading());
+      end = Date.now() + ms;
+    }
   }
   const text = value => ({ contentItems: [{ type: "inputText", text: String(value) }], success: true });
   // Chat links to a tab, opened in the pane when the user clicks them.
@@ -570,18 +707,22 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         scope.add(state.id);
         if (own) workerTabs.set(own, state.id);
         note(state.id, "Opening " + state.url);
-        const { contents } = browser.webContents(conversationId, state.id);
+        const { contents } = browser.webContents(conversationId, state.id), mark = markOf(contents);
         // A new tab's page can take a moment to start loading; wait until it
         // has an address and finished, so the agent reads the page it opened.
-        for (const started = Date.now(); Date.now() - started < 10000 && (!contents.getURL() || contents.isLoading());) await pause(150);
-        await settle(contents, 400);
+        await sleep(mark.state, 10000, () => !!contents.getURL() && !contents.isLoading());
+        await settle(contents, 400, mark);
         return text(`Opened ${contents.getURL()} in tab ${state.id}: ${contents.getTitle()}\nTab link: ${tabLink(conversationId, state.id)}`);
       }
       case "tabs": {
         const state = browser.state(conversationId), current = own ? mine : state.active;
         return text(state.tabs.length ? state.tabs.map(item => `${item.id === current ? "* " : "  "}${item.id} ${item.url || "(home)"} ${item.title}`).join("\n") : "No tabs are open. Use the open tool.");
       }
-      case "snapshot": { const { tab: item, contents } = target(); note(item.id, "Reading the page"); return text(`${contents.getTitle()}\n${contents.getURL()}\n\n${await snapshot(conversationId, contents)}`); }
+      case "snapshot": {
+        // Watching the page starts with the first look, so the requests of the next action are seen.
+        const { tab: item, contents } = target(); note(item.id, "Reading the page"); activityOf(contents);
+        return text(`${contents.getTitle()}\n${contents.getURL()}\n\n${await snapshot(conversationId, contents)}`);
+      }
       case "click": {
         const { tab: item, contents, onScreen } = target(); const element = nodeFor(contents, input.ref);
         // checked: the box is clicked only when it isn't in that state yet.
@@ -594,15 +735,21 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         }
         const point = await centerOf(contents, element), count = input.double ? 2 : 1;
         note(item.id, input.double ? "Double-clicking" : "Clicking");
-        await showCursor(contents, point, agent);
-        await pause(250);
+        const cursor = await showCursor(contents, point, agent);
+        // On screen, the cursor glides to the element before it clicks: it eases
+        // out over .35 s and is within 4 px after about 60·ln(distance / 4) ms;
+        // one that just appeared shows a moment first. Nobody sees a page
+        // that isn't on screen, so there it clicks at once.
+        const glide = onScreen && cursor ? Math.min(250, Math.max(cursor.appeared ? 100 : 0, cursor.moved > 4 ? Math.round(60 * Math.log(cursor.moved / 4)) : 0)) : 0;
         // Chromium only takes mouse input on pages it draws on screen. A page
         // behind a closed pane or another tab gets the click through the DOM.
-        if (onScreen && await drawn(contents)) {
+        const [mouse] = await Promise.all([onScreen && drawn(contents), pause(glide)]);
+        const mark = markOf(contents);
+        if (mouse) {
           await within(cdp(contents, "Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "left", clickCount: 0 }), 3000, "").catch(() => {});
           for (let click = 1; click <= count; click++) for (const type of ["mousePressed", "mouseReleased"]) await cdp(contents, "Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", clickCount: click });
         } else await callOn(contents, element, CLICK_IN_PAGE, { arguments: [{ value: count }] });
-        await settle(contents);
+        await settle(contents, 600, mark);
         if (wanted !== null) {
           const after = await checkedNow();
           return after?.checked === wanted ? text(`${wanted ? "Checked" : "Unchecked"} ${input.ref}.`) : failed(`Clicked ${input.ref}, but it is still ${wanted ? "unchecked" : "checked"}. Take a snapshot to see why.`);
@@ -613,47 +760,60 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         // Without a reference, the text goes where the focus is, after what's there.
         const { tab: item, contents } = target(); const element = input.ref ? nodeFor(contents, input.ref) : null;
         note(item.id, "Typing");
+        const mark = markOf(contents);
         if (element) {
           await showCursor(contents, await centerOf(contents, element), agent);
           await focusAndClear(contents, element);
         }
         await cdp(contents, "Input.insertText", { text: String(input.text ?? "") });
         if (input.submit) await press(conversationId, item.id, contents, "Enter");
-        await settle(contents, input.submit ? 800 : 200);
+        await settle(contents, input.submit ? 800 : 200, mark);
         return text(`Typed into ${input.ref || "the focused element"}${input.submit ? " and pressed Enter" : ""}.`);
       }
-      case "press": { const { tab: item, contents } = target(); note(item.id, "Pressing " + input.key); await press(conversationId, item.id, contents, input.key); await settle(contents, 300); return text(`Pressed ${input.key}.`); }
+      case "press": {
+        const { tab: item, contents } = target(); note(item.id, "Pressing " + input.key);
+        const mark = markOf(contents);
+        await press(conversationId, item.id, contents, input.key);
+        await settle(contents, 300, mark);
+        return text(`Pressed ${input.key}.`);
+      }
       case "select": {
         const { tab: item, contents } = target(); const element = nodeFor(contents, input.ref);
         note(item.id, "Choosing an option");
         await showCursor(contents, await centerOf(contents, element), agent);
+        const mark = markOf(contents);
         const { result } = await callOn(contents, element, SELECT_IN_PAGE, { arguments: [{ value: String(input.option ?? "") }], returnByValue: true });
         if (!result?.value?.ok) throw fail(400, result?.value?.error || "That option isn't in the list.");
-        await settle(contents, 300);
+        await settle(contents, 300, mark);
         return text(`Chose "${result.value.label}" in ${input.ref}.`);
       }
       case "hover": {
         const { tab: item, contents, onScreen } = target(); const element = nodeFor(contents, input.ref); const point = await centerOf(contents, element);
         note(item.id, "Pointing");
         await showCursor(contents, point, agent);
+        const mark = markOf(contents);
         if (onScreen && await drawn(contents)) await within(cdp(contents, "Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y }), 3000, "").catch(() => callOn(contents, element, HOVER_IN_PAGE));
         else await callOn(contents, element, HOVER_IN_PAGE);
-        await settle(contents, 400);
+        // Menus often open a moment after the pointer arrives, so the page must stay unchanged longer.
+        await settle(contents, 400, mark, 2 * QUIET);
         return text(`Pointing at ${input.ref}. Take a snapshot to see what appeared.`);
       }
       case "upload": {
         const { tab: item, contents } = target(); const element = nodeFor(contents, input.ref);
         const files = workspaceFiles(agent, input.files);
         note(item.id, "Attaching files");
+        const mark = markOf(contents);
         await cdp(contents, "DOM.setFileInputFiles", { backendNodeId: element.node, files }, element.session);
-        await settle(contents, 300);
+        await settle(contents, 300, mark);
         return text(`Attached ${files.map(file => path.basename(file)).join(", ")} to ${input.ref}.`);
       }
       case "scroll": {
         const { tab: item, contents } = target(); note(item.id, "Scrolling");
         const amount = Math.max(0.2, Math.min(10, Number(input.amount) || 1)) * (input.direction === "up" ? -1 : 1);
+        const mark = markOf(contents);
         await contents.executeJavaScript(`window.scrollBy({ top: ${amount} * window.innerHeight * 0.85, behavior: "instant" })`, true);
-        await pause(250);
+        // What scrolling loads, such as more results, gets up to 250 ms, as before.
+        await settle(contents, 100, mark);
         return text(`Scrolled ${input.direction}.`);
       }
       case "read": {
@@ -671,19 +831,35 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         if (image.getSize().width > 1280) image = image.resize({ width: 1280 });
         return { contentItems: [{ type: "inputImage", imageUrl: "data:image/jpeg;base64," + image.toJPEG(78).toString("base64") }], success: true };
       }
-      case "back": { const { tab: item, contents } = target(); browser.back(conversationId, item.id); await settle(contents); return text(`Now on ${contents.getURL()}`); }
-      case "forward": { const { tab: item, contents } = target(); browser.forward(conversationId, item.id); await settle(contents); return text(`Now on ${contents.getURL()}`); }
+      case "back": case "forward": {
+        const { tab: item, contents } = target(), mark = markOf(contents);
+        browser[name](conversationId, item.id);
+        await settle(contents, 600, mark);
+        return text(`Now on ${contents.getURL()}`);
+      }
       case "wait": {
         const { contents } = target(), until = !!(input.text || input.url || input.load);
         const deadline = Date.now() + Math.min(20, Math.max(0, Number(input.seconds) || (until ? 15 : 2))) * 1000;
         if (!until) { await pause(deadline - Date.now()); return text("Waited."); }
-        const met = async () => (!input.url || contents.getURL().includes(input.url)) && (!input.load || !contents.isLoading())
-          && (!input.text || (await pageText(conversationId, contents).catch(() => "")).includes(input.text));
+        const state = activityOf(contents);
+        const at = () => (!input.url || contents.getURL().includes(input.url)) && (!input.load || !contents.isLoading());
+        // The page looks for the text itself, and watches for it up to ms.
+        // A page showing vault values is read as the agent reads it, hidden
+        // values and all, every 400 ms.
+        const shows = async ms => {
+          if (!secrets.has(conversationId)) { const found = await awaitInPage(contents, TEXT_IN_PAGE(input.text, ms)).catch(() => null); if (typeof found === "boolean") return found; }
+          const found = (await pageText(conversationId, contents).catch(() => "")).includes(input.text);
+          if (!found && ms) await pause(Math.min(ms, 400));
+          return found;
+        };
         const wanted = [input.text && `"${input.text}" on the page`, input.url && `an address with "${input.url}"`, input.load && "the page loaded"].filter(Boolean).join(" and ");
         for (;;) {
-          if (await met()) return text(`Done waiting: ${wanted}. Now on ${contents.getURL()}`);
-          if (Date.now() >= deadline) return failed(`Still no ${wanted} after waiting. Now on ${contents.getURL()}${contents.isLoading() ? " (still loading)" : ""}.`);
-          await pause(400);
+          if (at() && (!input.text || await shows(0))) return text(`Done waiting: ${wanted}. Now on ${contents.getURL()}`);
+          const left = deadline - Date.now();
+          if (left <= 0) return failed(`Still no ${wanted} after waiting. Now on ${contents.getURL()}${contents.isLoading() ? " (still loading)" : ""}.`);
+          // Woken by the page's events (another address, a load), or as the text appears.
+          if (input.text && at()) { let over = false; await Promise.race([shows(Math.min(left, 2000)), sleep(state, left, () => over || !at())]); over = true; }
+          else await sleep(state, Math.min(left, 400), at);
         }
       }
       case "close_tab": { const state = browser.close(conversationId, input.tab || mine || undefined); return text(`Closed the tab. ${state.tabs.length} tab(s) remain.`); }
@@ -695,10 +871,10 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         if (!pending.forAgent) return failed(dialogText(pending));
         scope.add(pending.tabId);
         const accept = input.accept !== false;
+        const { contents } = browser.webContents(conversationId, pending.tabId), mark = markOf(contents);
         browser.answerDialog(conversationId, pending.tabId, { accept, text: input.text });
         note(pending.tabId, accept ? "Accepting a dialog" : "Dismissing a dialog");
-        const { contents } = browser.webContents(conversationId, pending.tabId);
-        await settle(contents, 400);
+        await settle(contents, 400, mark);
         return text(`${accept ? "Accepted" : "Dismissed"} the ${pending.type}${accept && pending.type === "prompt" ? ` with ${quote(input.text ?? pending.value)}` : ""}. Now on ${contents.getURL()}: ${contents.getTitle()}`);
       }
       default: throw fail(404, "Unknown browser tool: " + name);
@@ -738,12 +914,13 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
   }
 
   // Says where downloads the agent started went (browser.cjs saves them in its
-  // workspace). A download that just started gets a few seconds to finish.
+  // workspace). A download that just started gets a few seconds to finish,
+  // looked at every 50 ms (it's only a list in this process).
   async function withDownloads(conversationId, result) {
     const found = new Map();
     const take = () => { for (const item of browser.downloads?.(conversationId) || []) found.set(item.file, item.state); };
     take();
-    for (const started = Date.now(); [...found.values()].includes("progressing") && Date.now() - started < 10000;) { await pause(250); take(); }
+    for (const started = Date.now(); [...found.values()].includes("progressing") && Date.now() - started < 10000;) { await pause(50); take(); }
     if (!found.size || !Array.isArray(result?.contentItems)) return result;
     const lines = [...found].map(([file, state]) => state === "completed" ? `Downloaded ${file}`
       : state === "progressing" ? `Downloading ${file} (still in progress; a later browser result says when it's done)` : `The download of ${path.basename(file)} didn't finish (${state}).`);
@@ -794,6 +971,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         const sources = new Set([...(secrets.get(conversationId)?.sources || []), ...patternsFor(value)]);
         secrets.set(conversationId, Object.assign(new RegExp([...sources].join("|"), "g"), { sources }));
       }
+      const mark = markOf(contents);
       if (choose) {
         const { result } = await callOn(contents, element, SELECT_IN_PAGE, { arguments: [{ value: String(value) }], returnByValue: true });
         if (!result?.value?.ok) throw fail(400, "That option isn't in the list.");
@@ -801,7 +979,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         await focusAndClear(contents, element);
         await cdp(contents, "Input.insertText", { text: String(value) });
       }
-      await settle(contents, 150);
+      await settle(contents, 150, mark);
       return redact(conversationId, contents.getURL());
     },
     // The address of the page or frame a field from the latest snapshot is in,

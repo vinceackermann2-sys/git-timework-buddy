@@ -33,13 +33,28 @@ const AZURE_MODELS: Record<string, { deployment: () => string; keys: () => strin
 
 // The deployment to call and the name usage is billed under ("-fast" bills at
 // Fast rates, aiCost.ts). Older clients' names, and any other, keep Sol 5.6.
+// Codex's approval reviews ("codex-auto-review") answer with a short verdict,
+// so they run on Luna 5.6, billed as Luna, with a small output cap (index.ts).
 export function azureRoute(name: unknown, serviceTier?: unknown) {
-  const value = String(name ?? '').replace(/^openai\//, '');
-  const slug = AZURE_MODELS[value] ? value : value === 'gpt-luna' || value === azureLunaModel() ? 'gpt-5.6-luna' : 'gpt-5.6-sol';
+  const value = String(name ?? '').replace(/^openai\//, ''), review = value === 'codex-auto-review';
+  const slug = AZURE_MODELS[value] ? value : review || value === 'gpt-luna' || value === azureLunaModel() ? 'gpt-5.6-luna' : 'gpt-5.6-sol';
   const entry = AZURE_MODELS[slug], fast = entry.fast && (serviceTier === 'priority' || serviceTier === 'fast');
-  return { slug, deployment: entry.deployment(), keys: entry.keys(), paid: entry.paid, fast, billing: `openai/${slug}${fast ? '-fast' : ''}` };
+  return { slug, deployment: entry.deployment(), keys: entry.keys(), paid: entry.paid, fast, billing: `openai/${slug}${fast ? '-fast' : ''}`, ...(review ? { review } : {}) };
 }
 export type AzureRoute = ReturnType<typeof azureRoute>;
+
+// One prompt cache key per account and model, so a new chat reads the tools
+// and instructions that the account's earlier chats cached. Codex's own key is
+// per thread, which left every chat's first request uncached.
+export async function promptCacheKey(userId: string, model: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`timewarp-cache:${userId}:${model}`));
+  return 'tw-' + [...new Uint8Array(digest)].slice(0, 16).map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// 24-hour prompt cache retention when the GPT_PROMPT_CACHE_RETENTION secret is
+// "24h". Off by default until the deployments are known to take it; one that
+// answers 400 to it is asked again without it (nativeResponses.ts).
+export const azureCacheRetention = () => Deno.env.get('GPT_PROMPT_CACHE_RETENTION') === '24h';
 // Azure reports the tier that served a request; with no report, the requested one.
 export const servedSpeed = (route: AzureRoute, tier: unknown) => !route.fast || (typeof tier === 'string' && !/^(priority|fast)$/.test(tier)) ? 'standard' : 'fast';
 

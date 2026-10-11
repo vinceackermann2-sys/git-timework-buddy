@@ -204,6 +204,13 @@ a { color: var(--accent-strong); }
 .tw-usage-meter[data-empty] > i { background: var(--danger); }
 .tw-usage > .tw-usage-credits { margin-top: 8px; }
 .tw-usage > .tw-usage-credits span:first-child { font-weight: 400; }
+/* Update, above the usage card once an update is downloaded. */
+.tw-update { flex: none; display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; margin-top: 16px; padding: 0 12px; border: none; border-radius: 8px; background: var(--soft); color: var(--ink-strong); font-size: 12px; line-height: 16px; font-weight: 500; text-align: left; cursor: pointer; }
+.tw-update:hover { background: var(--soft-hover); }
+.tw-update svg { flex: none; color: var(--accent-strong); }
+.tw-update span { flex: 1; }
+.tw-update small { font-size: 12px; font-weight: 400; color: var(--muted-64); }
+.tw-update + .tw-usage { margin-top: 8px; }
 .tw-account { display: flex; align-items: center; gap: 8px; width: 100%; height: 48px; margin-top: 8px; padding: 0 8px 0 11px; border: 0.67px solid transparent; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; color: var(--ink-strong); }
 .tw-account:hover, .tw-account[aria-expanded="true"] { background: var(--selected); }
 .tw-account[aria-expanded="true"] { border-color: color-mix(in srgb, var(--accent-strong) 45%, transparent); }

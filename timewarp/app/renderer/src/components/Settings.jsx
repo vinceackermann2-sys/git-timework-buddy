@@ -3,7 +3,7 @@ import { Blocks, BookMarked, Brain, Building2, CalendarClock, ChevronDown, Credi
 import { presets, hexToAccent } from "../../../../shared/appearance.cjs";
 import { call, initials, relativeTime, request, useEvent } from "../api.js";
 import { applyAppearance } from "../theme.js";
-import { splitEmails } from "../shell.mjs";
+import { splitEmails, updateRow } from "../shell.mjs";
 import { Avatar, Dialog, Menu, PageHead, Row, SearchField, Select, Switch, useConfirm, useToast } from "./common.jsx";
 import { AppIcon, ModelPicker, useApps } from "./Composer.jsx";
 import { Memories, Skills } from "./Knowledge.jsx";
@@ -152,6 +152,27 @@ function DiagnosticsRow() {
   );
 }
 
+// Settings → General → Updates: the version and where its updates stand.
+// Restart to update asks first, saying when an agent is still working.
+function UpdatesRow() {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  useEffect(() => { call("updates.state").then(setState).catch(() => {}); }, []);
+  useEvent("updates.changed", setState);
+  const { line, button, disabled } = updateRow(state);
+  const install = state?.kind === "auto" && state.status === "ready";
+  const run = () => {
+    setBusy(true);
+    call(install ? "updates.install" : "updates.check").then(value => { if (!install && value?.kind) setState(value); }).catch(error => toast(error, "error")).finally(() => setBusy(false));
+  };
+  return (
+    <Row title="Updates" description={state ? <>Timewarp {state.version}{line ? <><br />{line}</> : null}</> : "…"}>
+      <button type="button" className="tw-btn" disabled={disabled || busy} onClick={run}>{button}</button>
+    </Row>
+  );
+}
+
 function General({ settings, onSetting, models, onModel, agents }) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -193,6 +214,7 @@ function General({ settings, onSetting, models, onModel, agents }) {
         <Row title="Setup" description="Go through the first-run screens again: your name, what to bring in from other apps, and your theme.">
           <button type="button" className="tw-btn" onClick={() => void runSetup()}>Run setup again</button>
         </Row>
+        <UpdatesRow />
       </div>
       <Archived open={dialog === "archived"} onClose={() => setDialog(null)} agents={agents} />
     </div>

@@ -62,7 +62,7 @@ function fillSignIn(username, password, origin) {
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null, updates = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Each agent's workspace, so the skills kept there (Settings → Skills → Workspace) are listed, as before.
   const skillFolders = () => store.agents.list(services.auth.userId()).filter(agent => !agent.archivedAt && fs.existsSync(agent.workspace)).map(agent => agent.workspace);
@@ -78,6 +78,12 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       setTimeout(() => { app.relaunch(); app.quit(); }, 100);
       return { restarting: true };
     },
+    // Updates (desktop/updates.cjs) for Settings → General and the sidebar's
+    // Update button: checking now (a Store app opens its Store page), and
+    // restarting into a downloaded update, which asks first.
+    "updates.state": () => { if (!updates) throw fail(404, "Updates are unavailable."); return updates.state(); },
+    "updates.check": () => { if (!updates) throw fail(404, "Updates are unavailable."); return updates.check(); },
+    "updates.install": async () => { if (!updates) throw fail(404, "Updates are unavailable."); return { installing: await updates.install() }; },
     // A support file with versions, states and recent app log lines; no chats,
     // files, account details or secrets.
     "diagnostics.export": async () => {
@@ -147,7 +153,8 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     // meters as the previous app did (null when the billing service can't say).
     "funding.get": async () => {
       signedIn();
-      const state = await services.funding.current();
+      // What the interface shows is read fresh; sending uses the balance kept for a moment.
+      const state = await services.funding.current({ fresh: true });
       if (state.subscriptionAllowed) return state;
       const status = await require("../../desktop/account-compat.cjs").billingStatus(services.cloud).catch(() => null);
       const allowance = Number(status?.includedCredits?.allowance), left = Number(status?.includedCredits?.balance);
@@ -192,7 +199,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "conversations.history": ({ id }) => { signedIn(); return harness.history(id); },
     "conversations.status": ({ id }) => { signedIn(); return harness.conversations.status(id); },
     // Chats with a reply in progress, for the sidebar's "Agent is working".
-    "conversations.running": () => { signedIn(); return harness.conversations.list({}).filter(item => harness.conversations.status(item.id).running).map(item => item.id); },
+    "conversations.running": () => { signedIn(); return harness.conversations.running(); },
     // Ctrl/⌘+K search: { conversations: [{ conversation, snippet, highlight }], messages: [{ conversation, messageId, createdAt, snippet, highlight }] }.
     "conversations.search": ({ query }) => { signedIn(); return store.conversations.search(services.auth.userId(), text(query, 200)); },
     "conversations.usage": ({ id }) => { signedIn(); return harness.conversations.usage(id); },
@@ -209,6 +216,8 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       return harness.send(id, { text: text(message, 200000), images: existing(images).filter(file => IMAGE.test(file)), files: attached, ...(chosen.length ? { skills: chosen } : {}), clientId: typeof clientId === "string" ? clientId : undefined, retryOf: typeof retryOf === "string" ? retryOf : undefined }, { steer: true });
     },
     "conversations.warm": ({ id }) => { signedIn(); return harness.warm(id); },
+    // Home's composer: the agent's next new chat gets ready while the user writes (thread: once they type).
+    "conversations.prepare": ({ agentId, thread = false }) => { signedIn(); return harness.prepare(agentId, { thread: thread === true }); },
     "conversations.setModel": async ({ id, name, reasoningEffort, serviceTier }) => {
       signedIn();
       return harness.setModel(id, require("./model-catalog.cjs").chooseModel(await modelChoices(), { name, reasoningEffort, serviceTier }));

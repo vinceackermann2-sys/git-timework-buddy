@@ -1,50 +1,46 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.106.2';
-import { reserveAgentAi, responseOutputLimit } from './agentAiReservation.ts';
-import { azureFoundryBase, azureRoute, type AzureRoute, azureSolModel, azureLunaModel, servedSpeed } from './azureAgentAi.ts';
+import { REVIEW_OUTPUT_TOKENS, responseOutputLimit } from './agentAiReservation.ts';
+import { azureRoute, azureSolModel, azureLunaModel, promptCacheKey } from './azureAgentAi.ts';
 import { claudeRoute, PAID_PLANS } from './claudeAgentAi.ts';
 import { claudeCall, claudeStream, isClaudeReasoning } from './claudeResponses.ts';
 import { assertCloudSafe } from './privacy.ts';
-import { nativeStream, rejectsFast, standardRoute } from './nativeResponses.ts';
+import { nativeCall, nativeStream } from './nativeResponses.ts';
 import { accountProduct, nativeAccountSnapshot, productionService } from './nativeAccount.ts';
 import { nativeHistory } from './nativeHistory.ts';
 import { nativeBilling } from './nativeBilling.ts';
 import { transcribe } from './transcription.ts';
 const url=Deno.env.get('SUPABASE_URL')||'',serviceKey=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
 const admin=createClient(url,serviceKey,{auth:{persistSession:false,autoRefreshToken:false}});
-const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type','Access-Control-Allow-Methods':'GET,POST,OPTIONS'};
+const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,content-encoding','Access-Control-Allow-Methods':'GET,POST,OPTIONS'};
 const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'content-type':'application/json','cache-control':'no-store'}});
 const fail=(status:number,message:string)=>Object.assign(new Error(message),{status});
 const check=<T>(result:{data:T;error:any}):T=>{if(result.error)throw fail(503,'Cloud storage is temporarily unavailable.');return result.data;};
-async function modelCall(userId: string, route: AzureRoute, payload: any) {
-  if (!route.keys.length) throw fail(503, 'The cloud AI provider is not configured.');
-  assertCloudSafe(payload);
-  for (let attempt = 0; ; attempt++) {
-    const request={...payload,...(route.fast?{service_tier:'priority'}:{}),model:route.deployment,store:false,stream:false,max_output_tokens:responseOutputLimit(payload)};
-    const reservation = await reserveAgentAi(admin, userId, route.billing, request);
-    let upstream: Response;
-    try {
-      upstream = await fetch(`${azureFoundryBase()}/responses`, {
-        method: 'POST', headers: { 'api-key': route.keys[0], 'content-type': 'application/json' },
-        body: JSON.stringify(request),
-        signal: AbortSignal.timeout(65_000), redirect: 'error',
-      });
-    } catch {
-      await reservation.finish('uncertain');
-      throw fail(504, 'The AI request timed out. Its allowance stays reserved until usage is reconciled.');
-    }
-    const output = await upstream.json().catch(() => null);
-    if (!upstream.ok || !output) {
-      await reservation.finish(output ? 'released' : 'uncertain');
-      if (!attempt && upstream.status === 400 && rejectsFast(route, output)) { route = standardRoute(route); continue; }
-      throw fail(upstream.status === 429 ? 429 : 502, `The AI provider could not complete this request (${upstream.status}).`);
-    }
-    if (!output.usage || !Number.isFinite(output.usage.input_tokens) || !Number.isFinite(output.usage.output_tokens)) {
-      await reservation.finish('uncertain'); throw fail(502, 'The AI provider did not return usage information.');
-    }
-    await reservation.finish('settled', output.usage.input_tokens, output.usage.output_tokens, { ...output.usage.input_tokens_details, speed: servedSpeed(route, output.service_tier) });
-    assertCloudSafe(output.output);
-    return output;
+
+// Request bodies are at most 2 MB, read as they arrive so a larger one stops
+// early. The desktop gzips large ones; the limit then also holds for the JSON
+// inside, unpacked a piece at a time so a small upload can't expand without
+// bound. Gzip is told by its first bytes, in case the platform unpacked it.
+const MAX_BODY=2*1024*1024;
+async function readLimited(stream:ReadableStream<Uint8Array>|null):Promise<Uint8Array<ArrayBuffer>>{
+  const chunks:Uint8Array[]=[];let size=0;
+  if(stream){const reader=stream.getReader();
+    try{for(let part=await reader.read();!part.done;part=await reader.read()){size+=part.value.byteLength;if(size>MAX_BODY)throw fail(413,'Request is too large.');chunks.push(part.value);}}
+    finally{reader.cancel().catch(()=>{});}}
+  const bytes=new Uint8Array(size);let at=0;for(const chunk of chunks){bytes.set(chunk,at);at+=chunk.byteLength;}return bytes;
+}
+const requestBytes=(req:Request)=>Number(req.headers.get('content-length'))>MAX_BODY?Promise.reject(fail(413,'Request is too large.')):readLimited(req.body);
+async function requestJson(raw:Uint8Array<ArrayBuffer>){
+  let bytes=raw;
+  if(raw[0]===0x1f&&raw[1]===0x8b){
+    try{bytes=await readLimited(new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip')));}
+    catch(error){if((error as any)?.status===413)throw error;throw fail(400,'Invalid JSON.');}
   }
+  try{return JSON.parse(new TextDecoder().decode(bytes));}catch{throw fail(400,'Invalid JSON.');}
+}
+// Claude and the GPT-6 models are part of the paid plans.
+async function paidPlan(userId:string){
+  const usage=check(await admin.rpc('timewarp_ai_usage',{p_user_id:userId,p_workspace_id:null})) as any;
+  if(!PAID_PLANS.has(usage?.plan))throw fail(403,'This model is part of the paid plans. Choose GPT-5.6 Sol or Luna, or upgrade in Billing.');
 }
 
 
@@ -67,6 +63,9 @@ Deno.serve(async(req:Request)=>{
   try{
     if(route==='/healthz')return response({ok:true,execution:'local',services:['auth','history','billing','models','transcription']});
     const token=(req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'');
+    // The body arrives while the session is checked; it is only unpacked and
+    // parsed once the user is known.
+    const raw=req.method==='POST'&&route!=='/v1/transcriptions'?requestBytes(req):null;raw?.catch(()=>{});
     const {data:{user},error}=await admin.auth.getUser(token);if(error||!user)throw fail(401,'Sign in to Timewarp.');
     if(req.method==='GET'&&route==='/v1/models')return response(catalog());
     if(req.method!=='POST')throw fail(405,'Method not allowed.');
@@ -76,11 +75,11 @@ Deno.serve(async(req:Request)=>{
       try{return response(await transcribe(admin,user.id,req));}
       catch(error){const e=error as any;return response({error:{message:e instanceof Error?e.message:'Transcription failed.',type:e?.type||'server_error'}},e?.status||500);}
     }
-    const bytes=await req.arrayBuffer();if(bytes.byteLength>2*1024*1024)throw fail(413,'Request is too large.');
-    let body:any;try{body=JSON.parse(new TextDecoder().decode(bytes));}catch{throw fail(400,'Invalid JSON.');}
+    const body:any=await requestJson(await raw!);
     if(!body||typeof body!=='object'||Array.isArray(body))throw fail(400,'Invalid request object.');
     // Older desktop clients can still send native telemetry. It is never model
-    // input; discard it before scanning the retained request for secrets.
+    // input; discard it before scanning the retained request for secrets. This
+    // one scan covers everything a model call forwards.
     if(route==='/v1/responses')delete body.client_metadata;
     assertCloudSafe(body);
     if(['/document','/workspace','/memory','/enqueue','/cancel','/internal/worker'].includes(route))throw fail(410,'Files, memory and task execution are local.');
@@ -105,23 +104,24 @@ Deno.serve(async(req:Request)=>{
     if(route==='/billing'){const usage=check(await admin.rpc('timewarp_ai_usage',{p_user_id:user.id,p_workspace_id:null})) as any;return response({plan:usage?.plan||'free',included:Number(usage?.included_balance_credits)||0,purchased:Number(usage?.purchased_balance_credits)||0});}
     if(route==='/native/rpc'){const result=await accountProduct(admin,user,token,String(body.rpc||''),body.input||{});if(result===undefined)throw fail(410,'This feature uses the local desktop harness.');return response(result);}
     if(route==='/v1/responses'){
-      // Claude (claudeResponses.ts) and the GPT-6 models are part of the paid plans.
+      // Claude (claudeResponses.ts) and the GPT-6 models are part of the paid
+      // plans. The plan is checked alongside the call's reservation, and the
+      // model is only called once it has passed (reserveAgentAi).
       const claude=claudeRoute(body.model),azure=claude?null:azureRoute(body.model,body.service_tier);
-      if(claude||azure?.paid){
-        const usage=check(await admin.rpc('timewarp_ai_usage',{p_user_id:user.id,p_workspace_id:null})) as any;
-        if(!PAID_PLANS.has(usage?.plan))throw fail(403,'This model is part of the paid plans. Choose GPT-5.6 Sol or Luna, or upgrade in Billing.');
-      }
-      if(claude)return body.stream?await claudeStream(admin,user.id,body,cors):response(await claudeCall(admin,user.id,body));
+      const allowed=claude||azure?.paid?paidPlan(user.id):undefined;allowed?.catch(()=>{});
+      if(claude)return body.stream?await claudeStream(admin,user.id,body,cors,allowed):response(await claudeCall(admin,user.id,body,allowed));
       // Execution belongs to the desktop. Forward its client-executed tools,
       // excluding inherited upstream hosted search/image tools. Claude's
-      // thinking from earlier turns of the chat stays out.
+      // thinking from earlier turns of the chat stays out; the model's own
+      // encrypted reasoning comes back so it carries across tool steps.
       const tools=body.tools?.filter((t:any)=>['function','custom','namespace','tool_search'].includes(t.type));
       const input=Array.isArray(body.input)?body.input.filter((item:any)=>!isClaudeReasoning(item)):body.input;
         const payload={input,instructions:body.instructions,tools,reasoning:body.reasoning,text:body.text,
           parallel_tool_calls:body.parallel_tool_calls===true,
-          ...(body.max_output_tokens!==undefined?{max_output_tokens:body.max_output_tokens}:{}),
-          ...(typeof body.prompt_cache_key==='string'&&body.prompt_cache_key.length<=256?{prompt_cache_key:body.prompt_cache_key}:{})};
-      if(body.stream)return await nativeStream(admin,user.id,azure!,payload,cors);return response(await modelCall(user.id,azure!,payload));
+          ...(azure!.review?{max_output_tokens:Math.min(responseOutputLimit(body),REVIEW_OUTPUT_TOKENS)}:body.max_output_tokens!==undefined?{max_output_tokens:body.max_output_tokens}:{}),
+          ...(Array.isArray(body.include)&&body.include.includes('reasoning.encrypted_content')?{include:['reasoning.encrypted_content']}:{}),
+          prompt_cache_key:await promptCacheKey(user.id,azure!.review?'codex-auto-review':azure!.slug)};
+      if(body.stream)return await nativeStream(admin,user.id,azure!,payload,cors,allowed);return response(await nativeCall(admin,user.id,azure!,payload,allowed));
     }
     throw fail(404,'This endpoint is unavailable.');
   }catch(error){return response({error:error instanceof Error?error.message:'Cloud request failed.'},(error as any)?.status||500);}

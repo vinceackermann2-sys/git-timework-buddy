@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Globe, KeyRound } from "lucide-react";
 import { call, request } from "../api.js";
 import { durationText, upcomingAutomations } from "../shell.mjs";
@@ -99,6 +99,15 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, autom
     title: "Browser profiles", meta: "Manage profiles on this device", action: "Manage", run: () => onSettings("browser"),
   });
   const agent = agents.find(item => item.id === agentId) || agents[0];
+  // The chosen agent's next chat gets ready: its connected apps load now and,
+  // once the user types, its thread starts in the background.
+  useEffect(() => { if (agent?.id) void call("conversations.prepare", { agentId: agent.id }).catch(() => {}); }, [agent?.id]);
+  const prepared = useRef({ agentId: null, at: 0 });
+  const typing = event => {
+    if (!agent || event.target.tagName !== "TEXTAREA" || (prepared.current.agentId === agent.id && Date.now() - prepared.current.at < 20000)) return;
+    prepared.current = { agentId: agent.id, at: Date.now() };
+    void call("conversations.prepare", { agentId: agent.id, thread: true }).catch(() => {});
+  };
   if (onePassword?.installed && !onePassword.configured && agent) suggestions.push({
     id: "setup-one-password", icon: <KeyRound size={16} />, title: "Set up 1Password", meta: "Use your saved passwords", action: "Start",
     run: () => Promise.resolve(onStart(agent.id, { text: ONE_PASSWORD_PROMPT })).catch(error => toast(error, "error")),
@@ -109,7 +118,7 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, autom
   const visible = suggestions.filter(item => !dismissed.has(item.id)).slice(0, 6);
   return (
     <div className="tw-home">
-      <div className="tw-home-inner">
+      <div className="tw-home-inner" onInput={typing}>
         <h1>{heading}</h1>
         <Composer variant="large" autoFocusKey="home" agentId={agent?.id} placeholder="Tell me what you want to get done..." disabled={!agent}
           models={models} onModel={onModel} onSend={message => onStart(agent.id, message)}

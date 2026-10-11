@@ -1,9 +1,9 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MarkdownIt from "markdown-it";
-import hljs from "highlight.js/lib/common";
 import { Check, Copy, Maximize2 } from "lucide-react";
-import { messageKey, parseCards, PLACEHOLDER, readTag, stripCitations } from "./cards.mjs";
+import { messageKey, OPEN, parseCards, PLACEHOLDER, readTag, stripCitations } from "./cards.mjs";
+import { useHighlighter } from "./highlighter.js";
 import { CardScope, ChatCard, MarkdownImage, MarkdownLink, useRouteConversation } from "./widgets.jsx";
 import { Dialog } from "./components/common.jsx";
 
@@ -177,22 +177,40 @@ function htmlElement(token, children, key) {
 const MARKDOWN_BLOCKS = new Set(["markdown", "md", "mdx"]);
 const TAGS = new Set(["p", "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "thead", "tbody", "tr", "th", "td", "strong", "em", "s", "del", "sup", "sub", "code", "pre", "hr", "br"]);
 
+const highlight = (hljs, name, text) => { try { return hljs?.getLanguage(name) ? hljs.highlight(text, { language: name, ignoreIllegals: true }).value : null; } catch { return null; } };
+const escapeHtml = text => text.replace(/[&<>]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]);
+// How often a code block still arriving is highlighted again as its lines complete.
+const ARRIVING_HIGHLIGHT_MS = 200;
+
 // A code block with a copy button; ```md blocks show as Markdown, as before.
-function CodeBlock({ language, code }) {
+// One still arriving (`open`) stays highlighted up to its last complete line,
+// highlighted again at most every 200 ms as lines complete; the lines since
+// then show plain until the next time.
+function CodeBlock({ language, code, open = false }) {
   const [copied, setCopied] = useState(false);
   const name = (language || "text").toLowerCase();
   const value = code.replace(/\n$/, "");
   const markdown = MARKDOWN_BLOCKS.has(name);
-  const html = useMemo(() => {
-    if (markdown) return null;
-    try { return hljs.getLanguage(name) ? hljs.highlight(value, { language: name, ignoreIllegals: true }).value : null; } catch { return null; }
-  }, [name, value, markdown]);
+  const hljs = useHighlighter(!markdown);
+  const html = useMemo(() => markdown || open ? null : highlight(hljs, name, value), [name, value, markdown, open, hljs]);
+  const lines = open && !markdown ? code.slice(0, code.lastIndexOf("\n") + 1).replace(/\n$/, "") : "";
+  const [arrived, setArrived] = useState({ name, text: "", html: null });
+  const highlighted = useRef(0);
+  useEffect(() => {
+    if (!lines || !hljs || (arrived.name === name && arrived.text === lines)) return undefined;
+    const timer = setTimeout(() => { highlighted.current = Date.now(); setArrived({ name, text: lines, html: highlight(hljs, name, lines) }); }, Math.max(0, highlighted.current + ARRIVING_HIGHLIGHT_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [lines, hljs, name, arrived]);
+  // The first complete lines are highlighted as they show, not a moment later.
+  const first = useMemo(() => lines && arrived.html === null ? { name, text: lines, html: highlight(hljs, name, lines) } : null, [lines, arrived.html, hljs, name]);
+  const latest = first || arrived;
+  const shown = html ?? (open && latest.html !== null && latest.name === name && value.startsWith(latest.text) ? latest.html + escapeHtml(value.slice(latest.text.length)) : null);
   const copy = () => navigator.clipboard.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => setCopied(false));
   return (
     <div className="tw-code" data-language={name}>
       <button type="button" className="tw-code-copy" aria-label={copied ? `Copied ${name} block` : `Copy ${name} block`} title={copied ? "Copied" : "Copy"} onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</button>
       {markdown ? <div className="tw-code-markdown"><Blocks text={value} options={{ cards: false }} /></div>
-        : html !== null ? <pre><code className={"hljs language-" + name} dangerouslySetInnerHTML={{ __html: html }} /></pre>
+        : shown !== null ? <pre><code className={"hljs language-" + name} dangerouslySetInnerHTML={{ __html: shown }} /></pre>
           : <pre><code className="hljs">{value}</code></pre>}
     </div>
   );
@@ -239,10 +257,13 @@ function trimEdges(list) {
   return list.slice(start, end);
 }
 
-function render(nodes, context, prefix) {
+// `first` numbers nodes that follow others drawn before them (a streaming
+// message's finished parts), so each keeps the key it has in the whole message.
+function render(nodes, context, prefix, first = 0) {
   const out = [];
   nodes.forEach((node, index) => {
-    const value = node.children ? renderNode(node, context, prefix + "." + index) : renderLeaf(node.token, context, prefix + "." + index);
+    const key = prefix + "." + (first + index);
+    const value = node.children ? renderNode(node, context, key) : renderLeaf(node.token, context, key);
     if (Array.isArray(value)) out.push(...value);
     else if (value !== null && value !== undefined && value !== false && value !== "") out.push(value);
   });
@@ -338,8 +359,8 @@ function renderLeaf(token, context, key) {
     case "softbreak": return "\n";
     case "hardbreak": return <br key={key} />;
     case "code_inline": return <code key={key}>{token.content}</code>;
-    case "fence": return <CodeBlock key={key} language={(token.info || "").trim().split(/\s+/)[0]} code={token.content} />;
-    case "code_block": return <CodeBlock key={key} language="" code={token.content} />;
+    case "fence": return <CodeBlock key={key} language={(token.info || "").trim().split(/\s+/)[0]} code={token.content} open={token === context.open} />;
+    case "code_block": return <CodeBlock key={key} language="" code={token.content} open={token === context.open} />;
     case "image": return <MarkdownImage key={key} src={token.attrGet("src") || ""} alt={md.renderer.renderInlineAsText(token.children || [], md.options, {})} title={token.attrGet("title") || undefined} />;
     case "hr": return <hr key={key} />;
     default: return token.content || null;
@@ -348,11 +369,59 @@ function renderLeaf(token, context, key) {
 
 // Text as React elements: its cards (all, or `only` those named), its
 // Markdown, then its footnotes.
-function draw(text, { cards, streaming, only }) {
-  const parsed = cards ? parseCards(text, { streaming, only }) : { markdown: stripCitations(text), cards: [] };
-  const env = {}, context = { cards: parsed.cards, blocks: new Set() };
-  const content = render(nest(expandHtml(md.parse(parsed.markdown, env))), context, "m");
+const cardsOf = (text, { cards, streaming, only }) => cards ? parseCards(text, { streaming, only }) : { markdown: stripCitations(text), cards: [] };
+// The code block a streaming message ends with may still be arriving.
+const openCode = tokens => { const last = tokens.findLast(token => token.nesting !== -1); return last?.type === "fence" || last?.type === "code_block" ? last : null; };
+function drawMarkdown(parsed, { arriving = false } = {}) {
+  const env = {}, context = { cards: parsed.cards, blocks: new Set(), open: null };
+  const tokens = md.parse(parsed.markdown, env);
+  if (arriving) context.open = openCode(tokens);
+  const content = render(nest(expandHtml(tokens)), context, "m");
   return [...content, ...footnoteList(env, context)];
+}
+const draw = (text, options) => drawMarkdown(cardsOf(text, options));
+
+// A streaming message is drawn in parts: blocks that are finished are parsed
+// and drawn once, and only the rest is parsed again as text arrives. That
+// draws the same as the whole text: a top-level block is finished once the
+// next one has started and that one's first two lines are complete (a table
+// needs both to be one). Link references and footnotes resolve over the
+// whole message, and HTML blocks pair up across blocks, so messages with
+// them are drawn whole each time, as before.
+const DEFINITION = /\[[^\]\n]*\]:/, HTML_LINE = /^ {0,3}<[A-Za-z/!?]/m;
+// The cards a part shows, to tell when one of them changed.
+const cardsIn = (text, cards) => text.includes(OPEN) ? JSON.stringify([...text.matchAll(PLACEHOLDER)].map(match => cards[Number(match[1])] || null)) : "";
+// Where line `line` of the text starts, or -1.
+function lineOffset(text, line) {
+  let at = 0;
+  for (let index = 0; index < line; index++) { at = text.indexOf("\n", at); if (at < 0) return -1; at++; }
+  return at;
+}
+function drawStreaming(previous, text, options) {
+  const parsed = cardsOf(text, { ...options, streaming: true });
+  // As markdown-it reads it, so lines are counted the same.
+  const source = parsed.markdown.replace(/\r\n?/g, "\n").replace(/\0/g, "\uFFFD");
+  if (DEFINITION.test(source) || HTML_LINE.test(source)) return { parts: [], content: drawMarkdown(parsed, { arriving: true }) };
+  // Parts drawn before stay while their text, and the cards in it, are the same.
+  const parts = [];
+  let offset = 0, count = 0;
+  for (const part of previous || []) {
+    if (!source.startsWith(part.text, offset) || cardsIn(part.text, parsed.cards) !== part.cards) break;
+    parts.push(part); offset += part.text.length; count += part.count;
+  }
+  const rest = source.slice(offset);
+  const tokens = md.parse(rest, {});
+  const context = { cards: parsed.cards, blocks: new Set(), open: openCode(tokens) };
+  const nodes = nest(expandHtml(tokens));
+  const settled = line => { const start = lineOffset(rest, line), end = start < 0 ? -1 : rest.indexOf("\n", start); return end >= 0 && rest.includes("\n", end + 1); };
+  let finished = nodes.length - 1;
+  while (finished > 0 && !(nodes[finished].token.map && settled(nodes[finished].token.map[0]))) finished--;
+  if (finished > 0 && nodes.slice(0, finished).every(node => node.token.map)) {
+    const value = rest.slice(0, lineOffset(rest, nodes[finished].token.map[0]));
+    parts.push({ text: value, count: finished, cards: cardsIn(value, parsed.cards), content: render(nodes.slice(0, finished), context, "m", count) });
+    return { parts, content: [...parts.flatMap(part => part.content), ...render(nodes.slice(finished), context, "m", count + finished)] };
+  }
+  return { parts, content: [...parts.flatMap(part => part.content), ...render(nodes, context, "m", count)] };
 }
 
 // Markdown (and its cards) as React elements, within the surrounding scope.
@@ -385,7 +454,14 @@ export function Markdown({ text, streaming = false, cards }) {
   const value = String(text || "");
   const key = useMemo(() => messageKey(value), [value]);
   const scope = useMemo(() => ({ conversationId, cards: enabled, streaming, only, messageKey: key, renderMarkdown }), [conversationId, enabled, streaming, only, key]);
-  const content = useMemo(() => draw(value, { cards: enabled, streaming, only }), [value, enabled, streaming, only]);
+  // A streaming message's finished parts, kept from one update to the next.
+  const parts = useRef(null);
+  const content = useMemo(() => {
+    if (!streaming) { parts.current = null; return draw(value, { cards: enabled, streaming, only }); }
+    const drawn = drawStreaming(parts.current, value, { cards: enabled, only });
+    parts.current = drawn.parts;
+    return drawn.content;
+  }, [value, enabled, streaming, only]);
   return (
     <div ref={node} className={"tw-markdown" + (streaming ? " tw-streaming" : "")}>
       <CardScope.Provider value={scope}>{content}</CardScope.Provider>
