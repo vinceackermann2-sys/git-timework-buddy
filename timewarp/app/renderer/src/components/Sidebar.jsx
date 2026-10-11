@@ -366,7 +366,7 @@ export function UsageCard({ funding, chatgpt, onOpen }) {
   let title = "ChatGPT / Codex usage", detail = "Connect in Billing", percent = 0, hint, credits = null;
   if (!funding.subscriptionAllowed) {
     // As before: "<Plan> usage" with the monthly credits left, and the whole
-    // balance in dollars (USD 0.125 per credit). Codex isn't offered on paid plans.
+    // balance in credits (never dollars, as in Billing). Codex isn't offered on paid plans.
     const plan = funding.planUsage;
     if (plan) {
       percent = Math.round(Math.min(100, Math.max(0, plan.left / plan.allowance * 100)));
@@ -375,7 +375,7 @@ export function UsageCard({ funding, chatgpt, onOpen }) {
       hint = `Monthly credits: ${percent}% left${plan.resetsAt ? `; resets ${new Date(plan.resetsAt).toLocaleString()}` : ""}`;
     } else { title = "Usage"; detail = "Unavailable"; }
     const balance = Number(funding.timewarpCredits) || 0;
-    if (balance > 0) credits = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Math.floor(balance * 125000) / 1e6);
+    if (balance > 0) credits = (Math.floor(balance * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
   } else if (funding.source === "chatgpt") {
     // As before: the plan in the title, and how much of the current window is left.
     // A plan can report only its weekly window, so the tighter of the two counts.
