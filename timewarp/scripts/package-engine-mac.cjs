@@ -77,12 +77,14 @@ function builderOptions({ draft, config, feed, app, output, codex, version }) {
         entitlements: path.join(root, "assets/entitlements.mac.plist"), entitlementsInherit: path.join(root, "assets/entitlements.mac.plist"),
         minimumSystemVersion: MINIMUM_MACOS,
         extendInfo: { NSMicrophoneUsageDescription: "Timewarp uses the microphone when you dictate messages.", NSCameraUsageDescription: "Timewarp uses the camera when a website in its browser asks for it and you allow it." },
+        // The zip's name (the DMG has its own below). electron-builder has no
+        // zip section; an Apple Silicon Mac takes the zip with "arm64" in its
+        // name, an Intel Mac the other.
+        ...(draft ? {} : { artifactName: "Timewarp-${version}-${arch}-mac.${ext}" }),
       },
       // The DMG is stapled after it's built, which changes its checksum, so
       // updates list only the zip.
       dmg: { sign: !draft, ...(draft ? {} : { writeUpdateInfo: false }), artifactName: draft ? "Timewarp-Preview-${version}-${arch}.${ext}" : "Timewarp-${version}-${arch}.${ext}" },
-      // An Apple Silicon Mac takes the zip with "arm64" in its name, an Intel Mac the other.
-      ...(draft ? {} : { zip: { artifactName: "Timewarp-${version}-${arch}-mac.${ext}" } }),
     },
   };
 }
