@@ -11,7 +11,7 @@ import { ApprovalCard } from "./Approval.jsx";
 import { AutomationDialog } from "./Automations.jsx";
 import { Composer, FundingBanner, ReconnectBanner, rememberPrompt } from "./Composer.jsx";
 import { Trace } from "./Trace.jsx";
-import { TaskActivity, useWorkers } from "./TaskActivity.jsx";
+import { useWorkers } from "./Workers.jsx";
 import { Avatar, Dialog, Menu, useToast } from "./common.jsx";
 
 const baseName = file => String(file).split(/[\\/]/).pop();
@@ -534,8 +534,6 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
         {paneOpen ? null : <button type="button" className="tw-icon-button" title="Show pane" aria-label="Show pane" onClick={onTogglePane}><PanelRight size={18} strokeWidth={1.6} /></button>}
       </header>
       {finding ? <FindBar root={thread} focusKey={findFocus} onClose={() => setFinding(false)} /> : null}
-      {/* At the top of the chat, before the messages, as before. */}
-      <TaskActivity conversationId={id} workers={workers} onOpenThread={openThread} />
       <div className="tw-messages" ref={scroller} onScroll={event => { const node = event.currentTarget; const bottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80; pinned.current = bottom; setAtBottom(bottom); }}>
         <div className="tw-thread" ref={thread}>
           <div className="tw-chat-start">

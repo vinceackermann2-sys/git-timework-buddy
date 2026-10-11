@@ -20,6 +20,29 @@ export const azureLunaKeys = () => splitKeys(
   Deno.env.get('GPT_LUNA_KEY') || Deno.env.get('GPT_SOL_KEY') || Deno.env.get('GPT_TERRA_KEY') || '',
 );
 
+// Timewarp's GPT models by the name the desktop sends, with their Azure
+// deployments (a secret can rename one). The GPT-6 models are part of the paid
+// plans and offer Fast (Azure priority processing); GPT-5.6 serves Free.
+const AZURE_MODELS: Record<string, { deployment: () => string; keys: () => string[]; paid: boolean; fast: boolean }> = {
+  'gpt-5.6-sol': { deployment: azureSolModel, keys: azureSolKeys, paid: false, fast: false },
+  'gpt-5.6-luna': { deployment: azureLunaModel, keys: azureLunaKeys, paid: false, fast: false },
+  'gpt-6-astra': { deployment: () => Deno.env.get('GPT_ASTRA_MODEL') || 'gpt-6-astra', keys: azureSolKeys, paid: true, fast: true },
+  'gpt-6.1-sol': { deployment: () => Deno.env.get('GPT_SOL_6_1_MODEL') || 'gpt-6.1-sol', keys: azureSolKeys, paid: true, fast: true },
+  'gpt-6-luna': { deployment: () => Deno.env.get('GPT_LUNA_6_MODEL') || 'gpt-6-luna', keys: azureLunaKeys, paid: true, fast: true },
+};
+
+// The deployment to call and the name usage is billed under ("-fast" bills at
+// Fast rates, aiCost.ts). Older clients' names, and any other, keep Sol 5.6.
+export function azureRoute(name: unknown, serviceTier?: unknown) {
+  const value = String(name ?? '').replace(/^openai\//, '');
+  const slug = AZURE_MODELS[value] ? value : value === 'gpt-luna' || value === azureLunaModel() ? 'gpt-5.6-luna' : 'gpt-5.6-sol';
+  const entry = AZURE_MODELS[slug], fast = entry.fast && (serviceTier === 'priority' || serviceTier === 'fast');
+  return { slug, deployment: entry.deployment(), keys: entry.keys(), paid: entry.paid, fast, billing: `openai/${slug}${fast ? '-fast' : ''}` };
+}
+export type AzureRoute = ReturnType<typeof azureRoute>;
+// Azure reports the tier that served a request; with no report, the requested one.
+export const servedSpeed = (route: AzureRoute, tier: unknown) => !route.fast || (typeof tier === 'string' && !/^(priority|fast)$/.test(tier)) ? 'standard' : 'fast';
+
 // Safe to return to authenticated clients: this reports only route/model
 // readiness and never includes key material, endpoints, or secret digests.
 export const azureAgentAiReadiness = () => {

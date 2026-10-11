@@ -1,11 +1,14 @@
 import { computeCostUsd } from './aiCost.ts';
 import { AI_COST_MARKUP, USD_PER_CREDIT } from './nativeBilling.ts';
 export const AGENT_MODEL_OUTPUT_TOKENS = 16_384;
+// Extra high and Max thinking count toward the output, so they get room for it.
+export const DEEP_MODEL_OUTPUT_TOKENS = 32_768;
 export function responseOutputLimit(body:any) {
+  const limit=['xhigh','max','ultra'].includes(body?.reasoning?.effort)?DEEP_MODEL_OUTPUT_TOKENS:AGENT_MODEL_OUTPUT_TOKENS;
   const value=body?.max_output_tokens;
-  if(value===undefined||value===null)return AGENT_MODEL_OUTPUT_TOKENS;
+  if(value===undefined||value===null)return limit;
   if(!Number.isSafeInteger(value)||value<1)throw Object.assign(new Error('Invalid output token limit.'),{status:400});
-  return Math.min(value,AGENT_MODEL_OUTPUT_TOKENS);
+  return Math.min(value,limit);
 }
 
 export async function reserveAgentAi(admin: any, userId: string, model: string, body: unknown, bounds?: { inputTokens?: number; outputTokens?: number }) {
@@ -21,7 +24,7 @@ export async function reserveAgentAi(admin: any, userId: string, model: string, 
   let known: { outcome: 'settled' | 'released'; input: number; output: number; cost: number } | null = null;
   return {
     id,
-    async finish(outcome: 'settled' | 'released' | 'uncertain', input = 0, output = 0, details?: { cached_tokens?: number; cache_write_tokens?: number }) {
+    async finish(outcome: 'settled' | 'released' | 'uncertain', input = 0, output = 0, details?: { cached_tokens?: number; cache_write_tokens?: number; speed?: string }) {
       const candidate = known || { outcome, input, output, cost: computeCostUsd(model, input, output, details) };
       if (candidate.outcome !== 'uncertain') known = { ...candidate, outcome: candidate.outcome };
       const desired = candidate;

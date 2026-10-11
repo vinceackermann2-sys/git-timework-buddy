@@ -16,6 +16,10 @@ export const modelName = choice => (choice?.displayName || String(choice?.id || 
 const effortName = value => EFFORT_LABELS[value] || value || "";
 // A model's Fast tier: Codex lists it as "priority", named "Fast".
 const isFast = tier => tier?.value != null && (/^(priority|fast)$/i.test(tier.value) || /^fast$/i.test(tier.label || ""));
+// Timewarp's own models show their intelligence, speed and low cost as a
+// percentage of the best of Timewarp's models (shared/models.cjs).
+const STATS = [["intelligence", "Intelligence"], ["speed", "Speed"], ["cost", "Low cost"]];
+const STATS_TITLE = "Compared with the best of Timewarp's models (100%), from Artificial Analysis's benchmarks at the highest thinking: intelligence across every evaluation; speed from output speed, time to first token and time per task; low cost from the blended price and the cost per task.";
 const BOLT = "m13 2-9 12h7l-1 8 10-12h-7l1-8Z";
 
 // The thumb is 34px wide; the track runs between the centres of its two ends.
@@ -105,6 +109,7 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
   const [view, setView] = useState("thinking");
   const [side, setSide] = useState(up ? "top" : "bottom");
   const [shift, setShift] = useState(0);
+  const [room, setRoom] = useState(null);
   const anchor = useRef(null), panel = useRef(null), trigger = useRef(null), modelButton = useRef(null), options = useRef([]);
 
   const [draft, setDraft] = useState(null);
@@ -208,16 +213,21 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
   useEffect(() => () => clearTimeout(closed.current), []);
   const close = ({ focus = false } = {}) => { show(false); if (focus) trigger.current?.focus(); };
 
-  // Opens toward the composer; flips when there's no room, and stays inside the window.
+  // Opens toward the composer; flips when there's no room, and stays inside the
+  // window and the main area, which clips it.
   useLayoutEffect(() => {
     if (!open || !panel.current) return;
     // Layout sizes, not the painted box, which is scaled while it opens.
     const base = anchor.current.getBoundingClientRect(), width = panel.current.offsetWidth, height = panel.current.offsetHeight;
-    if (side === "top" && base.top - 8 - height < 8 && innerHeight - base.bottom > base.top) setSide("bottom");
-    else if (side === "bottom" && base.bottom + 8 + height > innerHeight - 8 && base.top > innerHeight - base.bottom) setSide("top");
+    const area = anchor.current.closest(".tw-main")?.getBoundingClientRect() || { top: 0, bottom: innerHeight };
+    if (side === "top" && base.top - 8 - height < area.top + 8 && area.bottom - base.bottom > base.top - area.top) setSide("bottom");
+    else if (side === "bottom" && base.bottom + 8 + height > area.bottom - 8 && base.top - area.top > area.bottom - base.bottom) setSide("top");
     const left = align === "left" ? base.left : base.right - width;
     const next = left < 12 ? 12 - left : left + width > innerWidth - 12 ? innerWidth - 12 - (left + width) : 0;
     if (Math.abs(next - shift) > 0.5) setShift(next);
+    // The model list scrolls when there's less room than it needs on that side.
+    const space = Math.floor(side === "top" ? base.top - area.top - 16 : area.bottom - base.bottom - 16);
+    if (space !== room) setRoom(space);
   }, [open, side, view, selected?.id, error, shared.loading]);
   // Focus starts in the popover: the model button, or the selected model in the list.
   useEffect(() => {
@@ -265,7 +275,15 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
         {choices.map((model, at) => (
           <button key={model.id} type="button" role="menuitemradio" aria-checked={model.id === selected.id} disabled={disabled} tabIndex={model.id === selected.id ? 0 : -1}
             ref={node => { options.current[at] = node; }} className="tw-mp-option" onKeyDown={event => navigate(event, at)} onClick={() => chooseModel(model)}>
-            <span>{modelName(model)}</span>{model.id === selected.id ? <Check aria-hidden="true" /> : null}
+            <span className="tw-mp-option-text">
+              <span className="tw-mp-option-name">{modelName(model)}</span>
+              {model.stats ? (
+                <span className="tw-mp-stats" title={STATS_TITLE}>
+                  {STATS.map(([key, label]) => <span key={key} className="tw-mp-stat" data-stat={key} style={{ "--tw-stat": `${model.stats[key]}%` }}><span>{label}</span><b>{model.stats[key]}%</b></span>)}
+                </span>
+              ) : null}
+            </span>
+            <span className="tw-mp-option-check">{model.id === selected.id ? <Check aria-hidden="true" /> : null}</span>
           </button>
         ))}
       </div>
@@ -284,8 +302,9 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
         <button type="button" className="tw-mp-reset" disabled={disabled || effort === selected.defaultReasoningEffort} aria-label="Reset thinking to model default" title="Reset thinking to model default"
           onClick={() => changeEffort(selected.defaultReasoningEffort)}><Icon path="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6" /></button>
       </div>
-      <div className="tw-mp-slider" data-dragging={draft?.key === catalogKey && !!draft.dragging} style={{ "--tw-progress": `${progress}%` }}>
-        <div className="tw-mp-track" aria-hidden="true"><div className="tw-mp-fill" /></div>
+      {/* With Fast on, the fill turns blue and sparkles stream through it. */}
+      <div className="tw-mp-slider" data-dragging={draft?.key === catalogKey && !!draft.dragging} data-fast={fast || undefined} style={{ "--tw-progress": `${progress}%` }}>
+        <div className="tw-mp-track" aria-hidden="true"><div className="tw-mp-fill"><span className="tw-mp-sparks" /></div></div>
         <div className="tw-mp-dots" aria-hidden="true">{efforts.map((value, at) => <span key={value} data-filled={at <= Math.round(position)} />)}</div>
         <div className="tw-mp-thumb" aria-hidden="true" />
         <input type="range" min={0} max={Math.max(0, efforts.length - 1)} step="any" value={position} disabled={disabled || efforts.length < 2} aria-label="Thinking effort" aria-valuetext={effortLabel}
@@ -299,7 +318,7 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
         <div className="tw-mp-speed">
           <div className="tw-mp-speed-label">Speed</div>
           <div className="tw-mp-speed-options" role="group" aria-label="Response speed">
-            {tiers.map(tier => <button key={tier.value || "standard"} type="button" disabled={disabled} aria-pressed={tier.value === serviceTier} title={tier.description || undefined}
+            {tiers.map(tier => <button key={tier.value || "standard"} type="button" disabled={disabled} aria-pressed={tier.value === serviceTier} data-fast={isFast(tier) || undefined} title={tier.description || undefined}
               onClick={() => commit({ name: selected.id, reasoningEffort: effort, serviceTier: tier.value })}>{tier.label}</button>)}
           </div>
           <p className="tw-mp-speed-description">{tiers.find(tier => tier.value === serviceTier)?.description}</p>
@@ -319,7 +338,7 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
       </button>
       {open || closing ? (
         <div ref={panel} className="tw-mp-panel" role="dialog" aria-label={view === "models" ? "Choose model" : "Model and thinking"} data-state={open ? "open" : "closed"} data-side={side}
-          style={{ [align === "left" ? "left" : "right"]: align === "left" ? shift : -shift, ...(side === "top" ? { bottom: "calc(100% + 8px)" } : { top: "calc(100% + 8px)" }) }}
+          style={{ [align === "left" ? "left" : "right"]: align === "left" ? shift : -shift, ...(side === "top" ? { bottom: "calc(100% + 8px)" } : { top: "calc(100% + 8px)" }), ...(room ? { "--tw-mp-room": `${room}px` } : {}) }}
           onBlur={event => { if (open && event.relatedTarget && !anchor.current?.contains(event.relatedTarget)) close(); }}>
           {content}
         </div>

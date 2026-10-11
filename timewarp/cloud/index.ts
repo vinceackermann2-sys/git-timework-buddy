@@ -1,8 +1,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.106.2';
 import { reserveAgentAi, responseOutputLimit } from './agentAiReservation.ts';
-import { azureFoundryBase, azureSolKeys, azureSolModel, azureLunaKeys, azureLunaModel } from './azureAgentAi.ts';
+import { azureFoundryBase, azureRoute, type AzureRoute, azureSolModel, azureLunaModel, servedSpeed } from './azureAgentAi.ts';
+import { claudeRoute, PAID_PLANS } from './claudeAgentAi.ts';
+import { claudeCall, claudeStream, isClaudeReasoning } from './claudeResponses.ts';
 import { assertCloudSafe } from './privacy.ts';
-import { nativeStream } from './nativeResponses.ts';
+import { nativeStream, rejectsFast, standardRoute } from './nativeResponses.ts';
 import { accountProduct, nativeAccountSnapshot, productionService } from './nativeAccount.ts';
 import { nativeHistory } from './nativeHistory.ts';
 import { nativeBilling } from './nativeBilling.ts';
@@ -13,36 +15,36 @@ const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'au
 const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'content-type':'application/json','cache-control':'no-store'}});
 const fail=(status:number,message:string)=>Object.assign(new Error(message),{status});
 const check=<T>(result:{data:T;error:any}):T=>{if(result.error)throw fail(503,'Cloud storage is temporarily unavailable.');return result.data;};
-const modelFor=(name:unknown)=>['gpt-luna',azureLunaModel()].includes(String(name).replace(/^openai\//,''))?azureLunaModel():azureSolModel();
-const keysFor=(model:string)=>model===azureLunaModel()?azureLunaKeys():azureSolKeys();
-async function modelCall(userId: string, model: string, payload: any) {
-  const keys = keysFor(model);
-  if (!keys.length) throw fail(503, 'The cloud AI provider is not configured.');
+async function modelCall(userId: string, route: AzureRoute, payload: any) {
+  if (!route.keys.length) throw fail(503, 'The cloud AI provider is not configured.');
   assertCloudSafe(payload);
-  const request={...payload,model,store:false,stream:false,max_output_tokens:responseOutputLimit(payload)};
-  const reservation = await reserveAgentAi(admin, userId, `openai/${model}`, request);
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${azureFoundryBase()}/responses`, {
-      method: 'POST', headers: { 'api-key': keys[0], 'content-type': 'application/json' },
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(65_000), redirect: 'error',
-    });
-  } catch {
-    await reservation.finish('uncertain');
-    throw fail(504, 'The AI request timed out. Its allowance stays reserved until usage is reconciled.');
+  for (let attempt = 0; ; attempt++) {
+    const request={...payload,...(route.fast?{service_tier:'priority'}:{}),model:route.deployment,store:false,stream:false,max_output_tokens:responseOutputLimit(payload)};
+    const reservation = await reserveAgentAi(admin, userId, route.billing, request);
+    let upstream: Response;
+    try {
+      upstream = await fetch(`${azureFoundryBase()}/responses`, {
+        method: 'POST', headers: { 'api-key': route.keys[0], 'content-type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: AbortSignal.timeout(65_000), redirect: 'error',
+      });
+    } catch {
+      await reservation.finish('uncertain');
+      throw fail(504, 'The AI request timed out. Its allowance stays reserved until usage is reconciled.');
+    }
+    const output = await upstream.json().catch(() => null);
+    if (!upstream.ok || !output) {
+      await reservation.finish(output ? 'released' : 'uncertain');
+      if (!attempt && upstream.status === 400 && rejectsFast(route, output)) { route = standardRoute(route); continue; }
+      throw fail(upstream.status === 429 ? 429 : 502, `The AI provider could not complete this request (${upstream.status}).`);
+    }
+    if (!output.usage || !Number.isFinite(output.usage.input_tokens) || !Number.isFinite(output.usage.output_tokens)) {
+      await reservation.finish('uncertain'); throw fail(502, 'The AI provider did not return usage information.');
+    }
+    await reservation.finish('settled', output.usage.input_tokens, output.usage.output_tokens, { ...output.usage.input_tokens_details, speed: servedSpeed(route, output.service_tier) });
+    assertCloudSafe(output.output);
+    return output;
   }
-  const output = await upstream.json().catch(() => null);
-  if (!upstream.ok || !output) {
-    await reservation.finish(output ? 'released' : 'uncertain');
-    throw fail(upstream.status === 429 ? 429 : 502, `The AI provider could not complete this request (${upstream.status}).`);
-  }
-  if (!output.usage || !Number.isFinite(output.usage.input_tokens) || !Number.isFinite(output.usage.output_tokens)) {
-    await reservation.finish('uncertain'); throw fail(502, 'The AI provider did not return usage information.');
-  }
-  await reservation.finish('settled', output.usage.input_tokens, output.usage.output_tokens, output.usage.input_tokens_details);
-  assertCloudSafe(output.output);
-  return output;
 }
 
 
@@ -103,14 +105,23 @@ Deno.serve(async(req:Request)=>{
     if(route==='/billing'){const usage=check(await admin.rpc('timewarp_ai_usage',{p_user_id:user.id,p_workspace_id:null})) as any;return response({plan:usage?.plan||'free',included:Number(usage?.included_balance_credits)||0,purchased:Number(usage?.purchased_balance_credits)||0});}
     if(route==='/native/rpc'){const result=await accountProduct(admin,user,token,String(body.rpc||''),body.input||{});if(result===undefined)throw fail(410,'This feature uses the local desktop harness.');return response(result);}
     if(route==='/v1/responses'){
+      // Claude (claudeResponses.ts) and the GPT-6 models are part of the paid plans.
+      const claude=claudeRoute(body.model),azure=claude?null:azureRoute(body.model,body.service_tier);
+      if(claude||azure?.paid){
+        const usage=check(await admin.rpc('timewarp_ai_usage',{p_user_id:user.id,p_workspace_id:null})) as any;
+        if(!PAID_PLANS.has(usage?.plan))throw fail(403,'This model is part of the paid plans. Choose GPT-5.6 Sol or Luna, or upgrade in Billing.');
+      }
+      if(claude)return body.stream?await claudeStream(admin,user.id,body,cors):response(await claudeCall(admin,user.id,body));
       // Execution belongs to the desktop. Forward its client-executed tools,
-      // excluding inherited upstream hosted search/image tools.
+      // excluding inherited upstream hosted search/image tools. Claude's
+      // thinking from earlier turns of the chat stays out.
       const tools=body.tools?.filter((t:any)=>['function','custom','namespace','tool_search'].includes(t.type));
-        const payload={input:body.input,instructions:body.instructions,tools,reasoning:body.reasoning,text:body.text,
+      const input=Array.isArray(body.input)?body.input.filter((item:any)=>!isClaudeReasoning(item)):body.input;
+        const payload={input,instructions:body.instructions,tools,reasoning:body.reasoning,text:body.text,
           parallel_tool_calls:body.parallel_tool_calls===true,
           ...(body.max_output_tokens!==undefined?{max_output_tokens:body.max_output_tokens}:{}),
           ...(typeof body.prompt_cache_key==='string'&&body.prompt_cache_key.length<=256?{prompt_cache_key:body.prompt_cache_key}:{})};
-      if(body.stream)return await nativeStream(admin,user.id,modelFor(body.model),payload,cors);return response(await modelCall(user.id,modelFor(body.model),payload));
+      if(body.stream)return await nativeStream(admin,user.id,azure!,payload,cors);return response(await modelCall(user.id,azure!,payload));
     }
     throw fail(404,'This endpoint is unavailable.');
   }catch(error){return response({error:error instanceof Error?error.message:'Cloud request failed.'},(error as any)?.status||500);}

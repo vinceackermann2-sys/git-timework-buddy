@@ -50,9 +50,9 @@ test('Codex catalog includes later pages once, preserves capabilities and hides 
 test('background memory uses a supported low-effort Luna and backs off on a terminal error',async t=>{
   const f=fixture();t.after(()=>f.service.stop());f.plan='pro';
   const created=await f.client.request('thread/start',{agentRole:'energy-memory-writer',model:'timewarp/background',config:{model_reasoning_effort:'high'}});
-  const thread=f.threads.get(created.thread.id);assert.equal(thread.model,'openai/gpt-5.6-luna');assert.equal(thread.config.model_reasoning_effort,'low');
+  const thread=f.threads.get(created.thread.id);assert.equal(thread.model,'openai/gpt-6-luna');assert.equal(thread.config.model_reasoning_effort,'low');
   await f.client.request('turn/start',{threadId:created.thread.id,model:'energy/lite',effort:'high',input:[]});
-  const turn=f.calls.filter(c=>c.method==='turn/start').at(-1).params;assert.equal(turn.model,'openai/gpt-5.6-luna');assert.equal(turn.effort,'low');
+  const turn=f.calls.filter(c=>c.method==='turn/start').at(-1).params;assert.equal(turn.model,'openai/gpt-6-luna');assert.equal(turn.effort,'low');
   f.client.emit('notification',{method:'error',params:{threadId:created.thread.id,willRetry:false}});
   await assert.rejects(f.client.request('turn/start',{threadId:created.thread.id,input:[]}),error=>error.status===429);
   await f.client.request('thread/start',{agentRole:'energy-task',model:'openai/gpt-5.6-sol'});
@@ -76,7 +76,7 @@ test('account catalog speed ids and defaults survive discovery and actual reques
   await f.client.request('turn/start',{threadId:created.thread.id,model:'gpt-codex',effort:'ultra',serviceTier:'priority',input:[]});
   const turn=f.calls.filter(c=>c.method==='turn/start').at(-1).params;assert.equal(turn.effort,'low');assert.equal(turn.serviceTier,null);
   f.plan='pro';await f.client.request('turn/start',{threadId:created.thread.id,model:'gpt-codex',effort:'ultra',serviceTier:'ultrafast',input:[]});
-  const paid=f.calls.filter(c=>c.method==='turn/start').at(-1).params;assert.equal(paid.model,'openai/gpt-5.6-sol');assert.equal(paid.effort,'low');assert.equal(paid.serviceTier,null);
+  const paid=f.calls.filter(c=>c.method==='turn/start').at(-1).params;assert.equal(paid.model,'openai/gpt-6.1-sol');assert.equal(paid.effort,'low');assert.equal(paid.serviceTier,null);
 });
 
 test('catalog pages cannot leak across a Timewarp owner change',async t=>{
@@ -130,7 +130,7 @@ test('all paid plans use Timewarp provider and changing plans reroutes an existi
   for(const plan of ['pro','max','ultra']){
     f.plan=plan;await f.client.request('turn/start',{threadId:created.thread.id,model:'gpt-codex',input:[]});
     assert.equal(f.threads.get(created.thread.id).modelProvider,'energy-llm-proxy');
-    assert.equal(f.calls.filter(c=>c.method==='turn/start').at(-1).params.model,'openai/gpt-5.6-sol');
+    assert.equal(f.calls.filter(c=>c.method==='turn/start').at(-1).params.model,'openai/gpt-6.1-sol');
     assert.equal((await f.funding.current()).source,'timewarp');
   }
   assert.equal(f.service.details().lastCompletedAt,null);

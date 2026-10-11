@@ -1,11 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, ChevronUp, GitBranch } from "lucide-react";
-import { call, request, useEvent } from "../api.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { call, useEvent } from "../api.js";
 import { threadEntries, threadState, toolRow, workerState } from "../turns.mjs";
 
-// The previous app's task panel: run limits and stop reasons, tool and token
-// counts, and the subagents an agent started, each of which can be followed.
-const LABELS = { running: "Working", paused: "Needs input", interrupted: "Stopped", failed: "Failed", completed: "Finished" };
+// The subagents a chat's agent started, for the "Waiting for …" line and the
+// thread sheet. The previous app had no task panel above the chat.
 const nameOf = (path, fallback) => String(path || "").split("/").filter(Boolean).pop() || fallback || null;
 const short = (text, length = 140) => { const value = String(text || "").replace(/\s+/g, " ").trim(); return value.length > length ? value.slice(0, length - 1) + "…" : value; };
 
@@ -103,58 +101,4 @@ export function useWorkers(conversationId, turns) {
     return () => { alive = false; clearTimeout(timer); };
   }, [conversationId, key]);
   return useMemo(() => announced.map(worker => ({ ...worker, ...snapshots.current.get(worker.threadId)?.value })), [announced, version]);
-}
-
-function detailOf(worker) {
-  const state = workerState(worker.status);
-  // A failed spawn's state message is its error.
-  if (state === "failed") return worker.error || (worker.status === "errored" ? worker.detail : null) || "Open worker for error details";
-  if (state === "paused") return worker.reason || "Waiting for input";
-  return short(worker.detail || worker.task) || "Open to follow its steps and results";
-}
-
-export function TaskActivity({ conversationId, workers, onOpenThread }) {
-  const [runs, setRuns] = useState([]);
-  const [expanded, setExpanded] = useState(true);
-  // While Codex restarts, as when the previous app lost its activity feed.
-  const [offline, setOffline] = useState(false);
-  const refresh = () => request("executionStatus", { conversationId }).then(value => setRuns(Array.isArray(value) ? value : [])).catch(() => {});
-  useEffect(() => { setRuns([]); void refresh(); }, [conversationId]);
-  useEvent("execution.changed", () => void refresh());
-  useEvent("codex.status", ({ status }) => setOffline(status !== "ready" && status !== "starting"));
-  if (!workers.length && !runs.some(run => run.toolCalls || run.reason)) return null;
-  const states = workers.map(worker => workerState(worker.status));
-  const count = state => states.filter(value => value === state).length;
-  const sum = key => runs.reduce((total, run) => total + (run[key] || 0), 0);
-  // "1 tool call", "2 tool calls".
-  const counted = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
-  const summary = offline ? "Reconnecting to activity…"
-    : runs.some(run => run.stopped) ? (count("running") ? "Stopping…" : "Stopped")
-      : count("running") ? `${count("running")} working` : count("paused") ? "Needs input" : count("failed") ? `${count("failed")} failed`
-        : count("interrupted") ? "Stopped" : states.every(state => state === "completed") ? "Finished" : "Starting";
-  return (
-    <section className="tw-task" aria-label="Task and subagent activity">
-      <button type="button" className="tw-task-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
-        <GitBranch size={16} />
-        <strong>{workers.length ? `Subagents (${workers.length})` : "Task activity"}</strong>
-        <span role="status">{workers.length ? summary : counted(sum("toolCalls"), "tool call")}</span>
-        {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-      </button>
-      {expanded ? (
-        <div className="tw-task-body">
-          {runs.filter(run => run.reason).map(run => <p key={run.id} className="tw-task-limit" role="alert">{run.reason}</p>)}
-          {runs.length ? <p className="tw-task-note">{counted(sum("toolCalls"), "tool call")} · {counted(sum("failures"), "error")} · {sum("inputTokens").toLocaleString()} input tokens ({sum("cachedTokens").toLocaleString()} cached). {runs.some(run => run.usagePartial) ? "Partial usage for this session." : "Current session."}</p> : null}
-          {workers.map((worker, index) => (
-            <button key={worker.threadId} type="button" className="tw-task-worker" data-status={states[index]} aria-label={"Follow " + (worker.name || "Subagent")} onClick={event => onOpenThread(worker.threadId, event.currentTarget)}>
-              <i aria-hidden="true" />
-              <span><strong>{worker.name || "Subagent"}</strong><small>{detailOf(worker)}</small></span>
-              <em>{offline ? "Disconnected" : LABELS[states[index]] || "Starting"}</em>
-              <ChevronRight size={15} />
-            </button>
-          ))}
-          {workers.length ? <p className="tw-task-note">Follow a worker to see its tools and results. Finished means its run ended; the main agent verifies the task outcome.</p> : null}
-        </div>
-      ) : null}
-    </section>
-  );
 }
