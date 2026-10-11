@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Download, LoaderCircle, X } from "lucide-react";
 import { call, request, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
-import { applyEvent, formatDuration, friendlyError, groupEntries, imageSource, threadEntries, threadState, workerState } from "../turns.mjs";
+import { applyEvent, formatDuration, friendlyError, groupEntries, imageSource, mergeDeltas, threadEntries, threadState, workerState } from "../turns.mjs";
 import { ToolGroup } from "./Activity.jsx";
 import { ImageDialog } from "../widgets.jsx";
 
@@ -124,8 +124,9 @@ export function TurnError({ error, onContinue, funding, onSettings }) {
 }
 
 // Below the last message: what the agent is doing, or why it stopped.
-// state comes from threadState(); workers are the chat's subagents.
-export function AgentActivity({ state, commentary, workers, browserTab, working, onOpenThread, onOpenBrowser, onContinue, funding, onSettings }) {
+// state comes from threadState(); workers are the chat's subagents. Drawn
+// again only when one of these changes, not for each streamed token.
+export const AgentActivity = React.memo(function AgentActivity({ state, commentary, workers, browserTab, working, onOpenThread, onOpenBrowser, onContinue, funding, onSettings }) {
   const active = state.status === "running" || state.status === "paused";
   const waiting = workers.filter(worker => ["running", "paused", "starting"].includes(workerState(worker.status)));
   const showWaiting = !commentary && waiting.length > 0;
@@ -144,7 +145,7 @@ export function AgentActivity({ state, commentary, workers, browserTab, working,
       {state.status === "failed" ? <div className="tw-activity-error"><TurnError key={state.turnId || "failed"} error={state.error} onContinue={onContinue} funding={funding} onSettings={onSettings} /></div> : null}
     </div>
   );
-}
+});
 
 // A generated image after its turn, with a download button; it opens at full size.
 export function GeneratedImage({ item }) {
@@ -246,19 +247,37 @@ function Entries({ entries }) {
 function useWorkerThread(conversationId, threadId) {
   const [thread, setThread] = useState({ status: "loading", turns: [], threadStatus: null, name: null });
   const settled = thread.status === "error" || (thread.status === "ready" && !["running", "paused"].includes(threadState(thread.turns, thread.threadStatus).status));
+  // The worker's events apply once per frame, in the order they came.
+  const queue = useRef([]), frame = useRef(0);
+  const flush = () => {
+    cancelAnimationFrame(frame.current); frame.current = 0;
+    const events = mergeDeltas(queue.current);
+    queue.current = [];
+    if (events.length) setThread(current => events.reduce((value, { method, params }) => method === "thread/status/changed" ? { ...value, threadStatus: params.status }
+      : { ...value, turns: applyEvent(value.turns, method, params, { worker: true }) }, current));
+  };
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
   useEffect(() => {
     let live = true, timer = null;
+    // A read that finds the transcript as it was keeps it, so the sheet isn't drawn again.
     const read = () => call("conversations.worker", { id: conversationId, threadId })
-      .then(value => { if (live) setThread(current => ({ status: "ready", name: value.name, threadStatus: value.status, turns: mergeTurns(value.turns || [], current.turns) })); })
-      .catch(() => { if (live) setThread(current => ({ ...current, status: current.turns.length ? "ready" : "error" })); })
+      .then(value => {
+        if (!live) return;
+        flush();
+        setThread(current => {
+          const next = { status: "ready", name: value.name, threadStatus: value.status, turns: mergeTurns(value.turns || [], current.turns) };
+          return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+        });
+      })
+      .catch(() => { if (live) setThread(current => { const status = current.turns.length ? "ready" : "error"; return status === current.status ? current : { ...current, status }; }); })
       .finally(() => { if (live && !settled) timer = setTimeout(read, 2000); });
     void read();
     return () => { live = false; clearTimeout(timer); };
   }, [conversationId, threadId, settled]);
   useEvent("conversation.event", ({ conversationId: id, method, params }) => {
     if (id !== conversationId || (params?.threadId || params?.thread?.id) !== threadId) return;
-    if (method === "thread/status/changed") setThread(current => ({ ...current, threadStatus: params.status }));
-    else setThread(current => ({ ...current, turns: applyEvent(current.turns, method, params, { worker: true }) }));
+    queue.current.push({ method, params });
+    if (!frame.current) frame.current = requestAnimationFrame(flush);
   });
   return thread;
 }

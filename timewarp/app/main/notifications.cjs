@@ -35,7 +35,7 @@ function createReplyNotifications({ Notification, store, userId, enabled = () =>
   // The unread count on the dock (macOS) or wherever the system shows one.
   function badge() {
     const owner = userId();
-    try { setBadge(owner ? store.conversations.list(owner).filter(item => !item.read).length : 0); } catch {}
+    try { setBadge(owner ? store.conversations.unreadCount(owner) : 0); } catch {}
   }
 
   function observe(name, payload) {

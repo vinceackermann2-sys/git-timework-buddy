@@ -10,10 +10,14 @@ const MAX_BYTES = 5 * 1024 * 1024;
 
 function createLog(directory, { now = () => new Date() } = {}) {
   const file = path.join(directory, "main.log");
-  let size = 0, failed = false;
+  // The file stays open: each line is still written when it's logged (so it's
+  // there after a crash), without opening the file again for every line.
+  let size = 0, failed = false, descriptor = null;
   try { fs.mkdirSync(directory, { recursive: true }); size = fs.statSync(file).size; } catch {}
+  const close = () => { if (descriptor === null) return; try { fs.closeSync(descriptor); } catch {} descriptor = null; };
   // One previous file is kept, so the log stays under about 10 MB.
   function rotate() {
+    close();
     try { fs.renameSync(file, path.join(directory, "main.1.log")); } catch {}
     size = 0;
   }
@@ -28,12 +32,13 @@ function createLog(directory, { now = () => new Date() } = {}) {
     line += "\n";
     try {
       if (size + line.length > MAX_BYTES) rotate();
-      fs.appendFileSync(file, line);
+      if (descriptor === null) descriptor = fs.openSync(file, "a");
+      fs.appendFileSync(descriptor, line);
       size += Buffer.byteLength(line);
-    } catch { failed = true; }
+    } catch { failed = true; close(); }
   }
   return {
-    file, directory,
+    file, directory, close,
     info: (tag, message, data) => write("info", tag, message, data),
     warn: (tag, message, data) => write("warn", tag, message, data),
     error: (tag, message, data) => write("error", tag, message, data),

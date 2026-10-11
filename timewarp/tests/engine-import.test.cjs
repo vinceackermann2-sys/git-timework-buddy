@@ -278,6 +278,103 @@ test("cloud history keeps the 1.x format, restores chats and creates the first a
   assert.deepEqual(await snapshotOf(adapter.store, "someone-else", local.id), null, "Another account cannot read the chat");
 });
 
+// The cloud as the history service keeps it: jsonb (object keys reordered),
+// entries merged by ID and a new revision on every save.
+function historyCloud() {
+  const rows = new Map(), calls = [];
+  let clock = 0;
+  const jsonb = value => Array.isArray(value) ? value.map(jsonb) : value && typeof value === "object"
+    ? Object.fromEntries(Object.keys(value).sort((a, b) => a.length - b.length || (a < b ? -1 : 1)).map(key => [key, jsonb(value[key])])) : value;
+  const put = chat => {
+    const value = jsonb(structuredClone(chat)), row = rows.get(value.conversation.id);
+    if (row) {
+      if (value.conversation.updatedAt >= row.conversation.updatedAt) row.conversation = value.conversation;
+      const entries = new Map(row.entries.map(entry => [entry.id, entry]));
+      for (const entry of value.entries) entries.set(entry.id, entry);
+      row.entries = [...entries.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+      row.version = "v" + ++clock;
+    } else rows.set(value.conversation.id, { ...value, version: "v" + ++clock });
+  };
+  const cloud = async (_route, input) => {
+    calls.push(input);
+    if (input.operation === "list") return { protocol: 2, manifest: [...rows.values()].map(row => ({ id: row.conversation.id, version: row.version })), nextOffset: null };
+    if (input.operation === "get") return { protocol: 2, chats: input.ids.map(id => structuredClone(rows.get(id))) };
+    put(input.snapshot);
+    return { saved: true };
+  };
+  const take = operation => calls.splice(0).filter(call => call.operation === operation);
+  return { rows, cloud, put, take };
+}
+
+test("a relaunch downloads and uploads only the chats that changed", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-history-"));
+  const store = openStore(path.join(root, "timewarp.sqlite"));
+  t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const adapter = createHistoryAdapter({ store, settings: store.settings, createAgent: input => store.agents.create({ ...input, workspace: path.join(root, input.id) }) });
+  const remote = historyCloud(), at = minutes => new Date(Date.UTC(2026, 9, 1, 10, minutes)).toISOString();
+  const entry = (id, minutes, text) => ({ id, kind: "message", authorId: "user-1", createdAt: at(minutes), parts: [{ type: "text", text }], suggestedReplies: [], replyToMessageId: null, forwardedFromMessageId: null });
+  const chat = (id, extra) => ({ conversation: { id, kind: "dm", createdByEntityId: "user-1", title: "Chat " + id, createdAt: at(0), updatedAt: at(0), lastActivityAt: at(0), modelSettings: { name: "gpt-5.6-sol", reasoningEffort: "low", serviceTier: null }, archived: false, read: true, ...extra },
+    agents: [{ id: "agent-r", displayName: "Nova" }], entries: [entry(id + "-1", 1, "Hello " + id), entry(id + "-2", 2, "Reply " + id)] });
+  remote.put(chat("a"));
+  remote.put(chat("b", { archived: true }));
+  remote.put(chat("c", { read: false }));
+  const launch = async () => { const history = createLocalHistory({ ...adapter, userId: () => "user-1", cloud: remote.cloud, intervalMs: 3600000 }); t.after(() => history.stop()); await history.sync(); return history; };
+  let history = await launch();
+  assert.equal(remote.take("get").flatMap(call => call.ids).length, 3);
+  assert.deepEqual(store.conversations.list("user-1", { includeArchived: true }).map(c => [c.id, !!c.archivedAt, c.read]).sort(), [["a", false, true], ["b", true, true], ["c", false, false]]);
+  history.stop();
+
+  const get = adapter.store.conversations.get;
+  let read = 0;
+  adapter.store.conversations.get = id => { read++; return get(id); };
+  history = await launch();
+  assert.equal(remote.take("get").length, 0, "Nothing is downloaded again");
+  history.stop();
+  assert.equal(remote.take("save").length, 0, "Nothing is uploaded again");
+  assert.equal(read, 0, "No chat is read to look for changes");
+  adapter.store.conversations.get = get;
+
+  // Changes made while sync wasn't running are found at the next launch.
+  store.conversations.update("a", { title: "Renamed offline" });
+  store.agents.update("agent-r", { name: "Nova Prime" });
+  history = await launch();
+  history.stop();
+  const offline = remote.take("save").map(save => save.snapshot);
+  assert.deepEqual(offline.map(snapshot => snapshot.conversation.id).sort(), ["a", "b", "c"], "The agent's new name goes to each of its chats");
+  assert.equal(offline.find(snapshot => snapshot.conversation.id === "a").conversation.title, "Renamed offline");
+  assert.ok(offline.every(snapshot => snapshot.entries.length === 0 && snapshot.agents[0].displayName === "Nova Prime"), "Without their messages again");
+  history = await launch();
+  history.stop();
+  assert.equal(remote.take("save").length, 0);
+
+  // Another device adds a message to b; this device adds one to a.
+  remote.put({ ...chat("b", { archived: true, updatedAt: at(5) }), entries: [entry("b-3", 5, "From the laptop")] });
+  history = await launch();
+  assert.deepEqual(remote.take("get").flatMap(call => call.ids), ["b"]);
+  assert.equal(store.messages.list("b").at(-1).text, "From the laptop");
+  assert.ok(store.conversations.get("b").archivedAt, "An archived chat stays archived");
+  store.messages.append({ id: "a-3", conversationId: "a", authorId: "user-1", text: "One more", createdAt: at(6) });
+  await history.sync();
+  const saves = remote.take("save");
+  assert.deepEqual(saves.find(save => save.snapshot.conversation.id === "a").snapshot.entries.map(item => item.id), ["a-3"], "Only the new message is sent");
+  assert.deepEqual(saves.flatMap(save => save.snapshot.entries.map(item => item.id)), ["a-3"]);
+  history.stop();
+
+  // A chat removed here comes back, and one the cloud lost is sent in full.
+  store.conversations.remove("c");
+  remote.rows.delete("b");
+  history = await launch();
+  assert.deepEqual(remote.take("save").map(save => [save.snapshot.conversation.id, save.snapshot.entries.length]), [["b", 3]]);
+  assert.equal(store.conversations.get("c").read, false);
+  assert.equal(store.messages.list("c").length, 2);
+  history.stop();
+
+  // Privacy Mode still pauses sync.
+  store.settings.set("privacy", { mode: "private" });
+  history = await launch();
+  assert.equal(remote.take("list").length, 0);
+});
+
 test("the previous app's browser profiles come over once with their storage, so sites stay signed in", t => {
   const { importLegacyBrowserProfiles } = require("../app/main/import-legacy.cjs");
   const crypto = require("node:crypto");

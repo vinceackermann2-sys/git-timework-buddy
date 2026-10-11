@@ -9,9 +9,9 @@ const vm = require("node:vm");
 const { stripTypeScriptTypes } = require("node:module");
 
 // A cloud module run with its imports given as bindings; its exports become
-// properties of the returned context.
+// properties of the returned context. A dynamic import calls loadModule.
 function moduleOf(file, bindings = {}) {
-  const source = stripTypeScriptTypes(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), { mode: "strip" }).replace(/^import[^\n]*\n/gm, "").replace(/export const /g, "var ").replace(/export /g, "");
+  const source = stripTypeScriptTypes(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), { mode: "strip" }).replace(/^import[^\n]*\n/gm, "").replace(/export const /g, "var ").replace(/export /g, "").replace(/\bimport\(/g, "loadModule(");
   const context = vm.createContext(bindings);
   vm.runInContext(source, context);
   return context;
@@ -22,15 +22,18 @@ const costs = moduleOf("cloud/aiCost.ts");
 const { responseOutputLimit } = moduleOf("cloud/agentAiReservation.ts");
 const route = moduleOf("cloud/claudeAgentAi.ts", { Deno: { env: { get: () => "fixture-key" } } });
 
-class APIError extends Error { constructor(status, error, message) { super(message); this.status = status; this.error = error; } }
-// The cloud's Claude module with a scripted Anthropic client.
-function claudeModule({ create = async () => { throw new Error("unused"); }, reserved = [], finished = [], pending = [] } = {}) {
+class APIError extends Error { constructor(status, error, message, headers) { super(message); this.status = status; this.error = error; this.headers = headers; } }
+// The cloud's Claude module with a scripted Anthropic client, loaded the
+// first time a request needs it (`loads` counts that). Its reservations wait
+// for the paid-plan check, as reserveAgentAi does; `clock` replaces Date.now.
+function claudeModule({ create = async () => { throw new Error("unused"); }, reserved = [], finished = [], pending = [], loads = [], key = route.claudeKey, clock } = {}) {
   class Anthropic { constructor(options) { this.options = options; this.beta = { messages: { create: (params, options) => create(params, options) } }; } }
-  Anthropic.APIError = APIError;
   return moduleOf("cloud/claudeResponses.ts", {
-    Anthropic, responseOutputLimit, claudeKey: route.claudeKey, claudeRoute: route.claudeRoute, assertCloudSafe: require("../shared/privacy.cjs").assertCloudSafe,
-    reserveAgentAi: async (_admin, _user, model, body, bounds) => { reserved.push({ model, body: plain(body), bounds }); return { id: "r" + reserved.length, finish: async (...args) => { finished.push([model, ...args]); } }; },
+    loadModule: async name => { loads.push(name); if (name !== "npm:@anthropic-ai/sdk@0.128.0") throw new Error("Unexpected module " + name); return { default: Anthropic }; },
+    responseOutputLimit, claudeKey: key, claudeRoute: route.claudeRoute, assertCloudSafe: require("../shared/privacy.cjs").assertCloudSafe,
+    reserveAgentAi: async (_admin, _user, model, body, bounds) => { await bounds?.allowed; reserved.push({ model, body: plain(body), bounds }); return { id: "r" + reserved.length, finish: async (...args) => { finished.push([model, ...args]); } }; },
     TextEncoder, TextDecoder, btoa, atob, crypto, ReadableStream, Response, AbortSignal, console, EdgeRuntime: { waitUntil: value => pending.push(value) },
+    ...(clock ? { Date: { now: clock } } : {}),
   });
 }
 async function* events(list) { for (const event of list) yield event; }
@@ -104,7 +107,7 @@ test("a Codex request becomes a Messages request with the system prompt, tools, 
   assert.equal(request.speed, undefined);
   assert.deepEqual(request.metadata, { user_id: "account" });
   assert.deepEqual(request.cache_control, { type: "ephemeral" });
-  assert.deepEqual(request.system, [{ type: "text", text: "BASE" }, { type: "text", text: "AGENT", cache_control: { type: "ephemeral" } }], "developer messages before the chat join the system prompt");
+  assert.deepEqual(request.system, [{ type: "text", text: "BASE", cache_control: { type: "ephemeral" } }, { type: "text", text: "AGENT", cache_control: { type: "ephemeral" } }], "developer messages before the chat join the system prompt");
   assert.deepEqual(request.tools.map(tool => tool.name), ["exec_command", "multi_agent_v1__spawn_agent", "apply_patch"], "hosted tools are left out");
   assert.equal(request.tools[0].strict, undefined);
   assert.deepEqual(request.tools[2].input_schema.required, ["input"]);
@@ -233,24 +236,78 @@ test("Anthropic errors before the reply map to clear messages and release the re
   assert.deepEqual(finished.map(entry => entry[1]), ["released", "released", "released", "uncertain"]);
   const missingKey = moduleOf("cloud/claudeAgentAi.ts", { Deno: { env: { get: () => "" } } });
   assert.equal(missingKey.claudeKey(), "");
+  const reserved = [];
+  await assert.rejects(claudeModule({ reserved, key: missingKey.claudeKey }).claudeCall({}, "owner", { model: "anthropic/claude-sonnet-5-5", input: "Hi" }), error => error.status === 503 && /not configured/.test(error.message));
+  assert.equal(reserved.length, 0, "a missing key reserves nothing");
+});
+
+test("the tools and base instructions get their own cache breakpoint, within Anthropic's four", () => {
+  const claude = claudeModule();
+  const request = (input, instructions = "BASE") => plain(claude.claudeRequest(route.claudeRoute("anthropic/claude-opus-5-5"), { instructions, tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }], input }).params);
+  const developer = text => ({ type: "message", role: "developer", content: [{ type: "input_text", text }] }), user = text => ({ type: "message", role: "user", content: [{ type: "input_text", text }] });
+  const breakpoints = params => (JSON.stringify(params).match(/"cache_control"/g) || []).length;
+  const chat = request([developer("AGENT"), developer("<timewarp_context>Sent 09:41</timewarp_context>"), user("Hi")]);
+  assert.deepEqual(chat.system.map(block => !!block.cache_control), [true, false, true]);
+  assert.equal(breakpoints(chat), 3, "the base prompt, the chat's context and the conversation");
+  const other = request([developer("WORKER"), user("Go")]);
+  assert.deepEqual(other.system[0], chat.system[0], "another chat or worker reads the same cached prefix");
+  assert.equal(breakpoints(request([user("Hi")])), 2, "a lone system block has one");
+  assert.equal(breakpoints(request([user("Hi")], "")), 1);
+  for (const params of [chat, other]) assert.ok(JSON.stringify(params).match(/"cache_control":\{[^}]*\}/g).every(marker => marker === '"cache_control":{"type":"ephemeral"}'), "all 5-minute");
+});
+
+test("the Anthropic SDK loads with the first Claude request, once", async () => {
+  const loads = [], reply = () => events([start("msg_l"), ...block(0, { type: "text", text: "" }, [{ type: "text_delta", text: "OK" }]), ...end("end_turn")]);
+  const claude = claudeModule({ loads, create: async () => reply() });
+  assert.deepEqual(loads, [], "isolates that only serve GPT never load it");
+  for (let turn = 0; turn < 2; turn++) await claude.claudeCall({}, "owner", { model: "anthropic/claude-haiku-5-5", input: "Hi" });
+  assert.deepEqual(loads, ["npm:@anthropic-ai/sdk@0.128.0"]);
+});
+
+test("Fast mode gets no SDK retries, and a Fast refusal is remembered until Anthropic's retry-after", async () => {
+  let now = 1_000_000;
+  const reserved = [], options = [], replies = [];
+  const ok = () => events([start("msg_f"), ...block(0, { type: "text", text: "" }, [{ type: "text_delta", text: "OK" }]), ...end("end_turn")]);
+  const claude = claudeModule({ reserved, clock: () => now, create: async (params, given) => { options.push([params.speed ?? "standard", given.maxRetries]); const next = replies.shift(); if (next instanceof Error) throw next; return next; } });
+  const ask = () => claude.claudeCall({}, "owner", { model: "anthropic/claude-opus-5-5-fast", input: "Hi" });
+  replies.push(new APIError(429, { error: { type: "rate_limit_error" } }, "429", { get: name => name === "retry-after" ? "30" : null }), ok());
+  await ask();
+  assert.deepEqual(options, [["fast", 0], ["standard", undefined]], "a Fast refusal falls back at once; the standard request keeps the SDK's retries");
+  now += 20_000; replies.push(ok()); await ask();
+  assert.deepEqual(options.at(-1), ["standard", undefined], "within retry-after, straight to the standard speed");
+  now += 11_000; replies.push(ok()); await ask();
+  assert.deepEqual(options.at(-1), ["fast", 0], "then Fast again");
+  assert.deepEqual(reserved.map(entry => entry.model), ["anthropic/claude-opus-5-5-fast", "anthropic/claude-opus-5-5", "anthropic/claude-opus-5-5", "anthropic/claude-opus-5-5-fast"]);
+  replies.push(new APIError(400, { error: { message: "Fast mode is not available for this organization." } }, "400"), ok()); await ask();
+  now += 9 * 60_000; replies.push(ok()); await ask();
+  assert.deepEqual(options.at(-1), ["standard", undefined], "Fast that isn't offered is left alone for a while");
+});
+
+test("a plan without Claude never reaches Anthropic, though its reservation runs alongside the check", async () => {
+  let created = false;
+  const reserved = [], claude = claudeModule({ reserved, create: async () => { created = true; throw new Error("unused"); } });
+  const denied = Promise.reject(Object.assign(new Error("This model is part of the paid plans."), { status: 403 })); denied.catch(() => {});
+  await assert.rejects(claude.claudeStream({}, "owner", { model: "anthropic/claude-opus-5-5", input: "Hi" }, {}, denied), error => error.status === 403);
+  assert.equal(created, false);
+  assert.equal(reserved.length, 0);
 });
 
 // Azure routes with the production secrets' names: the resource key, and a
 // renamed Astra deployment.
-const azure = moduleOf("cloud/azureAgentAi.ts", { Deno: { env: { get: name => ({ GPT_TERRA_KEY: "resource-key", GPT_ASTRA_MODEL: "astra-prod" })[name] || "" } } });
+const azure = moduleOf("cloud/azureAgentAi.ts", { Deno: { env: { get: name => ({ GPT_TERRA_KEY: "resource-key", GPT_ASTRA_MODEL: "astra-prod" })[name] || "" } }, crypto, TextEncoder });
 
 test("the cloud gives Claude and GPT-6 to paid plans and keeps Claude's thinking out of GPT requests", async () => {
   let handler, plan = "free", streamed, forwarded;
   const claude = claudeModule();
-  const native = moduleOf("cloud/nativeResponses.ts", {});
   moduleOf("cloud/index.ts", {
-    Deno: { env: { get: () => "" }, serve: fn => { handler = fn; } }, URL, Response, TextDecoder, TextEncoder, AbortSignal,
+    Deno: { env: { get: () => "" }, serve: fn => { handler = fn; } }, URL, Response, TextDecoder, TextEncoder, AbortSignal, Blob, DecompressionStream,
     createClient: () => ({ auth: { getUser: async () => ({ data: { user: { id: "owner" } } }) }, rpc: async name => name === "timewarp_ai_usage" ? { data: { plan } } : { data: null } }),
-    responseOutputLimit, assertCloudSafe: require("../shared/privacy.cjs").assertCloudSafe, azureSolModel: () => "gpt-5.6-sol", azureLunaModel: () => "gpt-5.6-luna", azureFoundryBase: () => "https://fixture.invalid",
-    azureRoute: azure.azureRoute, servedSpeed: azure.servedSpeed, rejectsFast: native.rejectsFast, standardRoute: native.standardRoute,
+    responseOutputLimit, REVIEW_OUTPUT_TOKENS: 4096, assertCloudSafe: require("../shared/privacy.cjs").assertCloudSafe, azureSolModel: () => "gpt-5.6-sol", azureLunaModel: () => "gpt-5.6-luna",
+    azureRoute: azure.azureRoute, promptCacheKey: azure.promptCacheKey,
     claudeRoute: route.claudeRoute, PAID_PLANS: route.PAID_PLANS, isClaudeReasoning: claude.isClaudeReasoning,
-    claudeStream: async (_admin, user, body) => { streamed = { user, model: body.model }; return new Response("claude"); }, claudeCall: async () => ({}),
-    nativeStream: async (_admin, _user, route, payload) => { forwarded = { route: plain(route), payload }; return new Response("gpt"); }, reserveAgentAi: async () => ({ finish: async () => {} }),
+    // Like the real ones, these call no model before the plan check passes.
+    claudeStream: async (_admin, user, body, _cors, allowed) => { await allowed; streamed = { user, model: body.model }; return new Response("claude"); }, claudeCall: async () => ({}),
+    nativeStream: async (_admin, _user, route, payload, _cors, allowed) => { await allowed; forwarded = { route: plain(route), payload }; return new Response("gpt"); }, nativeCall: async () => ({}),
   });
   const request = body => handler(new Request("https://fixture.invalid/functions/v1/timewarp-energy/v1/responses", { method: "POST", headers: { authorization: "Bearer fixture" }, body: JSON.stringify({ stream: true, input: "Hi", ...body }) }));
   for (const model of ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol", "openai/gpt-6-astra", "openai/gpt-6-luna"]) {
@@ -306,7 +363,7 @@ test("GPT-6 Fast asks Azure for priority processing, bills the tier that served 
   const sent = [], reserved = [], finished = [], pending = [];
   let replies;
   const native = moduleOf("cloud/nativeResponses.ts", {
-    responseOutputLimit, servedSpeed: azure.servedSpeed, azureFoundryBase: () => "https://fixture.invalid", assertCloudSafe() {}, TextEncoder, TextDecoder, Response, AbortSignal, console,
+    responseOutputLimit, requestInputTokens: () => 0, azureCacheRetention: () => false, servedSpeed: azure.servedSpeed, azureFoundryBase: () => "https://fixture.invalid", assertCloudSafe() {}, TextEncoder, TextDecoder, Response, AbortSignal, console,
     EdgeRuntime: { waitUntil: value => pending.push(value) },
     fetch: async (_url, options) => { sent.push(JSON.parse(options.body)); return replies.shift(); },
     reserveAgentAi: async (_admin, _user, model) => { reserved.push(model); return { id: "r", finish: async (...args) => { finished.push([model, ...args]); } }; },

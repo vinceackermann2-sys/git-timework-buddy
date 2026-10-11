@@ -21,16 +21,17 @@ function createLegacyRequests({ services, harness, guard, version, selectModel, 
         return conversation?.codexThreadId ? guard.snapshot([conversation.codexThreadId]) || [] : [];
       }
       case "browserAgent": return null;
-      case "chatgptDetails": { const state = await funding.current(); if (!state.subscriptionAllowed) await chatgpt.refresh(); return { ...chatgpt.details(), funding: state, login: chatgpt.currentBrowserLogin() }; }
+      // Billing's own checks read the plan fresh, not the balance chats keep for a moment.
+      case "chatgptDetails": { const state = await funding.current({ fresh: true }); if (!state.subscriptionAllowed) await chatgpt.refresh(); return { ...chatgpt.details(), funding: state, login: chatgpt.currentBrowserLogin() }; }
       case "verifyChatgpt": await funding.requireFree(); return chatgpt.verifyAccess();
       case "connectChatgpt": { await auth.accessToken(); await funding.requireFree(); const result = await chatgpt.startBrowserLogin(input); await services.openExternal(result.authUrl); return { status: result.status }; }
       case "cancelChatgpt": return chatgpt.cancelLogin();
       // The default model follows the new catalog (Timewarp's models after a
       // disconnect); open pickers and the composer reload.
-      case "disconnectChatgpt": { const result = await chatgpt.disconnect(); await selectModel().catch(() => {}); onFundingChanged(); return result; }
+      case "disconnectChatgpt": { const result = await chatgpt.disconnect(); funding.invalidate?.(); await selectModel().catch(() => {}); onFundingChanged(); return result; }
       case "selectChatgpt": await funding.requireFree(); return chatgpt.selectAccount(input.id);
       // After a plan change in Billing.
-      case "refreshAiFunding": await selectModel().catch(() => {}); onFundingChanged(); return funding.current();
+      case "refreshAiFunding": funding.invalidate?.(); await selectModel().catch(() => {}); onFundingChanged(); return funding.current();
       case "refreshTools": integrations.invalidate(); await registerTools(true); return { ready: true };
       case "openConnectorBrowser": await services.ensureCallback(); if (openConnector) { openConnector(input.url); return { ownerId: null, external: false }; } await services.openExternal(input.url); return { ownerId: null, external: true };
       case "closeConnectorBrowser": return { closed: true };

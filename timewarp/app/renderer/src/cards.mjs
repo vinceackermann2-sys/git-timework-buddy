@@ -318,10 +318,14 @@ export function refMarkup(reference) {
 }
 
 // A short stable key for a message's text (FNV-1a), naming its cards' state.
+// A streaming message only grows, so its hash goes on from the last text's.
+let hashed = { text: "", hash: 0x811c9dc5 };
 export function messageKey(text) {
-  let hash = 0x811c9dc5;
   const value = String(text ?? "");
-  for (let index = 0; index < value.length; index++) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 0x01000193) >>> 0; }
+  const from = value.startsWith(hashed.text) ? hashed : { text: "", hash: 0x811c9dc5 };
+  let hash = from.hash;
+  for (let index = from.text.length; index < value.length; index++) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 0x01000193) >>> 0; }
+  hashed = { text: value, hash };
   return hash.toString(36) + value.length.toString(36);
 }
 

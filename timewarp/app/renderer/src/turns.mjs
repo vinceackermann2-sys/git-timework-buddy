@@ -12,19 +12,34 @@ function upsertTurn(turns, id, patch = {}) {
   return next;
 }
 
+// An update that changes nothing (output of an item that isn't known) keeps
+// the same turns, so the chat isn't drawn again.
 function withItem(turns, turnId, itemId, update) {
-  let next = turns.some(turn => turn.id === turnId) ? turns : upsertTurn(turns, turnId);
-  next = next.map(turn => {
-    if (turn.id !== turnId) return turn;
-    const copy = cloneTurn(turn);
-    const index = copy.items.findIndex(item => item.id === itemId);
-    const current = index >= 0 ? copy.items[index] : null;
-    const value = update(current);
-    if (!value) return turn;
-    if (index >= 0) copy.items[index] = value; else copy.items.push(value);
-    return copy;
-  });
-  return next;
+  const next = turns.some(turn => turn.id === turnId) ? turns : upsertTurn(turns, turnId);
+  const at = next.findIndex(turn => turn.id === turnId);
+  const copy = cloneTurn(next[at]);
+  const index = copy.items.findIndex(item => item.id === itemId);
+  const value = update(index >= 0 ? copy.items[index] : null);
+  if (!value) return next;
+  if (index >= 0) copy.items[index] = value; else copy.items.push(value);
+  const changed = [...next];
+  changed[at] = copy;
+  return changed;
+}
+
+// Streamed text that arrives together (a frame's worth) is applied as one
+// delta: the same text, in one step.
+const DELTAS = new Set(["item/agentMessage/delta", "item/reasoning/summaryTextDelta", "item/commandExecution/outputDelta"]);
+export function mergeDeltas(events) {
+  const merged = [];
+  for (const event of events) {
+    const last = merged.at(-1), { method, params } = event;
+    if (last && DELTAS.has(method) && last.method === method && last.params.turnId === params?.turnId && last.params.itemId === params?.itemId
+      && (last.params.summaryIndex || 0) === (params?.summaryIndex || 0) && !last.params.subAgent === !params?.subAgent) {
+      merged[merged.length - 1] = { method, params: { ...last.params, delta: last.params.delta + params.delta } };
+    } else merged.push(event);
+  }
+  return merged;
 }
 
 // Worker threads apply their own events with { worker: true }; the chat
@@ -212,11 +227,15 @@ function createdAutomation(item) {
 // "Daily digest ran 3 times, Inbox ran 1 time".
 export const runsLabel = counts => [...counts].map(([name, count]) => `${name} ran ${count} ${count === 1 ? "time" : "times"}`).join(", ");
 
-// A generated image as an address the page can show.
+// A generated image as an address the page can show. Its result can be
+// megabytes of base64, so each item's address is worked out once.
+const sources = new WeakMap();
 export function imageSource(item) {
+  if (item && typeof item === "object" && sources.has(item)) return sources.get(item);
   const result = String(item?.result || "");
-  if (/^data:image\//.test(result)) return result;
-  return /^[A-Za-z0-9+/=\s]{64,}$/.test(result) ? "data:image/png;base64," + result.replace(/\s+/g, "") : null;
+  const source = /^data:image\//.test(result) ? result : /^[A-Za-z0-9+/=\s]{64,}$/.test(result) ? "data:image/png;base64," + result.replace(/\s+/g, "") : null;
+  if (item && typeof item === "object") sources.set(item, source);
+  return source;
 }
 
 // Separator text: "Today, 2:03 PM", "Yesterday, 9:15 AM", "Mon, Oct 6, 4:20 PM",
@@ -227,10 +246,14 @@ export function separatorLabel(kind, at, now = Date.now()) {
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   const day = sameDay(at, now) ? "Today" : sameDay(at, yesterday) ? "Yesterday"
-    : new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", year: new Date(at).getFullYear() === new Date(now).getFullYear() ? undefined : "numeric" }).format(at);
+    : (new Date(at).getFullYear() === new Date(now).getFullYear() ? DAY : DAY_YEAR).format(at);
   return `${day}, ${time}`;
 }
-export const clock = at => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(at);
+// Made once: a formatter is slow to make, and every message shows a time.
+const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const DAY = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" });
+const DAY_YEAR = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+export const clock = at => TIME.format(at);
 
 // ---- The agent's state -------------------------------------------------
 

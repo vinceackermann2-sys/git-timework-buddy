@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { AlarmClock, ArrowDown, Check, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Copy, EllipsisVertical, LoaderCircle, MessageSquareWarning, PanelRight, Pencil, Reply, Search, ShieldCheck, X } from "lucide-react";
 import { call, errorText, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { copyText, stripCitations, userMessageText } from "../cards.mjs";
 import { skillChips } from "../mentions.mjs";
-import { applyEvent, clock, commentaryLine, mergeTurns, plainQuote, quotedMessage, replyParts, runsLabel, separatorLabel, threadState, transcript, turnsFromMessages, userContent, userFiles, userImages, userSkills, userText } from "../turns.mjs";
+import { applyEvent, clock, commentaryLine, mergeDeltas, mergeTurns, plainQuote, quotedMessage, replyParts, runsLabel, separatorLabel, threadState, transcript, turnsFromMessages, userContent, userFiles, userImages, userSkills, userText } from "../turns.mjs";
 import { AttachmentImage, FileChip } from "../widgets.jsx";
 import { AgentActivity, AgentThreadSheet, Collapsible, GeneratedImage } from "./AgentThread.jsx";
 import { ApprovalCard } from "./Approval.jsx";
@@ -27,6 +28,32 @@ const PAGE = 100;
 const agentTab = state => state?.tabs?.find(tab => tab.agent)?.id || null;
 // A message that didn't reach the agent, offered for Retry.
 const undelivered = (turn, message = "This message wasn't sent.") => ({ ...turn, pending: false, undelivered: true, status: "failed", error: { message } });
+
+// The chat's turns after one of its events. A message sent while the agent
+// worked shows in its turn once Codex adds it; one still waiting when that
+// turn ends wasn't delivered.
+function chatEvent(turns, method, params) {
+  if (method === "turn/started") turns = turns.filter(turn => !turn.pending);
+  const next = applyEvent(turns, method, params);
+  const item = params.item;
+  if ((method === "item/started" || method === "item/completed") && item?.type === "userMessage" && item.clientId) return next.filter(turn => !(turn.pending && turn.items[0]?.clientId === item.clientId));
+  if (method === "turn/completed" || method === "turn/aborted") return next.map(turn => turn.pending && turn.steeredInto && (method === "turn/aborted" || turn.steeredInto === params.turn.id) ? undelivered(turn) : turn);
+  return next;
+}
+// Events that change what a turn is apply at once. Others add streamed text
+// (or, with a turn id, end a retry's notice) and apply once per frame; output
+// and thinking only the trace shows wait for the next update while it's closed.
+const AT_ONCE = new Set(["turn/started", "item/started", "item/completed", "turn/plan/updated", "turn/completed", "error", "item/autoApprovalReview/started", "item/autoApprovalReview/completed", "guardianWarning", "turn/aborted"]);
+const TRACE_ONLY = new Set(["item/reasoning/summaryTextDelta", "item/commandExecution/outputDelta"]);
+// The closed trace has no turns to go through.
+const NO_TURNS = [];
+// The value from before while it reads the same, so what shows it isn't drawn again.
+function useSame(value) {
+  const kept = useRef(null);
+  const key = JSON.stringify(value);
+  if (kept.current?.key !== key) kept.current = { key, value };
+  return kept.current.value;
+}
 
 function Title({ conversation, onRename }) {
   const [editing, setEditing] = useState(false);
@@ -151,6 +178,15 @@ function Row({ row, agent, conversationId, onRetry, onReply, onJump, onAutomatio
     default: return null;
   }
 }
+// A row is drawn again only when what it shows changed, not when another
+// message streams: rows keep their item until it changes (turns.mjs). A
+// day's separator ("Today") follows the date.
+const sameRow = (a, b) => a.kind === b.kind && a.key === b.key && a.item === b.item && a.text === b.text && a.streaming === b.streaming && a.group === b.group
+  && a.separator === b.separator && a.at === b.at && a.quoteTarget === b.quoteTarget && a.undelivered === b.undelivered && a.review === b.review
+  && a.turn?.pending === b.turn?.pending && a.turn?.message === b.turn?.message && (a.turn === b.turn || !(a.undelivered || a.turn?.pending))
+  && (a.kind !== "runs" || runsLabel(a.counts) === runsLabel(b.counts)) && (a.kind !== "event" || (a.automation?.id === b.automation?.id && a.automation?.name === b.automation?.name));
+const ChatRow = React.memo(Row, (before, after) => sameRow(before.row, after.row) && (before.row.separator !== "day" || before.day === after.day) && before.agent === after.agent
+  && before.conversationId === after.conversationId && before.onRetry === after.onRetry && before.onReply === after.onReply && before.onJump === after.onJump && before.onAutomation === after.onAutomation);
 
 // Find in conversation, as before: matches in the messages' text (not the
 // chat's intro, times or working line), across formatting, kept current as
@@ -299,6 +335,26 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
   runningNow.current = running;
   const toast = useToast();
   const id = conversation.id;
+  // Events waiting to apply to the turns (see AT_ONCE), and whether the
+  // trace, which shows output and thinking, is open.
+  const queue = useRef([]), frame = useRef(0), traceOpen = useRef(false);
+  const flush = useCallback(() => {
+    cancelAnimationFrame(frame.current); frame.current = 0;
+    if (!queue.current.length) return;
+    const events = mergeDeltas(queue.current);
+    queue.current = [];
+    setTurns(current => events.reduce((turns, { method, params }) => chatEvent(turns, method, params), current));
+  }, []);
+  // At most about 60 times a second, drawn in the frame that shows it.
+  const flushed = useRef(0);
+  const onFrame = useCallback(time => {
+    if (time - flushed.current < 16) { frame.current = requestAnimationFrame(onFrame); return; }
+    flushed.current = time;
+    flushSync(flush);
+  }, [flush]);
+  // Changes made here apply after the events that came before them.
+  const updateTurns = useCallback(update => { flush(); setTurns(update); }, [flush]);
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
 
   const markRead = useCallback(() => {
     if (document.hasFocus()) void call("conversations.markRead", { id }).then(onChanged).catch(() => {});
@@ -306,6 +362,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
 
   useEffect(() => {
     let cancelled = false;
+    queue.current = [];
     setLoading(true); setTurns([]); setApprovals([]); setNotice(null); pinned.current = true; live.current = false;
     setModel(conversation.modelSettings?.name ? conversation.modelSettings : null);
     Promise.all([call("conversations.history", { id }), call("conversations.status", { id })]).then(([history, status]) => {
@@ -313,7 +370,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
       const owner = account?.user?.id;
       // A first message sent, or a reply that started or finished, while the
       // history loaded stays as the events left it.
-      setTurns(current => mergeTurns(history.turns?.length
+      updateTurns(current => mergeTurns(history.turns?.length
         ? [...turnsFromMessages(history.earlier || [], owner), ...history.turns, ...turnsFromMessages(history.failed || [], owner)]
         : turnsFromMessages(history.messages || [], owner), current));
       if (!history.turns?.length && history.messages?.length && history.transcriptUnavailable !== undefined) setNotice("Earlier tool activity from another device isn't available here. Your messages are.");
@@ -339,18 +396,14 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
   useEvent("conversation.event", ({ conversationId, method, params }) => {
     if (conversationId !== id) return;
     if ((method === "turn/started" || method === "turn/completed" || method === "turn/aborted") && !params.subAgent) live.current = true;
-    if (method === "turn/started" && !params.subAgent) { setRunning(true); setTurns(current => current.filter(turn => !turn.pending)); }
+    if (method === "turn/started" && !params.subAgent) setRunning(true);
     if (method === "thread/status/changed" && !params.subAgent) setThreadStatus(params.status || null);
-    setTurns(current => {
-      const next = applyEvent(current, method, params);
-      if (params.subAgent) return next;
-      // A message sent while the agent worked shows in its turn once Codex
-      // adds it; one still waiting when that turn ends wasn't delivered.
-      const item = params.item;
-      if ((method === "item/started" || method === "item/completed") && item?.type === "userMessage" && item.clientId) return next.filter(turn => !(turn.pending && turn.items[0]?.clientId === item.clientId));
-      if (method === "turn/completed" || method === "turn/aborted") return next.map(turn => turn.pending && turn.steeredInto && (method === "turn/aborted" || turn.steeredInto === params.turn.id) ? undelivered(turn) : turn);
-      return next;
-    });
+    // Workers' events are theirs (Workers.jsx); events that can't change a turn are skipped.
+    if (!params.subAgent && (AT_ONCE.has(method) || params.turnId)) {
+      queue.current.push({ method, params });
+      if (AT_ONCE.has(method)) flush();
+      else if (!frame.current && (!TRACE_ONLY.has(method) || traceOpen.current || queue.current.length > 1000)) frame.current = requestAnimationFrame(onFrame);
+    }
     if ((method === "turn/completed" || method === "turn/aborted") && !params.subAgent) { setRunning(false); markRead(); }
     if (method === "turn/aborted") setThreadStatus(null);
     if (method === "thread/name/updated") onChanged?.();
@@ -404,7 +457,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
     });
     return list;
   }, [turns, id, automationRuns]);
-  const state = threadState(turns, threadStatus, running);
+  const state = useSame(threadState(turns, threadStatus, running));
   // The latest rows of a long chat, as before; Find searches them all.
   const [limit, setLimit] = useState(PAGE);
   const hidden = finding ? 0 : Math.max(0, rows.length - limit);
@@ -454,17 +507,17 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
     // Skills chosen with @ or $ go with the message for Codex.
     const skills = Array.isArray(message.skills) ? message.skills : [];
     message = { text: message.text || "", images: message.images || [], files: message.files || [], ...(skills.length ? { skills } : {}) };
-    setTurns(current => [...current, { id: pendingId, pending: true, message, startedAt: Date.now() / 1000, status: "inProgress", items: [{ type: "userMessage", id: clientId, clientId, content: userContent(message) }] }]);
+    updateTurns(current => [...current, { id: pendingId, pending: true, message, startedAt: Date.now() / 1000, status: "inProgress", items: [{ type: "userMessage", id: clientId, clientId, content: userContent(message) }] }]);
     setRunning(true);
     try {
       const result = await call("conversations.send", { id, ...message, clientId, retryOf });
       // A steered message waits for Codex to add it to the turn.
-      if (result?.steered) setTurns(current => current.map(turn => turn.id !== pendingId || !turn.pending ? turn
+      if (result?.steered) updateTurns(current => current.map(turn => turn.id !== pendingId || !turn.pending ? turn
         : current.some(item => item.id === result.turnId && item.status !== "inProgress") ? undelivered(turn) : { ...turn, steeredInto: result.turnId }));
       onChanged?.();
     } catch (error) {
       if (!steering) setRunning(false);
-      setTurns(current => current.map(turn => turn.id === pendingId ? undelivered(turn, error.message) : turn));
+      updateTurns(current => current.map(turn => turn.id === pendingId ? undelivered(turn, error.message) : turn));
       throw error;
     }
   }
@@ -492,7 +545,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
   });
   // Sends a message that didn't go through again, with its files, in place of the failed one.
   function retry(turn, item) {
-    setTurns(current => current.filter(entry => entry !== turn));
+    updateTurns(current => current.filter(entry => entry !== turn));
     void send(turn.message || { text: userText(item), images: userImages(item), files: [], skills: userSkills(item) }, item.clientId || item.id).catch(error => toast(error, "error"));
   }
   // "Scheduled <name>" opens the automation it made, as it is now.
@@ -507,16 +560,40 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
   useEvent("automations.changed", () => { if (automation) void call("automations.list").then(list => setAutomation(list.find(item => item.id === automation.id) || null)).catch(() => {}); });
   // "Continue" after a stop, and "Try again" after an error, as before.
   const resume = () => send({ text: "Continue" }).catch(error => { toast(error, "error"); throw error; });
-  const openThread = (threadId, source) => setSheet({ threadId, source });
   async function chooseModel(choice) {
     const previous = model;
     setModel(choice);
     try { setModel(await call("conversations.setModel", { id, ...choice }).then(value => value.modelSettings)); onChanged?.(); }
     catch (error) { setModel(previous); toast(error, "error"); }
   }
+  // What the rows, the activity line and the composer are given stays the
+  // same while a reply streams, so they aren't drawn again for each token.
+  const latest = useRef(null);
+  latest.current = { send, retry, jump, openAutomation, resume, chooseModel, reply };
+  const onRetry = useCallback((turn, item) => latest.current.retry(turn, item), []);
+  const onJump = useCallback(key => latest.current.jump(key), []);
+  const onAutomation = useCallback(value => void latest.current.openAutomation(value), []);
+  const onContinue = useCallback(() => latest.current.resume(), []);
+  const openThread = useCallback((threadId, source) => setSheet({ threadId, source }), []);
+  const openBrowser = useCallback(tabId => window.dispatchEvent(new CustomEvent("tw:open-tab", { detail: { conversationId: id, tabId } })), [id]);
+  const onModel = useCallback(choice => latest.current.chooseModel(choice), []);
+  const clearReply = useCallback(() => setReply(null), []);
+  const onSend = useCallback(message => {
+    // The reply clears with the box, and comes back with it if sending fails.
+    const replied = latest.current.reply;
+    setReply(null);
+    return latest.current.send(replied ? { ...message, text: quote(replied) + message.text } : message).catch(error => { setReply(current => current ?? replied); throw error; });
+  }, []);
+  const onStop = useCallback(() => call("conversations.interrupt", { id }).catch(error => toast(error, "error")), [id, toast]);
+  const banner = useMemo(() => <><ReconnectBanner agentId={agent.id} /><FundingBanner funding={funding} onOptions={() => onSettings("billing")} /></>, [agent.id, funding, onSettings]);
+  // The trace shows the turns as they are when it opens, with what waited for it.
+  traceOpen.current = dialog === "trace";
+  useLayoutEffect(() => { if (dialog === "trace") flush(); }, [dialog, flush]);
+  // A day's separator ("Today, 9:15 AM") changes with the date.
+  const day = new Date().toDateString();
 
   // Until the model list loads, the chat's own model shows, not the default.
-  const chatModels = { ...(models || {}), selected: model || models?.selected || null };
+  const chatModels = useMemo(() => ({ ...(models || {}), selected: model || models?.selected || null }), [models, model]);
   return (
     <>
       <header className="tw-chat-header">
@@ -545,32 +622,23 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
           </div>
           {notice ? <div className="tw-date">{notice}</div> : null}
           {hidden ? <div className="tw-older"><button type="button" className="tw-pill-button" onClick={() => showOlder()}>Load older messages</button></div> : null}
-          {shown.map(row => <Row key={row.key} row={row} agent={agent} conversationId={id} onRetry={retry} onReply={setReply} onJump={jump} onAutomation={value => void openAutomation(value)} />)}
+          {shown.map(row => <ChatRow key={row.key} row={row} day={day} agent={agent} conversationId={id} onRetry={onRetry} onReply={setReply} onJump={onJump} onAutomation={onAutomation} />)}
           {approvals.map(approval => <ApprovalCard key={approval.id} approval={approval} />)}
           {loading ? null : (
             <AgentActivity state={state} commentary={commentaryLine(turns)} workers={workers} browserTab={browserTab} working={running}
-              onOpenThread={openThread} onOpenBrowser={tabId => window.dispatchEvent(new CustomEvent("tw:open-tab", { detail: { conversationId: id, tabId } }))}
-              onContinue={resume} funding={funding} onSettings={onSettings} />
+              onOpenThread={openThread} onOpenBrowser={openBrowser} onContinue={onContinue} funding={funding} onSettings={onSettings} />
           )}
         </div>
       </div>
       {atBottom ? null : <div className="tw-jump-anchor"><button type="button" className="tw-jump" aria-label="Scroll to latest message" onClick={() => { const node = scroller.current; if (node) node.scrollTop = node.scrollHeight; }}><ArrowDown size={16} /></button></div>}
       <Composer
-        autoFocusKey={id} historyKey={id} draftKey={id} agentId={agent.id} running={running} models={chatModels} onModel={chooseModel}
+        autoFocusKey={id} historyKey={id} draftKey={id} agentId={agent.id} running={running} models={chatModels} onModel={onModel}
         placeholder={reply ? "Reply..." : "Send another message..."} disabled={loading && !initialMessage}
-        banner={<><ReconnectBanner agentId={agent.id} /><FundingBanner funding={funding} onOptions={() => onSettings("billing")} /></>}
-        reply={reply} onClearReply={() => setReply(null)}
-        onSend={message => {
-          // The reply clears with the box, and comes back with it if sending fails.
-          const replied = reply;
-          setReply(null);
-          return send(replied ? { ...message, text: quote(replied) + message.text } : message).catch(error => { setReply(current => current ?? replied); throw error; });
-        }}
-        onStop={() => call("conversations.interrupt", { id }).catch(error => toast(error, "error"))}
+        banner={banner} reply={reply} onClearReply={clearReply} onSend={onSend} onStop={onStop}
       />
       <FeedbackDialog open={dialog === "feedback"} onClose={() => setDialog(null)} conversationId={id} />
       <AutomationDialog automation={automation} onClose={() => setAutomation(null)} onRan={conversationId => { if (conversationId && conversationId !== id) location.hash = "#/conversation/" + conversationId; }} />
-      <Trace open={dialog === "trace"} onClose={() => setDialog(null)} conversation={conversation} turns={turns} agent={agent} />
+      <Trace open={dialog === "trace"} onClose={() => setDialog(null)} conversation={conversation} turns={dialog === "trace" ? turns : NO_TURNS} agent={agent} />
       <AgentThreadSheet conversationId={id} target={sheet} agentName={agent.name} turns={turns} state={state} workers={workers} onClose={() => setSheet(null)} />
     </>
   );

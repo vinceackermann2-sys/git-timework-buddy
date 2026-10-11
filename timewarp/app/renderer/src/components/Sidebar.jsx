@@ -340,8 +340,10 @@ export function Sidebar({ account, agents, conversations, selectedId, view, home
       <Tip label="New Task" keys={[modKey(), "N"]}><button type="button" className="tw-new-task" onClick={() => onNewTask()}><Plus size={18} strokeWidth={1.6} /><span>New Task</span></button></Tip>
       <div className={"tw-side-scroll" + (mode === "activity" ? " feed" : "")}>{body}</div>
       {usage}
+      {/* At launch the account's organization is still on its way: its
+          place is kept, empty, rather than showing the user's name first. */}
       <Menu up align="left" width={272} className="tw-account-menu" trigger={({ toggle, open }) => (
-        <button type="button" className="tw-account" aria-expanded={open} onClick={toggle} aria-label="Account">
+        <button type="button" className="tw-account" aria-expanded={open} onClick={toggle} aria-label="Account" style={account?.loading ? { visibility: "hidden" } : undefined}>
           <OrgPicture organization={organization} />
           <span><strong>{organization?.name || account?.user?.name || "Timewarp"}</strong><small>{account?.user?.email || ""}</small></span>
           <ChevronUp size={16} />

@@ -19,24 +19,45 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
   const focusApp = () => { for (const window of appWindows()) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } };
 
   const accountChanged = async ({ changedUser }) => {
+    funding.invalidate();
     if (changedUser) { chatgpt.stop(); integrations.invalidate(); }
     await onAccountChanged({ changedUser });
   };
   const auth = fixture ? fixture.auth : createAuth({ config, storage: sessionStorage(profile, safeStorage), onChange: accountChanged });
   if (fixture) fixture.auth.bind(accountChanged);
 
+  // Payloads the model bridge has just checked for secrets (cloudSafe), so a
+  // large model request isn't walked a second time here; every other payload is.
+  const checked = new WeakSet();
+  const cloudSafe = value => { assertCloudSafe(value); if (value && typeof value === "object") checked.add(value); return value; };
+  // Large model requests go compressed. A cloud function that can't read them
+  // yet answers 400 "Invalid JSON.": the request is sent again as it is, and
+  // the rest of this run sends them uncompressed.
+  let compress = true;
+  const gzip = require("node:util").promisify(require("node:zlib").gzip);
+  const refusedGzip = async response => response.status === 400 && (await response.clone().json().catch(() => null))?.error === "Invalid JSON.";
   // A content type marks payload as already-encoded bytes (dictation audio).
   // A model reply may stream for up to five minutes (Claude thinking deeply).
   async function cloud(route, payload, method = "POST", contentType) {
     await ready;
     if (fixture) return fixture.cloud(route, payload, method);
     const token = await auth.accessToken();
-    return fetch(`${config.supabaseUrl}/functions/v1/timewarp-energy${route}`, {
+    const body = payload === undefined || contentType ? payload : JSON.stringify(checked.delete(payload) ? payload : assertCloudSafe(payload));
+    const signal = AbortSignal.timeout(route === "/v1/responses" ? 310000 : 140000);
+    const send = (data, encoding) => fetch(`${config.supabaseUrl}/functions/v1/timewarp-energy${route}`, {
       method,
-      headers: { apikey: config.publishableKey, Authorization: `Bearer ${token}`, "content-type": contentType || "application/json" },
-      ...(payload === undefined ? {} : { body: contentType ? payload : JSON.stringify(assertCloudSafe(payload)) }),
-      signal: AbortSignal.timeout(route === "/v1/responses" ? 310000 : 140000), redirect: "error",
+      headers: { apikey: config.publishableKey, Authorization: `Bearer ${token}`, "content-type": contentType || "application/json", ...(encoding ? { "content-encoding": encoding } : {}) },
+      ...(data === undefined ? {} : { body: data }),
+      signal, redirect: "error",
     });
+    if (compress && route === "/v1/responses" && !contentType && typeof body === "string" && body.length > 32 * 1024) {
+      const response = await send(await gzip(body, { level: 1 }), "gzip");
+      if (!await refusedGzip(response)) return response;
+      void response.body?.cancel().catch(() => {});
+      compress = false;
+      console.error("[timewarp] The cloud doesn't read compressed model requests yet; they're sent uncompressed.");
+    }
+    return send(body);
   }
   async function cloudJson(route, input, method = "POST") {
     const response = await cloud(route, input, method), value = await response.json().catch(() => ({}));
@@ -68,7 +89,8 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
     onConnected: async () => { await onCodexConnected(); focusApp(); },
     onLoginError: async () => { focusApp(); },
   });
-  const funding = require("../../desktop/ai-funding.cjs").createAiFunding({ cloud, chatgpt, userId: () => auth.userId() });
+  // The balance is kept for 30 seconds: each step of a chat would otherwise wait for the cloud.
+  const funding = require("../../desktop/ai-funding.cjs").createAiFunding({ cloud, chatgpt, userId: () => auth.userId(), cacheMs: 30000 });
   const integrations = require("../../desktop/composio.cjs").createComposio({
     cloud: cloudJson, userId: () => auth.userId(),
     storage: protectedStore(path.join(profile, "connector-access.bin"), safeStorage),
@@ -101,7 +123,7 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
   }
 
   const service = {
-    auth, ready, cloud, cloudJson, accountRpc, chatgpt, funding, integrations, account, openExternal, ensureCallback, focusApp,
+    auth, ready, cloud, cloudSafe, cloudJson, accountRpc, chatgpt, funding, integrations, account, openExternal, ensureCallback, focusApp,
     submitFeedback: async input => { await ready; return sendFeedback(input); },
     // Sign-in methods. The last known answer shows the sign-in screen at once
     // while a fresh one loads; it holds no account data.

@@ -3,7 +3,8 @@
 // did: a short title for a new chat, and the memory writer, which updates the
 // user's notes and today's log after a chat has been quiet for a few minutes.
 // Each job is a short-lived Codex thread that only answers in JSON; Timewarp
-// writes the files itself. Jobs run one at a time and never hold up a chat.
+// writes the files itself. Jobs of a kind run one at a time and never hold up
+// a chat; a title doesn't wait for a memory job, which can take minutes.
 // codex-funding.cjs sends these to the funding source's small model.
 const BACKGROUND_MODEL = "timewarp/background", MEMORY_ROLE = "timewarp-memory-writer";
 const TITLE_LENGTH = 60, TRANSCRIPT = 24000, NOTES_INPUT = 60000, LOG_INPUT = 12000, IDLE_MS = 4 * 60 * 1000, JOB_MS = 3 * 60 * 1000;
@@ -36,10 +37,11 @@ function cleanTitle(value) {
   return text || null;
 }
 
-// Runs background jobs one at a time in short-lived Codex threads.
+// Runs background jobs in short-lived Codex threads, one at a time per
+// purpose (titles, memory).
 // client: the Codex client with AI funding routing (codex-funding.cjs).
 function createBackgroundRunner({ client, cwd, disabledServers = () => [], log = () => {} }) {
-  let queue = Promise.resolve();
+  const queues = new Map(); // purpose -> the last job's promise
   async function job({ purpose, role, instructions, prompt, schema, timeoutMs = JOB_MS }) {
     const started = Date.now();
     const config = {
@@ -86,8 +88,8 @@ function createBackgroundRunner({ client, cwd, disabledServers = () => [], log =
   }
   return {
     run(options) {
-      const result = queue.then(() => job(options));
-      queue = result.catch(() => {});
+      const result = (queues.get(options.purpose) || Promise.resolve()).then(() => job(options));
+      queues.set(options.purpose, result.catch(() => {}));
       return result;
     },
   };

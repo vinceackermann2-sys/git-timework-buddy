@@ -20,6 +20,13 @@ function createHistoryAdapter({ store, createAgent, settings }) {
     entries: store.messages.list(conversation.id).filter(message => message.status !== "replaced").map(entryOf),
   };
   const agentOf = agent => agent && { id: agent.id, ownerUserId: agent.ownerId, displayName: agent.name, deletedAt: agent.archivedAt };
+  // Restored metadata is written only where it changes the chat, so a chat
+  // that is already up to date costs no write and no change event.
+  const json = value => value === undefined || value === null ? null : JSON.stringify(value);
+  const updateUnless = (id, patch, same) => {
+    const current = store.conversations.get(id);
+    if (!current || !same(current)) store.conversations.update(id, patch, { touch: false });
+  };
   const conversations = {
     get: id => valueOf(store.conversations.get(id)),
     subscribe(listener) {
@@ -36,11 +43,12 @@ function createHistoryAdapter({ store, createAgent, settings }) {
       const text = (entry.parts || []).filter(part => part.type === "text").map(part => part.text).join("\n\n");
       store.messages.append({ id: entry.id, conversationId: entry.conversationId, authorId: entry.authorId, createdAt: entry.createdAt, text, status: "sent" });
     },
-    setTitle: (id, title) => store.conversations.update(id, { title }, { touch: false }),
-    setModelSettings: (id, modelSettings) => store.conversations.update(id, { modelSettings }, { touch: false }),
-    archive: id => store.conversations.update(id, { archivedAt: new Date().toISOString() }, { touch: false }),
-    unarchive: id => store.conversations.update(id, { archivedAt: null }, { touch: false }),
-    setRead: (id, _account, read) => store.conversations.update(id, { read: !!read }, { touch: false }),
+    setTitle: (id, title) => updateUnless(id, { title }, current => current.title === (title ?? null)),
+    setModelSettings: (id, modelSettings) => updateUnless(id, { modelSettings }, current => json(current.modelSettings) === json(modelSettings)),
+    // A chat already archived keeps the time it was archived.
+    archive: id => updateUnless(id, { archivedAt: new Date().toISOString() }, current => !!current.archivedAt),
+    unarchive: id => updateUnless(id, { archivedAt: null }, current => !current.archivedAt),
+    setRead: (id, _account, read) => updateUnless(id, { read: !!read }, current => current.read === !!read),
     list: ({ memberId, includeArchived }) => store.conversations.list(memberId, { includeArchived, limit: 100000 }).map(conversation => ({ conversation: { id: conversation.id } })),
   };
   return {
@@ -51,6 +59,9 @@ function createHistoryAdapter({ store, createAgent, settings }) {
         listActiveByOwner: async owner => store.agents.list(owner).map(agentOf),
       },
       browserProfiles: { bootstrap: async () => store.browserProfiles.ensureDefault() },
+      // What sync knew of each chat, kept between launches; a restored chat is
+      // written in one commit.
+      syncState: { ...store.historySync, transaction: fn => store.transaction(fn) },
     },
     workspace: {
       create: async ({ id, displayName, instructions, avatar, ownerUserId, modelSettings }) =>

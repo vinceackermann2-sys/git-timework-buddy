@@ -25,6 +25,14 @@ function textOf(input) {
 // Scripted Responses API: "run" asks for a shell command, everything else gets
 // a markdown reply that names what the user wrote.
 let dumped = 0;
+// A long Markdown reply ("long reply"), for measuring how the chat streams.
+function longReply() {
+  const sections = [];
+  for (let index = 1; index <= 8; index++) {
+    sections.push(`## Part ${index}\n\nThis paragraph explains step ${index} in **detail**, with a [link](https://example.com/${index}) and \`inline code\`. It goes on for a while so the reply is as long as a real one, covering the reasons, the trade-offs and what to check afterwards.\n\n- First point of part ${index}\n- Second point, with *emphasis*\n- Third point\n\n\`\`\`js\nfunction part${index}(items) {\n  return items.filter(item => item.ready).map(item => ({ id: item.id, total: item.count * ${index} }));\n}\n\`\`\`\n\n| Column | Value |\n| --- | --- |\n| Part | ${index} |\n| Status | ready |`);
+  }
+  return sections.join("\n\n");
+}
 function scriptedResponse(body) {
   const id = "resp_" + crypto.randomUUID(), message = "msg_" + crypto.randomUUID();
   const usage = { input_tokens: 40, input_tokens_details: { cached_tokens: 0 }, output_tokens: 30, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 70 };
@@ -97,6 +105,7 @@ function scriptedResponse(body) {
       ? JSON.stringify(/Remove-Item|rm -rf/.test(plan) ? { risk_level: "high", user_authorization: "unknown", outcome: "deny", rationale: "Deleting files isn't part of the task." } : { outcome: "allow" })
       : outputs.length
       ? spawn ? "Started a worker:\n\n```\n" + outputText(outputs.at(-1).output).slice(0, 2000) + "\n```" : script ? "Script output:\n\n```\n" + outputText(outputs.at(-1).output).slice(0, 6000) + "\n```" : (browse ? "I opened the page in the browser. Here is what it shows:\n\n```\n" : "The command finished. Here is what it printed:\n\n```\n") + outputText(outputs.at(-1).output).slice(0, 700) + "\n```"
+      : /\blong reply\b/i.test(latest) ? longReply()
       : `**Preview reply.** You wrote: “${latest.slice(0, 200)}”.\n\n- Streaming, markdown and code work\n- Ask me to *run* something to see a tool call\n\n\`\`\`js\nconsole.log("Timewarp");\n\`\`\``;
     events.push({ type: "response.output_item.added", output_index: 0, item: { type: "message", role: "assistant", id: message, content: [] } });
     for (const chunk of text.match(/[\s\S]{1,24}/g)) events.push({ type: "response.output_text.delta", item_id: message, output_index: 0, content_index: 0, delta: chunk });
@@ -107,7 +116,8 @@ function scriptedResponse(body) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      for (const event of events) { controller.enqueue(encoder.encode(sse([event]))); await new Promise(resolve => setTimeout(resolve, 35)); }
+      const spacing = /^\d+$/.test(process.env.TIMEWARP_FIXTURE_STREAM_MS || "") ? Number(process.env.TIMEWARP_FIXTURE_STREAM_MS) : 35;
+      for (const event of events) { controller.enqueue(encoder.encode(sse([event]))); await new Promise(resolve => setTimeout(resolve, spacing)); }
       controller.close();
     },
   });
@@ -165,7 +175,15 @@ function createFixture() {
   // requests go to a proxy on this computer that holds a test account's
   // sign-in. Everything else stays preview data.
   const liveModel = /^http:\/\/127\.0\.0\.1:\d+\/v1$/.test(process.env.TIMEWARP_FIXTURE_MODEL_URL || "") ? process.env.TIMEWARP_FIXTURE_MODEL_URL : null;
+  // Speed measurements (scripts/perf-engine.cjs): each cloud call waits as
+  // long as a round trip to the real cloud, and is logged by its route.
+  const latency = Math.max(0, Number(process.env.TIMEWARP_FIXTURE_CLOUD_LATENCY_MS) || 0);
   async function cloud(route, payload, method = "POST") {
+    if (process.env.TIMEWARP_FIXTURE_COUNT) console.error("[timewarp] fixture cloud " + route + (route === "/connectors" ? " " + (payload?.action || "") : ""));
+    if (latency && !(liveModel && /^\/v1\//.test(route))) await new Promise(resolve => setTimeout(resolve, latency));
+    return answer(route, payload, method);
+  }
+  async function answer(route, payload, method) {
     if (!signedIn) return json({ error: "Sign in to Timewarp." }, 401);
     if (liveModel && /^\/v1\/(responses|models)$/.test(route)) {
       return fetch(liveModel + route.slice(3), { method, headers: { "content-type": "application/json" }, ...(payload === undefined || method === "GET" ? {} : { body: JSON.stringify(payload) }) });

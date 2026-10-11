@@ -49,15 +49,17 @@ const memoryMode = mode => MEMORY_MODES[mode] || "enabled";
 const within = (base, target) => target === base || target.startsWith(base + path.sep);
 function lstat(file) { try { return fs.lstatSync(file); } catch { return null; } }
 
-// Memory-like files under a folder, without following links.
-function collect(root, relative, files, depth = 0) {
+// Memory-like files under a folder, without following links. folders, when
+// given, gets each folder read and its modification time.
+function collect(root, relative, files, depth = 0, folders = null) {
   const full = path.join(root, relative), stat = lstat(full);
   if (!stat || stat.isSymbolicLink() || files.length >= MAX_FILES) return;
   if (stat.isDirectory()) {
     if (depth > 8) return;
+    folders?.push([full, stat.mtimeMs]);
     for (const entry of fs.readdirSync(full).sort()) {
       if ((entry.startsWith(".") && entry !== ".cursorrules") || entry === "node_modules") continue;
-      collect(root, relative ? relative + "/" + entry : entry, files, depth + 1);
+      collect(root, relative ? relative + "/" + entry : entry, files, depth + 1, folders);
     }
   } else if (stat.isFile() && stat.size <= FILE_LIMIT && (MEMORY_FILE.test(full) || path.basename(full) === ".cursorrules")) files.push(relative);
 }
@@ -222,6 +224,7 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       return { item, names: [...new Set(selection.names)] };
     });
     const imported = { memoryFiles: 0, skills: 0 };
+    forgetImported();
     for (const { item, names } of chosen) {
       const root = all[item.source].root;
       for (const name of names) {
@@ -244,6 +247,23 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
 
   function notes() { try { return fs.readFileSync(notesFile, "utf8"); } catch { return ""; } }
   const readText = file => { try { return lstat(file)?.isFile() ? fs.readFileSync(file, "utf8") : ""; } catch { return ""; } };
+  // The files each message's memory comes from (context()), kept with their
+  // times and size: one is read again only once it changed, since checking
+  // costs a fraction of reading (security software scans every read). Any
+  // write also moves the change time, even a copy that keeps the old modified time.
+  const kept = new Map(); // file -> { key, text }
+  function keptText(file, { links = false } = {}) {
+    let stat;
+    try { stat = links ? fs.statSync(file) : fs.lstatSync(file); } catch { kept.delete(file); return ""; }
+    if (!stat.isFile()) return "";
+    const key = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`, known = kept.get(file);
+    if (known?.key === key) return known.text;
+    let text;
+    try { text = fs.readFileSync(file, "utf8"); } catch { return ""; }
+    if (kept.size >= 64) kept.clear();
+    kept.set(file, { key, text });
+    return text;
+  }
   // Daily logs, newest first: Timewarp's own, then the previous app's imported
   // ones for days Timewarp has no log of.
   function dailyLogs() {
@@ -262,6 +282,20 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       return { path: relative, source: relative.split("/")[0], size: stat?.size ?? 0, modifiedAt: stat ? stat.mtime.toISOString() : null };
     });
   }
+  // The imported files' paths for agent instructions, built as each chat's
+  // thread opens. They're kept until a folder they were found in changes (a
+  // file added, removed or renamed changes its folder's time) or Timewarp
+  // imports or removes one, so the folders are checked instead of every file.
+  let importedCache = null; // { folders: [[folder, mtimeMs]], paths }
+  function importedPaths() {
+    if (importedCache?.folders.every(([folder, time]) => lstat(folder)?.mtimeMs === time)) return importedCache.paths;
+    const files = [], folders = [];
+    if (lstat(importsRoot)?.isDirectory()) collect(importsRoot, "", files, 0, folders);
+    else folders.push([importsRoot, undefined]);
+    importedCache = { folders, paths: files };
+    return files;
+  }
+  const forgetImported = () => { importedCache = null; };
 
   return {
     memoriesRoot, importsRoot, skillsRoot, notesFile, detect, importItems,
@@ -282,6 +316,7 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       const target = path.resolve(importsRoot, String(relative || ""));
       if (!within(importsRoot, target) || target === importsRoot || !lstat(target)?.isFile()) throw fail(404, "That imported file no longer exists.");
       fs.rmSync(target);
+      forgetImported();
       return { files: importedFiles() };
     },
     // A new skill written by the user: a folder with SKILL.md.
@@ -322,7 +357,7 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       const mode = memoryMode(setting);
       if (mode === "none") return "Memory is turned off. Don't read or write the user's memory files.";
       if (mode === "write") return `Your memory about the user is in ${notesFile}. When the user shares a lasting preference or fact, or asks you to remember something, add it to that file briefly. Don't read the file or use what it says. Never store passwords, keys or payment details there.`;
-      const files = importedFiles();
+      const files = importedPaths();
       const lines = [
         mode === "read"
           ? `Your memory about the user is in ${notesFile}, with a log of each day in ${dailyLogsRoot}. Each message brings the current notes and the latest days' summaries. Use them, but don't change those files.`
@@ -330,7 +365,7 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       ];
       if (files.length) {
         lines.push(`Knowledge the user imported from other assistants (and from the previous Timewarp app, in ${PREVIOUS_APP}) is in ${importsRoot}. Read a file when it would help:`);
-        lines.push(...files.slice(0, PROMPT_FILES).map(file => "- " + file.path), ...(files.length > PROMPT_FILES ? [`- …and ${files.length - PROMPT_FILES} more`] : []));
+        lines.push(...files.slice(0, PROMPT_FILES).map(file => "- " + file), ...(files.length > PROMPT_FILES ? [`- …and ${files.length - PROMPT_FILES} more`] : []));
       }
       return lines.join("\n");
     },
@@ -341,17 +376,17 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       const mode = memoryMode(setting);
       if (mode !== "enabled" && mode !== "read") return null;
       const parts = [];
-      const text = notes().trim();
+      const text = keptText(notesFile, { links: true }).trim();
       // Setup's blocks (the user's chosen names) count; the bare placeholder doesn't.
       if (text.replace(PLACEHOLDER, "").replace(/^#\s*User\s*$/m, "").trim()) parts.push(`Notes (${notesFile}, full file):\n<user_notes>\n${text.length > NOTES_LIMIT ? text.slice(0, NOTES_LIMIT) + "\n…" : text}\n</user_notes>`);
       const logs = dailyLogs(), day = today(now);
       const current = logs.find(log => log.day === day && log.file.startsWith(dailyLogsRoot + path.sep));
       if (current) {
-        const body = readText(current.file).trim();
+        const body = keptText(current.file).trim();
         if (body) parts.push(`Today's log (${current.file}):\n${body.length > CONTEXT_TODAY ? body.slice(0, CONTEXT_TODAY) + "\n…" : body}`);
       }
       const earlier = logs.filter(log => log !== current).slice(0, CONTEXT_DAILY_LOGS)
-        .map(log => ({ ...log, summary: logSummary(readText(log.file)) })).filter(log => log.summary);
+        .map(log => ({ ...log, summary: logSummary(keptText(log.file)) })).filter(log => log.summary);
       if (earlier.length) parts.push("Earlier days (summaries; the full logs are in those files):\n" + earlier.map(log => `- ${log.day} (${log.file}): ${log.summary}`).join("\n"));
       return parts.length ? parts.join("\n\n") : null;
     },
@@ -367,6 +402,7 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
       const base = path.join(importsRoot, source), destination = path.resolve(base, String(relative || ""));
       if (!/^[a-z0-9-]+$/.test(source) || !within(base, destination) || destination === base || !MEMORY_FILE.test(destination)) throw fail(400, "An imported file is outside its folder.");
       writeAtomic(destination, data);
+      forgetImported();
     },
     // A day's log for the memory writer: { day, file, text }.
     dailyLog(day = today()) {

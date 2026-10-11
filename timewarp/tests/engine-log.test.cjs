@@ -8,8 +8,8 @@ const { createLog } = require("../app/main/log.cjs");
 
 test("the app log writes tagged lines, keeps one older file and returns its tail", t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tw-log-"));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const log = createLog(path.join(directory, "logs"), { now: () => new Date("2026-10-09T10:00:00Z") });
+  t.after(() => { log.close(); fs.rmSync(directory, { recursive: true, force: true }); });
   log.info("startup", "Timewarp starting", { platform: "win32" });
   log.warn("codex:app-server:stderr", "line\nwith  breaks");
   assert.deepEqual(log.tail(5), [
@@ -20,6 +20,25 @@ test("the app log writes tagged lines, keeps one older file and returns its tail
   for (let index = 0; index < 3000; index++) log.info("turn", big);
   assert.ok(fs.existsSync(path.join(directory, "logs", "main.1.log")), "The log rotates");
   assert.ok(fs.statSync(path.join(directory, "logs", "main.log")).size <= 5 * 1024 * 1024);
+});
+
+test("each line is in the file as soon as it's logged, so a crash or quit loses none", t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tw-log-"));
+  const log = createLog(directory, { now: () => new Date("2026-10-11T10:00:00Z") });
+  t.after(() => { log.close(); fs.rmSync(directory, { recursive: true, force: true }); });
+  const read = () => fs.readFileSync(path.join(directory, "main.log"), "utf8");
+  log.error("main", "Uncaught error: boom");
+  assert.equal(read(), "2026-10-11T10:00:00.000Z [error] [main] Uncaught error: boom\n");
+  log.warn("codex:app-server:stderr", "second");
+  assert.match(read(), /\[codex:app-server:stderr\] second\n$/);
+  // Closing (or rotating) and writing again carries on in the same file.
+  log.close();
+  log.info("shutdown", "Timewarp quit");
+  assert.equal(read().split("\n").filter(Boolean).length, 3);
+  // A process that is killed right after logging still leaves the line.
+  const script = `const log = require(${JSON.stringify(require.resolve("../app/main/log.cjs"))}).createLog(${JSON.stringify(directory)}); log.error("main", "Last words"); process.kill(process.pid, "SIGKILL");`;
+  require("node:child_process").spawnSync(process.execPath, ["-e", script]);
+  assert.match(read(), /\[error\] \[main\] Last words\n$/);
 });
 
 test("web addresses reach the log as their origin only, from console lines and process warnings", () => {
@@ -57,8 +76,8 @@ test("every log line is cleaned where it is written: addresses to their origin, 
   assert.equal(redact("jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9P"), "jwt [redacted]");
   assert.equal(redact("mode=enabled tokens=12 keyPath=mcp_servers.x"), "mode=enabled tokens=12 keyPath=mcp_servers.x", "ordinary values stay");
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tw-log-"));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const log = createLog(directory, { now: () => new Date("2026-10-10T10:00:00Z") });
+  t.after(() => { log.close(); fs.rmSync(directory, { recursive: true, force: true }); });
   // Codex's stderr and renderer errors reach the log directly, not through the console.
   log.warn("codex:app-server:stderr", "GET https://api.example.com/v1/x?token=abc123456 failed", { url: "https://mcp.example.com/sse?key=zzzzzzzz", durationMs: 1200 });
   assert.deepEqual(log.tail(1), ['2026-10-10T10:00:00.000Z [warn] [codex:app-server:stderr] GET https://api.example.com failed {"url":"https://mcp.example.com","durationMs":1200}']);

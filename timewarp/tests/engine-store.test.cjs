@@ -141,6 +141,94 @@ test("chat lists carry the latest message for the activity feed, as before", t =
   assert.equal(store.conversations.list("u1")[0].lastText, "Next question");
 });
 
+test("an existing database upgrades: thread lookups use an index, and its messages are found by search", t => {
+  const { DatabaseSync } = require("node:sqlite");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-store-"));
+  const file = path.join(root, "timewarp.sqlite");
+  let store = openStore(file);
+  t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
+  const chat = store.conversations.create({ ownerId: "u1", agentId: agent.id, title: "Trip", codexThreadId: "thread-1" });
+  store.messages.append({ id: "m1", conversationId: chat.id, authorId: "u1", text: "Book the hotel in Zürich" });
+  store.close();
+  // The database as version 5 left it.
+  const raw = new DatabaseSync(file);
+  raw.exec(`drop index conversations_thread; drop table history_sync; drop table history_entries; drop table history_changed; drop table message_search; drop table search_pending;
+    drop trigger messages_search_insert; drop trigger messages_search_text; drop trigger messages_search_delete;
+    drop trigger history_message_insert; drop trigger history_message_update; drop trigger history_message_delete; drop trigger history_conversation_update; drop trigger history_agent_update; update meta set value = '5' where key = 'schema'`);
+  raw.close();
+  store = openStore(file);
+  assert.equal(store.db.prepare("select value from meta where key = 'schema'").get().value, "7");
+  assert.equal(store.db.prepare("pragma synchronous").get().synchronous, 1, "synchronous = normal");
+  assert.match(store.db.prepare("explain query plan select * from conversations where codex_thread_id = ?").all("x").map(row => row.detail).join(), /conversations_thread/);
+  assert.equal(store.conversations.byThread("thread-1").id, chat.id);
+  assert.deepEqual(store.conversations.search("u1", "zurich").messages.map(item => item.messageId), ["m1"]);
+  assert.equal(store.db.prepare("select count(*) n from search_pending").get().n, 0, "Search indexed the waiting messages");
+  // A message written without this store (an older version) is found too.
+  store.db.prepare("insert into messages(id, conversation_id, seq, author_id, created_at, text) values ('m2', ?, 2, 'u1', ?, 'Train to Zurich at nine')").run(chat.id, new Date().toISOString());
+  assert.deepEqual(store.conversations.search("u1", "zurich").messages.map(item => item.messageId).sort(), ["m1", "m2"]);
+  store.db.prepare("update messages set text = 'Train to Basel' where id = 'm2'").run();
+  assert.deepEqual(store.conversations.search("u1", "zurich").messages.map(item => item.messageId), ["m1"]);
+  assert.deepEqual(store.conversations.search("u1", "basel").messages.map(item => item.messageId), ["m2"]);
+});
+
+test("queued messages are indexed in the background in small commits, and closing the store stops it", t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-store-"));
+  const file = path.join(root, "timewarp.sqlite");
+  let store = openStore(file);
+  t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
+  const chat = store.conversations.create({ ownerId: "u1", agentId: agent.id });
+  store.transaction(() => { for (let index = 0; index < 1000; index++) store.messages.append({ conversationId: chat.id, authorId: "u1", text: "Message " + index }); });
+  store.messages.append({ id: "last", conversationId: chat.id, authorId: "u1", text: "Meet in Zürich" });
+  const pending = () => store.db.prepare("select count(*) n from search_pending").get().n;
+  // Closed before its backlog starts: nothing runs later.
+  store.close();
+  store = openStore(file);
+  store.close();
+  t.mock.timers.tick(10000);
+  store = openStore(file);
+  assert.equal(pending(), 1001);
+  t.mock.timers.tick(4999);
+  assert.equal(pending(), 1001, "Not during start-up");
+  // At most 400 a commit (fewer when a commit takes over 10 ms).
+  t.mock.timers.tick(1);
+  const first = pending();
+  assert.ok(first >= 601 && first < 1001, String(first));
+  t.mock.timers.tick(20);
+  assert.ok(pending() >= first - 400 && pending() < first);
+  assert.deepEqual(store.conversations.search("u1", "zurich").messages.map(item => item.messageId), ["last"], "A search indexes what is left first");
+  assert.equal(pending(), 0);
+  t.mock.timers.tick(1000);
+});
+
+test("statements are prepared once", t => {
+  const { store } = tempStore(t);
+  const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
+  store.conversations.create({ ownerId: "u1", agentId: agent.id, codexThreadId: "thread-1" });
+  store.conversations.byThread("thread-1");
+  const prepare = store.db.prepare;
+  let prepared = 0;
+  store.db.prepare = sql => { prepared++; return prepare.call(store.db, sql); };
+  for (let index = 0; index < 5; index++) { store.conversations.byThread("thread-1"); store.settings.set("key", index); store.settings.get("key"); }
+  assert.equal(prepared, 2, "Only settings.set's and settings.get's statements are new");
+});
+
+test("the unread count is that of the chats the sidebar lists", t => {
+  const { store } = tempStore(t);
+  const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });
+  const at = index => new Date(Date.UTC(2026, 0, 1) + index * 60000).toISOString();
+  store.transaction(() => {
+    for (let index = 0; index < 530; index++) store.conversations.create({ ownerId: "u1", agentId: agent.id, read: index % 3 !== 0, lastActivityAt: at(index), archivedAt: index % 50 === 1 ? at(index) : null });
+    store.conversations.create({ ownerId: "u2", agentId: agent.id, read: false });
+  });
+  assert.equal(store.conversations.unreadCount("u1"), store.conversations.list("u1").filter(item => !item.read).length);
+  assert.ok(store.conversations.unreadCount("u1") < store.conversations.list("u1", { limit: 1000 }).filter(item => !item.read).length, "Older chats past the list aren't counted, as before");
+  assert.equal(store.conversations.unreadCount("u2"), 1);
+  assert.equal(store.conversations.unreadCount("nobody"), 0);
+});
+
 test("turn usage is the growth of the thread's totals", t => {
   const { store } = tempStore(t);
   const agent = store.agents.create({ ownerId: "u1", name: "Orbit", workspace: "/w/orbit" });

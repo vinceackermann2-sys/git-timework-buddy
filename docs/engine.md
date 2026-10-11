@@ -17,7 +17,7 @@ shipping (see [Before shipping](#before-shipping)).
 | Agent harness | OpenAI Codex app server (official `@openai/codex` 0.160.1, Apache-2.0) over its documented JSON-RPC protocol |
 | Built-in browser and agent browser tools | Electron `WebContentsView` and its in-process debugger (`app/main/browser.cjs`, `browser-tools.cjs`) |
 | Timewarp's agent tools (browser, vault, automations, chats) | MCP servers on the local bridge (`app/main/tool-server.cjs`), so every agent thread, workers included, has them; Codex settings in `app/main/codex-config.cjs` |
-| File previews | pdf.js, ExcelJS, JSZip, highlight.js, markdown-it, loaded on demand |
+| File previews | pdf.js, ExcelJS, JSZip and highlight.js, loaded on demand; markdown-it |
 | Display font | Quadrant Text (Matter of Sorts), the same file the previous app and the website use, from `store-assets/fonts` |
 | Local data | Built-in SQLite (`node:sqlite`) in the existing profile |
 | Account, billing, organizations, onboarding screens, connectors, chat sync | Timewarp modules in `timewarp/desktop` and `timewarp/shared` |
@@ -53,6 +53,7 @@ From `timewarp`:
     npm run engine:package:mac:draft # macOS DMGs, on a Mac (or the engine-mac workflow)
     npm run engine:smoke -- <app>    # smoke test a packaged app (Windows or macOS)
     npm run engine:bench             # speed comparison with the previous app (Windows)
+    npm run engine:perf -- <app>     # speed of a preview build as users meet it, with the real cloud's latency (Speed and memory)
     npm run engine:eval -- --launch build/engine-<name>/app --disposable  # live model tasks (see Live model evaluation)
 
 Preview mode is compiled only into `--fixture` development builds and is
@@ -111,13 +112,13 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Warm chat session on open | Energy | Same |
 | Attachments | Files, drag and drop, paste | Same: images to the model, other files copied into the agent's workspace; files can be dropped on the chat or Home and pasted into the composer (up to 10, 100 MB each) |
 | Dictation | Cloud transcription; Retry after a failure; Transcribe and send; level meter | Same service and controls: a failed transcription keeps the recording for Retry |
-| Chat history sync, restore, Privacy Mode | Timewarp sync | Same format and service |
+| Chat history sync, restore, Privacy Mode | Timewarp sync | Same format and service. What sync knew of each chat is kept between launches, so a launch fetches and sends only chats that changed (the previous app fetched and sent every chat at each start, since the cloud's reordered keys made every chat look changed) |
 | Built-in browser (tabs, profiles, recent sites, downloads) | Energy browser | Rebuilt on `WebContentsView` with the same tab strip and toolbar; searches go to Google and pages see a Chrome user agent. Settings → Browser and setup list the Chrome, Edge, Brave and Vivaldi profiles on the computer to import; profiles are renamed and removed in Settings → Browser and chosen from the chat's profile button, which reopens the chat's pages in that profile. Agents link the tabs they open (`timewarp://conversation/…/browser/…`); the link opens the tab in the pane. The previous app's browser profiles are imported once and keep their storage, so sites stay signed in, and its open tabs come back once with their pins and back/forward pages. Pop-ups (such as "Sign in with Google" and PayPal) open as tabs that keep their link to the page that opened them; Google's sign-in page gets the app's own user agent, as before. A page's alert, confirm and prompt never block: in the user's tab on screen they show as a dialog, beforeunload asks "Leave site?", and in a hidden tab they're dismissed as Chrome does. Right-click offers spelling suggestions, open or copy a link, copy an image, cut, copy, paste, select all, back, forward, reload and "Open page in default browser". Camera and microphone are asked per site in the user's own tab (an Allow is remembered per profile); pages can't show notifications, read the clipboard or use the location. Tabs can be pinned from the tab's menu. Background tabs sleep after 16 open pages, but never while on screen, pinned, loading, playing media, edited, showing a dialog, downloading, a pop-up or its opener, or used by an agent, and they wake with their back/forward history. The home button opens a separate home tab instead of replacing the page. Removing a profile deletes its storage folder |
 | Agent browser control, agent cursor, take over / hand back | agent-browser and Timewarp cursor | Rebuilt as in-process tools (open, snapshot with link addresses and focus, click including double click and checkboxes, type into a field or the focused element, press keys and combinations such as Control+A or Shift+Tab, scroll, read a page, an element's attribute or another address without leaving the tab, screenshot, tabs, back, forward, wait for text, an address or a load, close, choose from dropdowns, hover, upload from the workspace, answer a page's dialog); a page dialog never stalls an agent: an alert is reported, a confirm or prompt waits for the agent's answer up to 60 s; key presses reach background and worker tabs too (they're laid out off screen, with in-page fallbacks when the window is minimized); cursor in the page; take over supported; works with the pane closed (and on macOS with the window closed). Snapshots and actions reach into frames, including other sites' frames such as hosted card forms. Files an agent downloads go to `downloads` in its workspace without a Save dialog, and the next tool result names them |
 | Files view and previews (PDF, Excel, CSV, Word, images, code, markdown) | Energy UI | Rebuilt as a tree that remembers open folders, with Search files and closable file tabs, remembered per chat; refreshes as the agent works. Programs and scripts an agent wrote don't open from Files (Show in folder instead), as with chat cards |
 | Vault (sign-ins, cards, secrets, agent access, fill without revealing values) | Energy vault | Rebuilt; the previous vault's sign-ins, cards and secrets import once after sign-in, the newest copy of a duplicate winning, with every agent's access unless the previous app had it turned off (items the key store can't open are retried at later starts, up to five times; cards that fail the checksum are kept); each item is sealed together with its kind, site and username, so an edited database row fails its integrity check instead of filling elsewhere; notes, cardholder and expiry are encrypted, only the label, site, username and a card's brand and last four digits are readable; a sign-in fills on the same protocol, port and host (ignoring "www."), as before; cards and secrets need permission each time; passwords fill only into password fields, never into new-password fields; a card fill checks each field (choosing list options, two- or four-digit years) and reports any it couldn't fill; values filled from the vault are hidden from every browser tool result, including page addresses, and a page showing a filled value, whether in its field, copied elsewhere on the page or shown again after a reload, isn't captured by screenshots; sign-ins for plain-http sites (routers, NAS, intranet) are kept and fill only on the same protocol; address-bar fill; password import from browser CSV exports; card security codes are never stored, as before |
 | Passkeys | Energy (macOS 13.3+) | Not carried over |
-| Memory (notes, daily logs, background memory writer, imports from ChatGPT / Codex, Claude, Cursor; Enabled, Read only, Write only or None) | Energy memory, kept in a Git store per user (`runtime/personal-memory`) | Rebuilt on `memories/user.md`, `memories/daily-logs` and `memories/imports`. The previous app's memory store is read once per user without Git (`legacy-memory.cjs`, never modified): its notes replace placeholder notes, other files go to `imports/timewarp-previous`. Each turn carries the full notes, today's log and the last seven days' summaries. A background writer (`memory-writer.cjs`) updates the notes and the daily log after a chat has been idle four minutes, one job at a time on the funding source's small model; it is skipped in Privacy Mode and when memory is read only or off, and refuses rewrites that would drop most of the notes. The memory folder (when it may be written) and the skills folder are writable for agents without a review. Imports find the same memory files, skills (including skills linked in by skill installers) and MCP servers (Codex `config.toml`, Claude Code including `~/.claude/.mcp.json`, Claude's desktop app, Cursor) on Windows and macOS; a Cursor project folder can be chosen |
+| Memory (notes, daily logs, background memory writer, imports from ChatGPT / Codex, Claude, Cursor; Enabled, Read only, Write only or None) | Energy memory, kept in a Git store per user (`runtime/personal-memory`) | Rebuilt on `memories/user.md`, `memories/daily-logs` and `memories/imports`. The previous app's memory store is read once per user without Git (`legacy-memory.cjs`, never modified): its notes replace placeholder notes, other files go to `imports/timewarp-previous`. Each turn carries the full notes, today's log and the last seven days' summaries. A background writer (`memory-writer.cjs`) updates the notes and the daily log after a chat has been idle four minutes, one job at a time on the funding source's small model (titles have their own queue, so a long memory job never holds up a new chat's title); it is skipped in Privacy Mode and when memory is read only or off, and refuses rewrites that would drop most of the notes. The memory folder (when it may be written) and the skills folder are writable for agents without a review. Imports find the same memory files, skills (including skills linked in by skill installers) and MCP servers (Codex `config.toml`, Claude Code including `~/.claude/.mcp.json`, Claude's desktop app, Cursor) on Windows and macOS; a Cursor project folder can be chosen |
 | Skills (list, enable, import, view) | Codex skills | Same; previously connected skill folders stay available. The previous app's built-in browser, vault and memory-writer skills (for its browser command, vault and memory writer) are turned off once, since Timewarp's own tools replace them; they can be turned on again |
 | Chat tools for agents (find chats, search messages, read a chat) | Built-in tools | Same, read-only, over the user's chats that aren't archived; a chat can be read around a message or a time |
 | Reactions, thread replies, report-an-issue and open tools for agents | Built-in tools | Not carried over |
@@ -224,14 +225,19 @@ user had asked for.
 Open:
 
 - Every request carries about 18,000 tokens of instructions and tool
-  descriptions, and the cloud bills cached input at the full input price, so
-  on Sol a one-line answer costs about 1.4 credits and a short browser task
-  about 10.
-- The cloud runs and bills Codex's approval reviews (`codex-auto-review`) as
-  Sol whatever the chat's model, and reserves each call's worst case (the
-  request's size as cache writes plus 16,384 output tokens: 11–16 credits on
-  Sol). With less than that left a call fails with "Not enough unreserved AI
-  credits", and a failed review stops the run.
+  descriptions. Cached input is billed at the cache rate, but the first
+  request of every chat found nothing cached, since Codex's cache key is per
+  chat: on Sol a one-line answer cost about 1.4 credits and a short browser
+  task about 10. Since 11 October the cloud keys the cache per account and
+  model, and Claude's tools and base prompt have a cache breakpoint of their
+  own, so a new chat reads what earlier chats cached.
+- Codex's approval reviews (`codex-auto-review`) ran on Sol whatever the
+  chat's model; since 11 October they run on GPT-5.6 Luna with at most 4,096
+  output tokens. Each call reserves its worst case (the request's size as
+  cache writes plus its output allowance; images count by their size in
+  pixels, not their bytes, since 11 October). With less than that left a call
+  fails with "Not enough unreserved AI credits", and a failed review stops the
+  run.
 - On the reference PC (Windows 11 build 26300, Acronis Active Protection)
   Codex's restricted-token sandbox stalls every command, inside and outside
   the Claude app's container and with Codex 0.160.1 and 0.162; Windows' app
@@ -270,6 +276,37 @@ build (Energy 0.8.20 runtime, Electron 43.7.7). Engine: packaged draft.
 Model inference itself is the same for both: the same cloud function and
 models. The first launch after installing is slower for both while Windows
 scans the new files.
+
+The bench answers cloud calls at once, which hides the waits users have.
+`npm run engine:perf -- <preview build>` drives the interface of a preview
+build whose cloud calls each wait 280 ms, as long as a round trip from the
+reference PC to the cloud function (Stockholm to Frankfurt). Before and after
+the speed work of 11 October, 5-run medians on the reference PC, development
+builds:
+
+| | Before | After |
+| --- | --- | --- |
+| Launch to the main screen | 2,022 ms | 1,089 ms |
+| New chat from Home: Enter to first word | 2,117 ms | 826 ms |
+| Follow-up: Enter to first word | 1,148 ms | 880 ms |
+| Cloud calls before the first word | 3–4 (`/billing` before each thread start, turn start and model request) | 1 (the model request) |
+| A long reply streaming into a long chat: the window's script time | 1,600 ms (1,088 ms in a release build) | 821 ms (about 100 ms in a release build) |
+| Short browser task (open, read, click) | 4,253 ms | 2,044 ms |
+| Memory after start (working set / private) | 472–616 / 287–318 MB | 436–470 / 287–300 MB |
+
+What changed: the AI funding balance is kept for 30 seconds instead of
+fetched before every step (a balance that would refuse usage is always read
+again, and the cloud still enforces credits); a new chat started from Home
+takes a Codex thread prepared while the user types; connected apps load when
+a chat opens; titles no longer wait behind memory jobs; streamed text is drawn
+once per frame and only the unfinished end of a reply is parsed again;
+highlight.js and the signed-in interface load after the sign-in screen; the
+browser tools wait for a page to settle instead of fixed pauses (a click that
+changes nothing takes about 175 ms instead of about 1 s); large model requests
+go compressed; the database syncs at checkpoints (WAL with `synchronous =
+normal`), keeps prepared statements and indexes chats by Codex thread; message
+search reads a trigram index built in the background (results unchanged); and
+history sync keeps what it knew between launches.
 
 ## Platforms
 

@@ -1,7 +1,7 @@
-import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, ExternalLink, File, FileText, Folder, FolderOpen, Image, Search, Sheet, X } from "lucide-react";
-import hljs from "highlight.js/lib/common";
 import { call, useEvent } from "../api.js";
+import { useHighlighter } from "../highlighter.js";
 import { Markdown } from "../markdown.jsx";
 import { useToast } from "./common.jsx";
 
@@ -19,10 +19,15 @@ function iconFor(entry) {
   return <File size={15} />;
 }
 
+// Plain until highlight.js has loaded, and highlighted once per file.
+const escape = text => text.replace(/[&<>]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]);
 function Code({ text, language }) {
-  let html;
-  try { html = language && hljs.getLanguage(language) ? hljs.highlight(text, { language, ignoreIllegals: true }).value : hljs.highlightAuto(text.slice(0, 200000)).value; }
-  catch { html = text.replace(/[&<>]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]); }
+  const hljs = useHighlighter();
+  const html = useMemo(() => {
+    if (!hljs) return escape(text);
+    try { return language && hljs.getLanguage(language) ? hljs.highlight(text, { language, ignoreIllegals: true }).value : hljs.highlightAuto(text.slice(0, 200000)).value; }
+    catch { return escape(text); }
+  }, [hljs, text, language]);
   return <pre className="tw-code-view"><code className="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>;
 }
 
@@ -87,16 +92,27 @@ export function Files({ agent, files = { open: [], active: null }, onChange, ope
   const latest = useRef(files);
   latest.current = files;
   const update = next => onChange?.({ open: next.open, active: next.active });
-  const list = dir => call("files.list", { agentId: agent.id, path: dir }).then(value => setListings(current => ({ ...current, [dir]: value })))
+  // A folder read again as it was keeps its listing, so the tree isn't drawn again.
+  const list = dir => call("files.list", { agentId: agent.id, path: dir }).then(value => setListings(current => current[dir] && JSON.stringify(current[dir]) === JSON.stringify(value) ? current : { ...current, [dir]: value }))
     .catch(error => { if (dir) { setExpanded(current => { const next = new Set(current); next.delete(dir); writeJson(expandedKey, [...next]); return next; }); } else toast(error, "error"); });
   useEffect(() => { setListings({}); void list(""); for (const dir of expanded) void list(dir); }, [agent.id]);
   // Files the agent creates or changes show up without reopening the folder.
+  // Only the agent's own chats work in its workspace; each chat's agent is
+  // looked up once (unknown when that fails, which refreshes as before).
   const refresh = useRef(null);
-  useEvent("conversation.event", ({ method, params }) => {
+  const owners = useRef(new Map());
+  const ownerOf = conversationId => {
+    if (!owners.current.has(conversationId)) owners.current.set(conversationId, call("conversations.get", { id: conversationId }).then(value => value?.agentId ?? null, () => { owners.current.delete(conversationId); return undefined; }));
+    return owners.current.get(conversationId);
+  };
+  useEvent("conversation.event", ({ conversationId, method, params }) => {
     const changed = method === "turn/completed" || (method === "item/completed" && ["fileChange", "commandExecution"].includes(params?.item?.type));
     if (!changed) return;
-    clearTimeout(refresh.current);
-    refresh.current = setTimeout(() => { void list(""); for (const dir of expanded) void list(dir); }, 400);
+    void ownerOf(conversationId).then(owner => {
+      if (owner !== undefined && owner !== agent.id) return;
+      clearTimeout(refresh.current);
+      refresh.current = setTimeout(() => { void list(""); for (const dir of expanded) void list(dir); }, 400);
+    });
   });
   useEffect(() => () => clearTimeout(refresh.current), []);
   useEffect(() => {
