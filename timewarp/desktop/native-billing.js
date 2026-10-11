@@ -251,7 +251,7 @@ window.timewarpMountBilling = host => {
       const head = el('thead'), labels = el('tr'); for (const label of ['Activity', 'Date', 'Credits']) { const th = el('th', '', label); th.scope = 'col'; labels.append(th); } head.append(labels); table.append(head); const rows = el('tbody');
       for (const event of history.events.slice(0, 10)) {
         const row = el('tr'), detail = el('td'), delta = Number(event.delta_credits); detail.append(el('span', 'tw-activity-name', delta < 0 ? 'AI usage' : capitalized(String(event.kind || 'Credit adjustment').replace(/_/g, ' '))));
-        if (event.model) detail.append(el('span', 'tw-muted tw-activity-model', String(event.model).replace(/^openai\//, '')));
+        if (event.model) detail.append(el('span', 'tw-muted tw-activity-model', String(event.model).replace(/^(?:openai|anthropic)\//, '')));
         const time = el('time', '', date(event.occurred_at) || 'Unavailable'); if (date(event.occurred_at)) { time.dateTime = new Date(event.occurred_at).toISOString(); time.title = new Date(event.occurred_at).toLocaleString(); } const timestamp = el('td', 'tw-muted'); timestamp.append(time);
         const amount = el('td', 'tw-credit-delta' + (delta > 0 ? ' tw-credit-positive' : ''), Number.isFinite(delta) ? (delta > 0 ? '+' : delta < 0 ? '−' : '') + Math.abs(delta).toLocaleString(undefined, { maximumFractionDigits: 4 }) : 'Unavailable'); row.append(detail, timestamp, amount); rows.append(row);
       }

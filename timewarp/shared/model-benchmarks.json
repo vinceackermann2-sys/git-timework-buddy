@@ -1,0 +1,57 @@
+{
+  "source": "Artificial Analysis (artificialanalysis.ai), each model at its highest effort (Max), checked 2026-10-11. Evaluations: the ten Intelligence Index evaluations plus the three more every current model has (Harvey LAB, MLCR, Terminal-Bench Science); Artificial Analysis no longer publishes evaluation scores for deprecated models (GPT-5.6). Speed and prices from each model's page on the provider's own API. outputTokensMillions: output tokens written across the Intelligence Index. costPerTask: USD per Intelligence Index task.",
+  "models": {
+    "anthropic/claude-opus-5-5": {
+      "intelligenceIndex": 57.62,
+      "evaluations": { "briefcaseElo": 1807.05, "gdpvalElo": 1866.27, "automationBench": 0.6954, "terminalBench40": 0.596, "scicode": 0.669, "hle": 0.6135, "gdpPdf": 0.262, "critpt": 0.3171, "omniscience": 46.42, "lcr": 0.8467, "harveyLab": 0.0417, "mlcr": 0.6667, "terminalBenchScience": 0.5905 },
+      "tokensPerSecond": 97.0, "timeToFirstToken": 702.99, "outputTokensMillions": 259.9,
+      "pricePerMillion": { "input": 4, "output": 20, "cacheHit": 0.2 }, "costPerTask": 5.98
+    },
+    "anthropic/claude-sonnet-5-5": {
+      "intelligenceIndex": 56.0,
+      "evaluations": { "briefcaseElo": 1823, "gdpvalElo": 1837.82, "automationBench": 0.7177, "terminalBench40": 0.6364, "scicode": 0.61, "hle": 0.5496, "gdpPdf": 0.258, "critpt": 0.3143, "omniscience": 32.3, "lcr": 0.8267, "harveyLab": 0.0278, "mlcr": 0.75, "terminalBenchScience": 0.5333 },
+      "tokensPerSecond": 139.2, "timeToFirstToken": 486.23, "outputTokensMillions": 415.8,
+      "pricePerMillion": { "input": 2, "output": 10, "cacheHit": 0.1 }, "costPerTask": 5.46
+    },
+    "anthropic/claude-fable-5-1": {
+      "intelligenceIndex": 53.35,
+      "evaluations": { "briefcaseElo": 1674.62, "gdpvalElo": 1756.22, "automationBench": 0.5938, "terminalBench40": 0.5202, "scicode": 0.6308, "hle": 0.5913, "gdpPdf": 0.262, "critpt": 0.2971, "omniscience": 43.45, "lcr": 0.8533, "harveyLab": 0.0639, "mlcr": 0.7111, "terminalBenchScience": 0.4333 },
+      "tokensPerSecond": 66.8, "timeToFirstToken": 249.70, "outputTokensMillions": 188.5,
+      "pricePerMillion": { "input": 10, "output": 50, "cacheHit": 0.25 }, "costPerTask": 7.63
+    },
+    "anthropic/claude-haiku-5-5": {
+      "intelligenceIndex": 43.4,
+      "evaluations": { "briefcaseElo": 1577.1, "gdpvalElo": 1618.07, "automationBench": 0.3541, "terminalBench40": 0.3283, "scicode": 0.5498, "hle": 0.4439, "gdpPdf": 0.208, "critpt": 0.1886, "omniscience": 10.67, "lcr": 0.8267, "harveyLab": 0.0056, "mlcr": 0.6333, "terminalBenchScience": 0.2 },
+      "tokensPerSecond": 233.6, "timeToFirstToken": 305.80, "outputTokensMillions": 435.2,
+      "pricePerMillion": { "input": 0.1, "output": 0.5, "cacheHit": 0.01 }, "costPerTask": 0.21
+    },
+    "openai/gpt-6-astra": {
+      "intelligenceIndex": 52.67,
+      "evaluations": { "briefcaseElo": 1570.1, "gdpvalElo": 1573.9, "automationBench": 0.6849, "terminalBench40": 0.5909, "scicode": 0.5648, "hle": 0.5468, "gdpPdf": 0.31, "critpt": 0.3171, "omniscience": 43.4, "lcr": 0.8067, "harveyLab": 0.0861, "mlcr": 0.35, "terminalBenchScience": 0.6333 },
+      "tokensPerSecond": 59.1, "timeToFirstToken": 383.62, "outputTokensMillions": 60.0,
+      "pricePerMillion": { "input": 10, "output": 50, "cacheHit": 1 }, "costPerTask": 3.26
+    },
+    "openai/gpt-6.1-sol": {
+      "intelligenceIndex": 51.83,
+      "evaluations": { "briefcaseElo": 1557.24, "gdpvalElo": 1591.97, "automationBench": 0.6487, "terminalBench40": 0.5606, "scicode": 0.5417, "hle": 0.5292, "gdpPdf": 0.31, "critpt": 0.3171, "omniscience": 41.53, "lcr": 0.83, "harveyLab": 0.0694, "mlcr": 0.3389, "terminalBenchScience": 0.581 },
+      "tokensPerSecond": 62.7, "timeToFirstToken": 321.33, "outputTokensMillions": 67.2,
+      "pricePerMillion": { "input": 2, "output": 10, "cacheHit": 0.1 }, "costPerTask": 0.72
+    },
+    "openai/gpt-6-luna": {
+      "intelligenceIndex": 38.12,
+      "evaluations": { "briefcaseElo": 1336.38, "gdpvalElo": 1431.64, "automationBench": 0.5317, "terminalBench40": 0.1263, "scicode": 0.5463, "hle": 0.3851, "gdpPdf": 0.228, "critpt": 0.1943, "omniscience": 0.65, "lcr": 0.8333, "harveyLab": 0.0333, "mlcr": 0.1611, "terminalBenchScience": 0.0857 },
+      "tokensPerSecond": 138.4, "timeToFirstToken": 101.52, "outputTokensMillions": 144.4,
+      "pricePerMillion": { "input": 0.1, "output": 0.5, "cacheHit": 0.01 }, "costPerTask": 0.07
+    },
+    "openai/gpt-5.6-sol": {
+      "intelligenceIndex": 47,
+      "tokensPerSecond": 87.5, "timeToFirstToken": 111.40, "outputTokensMillions": 90,
+      "pricePerMillion": { "input": 4, "output": 20, "cacheHit": 0.4 }, "costPerTask": 1.99
+    },
+    "openai/gpt-5.6-luna": {
+      "intelligenceIndex": 37,
+      "tokensPerSecond": 115.0, "timeToFirstToken": 98.43, "outputTokensMillions": 150,
+      "pricePerMillion": { "input": 0.2, "output": 1.2, "cacheHit": 0.02 }, "costPerTask": 0.18
+    }
+  }
+}

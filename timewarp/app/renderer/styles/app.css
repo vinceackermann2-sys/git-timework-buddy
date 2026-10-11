@@ -318,14 +318,17 @@ a { color: var(--accent-strong); }
 .tw-mp-thinking { padding: 14px 12px 12px; }
 .tw-mp-heading { display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; align-items: start; gap: 8px; margin-bottom: 18px; }
 .tw-mp-heading svg { width: 18px; height: 18px; }
-/* The bolt is the Fast switch: lit and filled while Fast is on, dimmed for models without it */
+/* Fast's own blue, for the bolt, the trigger, the Speed button and the slider */
+.tw-model-anchor { --tw-fast: #3a83f7; }
+/* The bolt is the Fast switch: lit, filled and blue while Fast is on, dimmed for models without it */
 .tw-mp-bolt { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; background: transparent; border: 0; border-radius: 5px; color: var(--color-muted-foreground); cursor: pointer; transition: color 150ms ease, background-color 150ms ease; }
 .tw-mp-bolt:hover:not([aria-disabled="true"]) { background: var(--color-accent); color: var(--color-foreground); }
-.tw-mp-bolt[aria-pressed="true"], .tw-mp-bolt[aria-pressed="true"]:hover { color: var(--timewarp-accent-ink); }
-.tw-mp-bolt[aria-pressed="true"] svg { fill: currentColor; }
+.tw-mp-bolt[aria-pressed="true"], .tw-mp-bolt[aria-pressed="true"]:hover { color: var(--tw-fast); }
+.tw-mp-bolt[aria-pressed="true"] svg { fill: currentColor; filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tw-fast) 55%, transparent)); animation: tw-mp-zap 420ms cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes tw-mp-zap { from { transform: scale(.6) rotate(-14deg); } 60% { transform: scale(1.22) rotate(4deg); } }
 .tw-mp-bolt[aria-disabled="true"] { opacity: .4; cursor: default; }
 .tw-mp-bolt:focus-visible, .tw-mp-reset:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 1px; }
-.tw-model-speed[data-fast] { display: inline-flex; align-items: center; gap: 2px; color: var(--timewarp-accent-ink); font-weight: 500; }
+.tw-model-speed[data-fast] { display: inline-flex; align-items: center; gap: 2px; color: var(--tw-fast); font-weight: 500; }
 .tw-pill.model .tw-model-speed[data-fast] svg { width: 11px; height: 11px; color: inherit; fill: currentColor; }
 .tw-mp-labels { display: flex; flex-direction: column; align-items: center; min-width: 0; gap: 2px; }
 .tw-mp-level { color: var(--timewarp-accent-ink); font-weight: 600; font-size: 16px; line-height: 22px; }
@@ -338,9 +341,31 @@ a { color: var(--accent-strong); }
 .tw-mp-slider { position: relative; height: 30px; border-radius: 999px; background: color-mix(in srgb, var(--color-muted-foreground) 18%, var(--color-background)); }
 .tw-mp-track { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; }
 .tw-mp-fill, .tw-mp-thumb { position: absolute; inset: 0 17px; pointer-events: none; transform: translateX(var(--tw-progress)); transition: transform 240ms cubic-bezier(.22, 1, .36, 1); }
-.tw-mp-fill::before { content: ""; position: absolute; right: 100%; height: 100%; width: calc(100% + 17px); border-radius: 999px; background: var(--color-primary); }
+.tw-mp-fill::before { content: ""; position: absolute; right: 100%; height: 100%; width: calc(100% + 17px); border-radius: 999px; background-color: var(--color-primary); transition: background-color 300ms ease; }
 .tw-mp-thumb { z-index: 1; }
-.tw-mp-thumb::after { content: ""; position: absolute; left: 0; top: -2px; transform: translateX(-50%); width: 34px; height: 34px; box-sizing: border-box; border: 1px solid #00000018; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px #00000026; }
+.tw-mp-thumb::after { content: ""; position: absolute; left: 0; top: -2px; transform: translateX(-50%); width: 34px; height: 34px; box-sizing: border-box; border: 1px solid #00000018; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px #00000026; transition: box-shadow 300ms ease; }
+/* Fast: the fill turns blue, sparkles stream backwards through it as if it
+   were racing ahead, and a flash of light sweeps across as Fast turns on. */
+.tw-mp-slider[data-fast] .tw-mp-fill::before { background-color: var(--tw-fast); }
+.tw-mp-slider[data-fast] .tw-mp-thumb::after { box-shadow: 0 1px 4px #00000026, 0 0 0 4px color-mix(in srgb, var(--tw-fast) 22%, transparent); }
+.tw-mp-slider[data-fast] .tw-mp-dots span[data-filled="true"] { background: #ffffff59; }
+.tw-mp-sparks { position: absolute; right: 100%; height: 100%; width: calc(100% + 17px); border-radius: 999px; overflow: hidden; opacity: 0; transition: opacity 300ms ease;
+  background: linear-gradient(100deg, #fff0 35%, #ffffff8c 50%, #fff0 65%) no-repeat 250% 0 / 60% 100%; }
+.tw-mp-slider[data-fast] .tw-mp-sparks { opacity: 1; animation: tw-mp-boost 700ms ease-out; }
+.tw-mp-sparks::before, .tw-mp-sparks::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; right: -96px; background-repeat: repeat-x; }
+.tw-mp-sparks::before {
+  background-image: radial-gradient(circle at 9px 9px, #fff 0 1.3px, #fff0 2.4px), radial-gradient(circle at 31px 21px, #d6e6ff 0 1px, #d6e6ff00 2px), radial-gradient(circle at 52px 12px, #fff 0 .8px, #fff0 1.8px),
+    radial-gradient(circle at 70px 23px, #b7d2fd 0 1.4px, #b7d2fd00 2.6px), radial-gradient(circle at 86px 6px, #fff 0 .7px, #fff0 1.6px);
+  background-size: 96px 30px; }
+.tw-mp-sparks::after { right: -64px; opacity: .8;
+  background-image: radial-gradient(circle at 14px 17px, #fff 0 .9px, #fff0 2px), radial-gradient(circle at 40px 7px, #cfe0fe 0 1.1px, #cfe0fe00 2.2px), radial-gradient(circle at 55px 25px, #fff 0 .6px, #fff0 1.5px);
+  background-size: 64px 30px; }
+.tw-mp-slider[data-fast] .tw-mp-sparks::before { animation: tw-mp-stream 1.6s linear infinite; }
+.tw-mp-slider[data-fast] .tw-mp-sparks::after { animation: tw-mp-stream-near .9s linear infinite, tw-mp-twinkle 1.3s ease-in-out infinite alternate; }
+@keyframes tw-mp-stream { to { transform: translateX(-96px); } }
+@keyframes tw-mp-stream-near { to { transform: translateX(-64px); } }
+@keyframes tw-mp-twinkle { from { opacity: .35; } to { opacity: .9; } }
+@keyframes tw-mp-boost { from { background-position: -150% 0; } to { background-position: 250% 0; } }
 .tw-mp-slider[data-dragging="true"] .tw-mp-thumb, .tw-mp-slider[data-dragging="true"] .tw-mp-fill { transition: none; }
 .tw-mp-slider input { position: relative; z-index: 2; display: block; appearance: none; width: 100%; height: 30px; margin: 0; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: grab; touch-action: none; }
 .tw-mp-slider input:active { cursor: grabbing; }
@@ -356,13 +381,25 @@ a { color: var(--accent-strong); }
 .tw-mp-speed-options { display: flex; flex-wrap: wrap; gap: 4px; }
 .tw-mp-speed-options button { flex: 1; padding: 6px 9px; border: 1px solid var(--color-border); border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
 .tw-mp-speed-options button[aria-pressed="true"] { border-color: var(--color-primary); background: var(--color-primary); color: var(--color-primary-foreground); }
+.tw-mp-speed-options button[data-fast][aria-pressed="true"] { border-color: var(--tw-fast); background: var(--tw-fast); color: #fff; }
 .tw-mp-speed-options button:disabled { opacity: .5; cursor: default; }
 .tw-mp-speed-description { margin: 8px 0 0; min-height: 16px; color: var(--color-muted-foreground); font-size: 11px; line-height: 16px; }
 .tw-mp-list-title { padding: 12px 12px 7px; color: var(--color-muted-foreground); font-size: 13px; }
 .tw-mp-list-heading { display: flex; flex-direction: column; gap: 2px; padding: 7px 12px 10px; }
 .tw-mp-list-heading span + span { color: var(--color-muted-foreground); font-size: 12px; }
-.tw-mp-options { max-height: min(360px, calc(100dvh - 160px)); overflow-y: auto; overscroll-behavior: contain; padding: 0 4px 5px; scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
+.tw-mp-options { max-height: min(460px, calc(100dvh - 160px), calc(var(--tw-mp-room, 100dvh) - 110px)); overflow-y: auto; overscroll-behavior: contain; padding: 0 4px 5px; scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
 .tw-mp-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 37px; padding: 7px 8px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.tw-mp-option-text { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+.tw-mp-option-check { flex: none; width: 18px; height: 18px; }
+/* Intelligence, speed and low cost, each a percentage of the best with a bar */
+.tw-mp-stats { display: grid; grid-template-columns: 1.3fr 1fr 1.1fr; gap: 10px; }
+.tw-mp-stat { position: relative; display: flex; justify-content: space-between; gap: 4px; padding-bottom: 6px; color: var(--color-muted-foreground); font-size: 10.5px; line-height: 14px; white-space: nowrap; }
+.tw-mp-stat b { color: var(--color-foreground); font-weight: 500; font-variant-numeric: tabular-nums; }
+.tw-mp-stat::before, .tw-mp-stat::after { content: ""; position: absolute; left: 0; bottom: 0; height: 3px; border-radius: 2px; }
+.tw-mp-stat::before { right: 0; background: color-mix(in srgb, var(--color-muted-foreground) 18%, transparent); }
+.tw-mp-stat::after { width: var(--tw-stat); background: var(--timewarp-accent-ink); }
+.tw-mp-stat[data-stat="speed"]::after { background: var(--tw-fast); }
+.tw-mp-stat[data-stat="cost"]::after { background: #22a06b; }
 .tw-mp-option[aria-checked="true"] { background: color-mix(in srgb, var(--theme-accent) 18%, var(--color-background)); }
 .tw-mp-option:hover, .tw-mp-option:focus-visible { background: var(--color-accent); }
 .tw-mp-option svg { width: 18px; height: 18px; flex-shrink: 0; }
@@ -371,7 +408,8 @@ a { color: var(--accent-strong); }
 .tw-mp-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px; color: var(--color-muted-foreground); }
 .tw-mp-status button { flex: none; padding: 4px 10px; border: 1px solid var(--color-border); border-radius: 7px; background: transparent; color: var(--color-foreground); font-size: 13px; cursor: pointer; }
 .tw-mp-status button:hover { background: var(--color-accent); }
-@media (prefers-reduced-motion: reduce) { .tw-mp-thumb, .tw-mp-fill { transition: none; } .tw-mp-panel { animation: none; } .tw-mp-panel[data-state="closed"] { display: none; } }
+@media (prefers-reduced-motion: reduce) { .tw-mp-thumb, .tw-mp-fill { transition: none; } .tw-mp-panel { animation: none; } .tw-mp-panel[data-state="closed"] { display: none; }
+  .tw-mp-slider[data-fast] .tw-mp-sparks, .tw-mp-slider[data-fast] .tw-mp-sparks::before, .tw-mp-slider[data-fast] .tw-mp-sparks::after, .tw-mp-bolt[aria-pressed="true"] svg { animation: none; } }
 .tw-menu.tw-tools-menu { padding-top: 0; }
 .tw-app-letter { display: inline-grid; place-items: center; border-radius: 4px; background: var(--selected); color: var(--muted); font-weight: 600; flex: none; }
 .tw-kbd { font: 11px var(--font-mono); color: var(--muted); }

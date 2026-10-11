@@ -14,11 +14,16 @@ function bindCodexFunding({client,chatgpt,funding,userId,cloudProvider='timewarp
     const role=params.agentRole||threads.get(params.threadId)?.role;
     const background=role===backgroundRole||model==='timewarp/background';
     const provider=state.source==='chatgpt'?'openai':cloudProvider;
-    const choices=state.source==='chatgpt'?await chatgpt.models():require('../shared/models.cjs').models();
+    const {models,codexModelName}=require('../shared/models.cjs');
+    const choices=state.source==='chatgpt'?await chatgpt.models():models({plan:state.plan});
     const preferred=background?(choices.find(item=>/(?:^|\/)gpt-[\d.]+-luna$/.test(item.id))||choices.find(item=>item.featured)||choices[0]):null;
-    const selected=require('../shared/model-capabilities.cjs').resolveModelSettings(choices,{name:preferred?.id||model,reasoningEffort:background?'low':params.effort??params.collaborationMode?.settings?.reasoning_effort??params.config?.model_reasoning_effort,serviceTier:background?null:params.serviceTier});
+    // A Claude model Codex already runs in Fast mode carries "-fast" (codexModelName).
+    const fast=state.source!=='chatgpt'&&/^anthropic\/.+-fast$/.test(model||'');
+    const selected=require('../shared/model-capabilities.cjs').resolveModelSettings(choices,{name:preferred?.id||(fast?model.slice(0,-5):model),reasoningEffort:background?'low':params.effort??params.collaborationMode?.settings?.reasoning_effort??params.config?.model_reasoning_effort,serviceTier:background?null:fast&&params.serviceTier==null?'priority':params.serviceTier});
     if(!selected)throw fail(503,'No supported model is available for this account.');
-    return {...params,model:selected.name,effort:selected.reasoningEffort,serviceTier:selected.serviceTier,...params.collaborationMode?{collaborationMode:{...params.collaborationMode,settings:{...params.collaborationMode.settings,model:selected.name,reasoning_effort:selected.reasoningEffort}}}:{},modelProvider:provider,config:{...params.config,model_provider:provider,model_reasoning_effort:selected.reasoningEffort}};
+    // Timewarp's Claude models take their speed in the name Codex sends.
+    const name=provider===cloudProvider?codexModelName(selected):selected.name;
+    return {...params,model:name,effort:selected.reasoningEffort,serviceTier:selected.serviceTier,...params.collaborationMode?{collaborationMode:{...params.collaborationMode,settings:{...params.collaborationMode.settings,model:name,reasoning_effort:selected.reasoningEffort}}}:{},modelProvider:provider,config:{...params.config,model_provider:provider,model_reasoning_effort:selected.reasoningEffort}};
   }
   client.request=async(method,params)=>{
     if(!['thread/start','thread/resume','thread/fork','turn/start','turn/steer'].includes(method))return raw(method,params);

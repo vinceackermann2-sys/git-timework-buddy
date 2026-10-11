@@ -48,14 +48,19 @@ test("the bolt turns Fast on and off and the trigger shows Fast", async t => {
   await ui.click(".tw-pill.model");
   assert.equal(ui.$(".tw-mp-bolt").getAttribute("aria-pressed"), "false");
   assert.equal(ui.$(".tw-mp-bolt").getAttribute("aria-disabled"), "false");
+  assert.equal(ui.$(".tw-mp-slider").dataset.fast, undefined);
+  assert.ok(ui.$(".tw-mp-fill .tw-mp-sparks"), "the fill carries the sparkles Fast shows");
   await ui.click(".tw-mp-bolt");
   assert.deepEqual(ui.selections.at(-1), { name: "gpt-6.1-sol", reasoningEffort: "high", serviceTier: "priority" }, "Fast keeps the effort");
   assert.equal(ui.$(".tw-mp-bolt").getAttribute("aria-pressed"), "true");
+  assert.equal(ui.$(".tw-mp-slider").dataset.fast, "true", "the slider turns speedy");
   assert.match(ui.trigger(), /Fast/);
   assert.equal(ui.$(".tw-model-speed").dataset.fast, "true");
   assert.equal(ui.$('.tw-mp-speed-options button[aria-pressed="true"]').textContent, "Fast", "the Speed row follows the bolt");
+  assert.equal(ui.$('.tw-mp-speed-options button[aria-pressed="true"]').dataset.fast, "true");
   await ui.click(".tw-mp-bolt");
   assert.deepEqual(ui.selections.at(-1), { name: "gpt-6.1-sol", reasoningEffort: "high", serviceTier: null });
+  assert.equal(ui.$(".tw-mp-slider").dataset.fast, undefined);
   assert.doesNotMatch(ui.trigger(), /Fast/);
 });
 
@@ -83,4 +88,23 @@ test("Timewarp credits have no Fast: the bolt is inert and no speed shows", asyn
   await ui.click(".tw-mp-bolt");
   assert.equal(ui.selections.length, 0);
   assert.doesNotMatch(ui.trigger(), /Fast|Standard/);
+});
+
+test("Timewarp's models show intelligence, speed and low cost as a percentage of the best; Codex's don't", async t => {
+  const paid = require("../shared/models.cjs").models({ plan: "max" });
+  const ui = mount(t, paid, { name: "openai/gpt-6.1-sol", reasoningEffort: "low", serviceTier: null });
+  await ui.click(".tw-pill.model");
+  await ui.click(".tw-mp-choose");
+  const rows = [...ui.$(".tw-mp-options").querySelectorAll(".tw-mp-option")];
+  assert.deepEqual(rows.map(row => row.querySelector(".tw-mp-option-name").textContent), ["Claude Opus 5.5", "Claude Sonnet 5.5", "Claude Fable 5.1", "GPT-6 Astra", "GPT-6.1 Sol", "Claude Haiku 5.5", "GPT-6 Luna"]);
+  const stats = row => [...row.querySelectorAll(".tw-mp-stat")].map(stat => stat.textContent);
+  assert.deepEqual(stats(rows[0]), ["Intelligence100%", "Speed37%", "Low cost22%"]);
+  assert.deepEqual(stats(rows[5]), ["Intelligence59%", "Speed74%", "Low cost89%"]);
+  assert.equal(rows[6].querySelector('.tw-mp-stat[data-stat="speed"]').style.getPropertyValue("--tw-stat"), "100%", "the bar fills to the percentage");
+  assert.match(rows[0].querySelector(".tw-mp-stats").title, /Artificial Analysis/);
+  assert.ok(rows[4].querySelector(".tw-mp-option-check svg"), "the chosen model keeps its check");
+  const codexUi = mount(t, codex, { name: "gpt-6.1-sol", reasoningEffort: "medium", serviceTier: null });
+  await codexUi.click(".tw-pill.model");
+  await codexUi.click(".tw-mp-choose");
+  assert.equal(codexUi.$(".tw-mp-stats"), null, "Codex's catalog has no scores");
 });

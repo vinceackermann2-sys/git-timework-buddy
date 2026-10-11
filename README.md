@@ -84,8 +84,14 @@ page and no separate cloud agent workspace.
 
 - Supabase authentication with encrypted device sessions. Email confirmation,
   sign-in links, password recovery and Google sign-in return to the desktop callback.
-- Sol and Luna use the production Azure provider credentials. Provider keys and
-  service-role credentials remain on the server.
+- GPT models use the production Azure provider credentials: GPT-5.6 Sol and
+  Luna on Free, GPT-6 Astra, GPT-6.1 Sol and GPT-6 Luna on paid plans (Azure
+  deployments `gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna`, renamed with the
+  `GPT_ASTRA_MODEL`, `GPT_SOL_6_1_MODEL` and `GPT_LUNA_6_MODEL` secrets). Claude
+  models (paid plans) use the `ANTHROPIC_API_KEY` secret of `timewarp-energy`,
+  which turns Codex's Responses requests into Anthropic Messages requests
+  (`cloud/claudeResponses.ts`). Provider keys and service-role credentials
+  remain on the server.
 - Chat messages and chat display metadata synchronize to an owner-scoped history
   table. Sync pulls updates on every pass, including all chat pages, and uploads
   long conversations in retryable batches without truncating older messages.
@@ -269,7 +275,12 @@ are held by Composio. Custom MCP servers remain managed by the original local
 desktop interface.
 
 The model picker lists only the models the current plan runs: the connected
-Codex catalog on Free with a Codex account, otherwise Sol and Luna. A chat saved
+Codex catalog on Free with a Codex account, GPT-5.6 Sol and Luna on Free with
+Timewarp credits, and on paid plans, most intelligent first: Claude Opus 5.5,
+Claude Sonnet 5.5, Claude Fable 5.1, GPT-6 Astra, GPT-6.1 Sol (the default),
+Claude Haiku 5.5 and GPT-6 Luna. Each of Timewarp's models rates its
+intelligence, speed and low cost as a percentage of the best, worked out from
+Artificial Analysis's benchmarks (`shared/model-benchmarks.json`). A chat saved
 with a model outside that catalog shows the model it is routed to.
 
 Voice input (dictation) uploads the recording through the device bridge to

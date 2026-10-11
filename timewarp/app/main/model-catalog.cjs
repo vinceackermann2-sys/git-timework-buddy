@@ -1,21 +1,23 @@
 "use strict";
 // The models the current AI funding offers and the default model setting kept
 // in line with them. Free with a connected ChatGPT / Codex account lists the
-// Codex catalog; every other plan lists Timewarp's Sol and Luna. A catalog that
-// can't be read is an error, as in the previous app: the saved choice is kept
-// and never replaced from a fallback list.
+// Codex catalog; every other plan lists Timewarp's models (GPT-5.6 Sol and
+// Luna, and Claude on paid plans). A catalog that can't be read is an error, as
+// in the previous app: the saved choice is kept and never replaced from a
+// fallback list.
 const { resolveModelSettings } = require("../../shared/model-capabilities.cjs");
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 
-function createModelCatalog({ ready = () => undefined, funding, chatgpt, settings, userId, timewarpModels = () => require("../../shared/models.cjs").models(), log = () => {} }) {
+function createModelCatalog({ ready = () => undefined, funding, chatgpt, settings, userId, timewarpModels = state => require("../../shared/models.cjs").models({ plan: state?.plan }), log = () => {} }) {
   async function modelChoices() {
     await ready();
-    if (userId() && (await funding.current()).source === "chatgpt") {
+    const state = userId() ? await funding.current() : null;
+    if (state?.source === "chatgpt") {
       try { return await chatgpt.models(); }
       catch (error) { log("ChatGPT models unavailable: " + error.message); throw error; }
     }
-    return timewarpModels();
+    return timewarpModels(state);
   }
 
   // A model the catalog no longer offers, or an effort or speed it doesn't

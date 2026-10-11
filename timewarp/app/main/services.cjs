@@ -26,6 +26,7 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
   if (fixture) fixture.auth.bind(accountChanged);
 
   // A content type marks payload as already-encoded bytes (dictation audio).
+  // A model reply may stream for up to five minutes (Claude thinking deeply).
   async function cloud(route, payload, method = "POST", contentType) {
     await ready;
     if (fixture) return fixture.cloud(route, payload, method);
@@ -34,7 +35,7 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
       method,
       headers: { apikey: config.publishableKey, Authorization: `Bearer ${token}`, "content-type": contentType || "application/json" },
       ...(payload === undefined ? {} : { body: contentType ? payload : JSON.stringify(assertCloudSafe(payload)) }),
-      signal: AbortSignal.timeout(140000), redirect: "error",
+      signal: AbortSignal.timeout(route === "/v1/responses" ? 310000 : 140000), redirect: "error",
     });
   }
   async function cloudJson(route, input, method = "POST") {

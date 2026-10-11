@@ -14,7 +14,7 @@ const stage = path.join(root, "build", "engine", "stage");
 const report = process.argv.includes("--report");
 
 // Source folders the engine may be built from.
-const ALLOWED_SOURCES = [/^app\//, /^desktop\/[\w.-]+\.(cjs|js)$/, /^shared\/[\w.-]+\.cjs$/, /^config\.json$/, /^assets\//];
+const ALLOWED_SOURCES = [/^app\//, /^desktop\/[\w.-]+\.(cjs|js)$/, /^shared\/[\w.-]+\.(cjs|json)$/, /^config\.json$/, /^assets\//];
 // Never part of the engine: the old runtime, its upstream archive and patches.
 const FORBIDDEN_SOURCES = [/timewarp-runtime/i, /(^|\/)upstream\//i, /(^|\/)build\/(native|app|mac)/i, /app\.asar/i, /energy-git/i, /comp-work/i,
   // The old pipeline's patches into the inherited app never belong in the engine.
