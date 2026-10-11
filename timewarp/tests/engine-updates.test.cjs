@@ -220,7 +220,7 @@ test("signed Mac packages add the update zip and the generic feed; drafts stay a
   assert.deepEqual(signed.targets, ["dmg", "zip"]);
   assert.deepEqual(signed.config.publish, { provider: "generic", url: MAC_FEED });
   assert.equal(signed.config.dmg.writeUpdateInfo, false, "The stapled DMG stays out of latest-mac.yml");
-  const name = arch => signed.config.zip.artifactName.replace("${version}", config.version).replace("${arch}", arch).replace("${ext}", "zip");
+  const name = arch => signed.config.mac.artifactName.replace("${version}", config.version).replace("${arch}", arch).replace("${ext}", "zip");
   assert.equal(name("arm64"), `Timewarp-${config.version}-arm64-mac.zip`);
   assert.equal(name("x64"), `Timewarp-${config.version}-x64-mac.zip`);
   assert.ok(!name("x64").includes("arm64"));
@@ -228,8 +228,20 @@ test("signed Mac packages add the update zip and the generic feed; drafts stay a
   const draft = builderOptions({ ...common, draft: true, config: null, feed: null });
   assert.deepEqual(draft.targets, ["dmg"]);
   assert.equal(draft.config.publish, null);
-  assert.equal(draft.config.zip, undefined);
+  assert.equal(draft.config.mac.artifactName, undefined);
   assert.deepEqual(draft.config.dmg, { sign: false, artifactName: "Timewarp-Preview-${version}-${arch}.${ext}" });
   assert.equal(updateFileName("x64"), "latest-mac-x64.yml");
   for (const updateUrl of ["http://github.com/a/", "https://static.getenergy.com/mac/"]) assert.throws(() => checkMacFeed({ enabled: true, version: "1.3.0", updateUrl }), /public Timewarp/);
+});
+
+// electron-builder checks its configuration only when it builds, on a Mac;
+// the signed release then fails late. Check both here against its schema.
+test("the Mac packaging configuration matches electron-builder's schema", async () => {
+  const { validateConfiguration } = require("app-builder-lib/out/util/config/config");
+  const config = require("../mac-release.json"), logger = { isEnabled: false, add() {}, save: async () => {} };
+  const common = { app: "app", output: "out", codex: "codex", version: config.version };
+  for (const draft of [false, true]) {
+    const options = builderOptions({ ...common, draft, config: draft ? null : config, feed: draft ? null : { updateUrl: config.updateUrl } });
+    await validateConfiguration(structuredClone(options.config), logger);
+  }
 });
