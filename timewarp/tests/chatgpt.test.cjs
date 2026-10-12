@@ -86,7 +86,8 @@ test('catalog pages cannot leak across a Timewarp owner change',async t=>{
 });
 test('uses built-in Codex browser login, keeps Timewarp authentication separate and stores no tokens',async t=>{
   const f=fixture();t.after(()=>f.service.stop());await f.login();
-  assert.deepEqual(f.calls.find(c=>c.method==='account/login/start').params,{type:'chatgpt',useHostedLoginSuccessPage:true,appBrand:'chatgpt'});
+  // Codex's own success page: the hosted one opens the ChatGPT app.
+  assert.deepEqual(f.calls.find(c=>c.method==='account/login/start').params,{type:'chatgpt'});
   assert.equal(f.service.connection().status,'available');assert.equal(f.connected,1);
   assert.equal(f.service.details().backend,'codex-app-server');
   assert.equal(f.service.details().rateLimits.primary.usedPercent,25);
@@ -100,6 +101,13 @@ test('cancels the pending native login and ignores a late completion',async t=>{
   f.client.emit('notification',{method:'account/login/completed',params:{loginId:'login-1',success:true}});
   await tick();assert.equal(f.connected,0);assert.equal(f.service.currentBrowserLogin().status,'idle');
   assert.deepEqual(f.calls.find(c=>c.method==='account/login/cancel').params,{loginId:'login-1'});
+});
+test('a closed sign-in window cancels only its own login',async t=>{
+  const f=fixture();t.after(()=>f.service.stop());const started=await f.service.startBrowserLogin();assert.equal(started.loginId,'login-1');
+  assert.deepEqual(await f.service.cancelLogin('older-login'),{cancelled:false});
+  assert.equal(f.service.currentBrowserLogin().status,'waiting_for_user');assert.equal(f.calls.some(c=>c.method==='account/login/cancel'),false);
+  assert.deepEqual(await f.service.cancelLogin('login-1'),{cancelled:true});
+  assert.equal(f.service.currentBrowserLogin().status,'idle');assert.deepEqual(f.calls.find(c=>c.method==='account/login/cancel').params,{loginId:'login-1'});
 });
 test('provider login failure is visible and cannot silently switch to purchased credits',async t=>{
   const f=fixture();t.after(()=>f.service.stop());f.loginError='Provider rejected approval';await f.login();

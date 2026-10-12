@@ -51,16 +51,19 @@ function createChatgpt({storage,userId,onConnected=()=>{},onLoginError=()=>{},no
     metadata={...metadata.owner===who?metadata:{},owner:who,selected:true,lastConnectionError:null};persist();
     loadedOwner=who;lastRead=0;loginOwner=who;
     try{
-      const result=await rpc('account/login/start',{type:'chatgpt',useHostedLoginSuccessPage:true,appBrand:'chatgpt'});
+      // Codex's own success page, not the hosted one: that one (chatgpt.com/codex/open-app)
+      // opens the ChatGPT app. Timewarp's sign-in window shows its own page instead.
+      const result=await rpc('account/login/start',{type:'chatgpt'});
       if(who!==userId()||epoch!==generation){if(result.loginId)await rpc('account/login/cancel',{loginId:result.loginId}).catch(()=>{});assertOwner(who,epoch);}
       const url=new URL(result.authUrl);
       if(url.protocol!=='https:'||url.hostname!=='auth.openai.com'||url.username||url.password||!result.loginId)throw fail(502,'Codex returned an invalid account approval link.');
       login={status:'waiting_for_user',id:result.loginId};
       clearTimeout(loginTimer);loginTimer=setTimeout(()=>void cancelLogin().catch(()=>{}),10*60*1000);loginTimer.unref?.();
-      return {status:login.status,authUrl:url.href};
+      return {status:login.status,authUrl:url.href,loginId:result.loginId};
     }catch(error){assertOwner(who,epoch);login={status:'error',error:safeError(error)};metadata.lastConnectionError={message:login.error,stage:'codex_login'};persist();throw error;}
   }
-  async function cancelLogin(){clearTimeout(loginTimer);const id=login.id;login={status:'idle'};loginOwner=null;if(id)await rpc('account/login/cancel',{loginId:id});return {cancelled:true};}
+  // With an id, only that sign-in: a closed sign-in window leaves a newer one alone.
+  async function cancelLogin(only){if(only!==undefined&&only!==login.id)return {cancelled:false};clearTimeout(loginTimer);const id=login.id;login={status:'idle'};loginOwner=null;if(id)await rpc('account/login/cancel',{loginId:id});return {cancelled:true};}
   async function disconnect(){const who=owner(),epoch=generation;await cancelLogin();assertOwner(who,epoch);await interruptActive();await rpc('account/logout',{});assertOwner(who,epoch);metadata={owner:who,selected:false};persist();account=null;rateLimits=null;lastRead=0;return {remoteRevoked:true};}
   async function models(){
     const who=owner(),epoch=generation;await refresh();assertOwner(who,epoch);

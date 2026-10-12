@@ -139,7 +139,8 @@ function billingStatus() {
 }
 
 function createFixture() {
-  let signedIn = true, onChange = async () => {};
+  // plan: the account's plan; debug.plan changes it (Free offers Connect ChatGPT).
+  let signedIn = true, plan = "max", onChange = async () => {};
   const members = [{ id: "member-1", userId: USER.id, email: USER.email, name: USER.name, image: null, roles: ["owner"], createdAt: "2026-01-01T00:00:00.000Z" }];
   const invites = [];
   const auth = {
@@ -193,7 +194,7 @@ function createFixture() {
     if (route === "/v1/responses") return scriptedResponse(payload || {});
     if (route === "/v1/models") return json({ object: "list", data: [{ id: "openai/gpt-5.6-sol", object: "model" }, { id: "openai/gpt-5.6-luna", object: "model" }] });
     if (route === "/account") return json({ image: null, activeOrganization: { ...ORGANIZATION }, organizations: [{ ...ORGANIZATION }] });
-    if (route === "/billing") return json({ plan: "max", included: 504, purchased: 20, monthlyIncluded: 700, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
+    if (route === "/billing") return json({ plan, included: 504, purchased: 20, monthlyIncluded: 700, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
     if (route === "/billing/service") return json(billingStatus());
     if (route === "/billing/history") return json({ events: [{ id: "e1", kind: "usage", description: "AI usage", credits: -3.2, createdAt: new Date(Date.now() - 3600000).toISOString() }, { id: "e2", kind: "purchase", description: "Extra credits", credits: 20, createdAt: new Date(Date.now() - 86400000).toISOString() }] });
     if (route === "/history") return json(payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
@@ -220,7 +221,7 @@ function createFixture() {
     write(".codex/skills/release-notes/SKILL.md", "---\nname: release-notes\ndescription: Draft release notes from a list of changes.\n---\n\nGroup changes by area.\n");
     return directory;
   }
-  return { auth, cloud, user: USER, sampleHome };
+  return { auth, cloud, user: USER, sampleHome, setPlan: value => { plan = value; } };
 }
 
 module.exports = { createFixture, scriptedResponse };

@@ -1,6 +1,6 @@
 "use strict";
 // Timewarp desktop main process.
-const { app, BrowserWindow, Menu, Notification, ipcMain, nativeTheme, net, protocol, session, shell, dialog, safeStorage, clipboard } = require("electron");
+const { app, BrowserWindow, Menu, Notification, ipcMain, nativeImage, nativeTheme, net, protocol, session, shell, dialog, safeStorage, clipboard } = require("electron");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -536,47 +536,47 @@ async function boot() {
     },
   });
 
-  // App and MCP server sign-ins open in an app window that uses the default
-  // browser profile, as in the previous app, so a site signed in there is
-  // signed in for the agent's browser too. It closes when the sign-in returns
-  // to Timewarp's callback on this computer.
-  function openConnector(link, title = "Connect an app") {
-    let url;
-    try { url = new URL(link); } catch { throw new Error("The sign-in link isn't valid."); }
-    if (url.protocol !== "https:" || url.username || url.password) throw new Error("The sign-in link isn't valid.");
-    const session = browser.sessionFor(store.browserProfiles.ensureDefault().id);
-    const window = new BrowserWindow({
-      parent: mainWindow || undefined, width: 560, height: 780, minWidth: 420, minHeight: 560, title, icon: appIcon, autoHideMenuBar: true, backgroundColor: "#ffffff", show: false,
-      webPreferences: { session, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
+  // ChatGPT, app and MCP server sign-ins open in a Timewarp window
+  // (signin-window.cjs), never in the system browser or another app.
+  const signin = require("./signin-window.cjs").createSigninWindows({
+    BrowserWindow, session: () => browser.sessionFor(store.browserProfiles.ensureDefault().id), parent: () => mainWindow, icon: appIcon, log: appLog,
+    logo: (() => { try { return nativeImage.createFromPath(path.join(assetsDir, "app-icon.png")).resize({ width: 96, quality: "best" }).toDataURL(); } catch { return ""; } })(),
+    css: (() => { try { return fs.readFileSync(path.join(assetsDir, "auth-bridge.css"), "utf8"); } catch { return ""; } })(),
+  });
+  function openConnector(link, title = "Connect an app") { signin.open(link, { title }); return { opened: true }; }
+  // Codex finishes the sign-in, and Timewarp shows how it went. Closing the
+  // window before it comes back stops waiting for it; a new Connect replaces it.
+  let chatgptSignin = null;
+  function openChatgpt({ authUrl, loginId }) {
+    chatgptSignin?.close();
+    chatgptSignin = signin.open(authUrl, {
+      title: "Connect ChatGPT",
+      finish: {
+        done: answer => answer.status === 200 && answer.path === "/success",
+        pending: { title: "Connecting ChatGPT", message: "Finishing your ChatGPT sign-in…" },
+        success: { title: "ChatGPT is connected", message: "Your ChatGPT plan now powers AI in Timewarp.", hint: "This window closes by itself." },
+        failure: { title: "ChatGPT couldn't connect", message: "The sign-in didn't finish." },
+      },
+      onClose: ({ returned }) => { if (!returned) return services.chatgpt.cancelLogin(loginId); },
     });
-    const loopback = address => { try { return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(address).hostname); } catch { return false; } };
-    const web = address => { try { return ["https:", "http:"].includes(new URL(address).protocol); } catch { return false; } };
-    window.once("ready-to-show", () => window.show());
-    // The title bar always names the site being signed in to, as the previous
-    // app's sign-in panel showed its address; pages can't change it.
-    const showAddress = () => { if (window.isDestroyed()) return; try { window.setTitle(`${title} — ${new URL(window.webContents.getURL()).host}`); } catch { window.setTitle(title); } };
-    window.on("page-title-updated", event => event.preventDefault());
-    window.webContents.on("did-navigate", showAddress);
-    window.webContents.on("did-navigate-in-page", showAddress);
-    window.webContents.setWindowOpenHandler(({ url: next }) => web(next) && new URL(next).protocol === "https:"
-      ? { action: "allow", overrideBrowserWindowOptions: { parent: window, autoHideMenuBar: true, webPreferences: { session, sandbox: true, contextIsolation: true, nodeIntegration: false } } }
-      : { action: "deny" });
-    window.webContents.on("will-navigate", (event, next) => { if (!web(next)) event.preventDefault(); });
-    window.webContents.on("did-navigate", (_event, next) => {
-      if (!loopback(next)) return;
-      appLog.info("connector", "Sign-in returned to Timewarp");
-      setTimeout(() => { if (!window.isDestroyed()) window.close(); }, 1500);
-    });
-    window.webContents.on("did-fail-load", (_event, code, description, next, isMainFrame) => { if (isMainFrame && code !== -3) appLog.warn("connector", "The sign-in page didn't load", { code, description, origin: (() => { try { return new URL(next).origin; } catch { return null; } })() }); });
-    appLog.info("connector", "Sign-in window opened", { origin: url.origin });
-    void window.loadURL(url.href);
     return { opened: true };
   }
   // The end-to-end check of a preview build answers the command confirmation;
   // other builds always ask.
   // A server added, removed, turned on or off or signed in to: prepared threads started without it.
   const mcpChanged = (name, payload) => { if (name === "mcp.changed" && (!payload?.name || payload.success)) harness?.discardSpares(); broadcast(name, payload); };
-  const mcp = createMcp({ client, openExternal: url => openConnector(url, "Sign in to a server"), notify: mcpChanged, ...(fixture && process.env.TIMEWARP_FIXTURE_CONFIRM === "allow" ? { confirmCommand: async () => true } : {}) });
+  const mcp = createMcp({
+    client, notify: mcpChanged, ...(fixture && process.env.TIMEWARP_FIXTURE_CONFIRM === "allow" ? { confirmCommand: async () => true } : {}),
+    openExternal: url => signin.open(url, {
+      title: "Sign in to a server",
+      finish: {
+        done: answer => answer.status === 200,
+        pending: { title: "Signing in", message: "Finishing your sign-in to the server…" },
+        success: { title: "You're signed in", message: "Return to Timewarp to use the server's tools.", hint: "This window closes by itself." },
+        failure: { title: "Sign-in couldn't finish", message: "The server didn't accept the sign-in." },
+      },
+    }),
+  });
 
   async function registerTools(force = false) {
     if (!userId() || (toolsRegistered && !force)) return;
@@ -704,6 +704,7 @@ async function boot() {
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();
+  if (fixture) methods["debug.plan"] = ({ plan }) => { fixture.setPlan(plan); services.funding.invalidate(); return { plan }; };
   // Preview builds have no updates; debug.updates shows one (such as a ready
   // update) in Settings and the sidebar, and counts Update clicks.
   if (fixture) {
@@ -733,7 +734,7 @@ async function boot() {
     void Promise.resolve(harness?.unloadIdle?.()).catch(error => appLog.warn("funding", "Chats could not be reloaded: " + error.message));
     broadcast("funding.changed", {});
   }
-  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, onFundingChanged: fundingChanged, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service, openConnector, sandbox });
+  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, onFundingChanged: fundingChanged, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service, openConnector, openChatgpt, sandbox });
   const trusted = event => event.senderFrame && event.senderFrame === event.sender.mainFrame && event.senderFrame.url.startsWith("app://app/");
   ipcMain.handle("tw:call", async (event, method, input) => {
     if (!trusted(event)) return { ok: false, error: { message: "Untrusted window.", status: 403 } };

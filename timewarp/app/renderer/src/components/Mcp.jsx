@@ -84,7 +84,7 @@ function ServerDetails({ server, onRun, onClose }) {
       </div>
       <div className="tw-dialog-actions">
         <button type="button" className="tw-btn danger" onClick={() => void remove()}><Trash2 size={15} />Remove</button>
-        {expired || server.authStatus === "notLoggedIn" ? <button type="button" className="tw-btn primary" onClick={() => onRun("mcp.signIn", { name: server.name }).then(ok => { if (ok) toast("Finish signing in in your browser."); })}>{expired ? "Sign in again" : "Sign in"}</button> : null}
+        {expired || server.authStatus === "notLoggedIn" ? <button type="button" className="tw-btn primary" onClick={() => onRun("mcp.signIn", { name: server.name }).then(ok => { if (ok) toast("Finish signing in in the window that opened."); })}>{expired ? "Sign in again" : "Sign in"}</button> : null}
       </div>
     </>
   );

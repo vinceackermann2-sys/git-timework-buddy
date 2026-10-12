@@ -87,7 +87,7 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, autom
   const suggestions = [];
   if (funding?.subscriptionAllowed && funding.source !== "chatgpt") suggestions.push({
     id: "connect-chatgpt", icon: <Icon name="chatgpt" />, title: "Connect ChatGPT to use Timewarp for free", action: "Connect",
-    run: () => request("connectChatgpt").then(() => toast("Finish connecting ChatGPT in your browser.")).catch(error => toast(error, "error")),
+    run: () => request("connectChatgpt").then(() => toast("Finish connecting ChatGPT in the window that opened.")).catch(error => toast(error, "error")),
   });
   for (const source of Object.keys(SOURCES)) {
     const count = counts(source);

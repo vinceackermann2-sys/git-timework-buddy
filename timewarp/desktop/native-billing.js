@@ -111,7 +111,7 @@ window.timewarpMountBilling = host => {
       }
       provider.append(limits);
     }
-    if (waiting) provider.append(el('p', 'tw-muted tw-provider-note', 'Finish connecting in your browser. This page updates automatically.'));
+    if (waiting) provider.append(el('p', 'tw-muted tw-provider-note', 'Finish connecting in the window that opened. This page updates automatically.'));
     else if (connected) provider.append(el('p', 'tw-muted tw-provider-note', allowed ? 'AI requests use your Codex allowance.' : 'Your current plan uses Timewarp credits.'));
     else if (!allowed) provider.append(el('p', 'tw-muted tw-provider-note', 'Your current plan uses Timewarp credits.'));
     else if (data.login?.status === 'error' || data.lastConnectionError || data.status === 'reauth_required' || data.planUsageDisabled) {

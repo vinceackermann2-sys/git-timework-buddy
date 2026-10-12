@@ -190,7 +190,7 @@ export function ToolsPicker({ agentId, onBrowse }) {
   // Connecting names the agent the app is for.
   // An app waiting to reconnect names the account that signs in again.
   const reconnect = app => call("integrations.beginConnect", { integrationId: app.id, agentId, ...(app.pendingAccounts?.[0]?.id && !app.accounts?.length ? { reconnectAccountId: app.pendingAccounts[0].id } : {}) })
-    .then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"));
+    .then(() => toast("Finish connecting in the window that opened.")).catch(error => toast(error, "error"));
   const shown = [...linked, ...(items || []).filter(app => !linked.includes(app) && app.featured)].slice(0, 3);
   return (
     <Menu up align="left" width={240} className="tw-tools-menu" trigger={({ toggle, open }) => (
@@ -263,7 +263,7 @@ export function ReconnectBanner({ agentId = null }) {
           <span className="tw-reconnect-face">{initials(account.displayName).slice(0, 1)}</span>
           <span className="grow">Reconnect {account.displayName} to {app.displayName}</span>
           <button type="button" className="tw-btn ghost" disabled={busy === account.id} onClick={() => skip(app, account)}>Skip</button>
-          <button type="button" className="tw-btn" disabled={busy === account.id} onClick={() => call("integrations.beginConnect", { integrationId: app.id, agentId, reconnectAccountId: account.id }).then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"))}>Reconnect</button>
+          <button type="button" className="tw-btn" disabled={busy === account.id} onClick={() => call("integrations.beginConnect", { integrationId: app.id, agentId, reconnectAccountId: account.id }).then(() => toast("Finish connecting in the window that opened.")).catch(error => toast(error, "error"))}>Reconnect</button>
         </div>
       ))}
     </div>
@@ -281,7 +281,7 @@ export function FundingBanner({ funding, onOptions }) {
   const title = reconnect ? "Reconnect ChatGPT" : funding.subscriptionAllowed ? "You're out of free credits" : "You're out of credits";
   const description = reconnect ? "Your ChatGPT plan needs you to sign in again before Timewarp can use it."
     : funding.subscriptionAllowed ? "Use your ChatGPT plan with Timewarp, or choose a paid plan." : "Add credits or change your plan to keep going.";
-  const connect = () => { setOpen(false); request("connectChatgpt").then(() => toast("Finish connecting ChatGPT in your browser.")).catch(error => toast(error, "error")); };
+  const connect = () => { setOpen(false); request("connectChatgpt").then(() => toast("Finish connecting ChatGPT in the window that opened.")).catch(error => toast(error, "error")); };
   return (
     <>
       <button type="button" className="tw-banner" onClick={() => setOpen(true)}>
