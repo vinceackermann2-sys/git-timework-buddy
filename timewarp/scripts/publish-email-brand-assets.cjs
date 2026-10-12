@@ -9,8 +9,9 @@ const config = require('../config.json');
 async function main() {
   const credential = keys();
   const bucket = 'timewarp-brand-assets';
-  const filename = 'timewarp-email-logo.png';
-  const bytes = fs.readFileSync(path.join(root, 'assets/app-icon.png'));
+  // The app icon at 128 px: sharp at the 48 px the emails show, and small to load.
+  const filename = 'timewarp-email-logo-v2.png';
+  const bytes = fs.readFileSync(path.join(root, 'assets/icons/app-icon-128.png'));
   const headers = { apikey: config.publishableKey, Authorization: `Bearer ${credential}` };
   const request = (route, options = {}) => fetch(config.supabaseUrl + '/storage/v1/' + route, {
     ...options, headers: { ...headers, ...options.headers }, signal: AbortSignal.timeout(30000),

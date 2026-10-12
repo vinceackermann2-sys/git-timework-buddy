@@ -3,6 +3,7 @@ import { renderAsync } from 'npm:@react-email/components@0.0.22'
 import { createMessages, type HookPayload } from '../supabase/functions/auth-email-hook/messages.ts'
 import { WorkspaceInviteEmail } from '../supabase/functions/_shared/email-templates/workspace-invite.tsx'
 import { ContactReceiptEmail, ContactSubmissionEmail, WaitlistConfirmationEmail } from '../supabase/functions/_shared/email-templates/contact.tsx'
+import { enqueueEmail, reservedEmailDomain } from '../supabase/functions/_shared/queuedEmail.ts'
 
 Deno.env.set('SUPABASE_URL', 'https://mrqoeywofslgnquvzhuf.supabase.co')
 const assert = (value: unknown, message: string) => { if (!value) throw new Error(message) }
@@ -32,12 +33,14 @@ for (const action of actions) {
       const html = await renderAsync(message.element)
       const text = await renderAsync(message.element, { plainText: true })
       assert(html.includes('alt="Timewarp"'), 'Logo must have a readable brand fallback')
-      assert(html.includes('timewarp-brand-assets/timewarp-email-logo.png'), 'Use the app logo')
-      assert(html.includes('#B7D6FF'), 'Use the app accent')
+      assert(html.includes('timewarp-brand-assets/timewarp-email-logo-v2.png'), 'Use the app logo')
+      assert(html.includes('#E9D2FF') && html.includes('#5E3C86') && html.includes('Segoe UI'), 'Use the app branding: Pale lilac, its ink and Segoe UI')
       assert(html.includes('max-width: 480px'), 'Include the mobile layout')
       assert(html.includes('support@timewarpdev.com') && text.includes('support@timewarpdev.com'), 'Support appears in both formats')
       assert(text.includes('Timewarp') && message.subject.includes('Timewarp'), 'Brand the text and subject')
-      assert(!html.includes('TimeWarp') && !html.includes('#A562BC'), 'Retired branding must be absent')
+      // Retired: the TimeWarp spelling, the old purple, the Ice blue emails, every
+      // blue-tinted gray and ink, and the dark logo.
+      assert(!html.includes('TimeWarp') && !['#A562BC', '#B7D6FF', '#315A8A', '#F4F7FB', '#172033', '#182230', '#626B7C', '#526175'].some(color => html.includes(color)) && !html.includes('timewarp-email-logo.png'), 'Retired branding must be absent')
       if (['signup', 'magiclink', 'email', 'reauthentication'].includes(action)) {
         assert(html.includes('0123456789') && text.includes('0123456789'), 'Preserve leading zeroes and ten-digit codes')
       }
@@ -94,8 +97,30 @@ Deno.test('workspace, contact and waitlist emails share the brand and escape use
   for (const element of elements) {
     const html = await renderAsync(element)
     const text = await renderAsync(element, { plainText: true })
-    assert(html.includes('alt="Timewarp"') && html.includes('#B7D6FF'), 'Use the shared branding')
+    assert(html.includes('alt="Timewarp"') && html.includes('#E8E3EC') && html.includes('#5E3C86') && html.includes('Segoe UI'), 'Use the shared branding')
+    assert(!['#A562BC', '#B7D6FF', '#315A8A', '#F4F7FB', '#172033', '#182230', '#626B7C', '#526175'].some(color => html.includes(color)), 'No blue left')
+    assert(/<body[^>]*background-color:#FFFFFF/i.test(html), 'White behind the card')
     assert(text.includes('Timewarp') && text.includes('support@timewarpdev.com'), 'Keep the text fallback branded')
     assert(!html.includes('<script>'), 'Escape user-controlled content')
   }
+})
+
+Deno.test('addresses on reserved test domains are logged, never queued', async () => {
+  for (const address of ['a@example.com', 'a@mail.example.org', 'a@preview.invalid', 'a@example.test', 'a@host.localhost']) {
+    assert(reservedEmailDomain(address), `${address} is reserved`)
+  }
+  for (const address of ['person@timewarpdev.com', 'person@gmail.com', 'person@examples.com', 'person@test.io']) {
+    assert(!reservedEmailDomain(address), `${address} receives mail`)
+  }
+  const calls: string[] = []
+  const admin = {
+    from: () => ({ insert: async (row: Record<string, string>) => { calls.push('log:' + row.status); return { error: null } } }),
+    rpc: async () => { calls.push('queue'); return { error: null } },
+  }
+  const email = { to: '', from: 'Timewarp <noreply@agents.timewarpdev.com>', subject: 'Subject', html: '<p></p>', text: '', label: 'signup' }
+  await enqueueEmail(admin, { ...email, to: 'person@example.com' })
+  assert(calls.join() === 'log:suppressed', 'A reserved address is only logged')
+  calls.length = 0
+  await enqueueEmail(admin, { ...email, to: 'person@timewarpdev.com' })
+  assert(calls.join() === 'log:pending,queue', 'A real address is queued')
 })
