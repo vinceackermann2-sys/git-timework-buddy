@@ -13,6 +13,19 @@ const invitation=(v:any)=>({id:v.id,organizationId:v.workspace_id,email:v.email,
 async function preferences(admin:any,user:any){return checked(await admin.from('timewarp_energy_settings').select('settings').eq('user_id',user.id).maybeSingle())?.settings||{};}
 async function patchPreferences(admin:any,user:any,patch:any){checked(await admin.rpc('timewarp_energy_patch_settings',{p_user:user.id,p_patch:patch}));}
 async function saveActive(admin:any,user:any,workspaceId:string|null){await patchPreferences(admin,user,{activeWorkspaceId:workspaceId});}
+// Setup runs once per account, whichever computer it's finished on. Accounts
+// that finished it before the cloud kept this have synced chats or AI use,
+// which only come after setup.
+async function finishSetup(admin:any,user:any){if(!(await preferences(admin,user)).onboardingCompletedAt)await patchPreferences(admin,user,{onboardingCompletedAt:new Date().toISOString()});}
+async function setupDone(admin:any,user:any){
+  if((await preferences(admin,user)).onboardingCompletedAt)return true;
+  const [chats,usage]=await Promise.all([
+    admin.from('timewarp_energy_desktop_history').select('id').eq('user_id',user.id).limit(1),
+    admin.from('timewarp_ai_cost_events').select('id').eq('user_id',user.id).limit(1),
+  ]);
+  if(!checked(chats)?.length&&!checked(usage)?.length)return false;
+  await finishSetup(admin,user);return true;
+}
 export async function signedImage(admin:any,userId:string,path:unknown){
   if(!path)return null;if(typeof path!=='string'||!new RegExp(`^${userId}/[a-f0-9-]+$`,'i').test(path))throw fail(403,'This picture belongs to another account.');
   return checked(await admin.storage.from('timewarp-energy-pictures').createSignedUrl(path,3600)).signedUrl;
@@ -45,6 +58,8 @@ export async function accountProduct(admin:any,user:any,token:string,rpc:string,
     checked(await admin.auth.admin.updateUserById(user.id,{user_metadata:metadata}));
     if(input.name!==undefined){checked(await admin.from('profiles').update({name:metadata.full_name,updated_at:new Date().toISOString()}).eq('user_id',user.id));checked(await admin.from('timewarp_workspace_members').update({name:metadata.full_name}).eq('user_id',user.id));}return null;
   }
+  if(rpc==='product.onboarding.status')return{done:await setupDone(admin,user)};
+  if(rpc==='product.onboarding.complete'){await finishSetup(admin,user);return null;}
   if(!rpc.startsWith('product.organizations.'))return undefined;
   const snapshot=await nativeAccountSnapshot(admin,user,token),workspaceId:string|null=snapshot.activeOrganization?.id??null;
   if(rpc==='product.organizations.list')return{organizations:snapshot.organizations};

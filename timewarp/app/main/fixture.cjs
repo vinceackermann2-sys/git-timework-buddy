@@ -168,6 +168,8 @@ function createFixture() {
     if (name === "product.organizations.invitations.revoke") { invites.splice(invites.findIndex(item => item.id === input.invitationId), 1); return null; }
     if (name === "product.organizations.update") { ORGANIZATION.name = input.name; return null; }
     if (name === "product.profile.update") { if (input.name) USER.name = input.name; return null; }
+    // TIMEWARP_FIXTURE_SETUP_DONE: the preview account finished setup on another computer.
+    if (name === "product.onboarding.status") return { done: !!process.env.TIMEWARP_FIXTURE_SETUP_DONE };
     if (name === "product.images.beginUpload") throw Object.assign(new Error("Pictures can't be uploaded in preview mode."), { status: 400 });
     return null;
   };
