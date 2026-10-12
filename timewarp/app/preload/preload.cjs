@@ -1,11 +1,17 @@
 "use strict";
 // The only bridge between Timewarp's interface and the main process.
-const { contextBridge, ipcRenderer, webUtils } = require("electron");
+const { contextBridge, ipcRenderer, webFrame, webUtils } = require("electron");
+
+// The window's zoom (main/window-zoom.cjs) as --zoom, for the parts sized to
+// the window's own buttons, which don't zoom.
+const showZoom = factor => { if (factor > 0) document.documentElement?.style.setProperty("--zoom", String(factor)); };
+window.addEventListener("DOMContentLoaded", () => showZoom(webFrame.getZoomFactor()));
 
 // One IPC listener serves every subscriber (the chat, its cards and panels
 // each subscribe), instead of one listener each.
 const subscribers = new Set();
 ipcRenderer.on("tw:event", (_event, name, payload) => {
+  if (name === "window.zoom") showZoom(Number(payload?.factor));
   for (const subscriber of [...subscribers]) {
     if (subscriber.name !== "*" && subscriber.name !== name) continue;
     try { subscriber.callback(payload, name); } catch (error) { console.error(error); }
