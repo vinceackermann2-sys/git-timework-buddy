@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { BookMarked, CalendarClock, Check, ChevronLeft, ChevronRight, FileText, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Pin, PinOff, Plus, RotateCw, Settings, Trash2, UserRound, Volume2, VolumeX, X } from "lucide-react";
+import { BookMarked, CalendarClock, Check, ChevronLeft, ChevronRight, FileText, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Pin, PinOff, Plus, RotateCw, Settings, Share, Trash2, UserRound, Volume2, VolumeX, X } from "lucide-react";
 import { call, relativeTime, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { Avatar, ContextMenu, Dialog, Menu, Switch, useConfirm, useToast } from "./common.jsx";
 import { AppIcon, useApps } from "./Composer.jsx";
 import { AutomationDialog, describeSchedule } from "./Automations.jsx";
+import { shareItem } from "./Share.jsx";
 import { Files, recentFiles } from "./Files.jsx";
 
 const host = url => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url || ""; } };
@@ -235,7 +236,10 @@ function AgentPage({ agent, conversationId, onEditAgent, onAgentChanged, onSetti
         {recent.length ? null : <button type="button" className="tw-agent-action" onClick={() => onOpenFiles(null)}><Plus size={16} />Add files</button>}
       </div>
       <h3 className="tw-agent-section">Manage agent</h3>
-      <button type="button" className="tw-agent-card tw-agent-action tw-danger-hover" onClick={() => void remove()}><Trash2 size={16} />Remove agent</button>
+      <div className="tw-agent-card">
+        <button type="button" className="tw-agent-action" onClick={() => shareItem("agent", agent.id, agent.name)}><Share size={16} />Share agent</button>
+        <button type="button" className="tw-agent-action inner tw-danger-hover" onClick={() => void remove()}><Trash2 size={16} />Remove agent</button>
+      </div>
     </div>
   );
 }

@@ -255,6 +255,33 @@ const guardedMemberUpdate = async (
     'ok' | 'last_owner' | 'not_found' | 'invalid' | 'forbidden';
 };
 
+// Share invites: a copy of a chat, an agent or an automation sent to another
+// member of the organization. Membership and every status change are checked
+// in the database (20261012150000_organization_shares).
+const SHARE_KINDS = new Set(['chat', 'agent', 'automation']);
+const shareRpc = async (admin: any, name: string, args: Record<string, unknown>) => {
+  const { data, error } = await admin.rpc(name, args);
+  if (error) {
+    if (String(error.code || '') === 'PGRST202') {
+      throw Object.assign(new Error('Sharing is temporarily unavailable. Try again later.'), { status: 503 });
+    }
+    throw error;
+  }
+  return data;
+};
+const SHARE_ERRORS: Record<string, [number, string]> = {
+  forbidden: [403, 'Workspace membership required.'],
+  not_member: [404, 'Choose people who are in this organization.'],
+  too_large: [413, 'That is too large to share.'],
+  too_many: [429, 'You have too many shares waiting for an answer. Try again once some are answered.'],
+  not_found: [404, 'This share is no longer available.'],
+  invalid: [400, 'Invalid share.'],
+};
+const shareFailure = (status: unknown) => {
+  const [code, message] = SHARE_ERRORS[cleanText(status)] || SHARE_ERRORS.invalid;
+  return Object.assign(new Error(message), { status: code });
+};
+
 const inviteExpiry = () => new Date(Date.now() + WORKSPACE_INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
 const maskEmail = (email: string) => {
@@ -699,6 +726,60 @@ Deno.serve(async (req) => {
           recipientUserId,
         },
       });
+    }
+
+    if (action === 'createShares') {
+      const workspaceId = cleanText(body.workspaceId);
+      const kind = cleanText(body.kind);
+      const recipientUserIds = [...new Set(asArray(body.recipientUserIds).map(value => cleanText(value)).filter(isUuid))];
+      const title = cleanText(body.title).slice(0, 200);
+      if (!isUuid(workspaceId) || !SHARE_KINDS.has(kind) || !recipientUserIds.length || recipientUserIds.length > 20 || !title) {
+        return jsonResponse({ error: 'Choose what to share and up to 20 members.' }, 400);
+      }
+      const shareLimit = await consumeRateLimit(
+        admin,
+        user.id,
+        'workspace_share',
+        envLimit('WORKSPACE_SHARE_PER_MINUTE', 20),
+        envLimit('WORKSPACE_SHARE_PER_DAY', 300),
+        'share',
+      );
+      if (!shareLimit.allowed) return rateLimitResponse(shareLimit, corsHeaders);
+      const result = await shareRpc(admin, 'timewarp_create_shares', {
+        p_sender: user.id,
+        p_workspace_id: workspaceId,
+        p_kind: kind,
+        p_recipients: recipientUserIds,
+        p_title: title,
+        p_summary: asRecord(body.summary),
+        p_payload: asRecord(body.payload),
+      });
+      if (result?.status !== 'ok') throw shareFailure(result?.status);
+      return jsonResponse({ ids: asArray(result.ids) });
+    }
+
+    if (action === 'listShares') {
+      const result = asRecord(await shareRpc(admin, 'timewarp_list_shares', { p_user: user.id }));
+      return jsonResponse({ incoming: asArray(result.incoming), outgoing: asArray(result.outgoing) });
+    }
+
+    if (action === 'openShare') {
+      const shareId = cleanText(body.shareId);
+      if (!isUuid(shareId)) return jsonResponse({ error: 'Valid shareId is required.' }, 400);
+      const result = await shareRpc(admin, 'timewarp_open_share', { p_user: user.id, p_share_id: shareId });
+      if (result?.status !== 'ok') throw shareFailure(result?.status);
+      return jsonResponse({ share: result.share });
+    }
+
+    if (action === 'respondShare') {
+      const shareId = cleanText(body.shareId);
+      const response = cleanText(body.response);
+      if (!isUuid(shareId) || !['accept', 'decline', 'cancel'].includes(response)) {
+        return jsonResponse({ error: 'Valid shareId and response are required.' }, 400);
+      }
+      const result = cleanText(await shareRpc(admin, 'timewarp_respond_share', { p_user: user.id, p_share_id: shareId, p_action: response }));
+      if (result !== 'ok') throw shareFailure(result);
+      return jsonResponse({ ok: true });
     }
 
     if (action === 'invite') {

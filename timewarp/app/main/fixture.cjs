@@ -142,6 +142,26 @@ function createFixture() {
   let signedIn = true, onChange = async () => {};
   const members = [{ id: "member-1", userId: USER.id, email: USER.email, name: USER.name, image: null, roles: ["owner"], createdAt: "2026-01-01T00:00:00.000Z" }];
   const invites = [];
+  // TIMEWARP_FIXTURE_SHARES: a colleague in the organization who has shared a
+  // conversation, an agent and an automation, for trying share invites.
+  const shares = [];
+  if (process.env.TIMEWARP_FIXTURE_SHARES) {
+    const colleague = { userId: "00000000-0000-4000-8000-00000000a1e7", name: "Alex Rivera", email: "alex@preview.invalid" };
+    members.push({ id: "member-2", ...colleague, image: null, roles: ["member"], createdAt: "2026-02-01T00:00:00.000Z" });
+    const sent = new Date(Date.now() - 2 * 3600000).toISOString();
+    const incoming = (kind, title, summary, payload) => ({ id: crypto.randomUUID(), workspaceId: ORGANIZATION.id, organizationName: ORGANIZATION.name, kind, title, summary, payload, createdAt: sent, sender: colleague, recipient: { userId: USER.id, name: USER.name, email: USER.email }, status: "pending" });
+    shares.push(
+      incoming("chat", "Q3 launch checklist", { agentName: "Orbit", messages: 2, omitted: 0, preview: "Draft a launch checklist for the Q3 release." }, { version: 1, title: "Q3 launch checklist", agentName: "Orbit", omitted: 0, messages: [
+        { role: "user", text: "Draft a launch checklist for the Q3 release.", createdAt: new Date(Date.now() - 3 * 3600000).toISOString() },
+        { role: "agent", text: "Here is a checklist:\n\n1. Freeze features\n2. Update the changelog\n3. Brief support", createdAt: new Date(Date.now() - 3 * 3600000 + 60000).toISOString() },
+      ] }),
+      incoming("agent", "Research Scout", { mascot: "Nova", description: "Finds and summarizes market research.", workflows: ["weekly-digest"] }, { version: 1, name: "Research Scout", responsibilities: "Finds and summarizes market research.", instructions: "Find and summarize market research. Cite every source.", avatar: { mascot: "Nova" }, workflows: [
+        { name: "weekly-digest", files: [{ path: "SKILL.md", content: "---\nname: weekly-digest\ndescription: Summarize the week's research.\n---\n\nCollect the week's findings into five bullet points.\n" }] },
+      ] }),
+      incoming("automation", "Morning inbox summary", { agentName: "Orbit", schedule: { kind: "weekdays", time: "08:30" }, preview: "Summarize unread email from the last day." }, { version: 1, name: "Morning inbox summary", instructions: "Summarize unread email from the last day in five bullet points. Say nothing new when there is nothing new.", schedule: { kind: "weekdays", time: "08:30" }, agentName: "Orbit" }),
+    );
+  }
+  const shareFail = () => { throw Object.assign(new Error("This share is no longer available."), { status: 404 }); };
   const auth = {
     bind(handler) { onChange = handler; },
     init: async () => {},
@@ -170,6 +190,35 @@ function createFixture() {
     if (name === "product.profile.update") { if (input.name) USER.name = input.name; return null; }
     // TIMEWARP_FIXTURE_SETUP_DONE: the preview account finished setup on another computer.
     if (name === "product.onboarding.status") return { done: !!process.env.TIMEWARP_FIXTURE_SETUP_DONE };
+    if (name === "product.shares.list") {
+      const waiting = shares.filter(share => share.status === "pending");
+      return {
+        incoming: waiting.filter(share => share.recipient.userId === USER.id).map(({ payload, recipient, status, ...share }) => share),
+        outgoing: waiting.filter(share => share.sender.userId === USER.id).map(({ payload, sender, summary, status, ...share }) => share),
+      };
+    }
+    if (name === "product.shares.create") {
+      const ids = input.recipientUserIds.map(userId => {
+        const person = members.find(member => member.userId === userId);
+        if (!person || userId === USER.id) throw Object.assign(new Error("Choose people who are in this organization."), { status: 404 });
+        const id = crypto.randomUUID();
+        shares.push({ id, workspaceId: input.organizationId, organizationName: ORGANIZATION.name, kind: input.kind, title: input.title, summary: input.summary, payload: input.payload, createdAt: new Date().toISOString(), sender: { userId: USER.id, name: USER.name, email: USER.email }, recipient: { userId, name: person.name, email: person.email }, status: "pending" });
+        return id;
+      });
+      return { ids };
+    }
+    if (name === "product.shares.open") {
+      const share = shares.find(item => item.id === input.shareId && item.status === "pending" && item.recipient.userId === USER.id) || shareFail();
+      const { recipient, status, ...open } = share;
+      return open;
+    }
+    if (name === "product.shares.respond") {
+      const share = shares.find(item => item.id === input.shareId && item.status === "pending") || shareFail();
+      if ((input.response === "cancel" ? share.sender : share.recipient).userId !== USER.id) shareFail();
+      share.status = { accept: "accepted", decline: "declined", cancel: "canceled" }[input.response];
+      share.payload = null;
+      return null;
+    }
     if (name === "product.images.beginUpload") throw Object.assign(new Error("Pictures can't be uploaded in preview mode."), { status: 400 });
     return null;
   };
