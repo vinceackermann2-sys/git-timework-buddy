@@ -11,9 +11,29 @@ interface QueuedEmailOptions {
   label: string
 }
 
+// Names reserved for documentation and tests (RFC 2606, RFC 6761) can never
+// receive mail. The provider rejects some outright and others bounce, and
+// bounces count against the sender's reputation, so these are logged and not
+// sent.
+export const reservedEmailDomain = (address: string) => {
+  const domain = String(address).trim().toLowerCase().split('@').pop() || ''
+  return /(^|\.)example\.(com|net|org)$/.test(domain) || /(^|\.)(test|example|invalid|localhost)$/.test(domain)
+}
+
 export const enqueueEmail = async (admin: any, options: QueuedEmailOptions) => {
   const messageId = options.messageId || crypto.randomUUID()
   const queueName = options.queueName || 'transactional_emails'
+
+  if (reservedEmailDomain(options.to)) {
+    await admin.from('email_send_log').insert({
+      message_id: messageId,
+      template_name: options.label,
+      recipient_email: options.to,
+      status: 'suppressed',
+      error_message: 'Reserved test domain: not sent',
+    })
+    return messageId
+  }
 
   const { error: logError } = await admin.from('email_send_log').insert({
     message_id: messageId,

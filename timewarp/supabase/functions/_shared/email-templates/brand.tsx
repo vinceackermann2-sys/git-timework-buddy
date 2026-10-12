@@ -22,24 +22,35 @@ interface EmailShellProps {
   children?: any
 }
 
-// Fixed email colors match the desktop's default Ice blue accent. Inline styles
-// and table layouts also work in clients that ignore stylesheets and web fonts.
+// The desktop app's own branding (shared/appearance.cjs, appearance.css): Pale
+// lilac fills, purple ink for links and labels, white cards with hairline
+// borders on white, and Segoe UI. Text uses the app's purple-tinted neutrals
+// (its heading ink, and a darker shade of its muted text so body copy stays
+// readable), never blue. Fixed colors, inline styles and table layouts also
+// hold in clients that ignore stylesheets and web fonts.
 export const emailBrand = {
   white: '#FFFFFF',
-  black: '#182230',
-  background: '#F4F7FB',
-  gray: '#F4F7FB',
-  muted: '#526175',
-  border: '#DCE4EE',
-  accent: '#B7D6FF',
-  link: '#315A8A',
-  accentSoft: '#EAF2FF',
-  accentBorder: '#C9DDF7',
-  accentText: '#315A8A',
+  black: '#27232E',
+  heading: '#27232E',
+  background: '#FFFFFF',
+  gray: '#FBFAFC',
+  muted: '#6E6577',
+  border: '#E8E3EC',
+  accent: '#E9D2FF',
+  link: '#5E3C86',
+  accentSoft: '#F9F2FF',
+  accentBorder: '#E9D2FF',
+  accentText: '#5E3C86',
 } as const
 
+const textFont = '"Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif'
+const displayFont = '"Segoe UI Variable Display", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif'
+
+// The app icon at 128 px (assets/icons/app-icon-128.png), published by
+// scripts/publish-email-brand-assets.cjs. A new name for a new icon, so mail
+// clients that cached the previous one don't keep showing it.
 export const emailLogoUrl = Deno.env.get('TIMEWARP_EMAIL_LOGO_URL') ||
-  'https://mrqoeywofslgnquvzhuf.supabase.co/storage/v1/object/public/timewarp-brand-assets/timewarp-email-logo.png'
+  'https://mrqoeywofslgnquvzhuf.supabase.co/storage/v1/object/public/timewarp-brand-assets/timewarp-email-logo-v2.png'
 
 export const EmailShell = ({ preview, eyebrow, heading, siteUrl, children }: EmailShellProps) => {
   const baseUrl = siteUrl.replace(/\/+$/, '')
@@ -126,14 +137,14 @@ export const EmailDivider = () => <Hr style={divider} />
 
 export const emailLinkStyle = {
   color: emailBrand.link,
-  fontWeight: 700,
+  fontWeight: 600,
   textDecoration: 'underline',
 }
 
 const main = {
   backgroundColor: emailBrand.background,
   color: emailBrand.black,
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif',
+  fontFamily: textFont,
   margin: 0,
   padding: 0,
 }
@@ -162,9 +173,10 @@ const brandMark = {
 
 const brandName = {
   color: emailBrand.black,
+  fontFamily: displayFont,
   fontSize: '20px',
-  fontWeight: 700,
-  letterSpacing: '-0.2px',
+  fontWeight: 600,
+  letterSpacing: '-0.5px',
   verticalAlign: 'middle',
 }
 
@@ -172,23 +184,24 @@ const card = {
   backgroundColor: emailBrand.white,
   border: `1px solid ${emailBrand.border}`,
   borderRadius: '16px',
-  borderTop: `4px solid ${emailBrand.accent}`,
+  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
   padding: '36px 36px 32px',
 }
 
 const eyebrowStyle = {
   color: emailBrand.link,
   fontSize: '11px',
-  fontWeight: 800,
-  letterSpacing: '1.3px',
+  fontWeight: 600,
+  letterSpacing: '2px',
   margin: '0 0 12px',
   textTransform: 'uppercase' as const,
 }
 
 const headingStyle = {
-  color: emailBrand.black,
+  color: emailBrand.heading,
+  fontFamily: displayFont,
   fontSize: '29px',
-  fontWeight: 700,
+  fontWeight: 600,
   letterSpacing: '-0.6px',
   lineHeight: '1.18',
   margin: '0 0 22px',
@@ -205,11 +218,11 @@ const buttonRow = { margin: '27px 0 24px' }
 
 const buttonStyle = {
   backgroundColor: emailBrand.accent,
-  borderRadius: '8px',
+  borderRadius: '10px',
   color: emailBrand.black,
   fontSize: '14px',
-  fontWeight: 700,
-  padding: '14px 23px',
+  fontWeight: 600,
+  padding: '14px 24px',
   textDecoration: 'none',
 }
 
@@ -224,7 +237,7 @@ const fallbackBox = {
 const fallbackLabel = {
   color: emailBrand.muted,
   fontSize: '11px',
-  fontWeight: 700,
+  fontWeight: 600,
   margin: '0 0 6px',
 }
 
@@ -265,7 +278,7 @@ const codeStyle = {
   color: emailBrand.black,
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
   fontSize: '30px',
-  fontWeight: 800,
+  fontWeight: 700,
   letterSpacing: '4px',
   margin: 0,
 }
@@ -281,6 +294,6 @@ const footerText = {
   margin: '0 0 5px',
 }
 
-const footerLink = { color: '#4A4A4A', textDecoration: 'underline' }
-const footerDot = { color: '#BDBDBD' }
-const address = { color: '#8A8A8A', fontSize: '10px', margin: '10px 0 0' }
+const footerLink = { color: emailBrand.link, textDecoration: 'underline' }
+const footerDot = { color: emailBrand.muted }
+const address = { color: emailBrand.muted, fontSize: '10px', margin: '10px 0 0' }

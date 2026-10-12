@@ -213,8 +213,10 @@ The production `auth-email-hook`, `timewarp-workspaces`, and `contact` functions
 share the email shell in `timewarp/supabase/functions/_shared/email-templates`.
 Authentication emails, account security notices, workspace invitations,
 contact receipts, support submissions, and waitlist confirmations use the
-Timewarp name, app icon, Ice blue accent, and support/legal footer. Each message
-has HTML and plain-text versions. Confirmation and passwordless sign-in emails
+Timewarp name and the desktop app's branding (the app icon, Pale lilac buttons
+with dark text, purple ink labels and links, white cards with hairline
+borders on white, no blue, Segoe UI) and the support/legal footer. Each message has
+HTML and plain-text versions. Confirmation and passwordless sign-in emails
 include both a secure link and the service-issued one-time code. Recovery uses
 the password-reset link accepted by the app; reauthentication uses its
 service-issued code. Desktop links preserve the
@@ -222,8 +224,11 @@ loopback callback and PKCE flow. Secure email changes keep separate links for
 the current and new addresses.
 
 `TIMEWARP_EMAIL_FROM` supplies the branded sender. The public logo is the app
-icon in the `timewarp-brand-assets` storage bucket; run
-`node scripts/publish-email-brand-assets.cjs` from `timewarp` when it changes.
+icon at 128 px (`assets/icons/app-icon-128.png`) in the `timewarp-brand-assets`
+storage bucket; run `node scripts/publish-email-brand-assets.cjs` from
+`timewarp` when it changes, under a new file name so mail clients that cached
+the old icon don't keep it. Addresses on reserved test domains (`example.com`,
+`.test`, `.invalid` and the like) are logged as suppressed and never sent.
 `TIMEWARP_EMAIL_LOGO_URL` can override its public URL. Publishing requires the
 existing authenticated Supabase CLI; credentials are never embedded in emails.
 

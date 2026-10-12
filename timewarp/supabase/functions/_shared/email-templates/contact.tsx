@@ -74,5 +74,5 @@ const detailsBox = {
 }
 const detailRow = { color: emailBrand.muted, fontSize: '13px', lineHeight: '1.5', margin: '4px 0' }
 const messageBox = { margin: '18px 0 0' }
-const sectionLabel = { color: emailBrand.link, fontSize: '11px', fontWeight: 800, margin: '0 0 6px', textTransform: 'uppercase' as const }
+const sectionLabel = { color: emailBrand.link, fontSize: '11px', fontWeight: 600, letterSpacing: '2px', margin: '0 0 6px', textTransform: 'uppercase' as const }
 const messageText = { color: emailBrand.muted, fontSize: '14px', lineHeight: '1.6', margin: 0, whiteSpace: 'pre-wrap' as const }
