@@ -21,6 +21,8 @@
 .timewarp-auth-divider::before, .timewarp-auth-divider::after { content:''; flex:1; height:1px; background:var(--color-border,#d4d4d8); }
 .timewarp-auth-actions { display:grid; gap:16px; margin-top:16px; }
 .timewarp-auth-actions > button { width:100%; padding:10px 16px; }
+.timewarp-auth-switch { display:grid; gap:8px; color:var(--color-muted-foreground,#626b7c); font-size:13px; }
+.timewarp-auth-switch button { width:100%; padding:10px 16px; color:var(--color-foreground,#172033); }
 .timewarp-auth-links { display:flex; justify-content:center; flex-wrap:wrap; gap:4px 14px; }
 .timewarp-auth-links button { border:0; background:transparent; font-size:12px; min-height:32px; padding:4px 0; text-decoration:underline; text-underline-offset:3px; }
 .timewarp-auth-shell a { display:inline-block; margin-top:20px; color:var(--color-muted-foreground,#626b7c); font-size:12px; text-decoration:underline; text-underline-offset:3px; }
