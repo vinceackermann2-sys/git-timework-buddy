@@ -329,7 +329,7 @@ function ConnectCard({ card }) {
   const connect = () => {
     waiting.current = ready.map(account => account.id);
     setConnecting(true);
-    call("integrations.beginConnect", { integrationId: app.id, agentId }).then(() => toast("Finish connecting in your browser.")).catch(failure => { waiting.current = null; setConnecting(false); setError(errorText(failure)); });
+    call("integrations.beginConnect", { integrationId: app.id, agentId }).then(() => toast("Finish connecting in the window that opened.")).catch(failure => { waiting.current = null; setConnecting(false); setError(errorText(failure)); });
   };
   const busy = connecting || !agentId;
   const action = ready.length ? (
@@ -404,7 +404,7 @@ function McpCard({ card }) {
       if (entry?.authStatus === "notLoggedIn") {
         waiting.current = added;
         await call("mcp.signIn", { name: added });
-        toast("Finish signing in in your browser.");
+        toast("Finish signing in in the window that opened.");
       } else connected(added);
     } catch (failure) { setError(errorText(failure) || "Could not connect this MCP server."); }
     finally { setBusy(false); }

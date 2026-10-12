@@ -117,7 +117,7 @@ function AgentPage({ agent, conversationId, onEditAgent, onAgentChanged, onSetti
   const waiting = (items || []).filter(app => app.pendingAccounts?.length).flatMap(app => app.pendingAccounts.map(account => ({ app, account, pending: true })));
   const rows = [...using, ...waiting].sort((a, b) => a.app.displayName.localeCompare(b.app.displayName));
   // The account comes back connected for this agent.
-  const reconnect = entry => call("integrations.beginConnect", { integrationId: entry.app.id, agentId: agent.id, reconnectAccountId: entry.account.id }).then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"));
+  const reconnect = entry => call("integrations.beginConnect", { integrationId: entry.app.id, agentId: agent.id, reconnectAccountId: entry.account.id }).then(() => toast("Finish connecting in the window that opened.")).catch(error => toast(error, "error"));
   const setVault = value => call("agents.update", { id: agent.id, vaultAccess: value }).then(() => onAgentChanged?.()).catch(error => toast(error, "error"));
   const confirm = useConfirm();
   // Instructions are its AGENTS.md, edited here as Markdown, as before.

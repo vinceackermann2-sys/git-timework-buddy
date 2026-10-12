@@ -121,6 +121,8 @@ async function main() {
   const only = new Set(process.argv.slice(2));
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, "http://localhost").pathname;
+    // A provider sending the browser back to a sign-in's callback (chatgptSignIn).
+    if (pathname === "/return") { res.writeHead(302, { location: new URL(req.url, "http://localhost").searchParams.get("to") }); res.end(); return; }
     if (SLOW[pathname]) { setTimeout(() => { res.writeHead(200, { "content-type": "text/plain" }); res.end(SLOW[pathname][1]); }, SLOW[pathname][0]); return; }
     const page = PAGES[pathname];
     res.writeHead(page ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
@@ -601,6 +603,44 @@ async function main() {
       const announced = await app.evaluate(`JSON.stringify(window.__e2eConnected)`);
       if (!/Preview Slack/.test(announced) || !/slack@preview\.invalid/.test(announced)) throw new Error("The app didn't announce the connected account: " + announced);
       return "the sign-in opened in an app window with the browser profile, closed when it returned to Timewarp, and the account was connected at once as Preview Slack · slack@preview.invalid with no reconnect shown";
+    },
+    // Connecting ChatGPT happens in a Timewarp window. The provider's redirect to
+    // Codex's callback (port 1455) is handed to Codex from Timewarp, and the
+    // window shows Timewarp's page, never Codex's, which opens the ChatGPT app.
+    async chatgptSignIn() {
+      await call("debug.plan", { plan: "free" });
+      try {
+        const started = await app.evaluate(`window.timewarp.request("connectChatgpt", {}).then(value => ({ ok: true, value }), error => ({ ok: false, error: error.message }))`);
+        if (!started?.ok) throw new Error("Connect ChatGPT failed: " + started?.error);
+        // The sign-in page has loaded (it has a title) once OpenAI's own redirects are done.
+        let window;
+        for (const deadline = Date.now() + 30000; !window && Date.now() < deadline; await pause(300)) window = (await app.targets()).find(item => item.type === "page" && /^https:\/\/[^/]*(openai\.com|chatgpt\.com)\//.test(item.url) && item.title && !/^https?:/.test(item.title));
+        if (!window) throw new Error("The ChatGPT sign-in window didn't open.");
+        const titles = new Set(), addresses = new Set();
+        let gone = false;
+        for (let attempt = 0; attempt < 3 && !gone && !titles.has("ChatGPT is connected · Timewarp"); attempt++) {
+          await app.evaluateIn(window, `location.href = ${JSON.stringify(site + "/return?to=" + encodeURIComponent("http://127.0.0.1:1455/success?id_token=preview"))}`);
+          for (const deadline = Date.now() + 5000; Date.now() < deadline; await pause(100)) {
+            const list = await app.targets();
+            for (const item of list) addresses.add(item.url.slice(0, 60));
+            const current = list.find(item => item.id === window.id);
+            if (!current) { gone = true; break; }
+            titles.add(current.title);
+            if (current.title === "ChatGPT is connected · Timewarp") break;
+          }
+        }
+        for (const deadline = Date.now() + 10000; !gone && Date.now() < deadline; await pause(200)) gone = !(await app.targets()).some(item => item.id === window.id);
+        if ((await app.targets()).some(item => item.id === window.id)) throw new Error("The sign-in window didn't close: " + [...titles].join(" | "));
+        if (!titles.has("ChatGPT is connected · Timewarp")) throw new Error("The window didn't show Timewarp's page: " + [...titles].join(" | "));
+        // Codex's pages are "Sign into Codex" and "Signed in to Codex"; the hosted one is chatgpt.com/codex/open-app.
+        const shown = [...[...titles].filter(text => /^(Sign into Codex|Signed in to Codex)$/.test(text)), ...[...addresses].filter(text => /^codex:|127\.0\.0\.1:1455|open-app/.test(text))];
+        if (shown.length) throw new Error("The window showed Codex's page: " + shown.join(" | "));
+        // Codex finished the sign-in (the preview has no real ChatGPT account, so Timewarp then says it couldn't confirm one).
+        let login;
+        for (const deadline = Date.now() + 10000; Date.now() < deadline; await pause(300)) { login = (await app.evaluate(`window.timewarp.request("chatgptDetails", {})`))?.login; if (login?.status !== "waiting_for_user") break; }
+        if (login?.status === "waiting_for_user") throw new Error("Codex never got the sign-in.");
+        return "ChatGPT's sign-in opened in a Timewarp window; the redirect to Codex's callback went to Codex from Timewarp, the window showed Timewarp's \"ChatGPT is connected\" page and closed";
+      } finally { await call("debug.plan", { plan: "max" }); }
     },
     async logFile() {
       await turn(await chat(), "A private note for the log check");

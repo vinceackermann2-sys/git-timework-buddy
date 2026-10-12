@@ -41,7 +41,7 @@ function ChatGptRow() {
   const allowed = state?.funding?.subscriptionAllowed === true;
   const description = !state ? "…" : !allowed ? "Your plan uses Timewarp AI credits. A ChatGPT plan can power AI usage on the Free plan."
     : state.status === "available" ? `Connected${state.account?.email ? " as " + state.account.email : ""}${state.account?.planType ? ` (${state.account.planType})` : ""}` : state.status === "reauth_required" ? "Sign in again to keep using your ChatGPT plan" : "Not connected";
-  const run = action => { setBusy(true); request(action).then(() => { if (action === "connectChatgpt") toast("Finish connecting ChatGPT in your browser."); return load(); }).catch(error => toast(error, "error")).finally(() => setBusy(false)); };
+  const run = action => { setBusy(true); request(action).then(() => { if (action === "connectChatgpt") toast("Finish connecting ChatGPT in the window that opened."); return load(); }).catch(error => toast(error, "error")).finally(() => setBusy(false)); };
   return (
     <Row title="ChatGPT" description={description}>
       {allowed ? (connected && state.status === "available"
@@ -292,7 +292,7 @@ function AppDetails({ app, agents, onClose, onChanged }) {
         </>
       ) : null}
       <div className="tw-dialog-actions">
-        <button type="button" className="tw-btn" onClick={() => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"))}><Plus size={15} />Add account</button>
+        <button type="button" className="tw-btn" onClick={() => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in the window that opened.")).catch(error => toast(error, "error"))}><Plus size={15} />Add account</button>
       </div>
     </>
   );
@@ -317,7 +317,7 @@ function Tools({ agents }) {
   const list = (needle ? all : tabs[tab] || []).filter(entry => !needle || entry.title.toLowerCase().includes(needle) || entry.description.toLowerCase().includes(needle));
   const detail = open && (items || []).find(app => app.id === open);
   const choose = entry => entry.connected ? setOpen(entry.app.id) : connect(entry.app);
-  const connect = app => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in your browser.")).catch(failure => toast(failure, "error"));
+  const connect = app => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in the window that opened.")).catch(failure => toast(failure, "error"));
   return (
     <div className="tw-page">
       <PageHead title="Tools" subtitle="Connect apps and manage connected accounts available to Timewarp." />
