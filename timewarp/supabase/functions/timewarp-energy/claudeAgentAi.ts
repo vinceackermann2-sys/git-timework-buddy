@@ -1,4 +1,4 @@
-// Claude models on paid plans, by the id the desktop sends (shared/models.cjs).
+// Claude models, by the id the desktop sends (shared/models.cjs).
 // Opus 5.5 also runs in Anthropic's Fast mode; the desktop asks for it with a
 // "-fast" suffix, because Codex forwards a speed only for its own models.
 // Checked against Anthropic's model docs on 2026-10-11.
@@ -22,5 +22,3 @@ export function claudeRoute(name: unknown) {
 }
 
 export const claudeKey = () => (Deno.env.get('ANTHROPIC_API_KEY') || '').trim();
-
-export const PAID_PLANS = new Set(['pro', 'max', 'ultra']);

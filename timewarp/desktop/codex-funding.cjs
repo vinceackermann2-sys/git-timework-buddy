@@ -15,7 +15,7 @@ function bindCodexFunding({client,chatgpt,funding,userId,cloudProvider='timewarp
     const background=role===backgroundRole||model==='timewarp/background';
     const provider=state.source==='chatgpt'?'openai':cloudProvider;
     const {models,codexModelName}=require('../shared/models.cjs');
-    const choices=state.source==='chatgpt'?await chatgpt.models():models({plan:state.plan});
+    const choices=state.source==='chatgpt'?await chatgpt.models():models();
     const preferred=background?(choices.find(item=>/(?:^|\/)gpt-[\d.]+-luna$/.test(item.id))||choices.find(item=>item.featured)||choices[0]):null;
     // A Claude model Codex already runs in Fast mode carries "-fast" (codexModelName).
     const fast=state.source!=='chatgpt'&&/^anthropic\/.+-fast$/.test(model||'');

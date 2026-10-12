@@ -21,14 +21,15 @@ export const azureLunaKeys = () => splitKeys(
 );
 
 // Timewarp's GPT models by the name the desktop sends, with their Azure
-// deployments (a secret can rename one). The GPT-6 models are part of the paid
-// plans and offer Fast (Azure priority processing); GPT-5.6 serves Free.
-const AZURE_MODELS: Record<string, { deployment: () => string; keys: () => string[]; paid: boolean; fast: boolean }> = {
-  'gpt-5.6-sol': { deployment: azureSolModel, keys: azureSolKeys, paid: false, fast: false },
-  'gpt-5.6-luna': { deployment: azureLunaModel, keys: azureLunaKeys, paid: false, fast: false },
-  'gpt-6-astra': { deployment: () => Deno.env.get('GPT_ASTRA_MODEL') || 'gpt-6-astra', keys: azureSolKeys, paid: true, fast: true },
-  'gpt-6.1-sol': { deployment: () => Deno.env.get('GPT_SOL_6_1_MODEL') || 'gpt-6.1-sol', keys: azureSolKeys, paid: true, fast: true },
-  'gpt-6-luna': { deployment: () => Deno.env.get('GPT_LUNA_6_MODEL') || 'gpt-6-luna', keys: azureLunaKeys, paid: true, fast: true },
+// deployments (a secret can rename one). The GPT-6 models are the ones the
+// desktop lists, on every plan, and offer Fast (Azure priority processing);
+// GPT-5.6 serves older desktops and approval reviews.
+const AZURE_MODELS: Record<string, { deployment: () => string; keys: () => string[]; fast: boolean }> = {
+  'gpt-5.6-sol': { deployment: azureSolModel, keys: azureSolKeys, fast: false },
+  'gpt-5.6-luna': { deployment: azureLunaModel, keys: azureLunaKeys, fast: false },
+  'gpt-6-astra': { deployment: () => Deno.env.get('GPT_ASTRA_MODEL') || 'gpt-6-astra', keys: azureSolKeys, fast: true },
+  'gpt-6.1-sol': { deployment: () => Deno.env.get('GPT_SOL_6_1_MODEL') || 'gpt-6.1-sol', keys: azureSolKeys, fast: true },
+  'gpt-6-luna': { deployment: () => Deno.env.get('GPT_LUNA_6_MODEL') || 'gpt-6-luna', keys: azureLunaKeys, fast: true },
 };
 
 // The deployment to call and the name usage is billed under ("-fast" bills at
@@ -39,7 +40,7 @@ export function azureRoute(name: unknown, serviceTier?: unknown) {
   const value = String(name ?? '').replace(/^openai\//, ''), review = value === 'codex-auto-review';
   const slug = AZURE_MODELS[value] ? value : review || value === 'gpt-luna' || value === azureLunaModel() ? 'gpt-5.6-luna' : 'gpt-5.6-sol';
   const entry = AZURE_MODELS[slug], fast = entry.fast && (serviceTier === 'priority' || serviceTier === 'fast');
-  return { slug, deployment: entry.deployment(), keys: entry.keys(), paid: entry.paid, fast, billing: `openai/${slug}${fast ? '-fast' : ''}`, ...(review ? { review } : {}) };
+  return { slug, deployment: entry.deployment(), keys: entry.keys(), fast, billing: `openai/${slug}${fast ? '-fast' : ''}`, ...(review ? { review } : {}) };
 }
 export type AzureRoute = ReturnType<typeof azureRoute>;
 

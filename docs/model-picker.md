@@ -18,12 +18,15 @@ using transforms. Grabbing the thumb preserves the pointer's offset, including
 during an animation, and follows the pointer directly until release. Reduced
 motion is respected.
 
-On Free with a connected Codex account, the desktop reads every `model/list`
-page. Hidden entries stay hidden, duplicate IDs are removed, and each model's
-reasoning levels, speed tiers and defaults are retained. Timewarp credits list
-Timewarp's models (`shared/models.cjs`), most intelligent first: on paid plans
-Claude Opus 5.5, Claude Sonnet 5.5, Claude Fable 5.1, GPT-6 Astra, GPT-6.1 Sol
-(the default), Claude Haiku 5.5 and GPT-6 Luna; on Free GPT-5.6 Sol and Luna.
+On Free with a connected Codex account, the picker lists only Codex's models:
+the desktop reads every `model/list` page. Hidden entries stay hidden,
+duplicate IDs are removed, and each model's reasoning levels and speed tiers
+are retained (its default speed is not: see the bolt below). Otherwise every
+plan, Free included, lists all of Timewarp's models (`shared/models.cjs`),
+most intelligent first: Claude Opus 5.5, Claude Sonnet 5.5, Claude Fable 5.1,
+GPT-6 Astra, GPT-6.1 Sol (the default), Claude Haiku 5.5 and GPT-6 Luna. Free
+runs them on purchased credits; with no credits and no Codex account the
+models still show, and sending says to connect ChatGPT or add credits.
 Each of these rows shows three percentages with a bar, 100% being the best of
 all Timewarp's models so they mean the same on every plan, from Artificial
 Analysis's benchmarks at each model's highest effort
@@ -46,25 +49,32 @@ Each offers Low to Max thinking with its own default. Claude Opus 5.5 and the
 GPT-6 models also have Fast at twice the credits (Anthropic's Fast mode, Azure's
 priority processing; a request Azure serves at the standard speed costs the
 standard rate); the others are Standard only. Changing models
-chooses the new model's defaults, except that Fast stays on when the new model offers it;
-changing or resetting effort preserves speed. The speed control appears only
-when the provider advertises extra tiers, using its labels and usage
-descriptions.
+chooses the new model's default effort at Standard, except that Fast stays on
+when the bolt had it on and the new model offers it; changing or resetting
+effort preserves speed. There is no separate speed control.
 
-The bolt beside the effort is the Fast switch. For a model with a Fast tier
-(Codex lists it as `priority`, named "Fast") it turns Fast on and off, keeping
-the effort; it is lit while Fast is on, and the Speed buttons follow it. Fast
+The bolt beside the effort is the Fast switch and the only speed control: the
+speed is always Standard unless the bolt is on. Codex lists Fast as the default
+speed of some of its models (GPT-6 Sol and Luna); Timewarp doesn't apply that
+default (`codexModel` in `shared/model-capabilities.cjs`). For a model with a
+Fast tier (Codex lists it as `priority`, named "Fast") the bolt turns Fast on
+and off, keeping the effort; it is lit while Fast is on, and its tooltip gives
+the tier's usage description. Fast
 has its own blue: the bolt pops and glows, the thinking slider's fill turns blue
 with sparkles streaming backwards through it and a flash sweeping across as Fast
-turns on, and the Fast button and the trigger's "⚡ Fast" turn blue too (still
-for reduced motion). The trigger names no speed for Standard. Models
-without a Fast tier, such as GPT-5.6 on Free and every Claude model but Opus
-5.5, show the bolt dimmed and inert, with a tooltip saying Fast isn't
-available. The chosen tier is sent as `serviceTier` on each `turn/start`; Codex
+turns on, and the trigger's "⚡ Fast" turns blue too (still for reduced
+motion). The trigger names no speed for Standard. Models without a Fast tier,
+such as every Claude model but Opus 5.5, show the bolt dimmed and inert, with a
+tooltip saying Fast isn't available. The chosen tier is sent as `serviceTier` on each `turn/start`; Codex
 sends `service_tier: "priority"` to the model and drops it again when a later
 turn sends `null`. Codex forwards a tier only for models in its own catalog, so
 Claude Opus 5.5 in Fast mode goes to Codex as `anthropic/claude-opus-5-5-fast`
-(`codexModelName` in `shared/models.cjs`), which the cloud reads back.
+(`codexModelName` in `shared/models.cjs`), which the cloud reads back and
+runs in Anthropic's Fast mode; GPT-6 Fast reaches Azure as
+`service_tier: "priority"`. Checked on 2026-10-12 against the bundled Codex
+0.160.1 with a recording stand-in for the cloud: the bolt on sent `priority`
+for GPT-6 and Codex's models and `-fast` for Opus; off sent no tier, even for
+models whose catalog default is Fast.
 `tests/engine-model-picker.test.cjs` renders the picker and checks this. Native schemas retain opaque effort and tier ids (including Ultra
 and priority), and requests validate saved choices against the current catalog.
 

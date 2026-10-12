@@ -63,11 +63,11 @@ test('a repeated Codex catalog cursor fails instead of looping',async t=>{
   await assert.rejects(f.service.models(),/invalid model catalog page/);assert.equal(f.calls.filter(c=>c.method==='model/list').length,2);
 });
 
-test('account catalog speed ids and defaults survive discovery and actual requests',async t=>{
+test('account catalog speed ids survive discovery and actual requests, and the default speed is Standard',async t=>{
   const f=fixture();t.after(()=>f.service.stop());await f.login();
   f.modelPage=()=>({data:[{model:'gpt-codex',defaultReasoningEffort:'high',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],serviceTiers:[{id:'priority',name:'Fast',description:'Higher usage'},{id:'ultrafast',name:'Ultrafast',description:'Highest speed'}],defaultServiceTier:'priority'}]});
   const [model]=await f.service.models();
-  assert.deepEqual(model.serviceTiers.map(tier=>tier.value),[null,'priority','ultrafast']);assert.equal(model.defaultServiceTier,'priority');
+  assert.deepEqual(model.serviceTiers.map(tier=>tier.value),[null,'priority','ultrafast']);assert.equal(model.defaultServiceTier,null,'Standard until the bolt turns Fast on, though the catalog defaults to Fast');
   const created=await f.client.request('thread/start',{model:'gpt-codex',serviceTier:'ultrafast',config:{model_reasoning_effort:'high'}});
   assert.equal(f.threads.get(created.thread.id).serviceTier,'ultrafast');
   await f.client.request('turn/start',{threadId:created.thread.id,model:'gpt-codex',effort:'high',serviceTier:'priority',input:[]});

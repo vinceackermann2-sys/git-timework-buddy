@@ -1,6 +1,7 @@
 "use strict";
-// The model picker's bolt is the Fast switch: it turns a model's Fast tier on
-// and off, the trigger shows Fast, and models without it leave the bolt inert.
+// The model picker's bolt is the Fast switch, and the only speed control: the
+// speed is Standard unless the bolt turns a model's Fast tier on, the trigger
+// shows Fast, and models without it leave the bolt inert.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
@@ -18,7 +19,8 @@ const tiers = [{ id: "priority", name: "Fast", description: "1.5x speed, increas
 const efforts = ["low", "medium", "high"].map(effort => ({ reasoningEffort: effort, description: effort }));
 const codex = [
   codexModel({ model: "gpt-6.1-sol", displayName: "gpt-6.1-sol", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: efforts, serviceTiers: tiers }),
-  codexModel({ model: "gpt-6-luna", displayName: "gpt-6-luna", defaultReasoningEffort: "low", supportedReasoningEfforts: efforts, serviceTiers: tiers }),
+  // Codex lists Fast as some models' default speed; the picker still starts at Standard.
+  codexModel({ model: "gpt-6-luna", displayName: "gpt-6-luna", defaultReasoningEffort: "low", supportedReasoningEfforts: efforts, serviceTiers: tiers, defaultServiceTier: "priority" }),
   codexModel({ model: "gpt-review", displayName: "gpt-review", defaultReasoningEffort: "low", supportedReasoningEfforts: efforts, serviceTiers: [] }),
 ];
 const credits = require("../shared/models.cjs").models();
@@ -50,14 +52,14 @@ test("the bolt turns Fast on and off and the trigger shows Fast", async t => {
   assert.equal(ui.$(".tw-mp-bolt").getAttribute("aria-disabled"), "false");
   assert.equal(ui.$(".tw-mp-slider").dataset.fast, undefined);
   assert.ok(ui.$(".tw-mp-fill .tw-mp-sparks"), "the fill carries the sparkles Fast shows");
+  assert.equal(ui.$(".tw-mp-speed"), null, "there's no Speed row: the bolt is the only speed control");
   await ui.click(".tw-mp-bolt");
   assert.deepEqual(ui.selections.at(-1), { name: "gpt-6.1-sol", reasoningEffort: "high", serviceTier: "priority" }, "Fast keeps the effort");
   assert.equal(ui.$(".tw-mp-bolt").getAttribute("aria-pressed"), "true");
   assert.equal(ui.$(".tw-mp-slider").dataset.fast, "true", "the slider turns speedy");
   assert.match(ui.trigger(), /Fast/);
   assert.equal(ui.$(".tw-model-speed").dataset.fast, "true");
-  assert.equal(ui.$('.tw-mp-speed-options button[aria-pressed="true"]').textContent, "Fast", "the Speed row follows the bolt");
-  assert.equal(ui.$('.tw-mp-speed-options button[aria-pressed="true"]').dataset.fast, "true");
+  assert.equal(ui.$(".tw-mp-speed"), null);
   await ui.click(".tw-mp-bolt");
   assert.deepEqual(ui.selections.at(-1), { name: "gpt-6.1-sol", reasoningEffort: "high", serviceTier: null });
   assert.equal(ui.$(".tw-mp-slider").dataset.fast, undefined);
@@ -79,20 +81,41 @@ test("Fast stays on when the next model offers it and turns off when it doesn't"
   assert.equal(ui.selections.length, before, "the bolt does nothing for a model without Fast");
 });
 
-test("Timewarp credits have no Fast: the bolt is inert and no speed shows", async t => {
-  const ui = mount(t, credits, { name: credits[0].id, reasoningEffort: "low", serviceTier: null });
+test("picking a model is Standard unless the bolt is on, even where Codex lists Fast as its default", async t => {
+  const ui = mount(t, codex, { name: "gpt-6.1-sol", reasoningEffort: "medium", serviceTier: null });
+  await ui.click(".tw-pill.model");
+  await ui.click(".tw-mp-choose");
+  await ui.click(".tw-mp-option", 1);
+  assert.deepEqual(ui.selections.at(-1), { name: "gpt-6-luna", reasoningEffort: "low", serviceTier: null });
+  assert.equal(ui.$(".tw-mp-bolt").getAttribute("aria-pressed"), "false");
+  assert.doesNotMatch(ui.trigger(), /Fast|Standard/);
+  await ui.click(".tw-mp-bolt");
+  assert.deepEqual(ui.selections.at(-1), { name: "gpt-6-luna", reasoningEffort: "low", serviceTier: "priority" });
+});
+
+test("Timewarp's models: the bolt turns Fast on for Opus 5.5 and GPT-6, and is inert for the other Claude models", async t => {
+  const sonnet = credits.find(model => model.id === "anthropic/claude-sonnet-5-5");
+  const ui = mount(t, credits, { name: sonnet.id, reasoningEffort: "high", serviceTier: null });
   await ui.click(".tw-pill.model");
   assert.equal(ui.$(".tw-mp-bolt").getAttribute("aria-disabled"), "true");
   assert.equal(ui.$(".tw-mp-bolt").title, "Fast isn't available for this model");
-  assert.equal(ui.$(".tw-mp-speed"), null);
   await ui.click(".tw-mp-bolt");
   assert.equal(ui.selections.length, 0);
   assert.doesNotMatch(ui.trigger(), /Fast|Standard/);
+  await ui.click(".tw-mp-choose");
+  await ui.click(".tw-mp-option", credits.findIndex(model => model.id === "anthropic/claude-opus-5-5"));
+  assert.deepEqual(ui.selections.at(-1), { name: "anthropic/claude-opus-5-5", reasoningEffort: "medium", serviceTier: null });
+  await ui.click(".tw-mp-bolt");
+  assert.deepEqual(ui.selections.at(-1), { name: "anthropic/claude-opus-5-5", reasoningEffort: "medium", serviceTier: "priority" });
+  assert.match(ui.$(".tw-mp-bolt").title, /^Fast is on: Up to 2.5x faster replies, uses twice the credits$/);
+  assert.match(ui.trigger(), /Fast/);
+  await ui.click(".tw-mp-choose");
+  await ui.click(".tw-mp-option", credits.findIndex(model => model.id === "openai/gpt-6-astra"));
+  assert.deepEqual(ui.selections.at(-1), { name: "openai/gpt-6-astra", reasoningEffort: "low", serviceTier: "priority" }, "Fast stays on for GPT-6");
 });
 
 test("Timewarp's models show intelligence, speed and low cost as a percentage of the best; Codex's don't", async t => {
-  const paid = require("../shared/models.cjs").models({ plan: "max" });
-  const ui = mount(t, paid, { name: "openai/gpt-6.1-sol", reasoningEffort: "low", serviceTier: null });
+  const ui = mount(t, credits, { name: "openai/gpt-6.1-sol", reasoningEffort: "low", serviceTier: null });
   await ui.click(".tw-pill.model");
   await ui.click(".tw-mp-choose");
   const rows = [...ui.$(".tw-mp-options").querySelectorAll(".tw-mp-option")];

@@ -483,7 +483,8 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
           ...settings?.name ? { model: settings.name } : {},
           ...settings?.reasoningEffort ? { effort: settings.reasoningEffort } : {},
           // The chosen speed (null is Standard); codex-funding.cjs checks it
-          // against the model's tiers. Older chats without one use the model's default.
+          // against the model's tiers. Older chats without one run at
+          // Standard, every model's default.
           ...settings && settings.serviceTier !== undefined ? { serviceTier: settings.serviceTier } : {},
         });
       };

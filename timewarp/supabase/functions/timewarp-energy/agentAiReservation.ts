@@ -78,7 +78,7 @@ export function requestInputTokens(body: any, text = JSON.stringify(body)) {
   return tokens;
 }
 
-export async function reserveAgentAi(admin: any, userId: string, model: string, body: unknown, bounds?: { inputTokens?: number; outputTokens?: number; allowed?: Promise<unknown> }) {
+export async function reserveAgentAi(admin: any, userId: string, model: string, body: unknown, bounds?: { inputTokens?: number; outputTokens?: number }) {
   // Include the bounded reasoning+output allowance. Non-text requests (audio)
   // pass their own ceilings.
   const inputCeiling = bounds?.inputTokens ?? requestInputTokens(body);
@@ -106,14 +106,7 @@ export async function reserveAgentAi(admin: any, userId: string, model: string, 
       throw new Error('AI usage reconciliation is pending; its allowance remains reserved.');
     },
   };
-  // A check the call needs first (the paid plan) runs alongside the
-  // reservation. When it fails, its error wins and the reservation is released.
-  const [reserved, allowed] = await Promise.allSettled([admin.rpc('timewarp_reserve_agent_ai', { p_id: id, p_user_id: userId, p_credits: credits }), bounds?.allowed]);
-  const { data, error } = reserved.status === 'fulfilled' ? reserved.value : { data: null, error: reserved.reason };
-  if (allowed.status === 'rejected') {
-    if (!error && data === true) await reservation.finish('released').catch(() => {});
-    throw allowed.reason;
-  }
+  const { data, error } = await admin.rpc('timewarp_reserve_agent_ai', { p_id: id, p_user_id: userId, p_credits: credits });
   if (error || data !== true) throw Object.assign(new Error(error ? 'AI budget reservation is unavailable. No model request was sent.' : 'Not enough unreserved AI credits for this bounded model call. Other agent work may still be using the shared allowance.'), { status: error ? 503 : 402 });
   return reservation;
 }

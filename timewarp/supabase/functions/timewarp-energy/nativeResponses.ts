@@ -24,7 +24,7 @@ const withoutInclude = ({ include: _, ...payload }: any) => payload;
 // 400 for something the deployment can't take sends the request again
 // without it: Fast, 24-hour retention, encrypted reasoning, or reasoning that
 // another model encrypted (after a model switch mid-chat).
-async function openAzure(admin: any, userId: string, route: AzureRoute, payload: any, stream: boolean, allowed?: Promise<unknown>) {
+async function openAzure(admin: any, userId: string, route: AzureRoute, payload: any, stream: boolean) {
   if (!route.keys.length) throw fail(503, 'The cloud AI provider is not configured.');
   if (route.fast && declines(route, 'fast')) route = standardRoute(route);
   if (payload.include && declines(route, 'include')) payload = withoutInclude(payload);
@@ -33,7 +33,7 @@ async function openAzure(admin: any, userId: string, route: AzureRoute, payload:
     const request = { ...payload, ...(route.fast ? { service_tier: 'priority' } : {}), ...(retention ? { prompt_cache_retention: '24h' } : {}), model: route.deployment, store: false, stream, max_output_tokens: responseOutputLimit(payload) };
     // One serialization sizes the reservation and is sent.
     const text = JSON.stringify(request);
-    const reservation = await reserveAgentAi(admin, userId, route.billing, request, { inputTokens: requestInputTokens(request, text), allowed });
+    const reservation = await reserveAgentAi(admin, userId, route.billing, request, { inputTokens: requestInputTokens(request, text) });
     let upstream: Response;
     try {
       upstream = await fetch(`${azureFoundryBase()}/responses`, { method: 'POST', headers: { 'api-key': route.keys[0], 'content-type': 'application/json' }, body: text, signal: AbortSignal.timeout(stream ? 300_000 : 65_000), redirect: 'error' });
@@ -61,8 +61,8 @@ async function openAzure(admin: any, userId: string, route: AzureRoute, payload:
 // Forward real provider events. Meter the independent tee so a desktop closing
 // mid-stream cannot turn a paid request into an unrecorded model call. The
 // request was checked for secrets on arrival (index.ts).
-export async function nativeStream(admin: any, userId: string, route: AzureRoute, payload: any, cors: Record<string, string>, allowed?: Promise<unknown>) {
-  const { upstream, reservation, route: settled } = await openAzure(admin, userId, route, payload, true, allowed);
+export async function nativeStream(admin: any, userId: string, route: AzureRoute, payload: any, cors: Record<string, string>) {
+  const { upstream, reservation, route: settled } = await openAzure(admin, userId, route, payload, true);
   const [client, meter] = upstream.body!.tee();
   const settle = (async () => {
     const reader = meter.getReader(); const decoder = new TextDecoder(); let buffer = '', usage: any = null, tier: unknown;
@@ -95,8 +95,8 @@ export async function nativeStream(admin: any, userId: string, route: AzureRoute
 }
 
 // The same request as one Responses object, for clients that don't stream.
-export async function nativeCall(admin: any, userId: string, route: AzureRoute, payload: any, allowed?: Promise<unknown>) {
-  const { upstream, reservation, route: served } = await openAzure(admin, userId, route, payload, false, allowed);
+export async function nativeCall(admin: any, userId: string, route: AzureRoute, payload: any) {
+  const { upstream, reservation, route: served } = await openAzure(admin, userId, route, payload, false);
   const output = await upstream.json().catch(() => null);
   if (!output) { await reservation.finish('uncertain'); throw fail(502, `The AI provider could not complete this request (${upstream.status}).`); }
   if (!output.usage || !Number.isFinite(output.usage.input_tokens) || !Number.isFinite(output.usage.output_tokens)) {

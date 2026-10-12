@@ -1,8 +1,8 @@
 "use strict";
-// Timewarp's cloud models, most intelligent first (SCORES). Paid plans run
-// Claude and OpenAI's GPT-6 models on Azure, with GPT-6.1 Sol as the default;
-// Free with Timewarp credits runs GPT-5.6 Sol and Luna.
-const PAID_PLANS = new Set(["pro", "max", "ultra"]);
+// Timewarp's cloud models, most intelligent first (SCORES): Claude and OpenAI's
+// GPT-6 models on Azure, with GPT-6.1 Sol as the default. Every plan lists them
+// all; on Free they run on purchased Timewarp credits (Free with a connected
+// ChatGPT / Codex account lists Codex's own models instead, model-catalog.cjs).
 
 // Each model's intelligence, speed and low cost from 0 to 1, against the best
 // of all Timewarp's models, from Artificial Analysis's benchmarks
@@ -64,7 +64,7 @@ const model = (id, displayName, description, supportedReasoningEfforts, defaultR
   id, displayName, description, inputModalities: ["text", "image"], supportedReasoningEfforts, defaultReasoningEffort, featured,
   serviceTiers: speed ? [STANDARD, fast(speed)] : [STANDARD], defaultServiceTier: null,
 });
-const PAID_MODELS = withStats(byIntelligence([
+const MODELS = withStats(byIntelligence([
   model("anthropic/claude-opus-5-5", "Claude Opus 5.5", "Anthropic's frontier model for complex agent and coding work", CLAUDE_EFFORTS, "medium", { speed: "2.5x" }),
   model("anthropic/claude-sonnet-5-5", "Claude Sonnet 5.5", "Fast and capable for everyday work", CLAUDE_EFFORTS, "high"),
   model("anthropic/claude-fable-5-1", "Claude Fable 5.1", "Anthropic's model for the hardest long-running work", CLAUDE_EFFORTS, "high"),
@@ -73,14 +73,9 @@ const PAID_MODELS = withStats(byIntelligence([
   model("anthropic/claude-haiku-5-5", "Claude Haiku 5.5", "Anthropic's fastest, most affordable model", CLAUDE_EFFORTS, "medium"),
   model("openai/gpt-6-luna", "GPT-6 Luna", "OpenAI's fast, affordable model for easier tasks", GPT_EFFORTS, "medium", { speed: "1.5x" }),
 ]));
-const FREE_MODELS = withStats(byIntelligence([
-  model("openai/gpt-5.6-sol", "GPT-5.6 Sol", "OpenAI's workhorse model", GPT_EFFORTS, "low", { featured: true }),
-  model("openai/gpt-5.6-luna", "GPT-5.6 Luna", "OpenAI's fast, efficient model", GPT_EFFORTS, "low", { featured: true }),
-]));
 
-function models({ plan } = {}) {
-  return (PAID_PLANS.has(plan) ? PAID_MODELS : FREE_MODELS)
-    .map(item => ({ ...item, supportedReasoningEfforts: item.supportedReasoningEfforts.map(option => ({ ...option })), serviceTiers: item.serviceTiers.map(tier => ({ ...tier })), stats: { ...item.stats } }));
+function models() {
+  return MODELS.map(item => ({ ...item, supportedReasoningEfforts: item.supportedReasoningEfforts.map(option => ({ ...option })), serviceTiers: item.serviceTiers.map(tier => ({ ...tier })), stats: { ...item.stats } }));
 }
 
 // The model name Codex sends to the cloud. Codex forwards a speed only for its
@@ -90,4 +85,4 @@ function codexModelName({ name, serviceTier } = {}) {
   return /^anthropic\//.test(name || "") && serviceTier === "priority" ? name + "-fast" : name;
 }
 
-module.exports = { models, codexModelName, SCORES, PAID_PLANS };
+module.exports = { models, codexModelName, SCORES };
