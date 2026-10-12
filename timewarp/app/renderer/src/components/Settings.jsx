@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Blocks, BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Ellipsis, Globe, KeyRound, LayoutGrid, Monitor, Moon, Pencil, Plus, Search, Settings2, Sun, Trash2, TriangleAlert, UserPlus, UserRound } from "lucide-react";
 import { presets, hexToAccent } from "../../../../shared/appearance.cjs";
-import { call, initials, relativeTime, request, useEvent } from "../api.js";
+import { accountText, call, initials, relativeTime, request, useEvent } from "../api.js";
 import { applyAppearance } from "../theme.js";
 import { splitEmails, updateRow } from "../shell.mjs";
 import { Avatar, Dialog, Menu, PageHead, Row, SearchField, Select, Switch, useConfirm, useToast } from "./common.jsx";
@@ -253,20 +253,22 @@ function AppDetails({ app, agents, onClose, onChanged }) {
     setAccess(state => ({ ...state, [agentId]: items }));
     try { await call("integrations.setAccess", { agentId, items }); } catch (error) { setAccess(state => ({ ...state, [agentId]: previous })); toast(error, "error"); }
   }
+  // Each account shows the name and the email it signs in with.
+  const email = account => account.email && account.email !== account.displayName ? <span className="desc">{account.email}</span> : null;
   return (
     <>
       <div className="tw-list-panel">
         {app.accounts.map(account => (
           <div key={account.id} className="tw-list-row compact">
             <span className="tw-face">{initials(account.displayName).slice(0, 1)}</span>
-            <div className="grow"><strong>{account.displayName}</strong><span className="desc">{agents.filter(agent => allowed(agent.id, account)).map(agent => agent.name).join(", ") || "No agents"}</span></div>
+            <div className="grow"><strong>{account.displayName}</strong>{email(account)}<span className="desc">{agents.filter(agent => allowed(agent.id, account)).map(agent => agent.name).join(", ") || "No agents"}</span></div>
             <button type="button" className="tw-btn" onClick={() => void disconnect(account, false)}>Disconnect</button>
           </div>
         ))}
         {(app.pendingAccounts || []).map(account => (
           <div key={account.id} className="tw-list-row compact">
             <span className="tw-face">{initials(account.displayName).slice(0, 1)}</span>
-            <div className="grow"><strong>{account.displayName}</strong><span className="desc">Needs signing in again</span></div>
+            <div className="grow"><strong>{account.displayName}</strong>{email(account)}<span className="desc">Needs signing in again</span></div>
             <button type="button" className="tw-btn" onClick={() => void disconnect(account, true)}>Remove</button>
           </div>
         ))}
@@ -281,7 +283,7 @@ function AppDetails({ app, agents, onClose, onChanged }) {
                 <div className="grow" style={{ gap: 6 }}>
                   <strong>{agent.name}</strong>
                   {app.accounts.map(account => (
-                    <label key={account.id} className="tw-check"><input type="checkbox" checked={allowed(agent.id, account)} onChange={event => void toggle(agent.id, account, event.target.checked)} /><span>{account.displayName}</span></label>
+                    <label key={account.id} className="tw-check"><input type="checkbox" checked={allowed(agent.id, account)} onChange={event => void toggle(agent.id, account, event.target.checked)} /><span>{accountText(account)}</span></label>
                   ))}
                 </div>
               </div>
@@ -334,7 +336,7 @@ function Tools({ agents }) {
             <div key={entry.key} className="tw-tile clickable" role="button" tabIndex={0} onClick={() => choose(entry)} onKeyDown={event => { if (event.key === "Enter") choose(entry); }}>
               <AppIcon app={entry.app} size={36} />
               <div><strong>{entry.title}</strong><span className="desc">{entry.description}</span></div>
-              {entry.app.accounts?.length ? <span className="tw-faces">{entry.app.accounts.slice(0, 3).map(account => <span key={account.id} title={account.displayName}>{initials(account.displayName).slice(0, 1)}</span>)}</span> : null}
+              {entry.app.accounts?.length ? <span className="tw-faces">{entry.app.accounts.slice(0, 3).map(account => <span key={account.id} title={accountText(account)}>{initials(account.displayName).slice(0, 1)}</span>)}</span> : null}
               {entry.pending ? (
                 <button type="button" className="tw-tile-reconnect" aria-label={"Reconnect " + entry.title} onClick={event => { event.stopPropagation(); connect(entry.app); }}><TriangleAlert size={16} />Reconnect</button>
               ) : (

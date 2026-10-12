@@ -259,6 +259,8 @@ async function boot() {
       broadcast("account.changed", { signedIn: !!services.auth.user() });
     },
     onCodexConnected: async () => { await booted; services.funding.invalidate(); await selectModel().catch(() => console.error("[timewarp] The default model could not be updated.")); fundingChanged(); },
+    // An app just connected or removed: the next message names the agent's accounts afresh.
+    onIntegrationsChanged: () => { void booted.then(() => appAccounts.clear()); },
   });
   userId = () => services.auth.userId();
 
@@ -403,7 +405,7 @@ async function boot() {
   const appAccounts = new Map(); // agent id -> { at, text, loading }
   const accountsText = ({ items }) => {
     const apps = (items || []).filter(item => item.accounts?.length).map(item => `- ${item.displayName} (app id ${String(item.id).replace(/^composio-/, "")}): `
-      + item.accounts.map(account => account.displayName + (account.authStatus === "ready" ? "" : " (needs reconnecting)")).join(", "));
+      + item.accounts.map(account => account.displayName + (account.email && account.email !== account.displayName ? ` <${account.email}>` : "") + (account.authStatus === "ready" ? "" : " (needs reconnecting)")).join(", "));
     return apps.length
       ? "Connected app accounts this agent can use (one that needs reconnecting can't be used until the user reconnects it):\n" + apps.join("\n") + "\nOther apps aren't connected."
       : "No app accounts are connected for this agent.";

@@ -8,7 +8,7 @@ import {
   FileSpreadsheet, FileText, FileVideo, FolderOpen, Globe, KeyRound, Link2, LoaderCircle, Mail, MessageSquare, Mic, Plus, Presentation, Puzzle, RefreshCw,
   Send, Server, Sparkles, Square, UserRound, X,
 } from "lucide-react";
-import { avatarSrc, call, errorText, initials } from "./api.js";
+import { accountText, avatarSrc, call, errorText, initials } from "./api.js";
 import { Dialog, Menu, useToast } from "./components/common.jsx";
 import { AppIcon } from "./components/Composer.jsx";
 import { useDictation } from "./dictation.js";
@@ -334,7 +334,7 @@ function ConnectCard({ card }) {
   const busy = connecting || !agentId;
   const action = ready.length ? (
     <span className="tw-accounts" aria-label={`${ready.length} ${name} accounts`}>
-      {ready.slice(0, 4).map(account => account.avatarUrl ? <img key={account.id} src={account.avatarUrl} alt="" title={account.displayName} /> : <span key={account.id} className="tw-account-face" title={account.displayName}>{initials(account.displayName).slice(0, 1)}</span>)}
+      {ready.slice(0, 4).map(account => account.avatarUrl ? <img key={account.id} src={account.avatarUrl} alt="" title={accountText(account)} /> : <span key={account.id} className="tw-account-face" title={accountText(account)}>{initials(account.displayName).slice(0, 1)}</span>)}
       <button type="button" className="tw-round-add" aria-label={connecting ? `Connecting ${name}` : `Connect another ${name} account`} title={`Connect another ${name} account`} disabled={busy} onClick={connect}>
         {connecting ? <LoaderCircle size={14} className="tw-spin" /> : <Plus size={14} />}
       </button>

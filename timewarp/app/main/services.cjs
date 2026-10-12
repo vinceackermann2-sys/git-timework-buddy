@@ -10,12 +10,13 @@ const { callbackServer } = require("../../desktop/oauth.cjs");
 const { protectedStore } = require("../../desktop/protected-store.cjs");
 const { assertCloudSafe } = require("../../shared/privacy.cjs");
 
-function createServices({ profile, config, onAccountChanged = async () => {}, onCodexConnected = async () => {}, mcpToken, agentsFor, fixture = null }) {
+function createServices({ profile, config, onAccountChanged = async () => {}, onCodexConnected = async () => {}, onIntegrationsChanged = () => {}, mcpToken, agentsFor, fixture = null }) {
   let oauthServer = null, callbackOpening = null, providersPromise = null;
   const providersFile = path.join(profile, "auth-providers.json");
   const appWindows = () => BrowserWindow.getAllWindows().filter(window => !window.isDestroyed() && window.webContents.getURL().startsWith("app://app/"));
-  // Screens that list connected apps reload on this.
-  const integrationsChanged = () => { for (const window of appWindows()) window.webContents.send("tw:event", "integrations.changed", {}); };
+  // Screens that list connected apps reload on this; `connected` names the
+  // accounts a sign-in just added.
+  const integrationsChanged = (payload = {}) => { onIntegrationsChanged(); for (const window of appWindows()) window.webContents.send("tw:event", "integrations.changed", payload); };
   const focusApp = () => { for (const window of appWindows()) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } };
 
   const accountChanged = async ({ changedUser }) => {
@@ -70,11 +71,11 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
     if (oauthServer?.listening) return;
     if (callbackOpening) return callbackOpening;
     callbackOpening = (async () => {
-      const server = callbackServer(code => auth.completeOAuth(code), async () => focusApp(), 17654, async () => {
-        const result = await integrations.callback();
-        integrationsChanged();
-        focusApp();
-        return result;
+      // A connection that couldn't be confirmed still refreshes the app lists.
+      const server = callbackServer(code => auth.completeOAuth(code), async () => focusApp(), 17654, async params => {
+        let result = null;
+        try { result = await integrations.callback(params); return result; }
+        finally { integrationsChanged(result?.accounts ? { connected: result.accounts } : {}); focusApp(); }
       });
       await new Promise((resolve, reject) => { server.once("error", reject); server.listen(17654, "127.0.0.1", resolve); })
         .catch(() => { server.close(); throw new Error("Another app is using the Timewarp sign-in callback. Close it and retry."); });

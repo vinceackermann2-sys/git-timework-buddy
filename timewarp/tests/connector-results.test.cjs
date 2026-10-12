@@ -2,18 +2,22 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createComposio}=require('../desktop/composio.cjs');
 const http=require('node:http');
-function fixture(account,result={successful:true}) {
-  return createComposio({userId:()=> 'owner',storage:{load:()=>null,save(){}},getAgent:async id=>({id,ownerUserId:'owner'}),ensureCallback:async()=>{},mcpToken:'fixture-token',cloud:async(_route,input)=>{
+function fixture(account,result={successful:true},stored=null) {
+  return createComposio({userId:()=> 'owner',storage:{load:()=>stored,save(){}},getAgent:async id=>({id,ownerUserId:'owner'}),ensureCallback:async()=>{},mcpToken:'fixture-token',cloud:async(_route,input)=>{
     if(input.action==='list-apps')return {apps:[{toolkitSlug:'github',name:'GitHub',accounts:[{connectionId:'owned',...account}]}]};
     if(input.action==='execute')return result;
     throw Error('Unexpected action');
   }});
 }
 test('connector cards and executable access agree on explicit inactive and status-only accounts',async()=>{
-  for(const [account,ready]of [[{active:false,status:'ACTIVE'},false],[{status:'ACTIVE'},true],[{active:true,status:'ACTIVE'},true],[{status:'INITIATED'},false]]) {
-    const service=fixture(account);
-    const card=(await service.list({agentId:'agent'})).items[0].accounts[0];
+  // An account that worked before (seen here) needs signing in again; one that
+  // never worked is an unfinished Connect and isn't listed at all.
+  const seen={seen:{owner:{owned:{name:null,email:'me@example.com',icon:null}}}};
+  for(const [account,ready]of [[{active:false,status:'ACTIVE'},false],[{status:'ACTIVE'},true],[{active:true,status:'ACTIVE'},true],[{status:'INITIATED'},false],[{status:'EXPIRED'},false]]) {
+    const card=(await fixture(account,undefined,structuredClone(seen)).list({agentId:'agent'})).items[0].accounts[0];
     assert.equal(card.authStatus,ready?'ready':'reauthorization_required');
+    const service=fixture(account);
+    assert.equal((await service.list({agentId:'agent'})).items[0].accounts.length,ready?1:0);
     assert.equal((await service.connections('agent')).length,ready?1:0);
   }
 });

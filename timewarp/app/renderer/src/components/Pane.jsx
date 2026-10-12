@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BookMarked, CalendarClock, Check, ChevronLeft, ChevronRight, FileText, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Pin, PinOff, Plus, RotateCw, Settings, Trash2, UserRound, Volume2, VolumeX, X } from "lucide-react";
-import { call, relativeTime, useEvent } from "../api.js";
+import { accountText, call, relativeTime, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { Avatar, ContextMenu, Dialog, Menu, Switch, useConfirm, useToast } from "./common.jsx";
 import { AppIcon, useApps } from "./Composer.jsx";
@@ -176,7 +176,7 @@ function AgentPage({ agent, conversationId, onEditAgent, onAgentChanged, onSetti
         <Menu align="right" width={260} trigger={({ toggle }) => <button type="button" className="tw-agent-add" onClick={toggle}><Plus size={12} />Add</button>}>
           {other.map(entry => (
             <button key={entry.app.id + entry.account.id} type="button" className="tw-menu-item" data-close onClick={() => void save([...using, entry])}>
-              <AppIcon app={entry.app} /><span className="grow">{entry.app.displayName}<small>{entry.account.displayName}</small></span>
+              <AppIcon app={entry.app} /><span className="grow">{entry.app.displayName}<small>{accountText(entry.account)}</small></span>
             </button>
           ))}
           {other.length ? <div className="tw-menu-sep" /> : null}
@@ -186,11 +186,11 @@ function AgentPage({ agent, conversationId, onEditAgent, onAgentChanged, onSetti
       <div className="tw-agent-card tw-agent-tools">
         {rows.map(entry => entry.pending ? (
           <button key={entry.app.id + entry.account.id} type="button" className="tw-agent-tool tw-agent-tool-button" title="Reconnect" onClick={() => void reconnect(entry)}>
-            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc">{entry.account.displayName} (Authentication expired — reconnect required)</span>
+            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc" title={accountText(entry.account)}>{accountText(entry.account)} (Authentication expired — reconnect required)</span>
           </button>
         ) : (
           <div key={entry.app.id + entry.account.id} className="tw-agent-tool">
-            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc">{entry.account.displayName}</span>
+            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc" title={accountText(entry.account)}>{accountText(entry.account)}</span>
             <button type="button" className="tw-icon-button" title="Remove" aria-label={`Remove ${entry.app.displayName} ${entry.account.displayName}`} onClick={() => void save(using.filter(item => item !== entry))}><X size={12} /></button>
           </div>
         ))}

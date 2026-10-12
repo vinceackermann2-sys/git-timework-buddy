@@ -180,6 +180,10 @@ function createFixture() {
   // Speed measurements (scripts/perf-engine.cjs): each cloud call waits as
   // long as a round trip to the real cloud, and is logged by its route.
   const latency = Math.max(0, Number(process.env.TIMEWARP_FIXTURE_CLOUD_LATENCY_MS) || 0);
+  let connectorAccounts = [
+    { toolkit: "gmail", connectionId: "conn-gmail-1", label: "inbox@preview.invalid", name: "Preview inbox", email: "inbox@preview.invalid", status: "ACTIVE", active: true },
+    { toolkit: "gmail", connectionId: "conn-gmail-abandoned", label: "Account ndoned", email: null, status: "INITIATED", active: false },
+  ];
   async function cloud(route, payload, method = "POST") {
     if (process.env.TIMEWARP_FIXTURE_COUNT) console.error("[timewarp] fixture cloud " + route + (route === "/connectors" ? " " + (payload?.action || "") : ""));
     if (latency && !(liveModel && /^\/v1\//.test(route))) await new Promise(resolve => setTimeout(resolve, latency));
@@ -200,11 +204,26 @@ function createFixture() {
     if (route === "/native/rpc") return json(rpc(payload.rpc, payload.input || {}));
     if (route === "/v1/transcriptions") return json({ text: `Preview dictation (${payload?.length || 0} bytes of audio).` });
     if (route === "/connectors") {
+      // As the cloud answers: a working account's label is its email, and each
+      // Connect makes an account that stays started until its sign-in is done
+      // (Gmail keeps an abandoned one).
       if (payload?.action === "list-apps") return json({ apps: [
-        { toolkitSlug: "gmail", name: "Gmail", description: "Read and send email.", logo: null, accounts: [{ connectionId: "conn-gmail-1", label: "Preview inbox", email: "inbox@preview.invalid", status: "ACTIVE" }] },
-        { toolkitSlug: "slack", name: "Slack", description: "Read and post messages.", logo: null, authConfigId: "ac_preview_slack", accounts: [] },
+        { toolkitSlug: "gmail", name: "Gmail", description: "Read and send email.", logo: null, accounts: connectorAccounts.filter(account => account.toolkit === "gmail") },
+        { toolkitSlug: "slack", name: "Slack", description: "Read and post messages.", logo: null, authConfigId: "ac_preview_slack", accounts: connectorAccounts.filter(account => account.toolkit === "slack") },
       ] });
-      if (payload?.action === "initiate-connection") return json({ redirectUrl: "https://example.com/?timewarp-connect=1", connectionId: "conn-new-" + crypto.randomUUID() });
+      if (payload?.action === "initiate-connection") {
+        const connectionId = "conn-new-" + crypto.randomUUID();
+        connectorAccounts.push({ toolkit: "slack", connectionId, label: "Account " + connectionId.slice(-6), email: null, status: "INITIATED", active: false });
+        return json({ redirectUrl: "https://example.com/?timewarp-connect=1", connectionId });
+      }
+      // The sign-in returning to Timewarp finishes it.
+      if (payload?.action === "connection-status") {
+        const account = connectorAccounts.find(item => item.connectionId === payload.connectionId);
+        if (!account) return json({ error: "Connection not found." }, 404);
+        Object.assign(account, { status: "ACTIVE", active: true, label: "slack@preview.invalid", email: "slack@preview.invalid", name: "Preview Slack" });
+        return json({ ...account, failed: false });
+      }
+      if (payload?.action === "disconnect") { connectorAccounts = connectorAccounts.filter(item => item.connectionId !== payload.connectionId); return json({ ok: true }); }
       return json(payload?.action === "catalog" ? { apps: [] } : { ok: true });
     }
     return json({ error: "Unavailable in preview mode." }, 404);

@@ -26,6 +26,13 @@ export function initials(name) {
   return String(name || "T").trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase() || "").join("") || "T";
 }
 
+// A connected app account as one line: its name and the email it signs in
+// with ("Vince Ackermann · vince@example.com"), or whichever of them is known.
+export function accountText(account) {
+  const name = account?.name || account?.displayName || "";
+  return account?.email && account.email !== name ? (name ? `${name} · ${account.email}` : account.email) : name;
+}
+
 export function relativeTime(iso) {
   const time = Date.parse(iso || "");
   if (!Number.isFinite(time)) return "";

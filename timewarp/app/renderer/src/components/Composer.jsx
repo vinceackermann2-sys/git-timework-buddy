@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowUp, ArrowUpRight, Check, ChevronDown, Clipboard, CreditCard, Gauge, LoaderCircle, Mic, Plus, Reply, RotateCcw, Search, Sparkles, Square, TriangleAlert, UserRound, X } from "lucide-react";
-import { call, initials, request, useEvent } from "../api.js";
+import { accountText, call, initials, request, useEvent } from "../api.js";
 import { Avatar, Dialog, Menu, useToast } from "./common.jsx";
 import { useDictation } from "../dictation.js";
 import { FileIcon } from "../widgets.jsx";
@@ -261,7 +261,7 @@ export function ReconnectBanner({ agentId = null }) {
       {rows.map(({ app, account }) => (
         <div key={account.id} className="tw-reconnect">
           <span className="tw-reconnect-face">{initials(account.displayName).slice(0, 1)}</span>
-          <span className="grow">Reconnect {account.displayName} to {app.displayName}</span>
+          <span className="grow">Reconnect {accountText(account)} to {app.displayName}</span>
           <button type="button" className="tw-btn ghost" disabled={busy === account.id} onClick={() => skip(app, account)}>Skip</button>
           <button type="button" className="tw-btn" disabled={busy === account.id} onClick={() => call("integrations.beginConnect", { integrationId: app.id, agentId, reconnectAccountId: account.id }).then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"))}>Reconnect</button>
         </div>

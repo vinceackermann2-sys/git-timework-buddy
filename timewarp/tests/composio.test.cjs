@@ -1,9 +1,10 @@
 "use strict";
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createComposio}=require('../desktop/composio.cjs'),{createBridge}=require('../desktop/bridge.cjs'),{avatar,shouldAssign}=require('../desktop/mascots.cjs');
-function fixture(){let owner='user1',saved=null,active=true;const calls=[];const service=createComposio({userId:()=>owner,storage:{load:()=>saved,save:x=>{saved=structuredClone(x);}},getAgent:async id=>({id,ownerUserId:id==='foreign'?'user2':'user1'}),ensureCallback:async()=>{},mcpToken:'private-mcp-token',cloud:async(route,input)=>{
+function fixture(){let owner='user1',saved=null,active=true;const calls=[];const service=createComposio({userId:()=>owner,storage:{load:()=>saved,save:x=>{saved=structuredClone(x);}},getAgent:async id=>({id,ownerUserId:id==='foreign'?'user2':'user1'}),ensureCallback:async()=>{},mcpToken:'private-mcp-token',settleMs:50,cloud:async(route,input)=>{
   calls.push({route,input});assert.equal(route,'/connectors');
   if(input.action==='list-apps')return {apps:[{toolkitSlug:'github',authConfigId:'ac_real',name:'GitHub',logo:'https://example.invalid/logo.png',description:'GitHub tools',accounts:[{connectionId:'ca_owned',active,status:active?'ACTIVE':'INITIATED',label:'Owned GitHub account'}]}]};
+  if(input.action==='connection-status')return {connectionId:input.connectionId,status:active?'ACTIVE':'INITIATED',active,failed:false,label:'Owned GitHub account'};
   if(input.action==='list-tools')return {tools:[{slug:'GITHUB_GET_THE_AUTHENTICATED_USER',inputParameters:{type:'object',properties:{}},description:'Read user profile'}]};
   if(input.action==='execute')return {successful:true,data:{login:'fixture'}};
   if(input.action==='initiate-connection')return {connectionId:'ca_owned',redirectUrl:'https://connect.composio.dev/fixture'};
