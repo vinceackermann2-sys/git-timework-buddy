@@ -5,6 +5,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { bindWindowZoom } = require("./window-zoom.cjs");
 
 // Recent app log lines for the diagnostics file, also written to
 // runtime/logs/main.log. The app logs its own state messages only; chat
@@ -69,6 +70,8 @@ function broadcast(name, payload) {
   for (const window of appWindows()) window.webContents.send("tw:event", name, payload);
 }
 let mainWindow = null;
+let windowZoom = null; // the main window's zoom (window-zoom.cjs)
+let pane = null; // the browser pane's pages, once boot has them
 // On Windows the title bar is hidden and the window buttons sit over the top of
 // the app in its colours, as in the previous app; the top bar is the drag area.
 const TITLE_BAR_HEIGHT = 36;
@@ -118,7 +121,15 @@ function createWindow(route = "") {
     if (details.level === "error") appLog.error("renderer:error", String(details.message || "").slice(0, 300), { source: path.basename(String(details.sourceId || "")), line: details.lineNumber });
   });
   mainWindow.webContents.on("did-finish-load", () => appLog.info("startup-timing", `window loaded after ${Date.now() - traceStart}ms`));
-  mainWindow.on("closed", () => { mainWindow = null; });
+  // A window smaller than the screen shows the maximized layout, scaled down
+  // to fit (window-zoom.cjs); the pane's pages zoom with it.
+  const window = mainWindow;
+  windowZoom = bindWindowZoom(window, {
+    screen: require("electron").screen,
+    onFit: fit => pane?.setPageFit(fit),
+    onZoom: factor => { pane?.zoomChanged(); window.webContents.send("tw:event", "window.zoom", { factor }); },
+  });
+  mainWindow.on("closed", () => { mainWindow = null; windowZoom = null; });
   void mainWindow.loadURL("app://app/index.html" + route);
   return mainWindow;
 }
@@ -135,13 +146,25 @@ function openRoute(route) {
   else focusApp(route);
 }
 
+// Ctrl/⌘ +, - and 0 zoom the page that has the focus: a page in the pane, the
+// app (on top of its fit to the window) or a sign-in window's page.
+function zoomFocused(direction) {
+  const contents = require("electron").webContents.getFocusedWebContents();
+  if (contents && pane?.zoomPage(contents, direction)) return;
+  if (windowZoom && mainWindow && (!contents || contents === mainWindow.webContents)) { windowZoom.step(direction); return; }
+  if (contents && !contents.isDestroyed()) contents.zoomLevel = direction ? contents.zoomLevel + direction * 0.5 : 0;
+}
+
 // The menu holds the keyboard shortcuts on every platform, as in the previous
 // app: zoom (Ctrl/⌘ +, -, 0), full screen and editing. On Windows it isn't
 // shown; the title bar is hidden. Ctrl/⌘+W is handled by the window instead.
 function applicationMenu() {
   const openSettings = () => openRoute("#/customize/settings");
   const view = { label: "View", submenu: [
-    { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomIn", accelerator: "CommandOrControl+=", visible: false, acceleratorWorksWhenHidden: true }, { role: "zoomOut" },
+    { label: "Actual Size", accelerator: "CommandOrControl+0", click: () => zoomFocused(0) },
+    { label: "Zoom In", accelerator: "CommandOrControl+Plus", click: () => zoomFocused(1) },
+    { label: "Zoom In", accelerator: "CommandOrControl+=", visible: false, acceleratorWorksWhenHidden: true, click: () => zoomFocused(1) },
+    { label: "Zoom Out", accelerator: "CommandOrControl+-", click: () => zoomFocused(-1) },
     { type: "separator" }, { role: "togglefullscreen" },
     ...(app.isPackaged ? [] : [{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }]),
   ] };
@@ -436,7 +459,9 @@ async function boot() {
     };
   }
 
-  const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast, log: appLog });
+  const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast, log: appLog, zoom: () => mainWindow?.webContents.getZoomFactor() ?? 1 });
+  pane = browser;
+  if (windowZoom) browser.setPageFit(windowZoom.fit());
   const browserTools = createBrowserTools({ browser, onActivity: (conversationId, action) => broadcast("browser.agent", { conversationId, action }) });
   // Raise when the tool set changes: chats then continue in a new thread.
   const cipher = safeStorageCipher(safeStorage);

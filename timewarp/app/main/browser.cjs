@@ -100,14 +100,26 @@ async function removeFolder(folder, attempts = 8) {
   }
 }
 
-function createBrowser({ window: getWindow, store, notify = () => {}, log = null }) {
+// zoom: the window's page zoom, window pixels per pixel of the interface.
+function createBrowser({ window: getWindow, store, notify = () => {}, log = null, zoom = () => 1 }) {
   const tabs = new Map(); // tab id -> tab
   const groups = new Map(); // conversation id -> { active: tab id | null }
   const partitions = new Set();
   let shown = null; // conversation id whose tabs are on screen
   let bounds = null;
+  let rect = null; // where the interface last put the pane, in its own (zoomed) pixels
   let visible = false;
   let host = null; // the window the pages are in
+  // Pages zoom with the window (window-zoom.cjs), and each tab also by its own
+  // Ctrl/⌘ +, - steps. Chromium keeps a zoom per site, so it's set again as
+  // each page commits and as its tab comes on screen.
+  let pageFit = 1;
+  const pageZoom = tab => Math.min(5, Math.max(0.25, pageFit * 1.2 ** (tab.zoomLevel || 0)));
+  function applyZoom(tab) {
+    const contents = tab.view?.webContents;
+    if (!contents?.setZoomFactor || contents.isDestroyed?.()) return;
+    if (Math.abs((contents.getZoomFactor?.() ?? 1) - pageZoom(tab)) >= 0.001) contents.setZoomFactor(pageZoom(tab));
+  }
   // Tabs are ordered by when they opened; two can open in the same millisecond.
   let lastOrder = 0;
   const nextOrder = () => (lastOrder = Math.max(Date.now(), lastOrder + 1));
@@ -326,6 +338,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
       else if (!tab.parkedAt) tab.parkedAt = Date.now();
       tab.view.setVisible(show || park);
       tab.view.setBounds(show ? bounds : { x: park ? PARKED : 0, y: park ? PARKED : 0, ...size });
+      if (show) applyZoom(tab);
     }
   }
 
@@ -356,6 +369,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     contents.on("page-favicon-updated", (_event, favicons) => { tab.favicon = favicons.find(icon => /^https:/.test(icon)) || null; changed(tab.conversationId); });
     contents.on("did-navigate", (_event, url) => {
       tab.url = url;
+      applyZoom(tab);
       // A new page: nothing typed in it yet, no sound, and it may ask again for what was refused.
       Object.assign(tab, { edited: false, playing: false, mediaRefused: null, dialogs: 0, quiet: false });
       // The title arrives later (page-title-updated); until then the page has none.
@@ -379,6 +393,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     // A tab that slept comes back with its back and forward history.
     const history = tab.history;
     tab.history = null;
+    applyZoom(tab);
     if (adopted) return;
     if (history && contents.navigationHistory.restore) void contents.navigationHistory.restore(history).catch(() => {});
     else if (tab.url && tab.url !== "about:blank") void contents.loadURL(tab.url).catch(() => {});
@@ -633,14 +648,32 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     safeUrl,
     state: conversationId => groupState(conversationId),
     show(conversationId) { hostWindow(); shown = conversationId; restore(conversationId); wake(); layout(); return groupState(conversationId); },
-    setBounds(rect) {
+    // The interface measures in its zoomed pixels; the page goes there in the window's.
+    setBounds(next) {
       hostWindow();
+      rect = next || null;
       if (!rect) { visible = false; layout(); return; }
-      const round = value => Math.max(0, Math.round(Number(value) || 0));
-      bounds = { x: round(rect.x), y: round(rect.y), width: round(rect.width), height: round(rect.height) };
+      const factor = zoom() || 1, at = value => Math.max(0, Math.round((Number(value) || 0) * factor));
+      const x = at(rect.x), y = at(rect.y);
+      bounds = { x, y, width: at((Number(rect.x) || 0) + (Number(rect.width) || 0)) - x, height: at((Number(rect.y) || 0) + (Number(rect.height) || 0)) - y };
       visible = bounds.width > 40 && bounds.height > 40 && rect.visible !== false;
       wake();
       layout();
+    },
+    // The window's zoom changed: the pane goes where the interface last put
+    // it, at the new zoom, until the interface measures it again.
+    zoomChanged() { if (rect) this.setBounds(rect); },
+    setPageFit(fit) {
+      pageFit = Number(fit) || 1;
+      for (const tab of tabs.values()) applyZoom(tab);
+    },
+    // Ctrl/⌘ +, - and 0 in a page of the pane; false for any other page.
+    zoomPage(contents, direction) {
+      const tab = tabOf(contents);
+      if (!tab) return false;
+      tab.zoomLevel = direction ? Math.min(5, Math.max(-5, (tab.zoomLevel || 0) + direction * 0.5)) : 0;
+      applyZoom(tab);
+      return true;
     },
     openTab, navigate, close, sessionFor,
     activate(conversationId, tabId) { const tab = tabFor(conversationId, tabId); groups.get(conversationId).active = tab.id; if (tab.kind === "web" && !tab.view) { attach(tab); evict(tab); } layout(); changed(conversationId); return groupState(conversationId); },

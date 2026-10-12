@@ -88,7 +88,9 @@ a { color: var(--accent-strong); }
 
 /* Window: top strip, sidebar and the content cards */
 .tw-window { height: 100%; display: flex; flex-direction: column; }
-.tw-topbar { height: 36px; flex: none; display: flex; align-items: center; gap: 0; padding: 0 0 0 8px; }
+/* The strip keeps the height of the window's own buttons, which don't zoom
+   with the app (--zoom, main/window-zoom.cjs). */
+.tw-topbar { height: calc(36px / var(--zoom, 1)); flex: none; display: flex; align-items: center; gap: 0; padding: 0 0 0 8px; }
 .tw-topbar button { width: 32px; height: 32px; display: grid; place-items: center; border: none; border-radius: 8px; background: transparent; color: var(--ink-strong); cursor: pointer; }
 .tw-topbar button:first-child { width: 28px; height: 28px; margin: 0 4px 0 4px; }
 .tw-topbar button:hover:not(:disabled) { background: var(--hover); }
@@ -877,14 +879,16 @@ a { color: var(--accent-strong); }
 
 /* macOS: no title bar. The top strip moves the window and leaves room for
    the window buttons. */
-:root[data-platform="darwin"] .tw-topbar { -webkit-app-region: drag; padding-left: 84px; }
+:root[data-platform="darwin"] .tw-topbar { -webkit-app-region: drag; padding-left: calc(84px / var(--zoom, 1)); }
 :root[data-platform="darwin"] .tw-topbar button { -webkit-app-region: no-drag; }
-:root[data-platform="darwin"] #timewarp-auth-view::before, :root[data-platform="darwin"] .tw-splash::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: 36px; -webkit-app-region: drag; }
+:root[data-platform="darwin"] #timewarp-auth-view::before, :root[data-platform="darwin"] .tw-splash::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: calc(36px / var(--zoom, 1)); -webkit-app-region: drag; }
 /* Windows: no title bar; the top bar moves the window and the window buttons
    sit over its right end (main.cjs titleBarOverlay, 36px high). */
-:root[data-platform="win32"] .tw-topbar { -webkit-app-region: drag; padding-right: 140px; }
+:root[data-platform="win32"] .tw-topbar { -webkit-app-region: drag; padding-right: calc(140px / var(--zoom, 1)); }
 :root[data-platform="win32"] .tw-topbar button, :root[data-platform="win32"] .tw-topbar a, :root[data-platform="win32"] .tw-topbar input { -webkit-app-region: no-drag; }
-:root[data-platform="win32"] #timewarp-auth-view::before, :root[data-platform="win32"] .tw-splash::before { content: ""; position: fixed; top: 0; left: 0; right: 140px; height: 36px; -webkit-app-region: drag; }
+:root[data-platform="win32"] #timewarp-auth-view::before, :root[data-platform="win32"] .tw-splash::before { content: ""; position: fixed; top: 0; left: 0; right: calc(140px / var(--zoom, 1)); height: calc(36px / var(--zoom, 1)); -webkit-app-region: drag; }
+/* Setup's top bar: Sign out stays left of the window buttons. */
+:root[data-platform="win32"] .tw-journey-bar { padding-right: calc(140px / var(--zoom, 1)); }
 
 /* "See options" from the limit banner */
 .tw-dialog.tw-limit { width: min(448px, calc(100vw - 32px)); }
