@@ -578,16 +578,29 @@ async function main() {
     async connectorSignIn() {
       const slack = (await call("integrations.list", {})).items.find(item => /slack/i.test(item.displayName));
       if (!slack) throw new Error("The preview Slack app is missing.");
+      await app.evaluate(`window.__e2eConnected = []; window.tw.on("integrations.changed", event => window.__e2eConnected.push(...(event?.connected || []))); true`);
       await call("integrations.beginConnect", { integrationId: slack.id });
+      // While its sign-in is open, the started account isn't offered as a reconnect.
+      const reconnects = items => items.flatMap(item => (item.accounts || []).filter(account => account.authStatus !== "ready").map(account => item.displayName + ": " + account.displayName));
+      const during = reconnects((await call("integrations.list", {})).items);
+      if (during.length) throw new Error("Accounts show as needing a reconnect during a first Connect: " + during.join(", "));
       let window;
       for (const deadline = Date.now() + 20000; !window && Date.now() < deadline; await pause(500)) window = (await app.targets()).find(item => item.type === "page" && /example\.com\/\?timewarp-connect=1/.test(item.url));
       if (!window) throw new Error("The sign-in window didn't open.");
       // Composio sends the browser back to Timewarp's callback after approval.
-      await app.evaluateIn(window, `location.href = "http://127.0.0.1:17654/connector-callback"`);
-      for (const deadline = Date.now() + 15000; Date.now() < deadline; await pause(500)) {
-        if (!(await app.targets()).some(item => item.id === window.id)) return "the sign-in opened in an app window with the browser profile and closed when it returned to Timewarp";
-      }
-      throw new Error("The sign-in window didn't close after the callback.");
+      await app.evaluateIn(window, `location.href = "http://127.0.0.1:17654/connector-callback?status=success"`);
+      let closed = false;
+      for (const deadline = Date.now() + 15000; !closed && Date.now() < deadline; await pause(500)) closed = !(await app.targets()).some(item => item.id === window.id);
+      if (!closed) throw new Error("The sign-in window didn't close after the callback.");
+      // Connected at the first try, named by its name and email, and nothing asks to reconnect.
+      const items = (await call("integrations.list", {})).items;
+      const account = items.find(item => item.id === slack.id)?.accounts?.[0];
+      if (account?.authStatus !== "ready" || account.name !== "Preview Slack" || account.email !== "slack@preview.invalid") throw new Error("The new Slack account isn't ready with its name and email: " + JSON.stringify(account));
+      const after = reconnects(items);
+      if (after.length) throw new Error("Accounts show as needing a reconnect after a first Connect: " + after.join(", "));
+      const announced = await app.evaluate(`JSON.stringify(window.__e2eConnected)`);
+      if (!/Preview Slack/.test(announced) || !/slack@preview\.invalid/.test(announced)) throw new Error("The app didn't announce the connected account: " + announced);
+      return "the sign-in opened in an app window with the browser profile, closed when it returned to Timewarp, and the account was connected at once as Preview Slack · slack@preview.invalid with no reconnect shown";
     },
     async logFile() {
       await turn(await chat(), "A private note for the log check");

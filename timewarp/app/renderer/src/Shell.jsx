@@ -2,7 +2,7 @@
 // loads it once someone is signed in.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, PanelLeft, Pencil } from "lucide-react";
-import { call, initials, request, useEvent } from "./api.js";
+import { accountText, call, initials, request, useEvent } from "./api.js";
 import { applyAppearance } from "./theme.js";
 import { loadHighlighter } from "./highlighter.js";
 import { SIDEBAR, byActivity, shortcutFor, sidebarCollapses, sidebarWidth } from "./shell.mjs";
@@ -255,6 +255,10 @@ function Shell({ account, setAccount, settings, setSettings }) {
   useEvent("app.navigate", ({ route: target } = {}) => { if (typeof target === "string" && target.startsWith("#/")) go(target); });
   useEvent("history.status", state => { if (state.state === "synced") { void loadAgents(); void loadConversations(); void loadRunning(); } });
   useEvent("funding.changed", () => { void loadModels(); loadFunding(); });
+  // A sign-in that just connected an app says which account it connected.
+  useEvent("integrations.changed", ({ connected } = {}) => {
+    for (const account of connected || []) toast({ title: `${account.app || "App"} connected`, body: accountText(account) || "Your account is ready for your agents." });
+  });
   useEvent("browser.agent", ({ conversationId }) => { if (route.view === "chat" && conversationId === route.id && pane === "closed") setPane("open"); });
   // Tab links in a chat open that tab in the pane.
   useEffect(() => {
