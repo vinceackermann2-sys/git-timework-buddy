@@ -1,24 +1,26 @@
 "use strict";
 // The models the current AI funding offers and the default model setting kept
-// in line with them. Free with a connected ChatGPT / Codex account lists the
-// Codex catalog; every other plan lists Timewarp's models (GPT-5.6 Sol and
-// Luna, and Claude on paid plans). A catalog that can't be read is an error, as
-// in the previous app: the saved choice is kept and never replaced from a
-// fallback list.
+// in line with them. Free with a connected ChatGPT / Codex account lists only
+// the Codex catalog; otherwise every plan, Free included, lists all of
+// Timewarp's models (Free runs them on purchased credits; without credits
+// nothing runs, and sending says so). A catalog that can't be read is an
+// error, as in the previous app: the saved choice is kept and never replaced
+// from a fallback list.
 const { resolveModelSettings } = require("../../shared/model-capabilities.cjs");
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 
-function createModelCatalog({ ready = () => undefined, funding, chatgpt, settings, userId, timewarpModels = state => require("../../shared/models.cjs").models({ plan: state?.plan }), log = () => {} }) {
+function createModelCatalog({ ready = () => undefined, funding, chatgpt, settings, userId, timewarpModels = () => require("../../shared/models.cjs").models(), log = () => {} }) {
   async function modelChoices() {
     await ready();
-    // The plan is read fresh: a choice is never refused on a plan that just changed.
+    // The funding is read fresh: a choice is never refused on a plan or a
+    // ChatGPT connection that just changed.
     const state = userId() ? await funding.current({ fresh: true }) : null;
     if (state?.source === "chatgpt") {
       try { return await chatgpt.models(); }
       catch (error) { log("ChatGPT models unavailable: " + error.message); throw error; }
     }
-    return timewarpModels(state);
+    return timewarpModels();
   }
 
   // A model the catalog no longer offers, or an effort or speed it doesn't

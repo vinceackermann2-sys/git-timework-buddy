@@ -84,11 +84,12 @@ page and no separate cloud agent workspace.
 
 - Supabase authentication with encrypted device sessions. Email confirmation,
   sign-in links, password recovery and Google sign-in return to the desktop callback.
-- GPT models use the production Azure provider credentials: GPT-5.6 Sol and
-  Luna on Free, GPT-6 Astra, GPT-6.1 Sol and GPT-6 Luna on paid plans (Azure
+- GPT models use the production Azure provider credentials: GPT-6 Astra,
+  GPT-6.1 Sol and GPT-6 Luna on every plan, Free on purchased credits (Azure
   deployments `gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna`, renamed with the
-  `GPT_ASTRA_MODEL`, `GPT_SOL_6_1_MODEL` and `GPT_LUNA_6_MODEL` secrets). Claude
-  models (paid plans) use the `ANTHROPIC_API_KEY` secret of `timewarp-energy`,
+  `GPT_ASTRA_MODEL`, `GPT_SOL_6_1_MODEL` and `GPT_LUNA_6_MODEL` secrets); GPT-5.6
+  Sol and Luna remain for older desktops and approval reviews. Claude models
+  (every plan) use the `ANTHROPIC_API_KEY` secret of `timewarp-energy`,
   which turns Codex's Responses requests into Anthropic Messages requests
   (`cloud/claudeResponses.ts`). Provider keys and service-role credentials
   remain on the server.
@@ -274,11 +275,14 @@ connection ownership is rechecked by the server. Connected-app OAuth tokens
 are held by Composio. Custom MCP servers remain managed by the original local
 desktop interface.
 
-The model picker lists only the models the current plan runs: the connected
-Codex catalog on Free with a Codex account, GPT-5.6 Sol and Luna on Free with
-Timewarp credits, and on paid plans, most intelligent first: Claude Opus 5.5,
-Claude Sonnet 5.5, Claude Fable 5.1, GPT-6 Astra, GPT-6.1 Sol (the default),
-Claude Haiku 5.5 and GPT-6 Luna. Each of Timewarp's models rates its
+The model picker lists only the connected Codex catalog on Free with a Codex
+account. Otherwise every plan, Free included, lists all of Timewarp's models,
+most intelligent first: Claude Opus 5.5, Claude Sonnet 5.5, Claude Fable 5.1,
+GPT-6 Astra, GPT-6.1 Sol (the default), Claude Haiku 5.5 and GPT-6 Luna. Free
+runs them on purchased credits; without credits or a Codex account nothing
+runs, and sending a message says how to fund it. The speed is always Standard
+unless the picker's bolt turns Fast on, for the models that have it (Claude
+Opus 5.5 and the GPT-6 models, or a Codex model's own Fast tier). Each of Timewarp's models rates its
 intelligence, speed and low cost as a percentage of the best, worked out from
 Artificial Analysis's benchmarks (`shared/model-benchmarks.json`). A chat saved
 with a model outside that catalog shows the model it is routed to.

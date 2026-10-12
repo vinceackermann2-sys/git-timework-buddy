@@ -55,14 +55,13 @@ test('bounded output limits validate inputs and reserve the same request sent up
   assert.equal(JSON.parse(sent).max_output_tokens,256);assert.equal(JSON.parse(sent).prompt_cache_key,'stable');
 });
 
-// The cloud entry with Azure behind a scripted fetch. Its reservations wait
-// for the paid-plan check, as reserveAgentAi does.
+// The cloud entry with Azure behind a scripted fetch.
 function entry({user='owner',plan='free',fetch,reserved=[],finished=[]}={}) {
   let handler;
-  const {nativeStream,nativeCall}=native({fetch,reserveAgentAi:async(_a,_u,model,body,bounds)=>{await bounds?.allowed;reserved.push({model,body:plain(body)});return{id:'r',finish:async(...args)=>{finished.push([model,...args]);}};}});
+  const {nativeStream,nativeCall}=native({fetch,reserveAgentAi:async(_a,_u,model,body)=>{reserved.push({model,body:plain(body)});return{id:'r',finish:async(...args)=>{finished.push([model,...args]);}};}});
   moduleOf('cloud/index.ts',{Deno:{env:{get:()=>''},serve:fn=>handler=fn},createClient:()=>({auth:{getUser:async token=>token==='signed-out'?{data:{user:null},error:{message:'expired'}}:{data:{user:{id:user}}}},rpc:async()=>({data:{plan}})}),
     Response,TextDecoder,TextEncoder,AbortSignal,URL,Blob,DecompressionStream,REVIEW_OUTPUT_TOKENS:reservations.REVIEW_OUTPUT_TOKENS,responseOutputLimit:reservations.responseOutputLimit,assertCloudSafe:require('../shared/privacy.cjs').assertCloudSafe,
-    azureSolModel:()=> 'gpt-5.6-sol',azureLunaModel:()=> 'gpt-5.6-luna',azureRoute:azure.azureRoute,promptCacheKey:azure.promptCacheKey,claudeRoute:moduleOf('cloud/claudeAgentAi.ts').claudeRoute,PAID_PLANS:new Set(['max']),isClaudeReasoning:()=>false,
+    azureSolModel:()=> 'gpt-5.6-sol',azureLunaModel:()=> 'gpt-5.6-luna',azureRoute:azure.azureRoute,promptCacheKey:azure.promptCacheKey,claudeRoute:moduleOf('cloud/claudeAgentAi.ts').claudeRoute,isClaudeReasoning:()=>false,
     claudeStream:async()=>{throw new Error('not Claude');},claudeCall:async()=>{throw new Error('not Claude');},nativeStream,nativeCall});
   return handler;
 }
@@ -103,7 +102,7 @@ test('gzipped request bodies are unpacked within the 2 MB limit, and plain ones 
 });
 
 test('approval reviews run on Luna, billed as Luna, with a small output cap',async()=>{
-  assert.deepEqual(plain(azure.azureRoute('codex-auto-review','priority')),{slug:'gpt-5.6-luna',deployment:'gpt-5.6-luna',keys:['fixture'],paid:false,fast:false,billing:'openai/gpt-5.6-luna',review:true});
+  assert.deepEqual(plain(azure.azureRoute('codex-auto-review','priority')),{slug:'gpt-5.6-luna',deployment:'gpt-5.6-luna',keys:['fixture'],fast:false,billing:'openai/gpt-5.6-luna',review:true});
   const sent=[],reserved=[],handler=entry({reserved,fetch:upstream(sent)}),review={stream:true,input:'Review this command',reasoning:{effort:'medium'}};
   for(const model of ['codex-auto-review','openai/codex-auto-review'])assert.equal((await call(handler,{...review,model})).status,200);
   await call(handler,{...review,model:'codex-auto-review',max_output_tokens:1000});
@@ -159,23 +158,12 @@ test('a deployment that turns Fast or 24-hour retention down is remembered, so l
   assert.equal(sent[0].prompt_cache_retention,undefined);
 });
 
-test('the paid-plan check runs alongside the reservation, and a failed check releases it before any model call',async()=>{
-  const calls=[];let funded=true;
-  const admin={rpc:async(name,input)=>{calls.push(name+(input.p_outcome?' '+input.p_outcome:''));return name==='timewarp_reserve_agent_ai'?{data:funded}:{data:{}};}};
-  let pass;const allowed=new Promise(resolve=>pass=resolve);
-  const pending=reservations.reserveAgentAi(admin,'owner','openai/gpt-6-luna',{input:'Hi'},{allowed});
-  await new Promise(resolve=>setImmediate(resolve));
-  assert.deepEqual(calls,['timewarp_reserve_agent_ai'],'the reservation does not wait for the check');
-  pass();assert.ok((await pending).id);
-  const denied=Promise.reject(Object.assign(new Error('This model is part of the paid plans.'),{status:403}));denied.catch(()=>{});
-  calls.length=0;await assert.rejects(reservations.reserveAgentAi(admin,'owner','openai/gpt-6-luna',{input:'Hi'},{allowed:denied}),error=>error.status===403);
-  assert.deepEqual(calls,['timewarp_reserve_agent_ai','timewarp_energy_complete_ai released']);
-  funded=false;calls.length=0;await assert.rejects(reservations.reserveAgentAi(admin,'owner','openai/gpt-6-luna',{input:'Hi'},{allowed:denied}),error=>error.status===403,'the plan error wins over a short balance');
-  assert.deepEqual(calls,['timewarp_reserve_agent_ai'],'nothing reserved, nothing to release');
-  funded=true;calls.length=0;let fetched=false;
-  const {nativeStream}=native({fetch:async()=>{fetched=true;return completed();},reserveAgentAi:reservations.reserveAgentAi});
-  await assert.rejects(nativeStream(admin,'owner',azure.azureRoute('openai/gpt-6-luna'),{input:'Hi'},{},denied),error=>error.status===403);
-  assert.equal(fetched,false,'a paid model never starts for a plan without it');assert.deepEqual(calls,['timewarp_reserve_agent_ai','timewarp_energy_complete_ai released']);
+test('Free reaches GPT-6, and Fast reaches Azure as priority billed at Fast rates',async()=>{
+  const sent=[],reserved=[],handler=entry({plan:'free',reserved,fetch:upstream(sent)});
+  assert.equal((await call(handler,{model:'openai/gpt-6.1-sol',service_tier:'priority',stream:true,input:'Hi'})).status,200);
+  assert.equal((await call(handler,{model:'openai/gpt-6-luna',stream:true,input:'Hi'})).status,200);
+  assert.deepEqual(sent.map(request=>[request.model,request.service_tier]),[['gpt-6.1-sol','priority'],['gpt-6-luna',undefined]]);
+  assert.deepEqual(reserved.map(entry=>entry.model),['openai/gpt-6.1-sol-fast','openai/gpt-6-luna']);
 });
 
 // Image headers: just enough of each format for its size.

@@ -1,6 +1,8 @@
 "use strict";
 
 // Keep provider ids intact: display names are not request service-tier values.
+// The speed is Standard until the picker's bolt turns Fast on: a catalog's own
+// default tier (Codex lists Fast as the default for some models) isn't used.
 function codexModel(item) {
   const efforts = [...new Map((item.supportedReasoningEfforts || []).filter(option => typeof option.reasoningEffort === 'string' && option.reasoningEffort).map(option => [option.reasoningEffort, { reasoningEffort: option.reasoningEffort, description: option.description || '' }])).values()];
   if (!efforts.length && item.defaultReasoningEffort) efforts.push({ reasoningEffort: item.defaultReasoningEffort, description: 'Default' });
@@ -9,7 +11,7 @@ function codexModel(item) {
   for (const tier of item.serviceTiers || []) {
     if (typeof tier.id === 'string' && tier.id && tier.id !== 'default' && !serviceTiers.some(option => option.value === tier.id)) serviceTiers.push({ value: tier.id, label: tier.name || tier.id, description: tier.description || '' });
   }
-  return { id: item.model || item.id, displayName: item.displayName || item.model || item.id, description: item.description || 'Uses your Codex allowance', inputModalities: item.inputModalities || ['text', 'image'], supportedReasoningEfforts: efforts, defaultReasoningEffort: efforts.some(option => option.reasoningEffort === item.defaultReasoningEffort) ? item.defaultReasoningEffort : efforts[0].reasoningEffort, featured: item.isDefault === true, serviceTiers, defaultServiceTier: serviceTiers.some(tier => tier.value === item.defaultServiceTier) ? item.defaultServiceTier : null };
+  return { id: item.model || item.id, displayName: item.displayName || item.model || item.id, description: item.description || 'Uses your Codex allowance', inputModalities: item.inputModalities || ['text', 'image'], supportedReasoningEfforts: efforts, defaultReasoningEffort: efforts.some(option => option.reasoningEffort === item.defaultReasoningEffort) ? item.defaultReasoningEffort : efforts[0].reasoningEffort, featured: item.isDefault === true, serviceTiers, defaultServiceTier: null };
 }
 
 function resolveModelSettings(choices, settings = {}) {

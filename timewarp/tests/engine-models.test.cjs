@@ -43,29 +43,28 @@ test("a ChatGPT catalog that can't be read keeps the saved model instead of swit
 });
 
 test("the default follows the catalog when the saved model is no longer offered", async () => {
-  const settings = settingsStore({ modelSettings: { name: "gpt-6.1-sol", reasoningEffort: "ultra", serviceTier: "priority" } });
-  const catalog = createModelCatalog({ funding: { current: async () => ({ source: "timewarp" }) }, chatgpt: {}, settings, userId: () => "user-1" });
-  assert.deepEqual((await catalog.modelChoices()).map(model => model.id), ["openai/gpt-5.6-sol", "openai/gpt-5.6-luna"]);
-  assert.deepEqual(await catalog.selectModel(), { name: "openai/gpt-5.6-sol", reasoningEffort: "low", serviceTier: null });
-  assert.deepEqual(settings.get("modelSettings"), { name: "openai/gpt-5.6-sol", reasoningEffort: "low", serviceTier: null });
+  // A Codex model, chosen while ChatGPT was connected, then disconnected.
+  const settings = settingsStore({ modelSettings: { name: "gpt-6-sol", reasoningEffort: "ultra", serviceTier: "priority" } });
+  const catalog = createModelCatalog({ funding: { current: async () => ({ source: "timewarp", plan: "free" }) }, chatgpt: {}, settings, userId: () => "user-1" });
+  assert.deepEqual((await catalog.modelChoices()).map(model => model.id), ["anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5", "anthropic/claude-fable-5-1", "openai/gpt-6-astra", "openai/gpt-6.1-sol", "anthropic/claude-haiku-5-5", "openai/gpt-6-luna"]);
+  assert.deepEqual(await catalog.selectModel(), { name: "openai/gpt-6.1-sol", reasoningEffort: "low", serviceTier: null });
+  assert.deepEqual(settings.get("modelSettings"), { name: "openai/gpt-6.1-sol", reasoningEffort: "low", serviceTier: null });
 });
 
-test("paid plans list Claude with GPT-6, most intelligent first, each with its thinking levels, speeds and scores", async () => {
+test("every plan lists Claude with GPT-6, Free included, most intelligent first, each with its thinking levels, speeds and scores", async () => {
   const listed = plan => createModelCatalog({ funding: { current: async () => ({ source: "timewarp", plan }) }, chatgpt: {}, settings: settingsStore(), userId: () => "user-1" }).modelChoices();
-  for (const plan of ["pro", "max", "ultra"]) {
-    assert.deepEqual((await listed(plan)).map(model => model.displayName), ["Claude Opus 5.5", "Claude Sonnet 5.5", "Claude Fable 5.1", "GPT-6 Astra", "GPT-6.1 Sol", "Claude Haiku 5.5", "GPT-6 Luna"]);
+  for (const plan of ["free", "pro", "max", "ultra"]) {
+    assert.deepEqual((await listed(plan)).map(model => model.displayName), ["Claude Opus 5.5", "Claude Sonnet 5.5", "Claude Fable 5.1", "GPT-6 Astra", "GPT-6.1 Sol", "Claude Haiku 5.5", "GPT-6 Luna"], plan);
   }
-  assert.deepEqual((await listed("free")).map(model => model.id), ["openai/gpt-5.6-sol", "openai/gpt-5.6-luna"], "Free keeps GPT-5.6; Claude and GPT-6 are part of the paid plans");
   const choices = await listed("max");
+  assert.deepEqual(await listed("free"), choices, "Free (on purchased credits, or with none) lists the same models, speeds and scores");
   const byId = Object.fromEntries(choices.map(model => [model.id, model]));
   for (const model of choices) assert.deepEqual(model.supportedReasoningEfforts.map(option => option.reasoningEffort), ["low", "medium", "high", "xhigh", "max"], model.id);
   assert.deepEqual(choices.map(model => model.defaultReasoningEffort), ["medium", "high", "high", "low", "low", "medium", "medium"], "each model's own default effort");
   const intelligence = choices.map(model => SCORES[model.id].intelligence);
   assert.deepEqual(intelligence, [...intelligence].sort((a, b) => b - a), "the list follows intelligence across every Artificial Analysis evaluation");
   assert.deepEqual(choices.map(model => [model.stats.intelligence, model.stats.speed, model.stats.cost]), [[100, 37, 22], [95, 45, 29], [91, 41, 11], [89, 60, 18], [85, 60, 49], [59, 74, 89], [48, 100, 100]], "percentages of the best for intelligence (every evaluation), speed (output speed, time to first token and time per task) and low cost (blended price and cost per task)");
-  assert.deepEqual((await listed("free")).map(model => [model.stats.intelligence, model.stats.speed, model.stats.cost]), [[71, 89, 32], [43, 90, 83]], "Free is compared with the same best models; GPT-5.6 has no evaluation scores, so its Intelligence Index places it");
   assert.deepEqual(choices.filter(model => model.serviceTiers.length > 1).map(model => model.id), ["anthropic/claude-opus-5-5", "openai/gpt-6-astra", "openai/gpt-6.1-sol", "openai/gpt-6-luna"], "Opus 5.5 and the GPT-6 models have Fast");
-  assert.deepEqual((await listed("free")).map(model => model.serviceTiers.length), [1, 1]);
   assert.deepEqual(byId["anthropic/claude-opus-5-5"].serviceTiers.map(tier => tier.value), [null, "priority"]);
   const settings = settingsStore();
   assert.deepEqual(await createModelCatalog({ funding: { current: async () => ({ source: "timewarp", plan: "max" }) }, chatgpt: {}, settings, userId: () => "user-1" }).selectModel(), { name: "openai/gpt-6.1-sol", reasoningEffort: "low", serviceTier: null }, "GPT-6.1 Sol is the paid plans' default");
@@ -76,7 +75,7 @@ test("paid plans list Claude with GPT-6, most intelligent first, each with its t
   assert.throws(() => chooseModel(choices.filter(model => model.id.startsWith("openai/")), { name: "anthropic/claude-opus-5-5" }), error => error.status === 400);
 });
 
-test("Codex gets Claude's Fast mode in the model name and GPT-6's as its tier, and a Free plan's paid-model chat moves to GPT-5.6 Sol", async () => {
+test("Codex gets Claude's Fast mode in the model name and GPT-6's as its tier, and Free runs every model too", async () => {
   const { client, calls } = fakeClient();
   let plan = "max";
   bindCodexFunding({ client, chatgpt: { bindClient() {} }, funding: { current: async () => ({ source: "timewarp", plan, canFundUsage: true }) }, userId: () => "user-1" });
@@ -90,7 +89,7 @@ test("Codex gets Claude's Fast mode in the model name and GPT-6's as its tier, a
   plan = "free";
   await client.request("turn/start", { threadId: "thread-1", input: [], model: "anthropic/claude-opus-5-5", effort: "high", serviceTier: "priority" });
   assert.deepEqual(calls.filter(call => call.method === "turn/start").map(call => [call.params.model, call.params.effort]), [
-    ["anthropic/claude-opus-5-5-fast", "high"], ["anthropic/claude-opus-5-5", "high"], ["anthropic/claude-fable-5-1", "max"], ["anthropic/claude-opus-5-5-fast", "low"], ["openai/gpt-6.1-sol", "xhigh"], ["openai/gpt-6.1-sol", "low"], ["openai/gpt-5.6-sol", "low"],
+    ["anthropic/claude-opus-5-5-fast", "high"], ["anthropic/claude-opus-5-5", "high"], ["anthropic/claude-fable-5-1", "max"], ["anthropic/claude-opus-5-5-fast", "low"], ["openai/gpt-6.1-sol", "xhigh"], ["openai/gpt-6.1-sol", "low"], ["anthropic/claude-opus-5-5-fast", "high"],
   ]);
   assert.deepEqual(calls.filter(call => call.method === "turn/start").map(call => call.params.serviceTier ?? null).slice(4, 5), ["priority"], "GPT-6 Fast reaches Codex as its tier");
 });
@@ -98,7 +97,7 @@ test("Codex gets Claude's Fast mode in the model name and GPT-6's as its tier, a
 test("a picked effort and speed are kept when the model offers them, otherwise its defaults", () => {
   assert.deepEqual(chooseModel(codexChoices, { name: "gpt-6.1-sol", reasoningEffort: "xhigh", serviceTier: "priority" }), { name: "gpt-6.1-sol", reasoningEffort: "xhigh", serviceTier: "priority" });
   assert.deepEqual(chooseModel(codexChoices, { name: "gpt-6.1-sol", reasoningEffort: "xhigh", serviceTier: null }), { name: "gpt-6.1-sol", reasoningEffort: "xhigh", serviceTier: null }, "Standard stays Standard");
-  assert.deepEqual(chooseModel(codexChoices, { name: "gpt-6-sol", reasoningEffort: "none", serviceTier: "turbo" }), { name: "gpt-6-sol", reasoningEffort: "medium", serviceTier: "priority" });
+  assert.deepEqual(chooseModel(codexChoices, { name: "gpt-6-sol", reasoningEffort: "none", serviceTier: "turbo" }), { name: "gpt-6-sol", reasoningEffort: "medium", serviceTier: null }, "a speed the model lacks is Standard, though Codex lists Fast as this model's default");
   assert.throws(() => chooseModel(codexChoices, { name: "gpt-4" }), error => error.status === 400);
 });
 
@@ -120,7 +119,7 @@ test("models.list reports an unreadable catalog with the saved choice, and model
   current = codexChoices;
   assert.deepEqual((await methods["models.list"]()).selected, saved);
   assert.deepEqual(await methods["models.select"]({ name: "gpt-6-sol", reasoningEffort: "high", serviceTier: null }), { name: "gpt-6-sol", reasoningEffort: "high", serviceTier: null });
-  assert.deepEqual(await methods["models.select"]({ name: "gpt-6-luna", reasoningEffort: "ultra" }), { name: "gpt-6-luna", reasoningEffort: "medium", serviceTier: "priority" }, "an effort the model lacks becomes its default");
+  assert.deepEqual(await methods["models.select"]({ name: "gpt-6-luna", reasoningEffort: "ultra" }), { name: "gpt-6-luna", reasoningEffort: "medium", serviceTier: null }, "an effort the model lacks becomes its default; the speed is Standard until the bolt turns Fast on");
 });
 
 test("a chat's model change keeps the speed it was given", async () => {
@@ -186,7 +185,7 @@ test("Codex receives the speed checked against the model's tiers", async () => {
   await client.request("turn/start", { threadId: "t1", input: [], model: "gpt-6-sol", effort: "high", serviceTier: null });
   await client.request("turn/start", { threadId: "t1", input: [], model: "gpt-6-sol", effort: "high" });
   await client.request("turn/start", { threadId: "t1", input: [], model: "gpt-5.5", effort: "low", serviceTier: "ultrafast" });
-  assert.deepEqual(calls.filter(call => call.method === "turn/start").map(call => call.params.serviceTier), ["priority", null, "priority", null]);
+  assert.deepEqual(calls.filter(call => call.method === "turn/start").map(call => call.params.serviceTier), ["priority", null, null, null], "a chat saved without a speed is Standard, though Codex lists Fast as gpt-6-sol's default");
 });
 
 test("disconnecting ChatGPT or changing plan refreshes the interface's models, even when the catalog fails", async () => {

@@ -383,14 +383,6 @@ a { color: var(--accent-strong); }
 .tw-mp-dots span { width: 5px; height: 5px; border-radius: 50%; background: color-mix(in srgb, var(--color-muted-foreground) 50%, transparent); }
 .tw-mp-dots span[data-filled="true"] { background: color-mix(in srgb, var(--color-primary-foreground) 40%, transparent); }
 .tw-mp-endpoints { display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px; line-height: 16.5px; color: var(--color-muted-foreground); }
-.tw-mp-speed { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-border); }
-.tw-mp-speed-label { font-size: 12px; line-height: 18px; margin-bottom: 8px; }
-.tw-mp-speed-options { display: flex; flex-wrap: wrap; gap: 4px; }
-.tw-mp-speed-options button { flex: 1; padding: 6px 9px; border: 1px solid var(--color-border); border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
-.tw-mp-speed-options button[aria-pressed="true"] { border-color: var(--color-primary); background: var(--color-primary); color: var(--color-primary-foreground); }
-.tw-mp-speed-options button[data-fast][aria-pressed="true"] { border-color: var(--tw-fast); background: var(--tw-fast); color: #fff; }
-.tw-mp-speed-options button:disabled { opacity: .5; cursor: default; }
-.tw-mp-speed-description { margin: 8px 0 0; min-height: 16px; color: var(--color-muted-foreground); font-size: 11px; line-height: 16px; }
 .tw-mp-list-title { padding: 12px 12px 7px; color: var(--color-muted-foreground); font-size: 13px; }
 .tw-mp-list-heading { display: flex; flex-direction: column; gap: 2px; padding: 7px 12px 10px; }
 .tw-mp-list-heading span + span { color: var(--color-muted-foreground); font-size: 12px; }

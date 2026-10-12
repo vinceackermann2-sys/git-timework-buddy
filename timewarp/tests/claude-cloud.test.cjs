@@ -1,6 +1,6 @@
 "use strict";
 // Claude models in the cloud: pricing, the Responses ↔ Messages conversion,
-// streaming, metering and the paid-plan gate.
+// streaming and metering, on every plan.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -24,14 +24,13 @@ const route = moduleOf("cloud/claudeAgentAi.ts", { Deno: { env: { get: () => "fi
 
 class APIError extends Error { constructor(status, error, message, headers) { super(message); this.status = status; this.error = error; this.headers = headers; } }
 // The cloud's Claude module with a scripted Anthropic client, loaded the
-// first time a request needs it (`loads` counts that). Its reservations wait
-// for the paid-plan check, as reserveAgentAi does; `clock` replaces Date.now.
+// first time a request needs it (`loads` counts that); `clock` replaces Date.now.
 function claudeModule({ create = async () => { throw new Error("unused"); }, reserved = [], finished = [], pending = [], loads = [], key = route.claudeKey, clock } = {}) {
   class Anthropic { constructor(options) { this.options = options; this.beta = { messages: { create: (params, options) => create(params, options) } }; } }
   return moduleOf("cloud/claudeResponses.ts", {
     loadModule: async name => { loads.push(name); if (name !== "npm:@anthropic-ai/sdk@0.128.0") throw new Error("Unexpected module " + name); return { default: Anthropic }; },
     responseOutputLimit, claudeKey: key, claudeRoute: route.claudeRoute, assertCloudSafe: require("../shared/privacy.cjs").assertCloudSafe,
-    reserveAgentAi: async (_admin, _user, model, body, bounds) => { await bounds?.allowed; reserved.push({ model, body: plain(body), bounds }); return { id: "r" + reserved.length, finish: async (...args) => { finished.push([model, ...args]); } }; },
+    reserveAgentAi: async (_admin, _user, model, body, bounds) => { reserved.push({ model, body: plain(body), bounds }); return { id: "r" + reserved.length, finish: async (...args) => { finished.push([model, ...args]); } }; },
     TextEncoder, TextDecoder, btoa, atob, crypto, ReadableStream, Response, AbortSignal, console, EdgeRuntime: { waitUntil: value => pending.push(value) },
     ...(clock ? { Date: { now: clock } } : {}),
   });
@@ -283,20 +282,11 @@ test("Fast mode gets no SDK retries, and a Fast refusal is remembered until Anth
   assert.deepEqual(options.at(-1), ["standard", undefined], "Fast that isn't offered is left alone for a while");
 });
 
-test("a plan without Claude never reaches Anthropic, though its reservation runs alongside the check", async () => {
-  let created = false;
-  const reserved = [], claude = claudeModule({ reserved, create: async () => { created = true; throw new Error("unused"); } });
-  const denied = Promise.reject(Object.assign(new Error("This model is part of the paid plans."), { status: 403 })); denied.catch(() => {});
-  await assert.rejects(claude.claudeStream({}, "owner", { model: "anthropic/claude-opus-5-5", input: "Hi" }, {}, denied), error => error.status === 403);
-  assert.equal(created, false);
-  assert.equal(reserved.length, 0);
-});
-
 // Azure routes with the production secrets' names: the resource key, and a
 // renamed Astra deployment.
 const azure = moduleOf("cloud/azureAgentAi.ts", { Deno: { env: { get: name => ({ GPT_TERRA_KEY: "resource-key", GPT_ASTRA_MODEL: "astra-prod" })[name] || "" } }, crypto, TextEncoder });
 
-test("the cloud gives Claude and GPT-6 to paid plans and keeps Claude's thinking out of GPT requests", async () => {
+test("the cloud gives Claude and GPT-6 to every plan, Free included, and keeps Claude's thinking out of GPT requests", async () => {
   let handler, plan = "free", streamed, forwarded;
   const claude = claudeModule();
   moduleOf("cloud/index.ts", {
@@ -304,22 +294,24 @@ test("the cloud gives Claude and GPT-6 to paid plans and keeps Claude's thinking
     createClient: () => ({ auth: { getUser: async () => ({ data: { user: { id: "owner" } } }) }, rpc: async name => name === "timewarp_ai_usage" ? { data: { plan } } : { data: null } }),
     responseOutputLimit, REVIEW_OUTPUT_TOKENS: 4096, assertCloudSafe: require("../shared/privacy.cjs").assertCloudSafe, azureSolModel: () => "gpt-5.6-sol", azureLunaModel: () => "gpt-5.6-luna",
     azureRoute: azure.azureRoute, promptCacheKey: azure.promptCacheKey,
-    claudeRoute: route.claudeRoute, PAID_PLANS: route.PAID_PLANS, isClaudeReasoning: claude.isClaudeReasoning,
-    // Like the real ones, these call no model before the plan check passes.
-    claudeStream: async (_admin, user, body, _cors, allowed) => { await allowed; streamed = { user, model: body.model }; return new Response("claude"); }, claudeCall: async () => ({}),
-    nativeStream: async (_admin, _user, route, payload, _cors, allowed) => { await allowed; forwarded = { route: plain(route), payload }; return new Response("gpt"); }, nativeCall: async () => ({}),
+    claudeRoute: route.claudeRoute, isClaudeReasoning: claude.isClaudeReasoning,
+    claudeStream: async (_admin, user, body) => { streamed = { user, model: body.model }; return new Response("claude"); }, claudeCall: async () => ({}),
+    nativeStream: async (_admin, _user, route, payload) => { forwarded = { route: plain(route), payload }; return new Response("gpt"); }, nativeCall: async () => ({}),
   });
   const request = body => handler(new Request("https://fixture.invalid/functions/v1/timewarp-energy/v1/responses", { method: "POST", headers: { authorization: "Bearer fixture" }, body: JSON.stringify({ stream: true, input: "Hi", ...body }) }));
-  for (const model of ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol", "openai/gpt-6-astra", "openai/gpt-6-luna"]) {
-    const response = await request({ model });
-    assert.equal(response.status, 403, model);
-    assert.match((await response.json()).error, /paid plans/);
+  for (plan of ["free", "max"]) {
+    for (const model of ["anthropic/claude-opus-5-5", "anthropic/claude-haiku-5-5"]) {
+      const response = await request({ model });
+      assert.equal(await response.text(), "claude", plan + " " + model);
+      assert.deepEqual(streamed, { user: "owner", model });
+    }
+    for (const model of ["openai/gpt-6.1-sol", "openai/gpt-6-astra", "openai/gpt-6-luna"]) {
+      const response = await request({ model });
+      assert.equal(await response.text(), "gpt", plan + " " + model);
+      assert.equal(forwarded.route.slug, model.slice("openai/".length));
+    }
   }
-  assert.equal(streamed, undefined);
-  assert.equal(forwarded, undefined);
-  await request({ model: "openai/gpt-5.6-sol" });
-  assert.equal(forwarded.route.deployment, "gpt-5.6-sol", "Free keeps GPT-5.6");
-  plan = "max";
+  plan = "free";
   const response = await request({ model: "anthropic/claude-opus-5-5-fast" });
   assert.equal(await response.text(), "claude");
   assert.deepEqual(streamed, { user: "owner", model: "anthropic/claude-opus-5-5-fast" });
@@ -328,16 +320,16 @@ test("the cloud gives Claude and GPT-6 to paid plans and keeps Claude's thinking
   assert.equal(forwarded.payload.service_tier, undefined, "the route decides the tier");
   const thinking = { type: "reasoning", encrypted_content: claude.encodeThinking([{ type: "thinking", thinking: "", signature: "S" }]) };
   await request({ model: "openai/gpt-5.6-sol", input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Hi" }] }, thinking, { type: "reasoning", encrypted_content: "gAAAA" }] });
-  assert.equal(forwarded.route.deployment, "gpt-5.6-sol", "desktops that haven't updated keep GPT-5.6 on paid plans");
+  assert.equal(forwarded.route.deployment, "gpt-5.6-sol", "desktops that haven't updated keep GPT-5.6");
   assert.deepEqual(plain(forwarded.payload.input.map(item => item.encrypted_content || item.type)), ["message", "gAAAA"]);
 });
 
 test("GPT-6 models route to their Azure deployments, with Fast only when asked for", () => {
   const routed = (name, tier) => plain(azure.azureRoute(name, tier));
-  assert.deepEqual(routed("openai/gpt-6-astra"), { slug: "gpt-6-astra", deployment: "astra-prod", keys: ["resource-key"], paid: true, fast: false, billing: "openai/gpt-6-astra" });
-  assert.deepEqual(routed("openai/gpt-6.1-sol", "priority"), { slug: "gpt-6.1-sol", deployment: "gpt-6.1-sol", keys: ["resource-key"], paid: true, fast: true, billing: "openai/gpt-6.1-sol-fast" });
-  assert.deepEqual(routed("gpt-6-luna", "fast"), { slug: "gpt-6-luna", deployment: "gpt-6-luna", keys: ["resource-key"], paid: true, fast: true, billing: "openai/gpt-6-luna-fast" });
-  assert.deepEqual(routed("openai/gpt-5.6-sol", "priority"), { slug: "gpt-5.6-sol", deployment: "gpt-5.6-sol", keys: ["resource-key"], paid: false, fast: false, billing: "openai/gpt-5.6-sol" });
+  assert.deepEqual(routed("openai/gpt-6-astra"), { slug: "gpt-6-astra", deployment: "astra-prod", keys: ["resource-key"], fast: false, billing: "openai/gpt-6-astra" });
+  assert.deepEqual(routed("openai/gpt-6.1-sol", "priority"), { slug: "gpt-6.1-sol", deployment: "gpt-6.1-sol", keys: ["resource-key"], fast: true, billing: "openai/gpt-6.1-sol-fast" });
+  assert.deepEqual(routed("gpt-6-luna", "fast"), { slug: "gpt-6-luna", deployment: "gpt-6-luna", keys: ["resource-key"], fast: true, billing: "openai/gpt-6-luna-fast" });
+  assert.deepEqual(routed("openai/gpt-5.6-sol", "priority"), { slug: "gpt-5.6-sol", deployment: "gpt-5.6-sol", keys: ["resource-key"], fast: false, billing: "openai/gpt-5.6-sol" });
   for (const name of ["openai/gpt-luna", "gpt-5.6-luna"]) assert.equal(routed(name).slug, "gpt-5.6-luna");
   for (const name of ["timewarp/background", "openai/gpt-7", undefined]) assert.equal(routed(name).slug, "gpt-5.6-sol");
   const fast = azure.azureRoute("openai/gpt-6.1-sol", "priority");
