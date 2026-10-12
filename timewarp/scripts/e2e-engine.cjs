@@ -60,13 +60,14 @@ rl.on("line", line => { let m; try { m = JSON.parse(line); } catch { return; } i
   if (m.method === "tools/call") return reply({ content: [{ type: "text", text: "echo: " + m.params.arguments.text }] });
   reply({}); });`;
 
-async function launch() {
+// env: more settings for this instance, such as a cloud file shared with another.
+async function launch(env = {}) {
   if (!fs.existsSync(path.join(appDir, "main", "fixture.cjs"))) throw new Error("Build a preview first: node scripts/build-engine.cjs --dev --fixture");
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-e2e-"));
   const port = await freePort();
   const electron = require("electron");
   // Nobody is there to answer the system dialog that confirms an MCP command.
-  const child = cp.spawn(electron, [appDir, "--remote-debugging-port=" + port], { env: { ...process.env, TIMEWARP_USER_DATA_DIR: profile, TIMEWARP_FIXTURE_CONFIRM: "allow" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const child = cp.spawn(electron, [appDir, "--remote-debugging-port=" + port], { env: { ...process.env, TIMEWARP_USER_DATA_DIR: profile, TIMEWARP_FIXTURE_CONFIRM: "allow", ...env }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let log = "";
   child.stdout.on("data", chunk => { log += chunk; });
   child.stderr.on("data", chunk => { log += chunk; });
@@ -626,6 +627,99 @@ async function main() {
         await until(`row.innerText.includes("Downloading 42%") && row.querySelector("button").disabled && !button`, "Downloading didn't show");
       } finally { await call("debug.updates", null); await app.evaluate(`location.hash = "#/"`); }
       return "Settings says updates are off in a preview build; a ready update shows in Settings and as the sidebar's Update button, which asks to install it";
+    },
+    // Two computers of one account share a cloud (the preview's cloud file),
+    // and one of them then signs in to another account: the account's agents,
+    // chats, memory, instructions, skills, theme, app access and MCP servers
+    // follow it, and the other account sees none of them.
+    accounts: async () => {
+      const cloudFile = path.join(os.tmpdir(), `timewarp-e2e-cloud-${process.pid}.json`);
+      const desk = await launch({ TIMEWARP_FIXTURE_CLOUD_FILE: cloudFile });
+      const laptop = await launch({ TIMEWARP_FIXTURE_CLOUD_FILE: cloudFile });
+      const until = async (check, what, ms = 45000) => {
+        let last;
+        for (const deadline = Date.now() + ms; Date.now() < deadline; await pause(500)) { try { last = await check(); if (last) return last; } catch (error) { last = error.message; } }
+        throw new Error(what + (last ? ": " + JSON.stringify(last).slice(0, 300) : ""));
+      };
+      // MCP servers sync once Codex runs: listing them starts it.
+      const synced = async app => {
+        await app.call("mcp.list", { status: false });
+        const state = await app.call("debug.accountSync");
+        if (state.state !== "synced") throw new Error("Account sync: " + JSON.stringify(state));
+        await app.call("history.sync");
+      };
+      // As people switch: sign out (the window shows the sign-in screen), then
+      // sign in to the other account, whose window loads afresh.
+      const signIn = async (app, email) => {
+        await app.evaluate(`void window.timewarp.request("signOut")`);
+        await until(async () => await app.evaluate("!!document.getElementById('timewarp-auth-view') && !document.querySelector('.tw-window')"), "The sign-in screen didn't show");
+        await app.evaluate(`void window.timewarp.request("signIn", { email: ${JSON.stringify(email)}, password: "preview" })`);
+        await until(async () => await app.evaluate(`window.timewarp?.request("state").then(state => state.user?.email)`) === email && await app.evaluate("!!document.querySelector('.tw-window')"), "The window didn't show " + email);
+        await until(async () => (await app.call("debug.accountSync")).state === "synced", "The account didn't finish starting");
+      };
+      try {
+        // On the desk: an agent with a chat, notes, instructions for every
+        // agent, a skill, the theme, app access and an MCP server.
+        const navigator = await desk.call("agents.create", { name: "Navigator", instructions: "Plan trips by train." });
+        const chat = await desk.call("conversations.create", { agentId: navigator.id });
+        await desk.call("conversations.send", { id: chat.id, text: "Find a night train to Berlin", images: [], files: [], clientId: crypto.randomUUID() });
+        await until(async () => {
+          const [status, history] = await Promise.all([desk.call("conversations.status", { id: chat.id }), desk.call("conversations.history", { id: chat.id })]);
+          const last = history.turns?.at(-1);
+          return !status.running && last && last.status !== "inProgress" ? last.status : null;
+        }, "The chat got no reply", 90000);
+        await desk.call("memory.save", { notes: "# User\n\n- Prefers aisle seats\n" });
+        await desk.call("instructions.save", { text: "Answer in Swedish." });
+        await desk.call("skills.create", { name: "rail-planner", description: "Plans rail journeys", instructions: "Check night trains first." });
+        await desk.call("settings.set", { key: "appearance", value: { ...(await desk.call("settings.get")).appearance, scheme: "dark" } });
+        await desk.call("integrations.setAccess", { agentId: navigator.id, items: [] });
+        await desk.call("mcp.add", { name: "docs", transport: "http", url: "https://mcp.example.com/mcp" });
+        await synced(desk);
+
+        // The laptop has all of it.
+        await synced(laptop);
+        const there = (await laptop.call("agents.list")).find(item => item.id === navigator.id);
+        if (there?.instructions !== "Plan trips by train.") throw new Error("The agent didn't follow: " + JSON.stringify(there));
+        if (!(await laptop.call("memory.get")).notes.includes("Prefers aisle seats")) throw new Error("The memory didn't follow.");
+        if ((await laptop.call("instructions.get")).text !== "Answer in Swedish.\n") throw new Error("The instructions didn't follow.");
+        if (!(await laptop.call("skills.list", { reload: true })).skills.some(skill => skill.name === "rail-planner")) throw new Error("The skill didn't follow.");
+        if ((await laptop.call("settings.get")).appearance?.scheme !== "dark") throw new Error("The theme didn't follow.");
+        if (JSON.stringify((await laptop.call("integrations.getAccess", { agentId: navigator.id })).items) !== "[]") throw new Error("The agent's app access didn't follow.");
+        if (!(await laptop.call("mcp.list", { status: false })).some(server => server.name === "docs" && server.url === "https://mcp.example.com/mcp")) throw new Error("The MCP server didn't follow.");
+        if (!(await laptop.call("conversations.search", { query: "night train" })).messages.some(item => item.conversation.id === chat.id)) throw new Error("The chat didn't follow.");
+
+        // Both change the notes before either syncs: both lines are kept.
+        await laptop.call("memory.save", { notes: "# User\n\n- Prefers aisle seats\n- Vegetarian\n" });
+        await desk.call("memory.save", { notes: "# User\n\n- Prefers aisle seats\n- Travels with a bike\n" });
+        await synced(desk); await synced(laptop); await synced(desk);
+        for (const app of [desk, laptop]) {
+          const notes = (await app.call("memory.get")).notes;
+          if (!notes.includes("Vegetarian") || !notes.includes("Travels with a bike")) throw new Error("The notes weren't merged: " + notes);
+        }
+
+        // Another account on the desk has none of it, and browser sign-ins of its own.
+        const firstProfiles = (await desk.call("browser.profiles")).map(profile => profile.id);
+        await signIn(desk, "second@timewarp.invalid");
+        const other = {
+          agents: await desk.call("agents.list"), notes: (await desk.call("memory.get")).notes, instructions: (await desk.call("instructions.get")).text,
+          scheme: (await desk.call("settings.get")).appearance?.scheme, profiles: await desk.call("browser.profiles"),
+          skills: (await desk.call("skills.list", { reload: true })).skills.map(skill => skill.name), servers: (await desk.call("mcp.list", { status: false })).map(server => server.name),
+          found: (await desk.call("conversations.search", { query: "night train" })).messages.length,
+        };
+        const leaks = [
+          other.agents.some(item => item.id === navigator.id) && "agents", /aisle/.test(other.notes) && "memory", other.instructions && "instructions",
+          other.scheme === "dark" && "theme", other.skills.includes("rail-planner") && "skills", other.servers.includes("docs") && "MCP servers", other.found && "chats",
+          (!other.profiles.length || other.profiles.some(profile => firstProfiles.includes(profile.id))) && "browser profiles",
+        ].filter(Boolean);
+        if (leaks.length) throw new Error("The second account sees the first one's " + leaks.join(", "));
+        // Back to the first account: everything is where it was.
+        await signIn(desk, "preview@timewarp.invalid");
+        if (!(await desk.call("agents.list")).some(item => item.id === navigator.id) || !(await desk.call("memory.get")).notes.includes("Travels with a bike")) throw new Error("The first account's data didn't come back.");
+        return "the account's agent, chat, memory (merged after both computers changed it), instructions, skill, theme, app access and MCP server reached its other computer; a second account on the same computer saw none of them and had its own browser profile; the first account's data was there when it signed in again";
+      } finally {
+        await desk.close(); await laptop.close();
+        fs.rmSync(cloudFile, { force: true });
+      }
     },
   };
 

@@ -19,7 +19,7 @@ shipping (see [Before shipping](#before-shipping)).
 | Timewarp's agent tools (browser, vault, automations, chats) | MCP servers on the local bridge (`app/main/tool-server.cjs`), so every agent thread, workers included, has them; Codex settings in `app/main/codex-config.cjs` |
 | File previews | pdf.js, ExcelJS, JSZip and highlight.js, loaded on demand; markdown-it |
 | Display font | Quadrant Text (Matter of Sorts), the same file the previous app and the website use, from `store-assets/fonts` |
-| Local data | Built-in SQLite (`node:sqlite`) in the existing profile |
+| Local data | Built-in SQLite (`node:sqlite`) in the existing profile, and a folder per account (see [Accounts and computers](#accounts-and-computers)) |
 | Account, billing, organizations, onboarding screens, connectors, chat sync | Timewarp modules in `timewarp/desktop` and `timewarp/shared` |
 | Cloud | Unchanged Supabase functions in `timewarp/supabase` |
 
@@ -30,6 +30,67 @@ browser profiles are imported once and keep their storage) and Codex thread
 history (`runtime/codex`). On first start it imports agents, chats, messages,
 automations and settings from the previous local database once, without
 modifying it.
+
+## Accounts and computers
+
+Each Timewarp account signed in on a computer keeps its own data there
+(`app/main/accounts.cjs`). Chats, agents, automations and vault items carry
+their owner in the database, as before. Since 12 October each account also
+has its own:
+
+- Codex home (`runtime/accounts/<account id>/codex`): its MCP servers and
+  their sign-ins, skills, instructions for every agent, ChatGPT connection and
+  chat transcripts;
+- memory folder (`runtime/accounts/<account id>/memories`);
+- settings (appearance, memory mode, default model, approvals, notifications,
+  Privacy Mode);
+- browser profiles, and with them its site sign-ins;
+- drafts, prompt history and home screen choices in the interface.
+
+Before then every account on a computer shared `runtime/codex`,
+`runtime/entities/memories`, the settings and the browser profiles. Those stay
+where they are and belong to one account, decided the first time someone
+signs in to this version: the account with the most chats on the computer,
+or the first to sign in when there are none. Nothing is moved. Each other
+account starts with empty folders, which account sync fills. When the
+account changes, Codex restarts in the next account's home, the browser's
+tabs close (each chat's tabs come back with its account) and the window
+reloads. The keyring keeps an MCP server's sign-in by the server's name and
+address, not by Codex home, so every account except the one that owns the
+earlier data keeps those in its own Codex home's file. That way two accounts
+adding the same server never share its sign-in.
+
+What follows an account to its other computers (`app/main/account-sync.cjs`,
+cloud route `/account-data`, table `timewarp_energy_account_data`):
+
+| Follows the account | Stays on each computer |
+| --- | --- |
+| Chats and their messages (chat history sync, as before) | Files in agents' workspaces and attachments |
+| Agents: name, responsibilities, picture (made at most 256 px), star, order, archived | The vault (sign-ins, cards, secrets) |
+| Memory: notes, daily logs, imported knowledge (text files up to about 300,000 characters; a larger one stays on its computer) | Browser profiles and site sign-ins |
+| Instructions for every agent | Automations (they run on the computer they were made on, so none runs twice) |
+| Skills made or imported in Timewarp (text files up to 256 KB a skill; one with pictures stays on its computer) | The ChatGPT connection, and MCP servers' sign-ins: each computer signs in once |
+| Which connected accounts each agent may use (the accounts themselves were already per account in Composio) | MCP servers that run a command, or are on this computer's network, or send fixed headers |
+| MCP servers added by address: address, on or off, names of the environment variables they read | The default model (it depends on how AI is paid for on each computer) and Privacy Mode |
+| Appearance, memory mode, approvals and notifications | Pictures and other files that aren't text |
+
+The cloud keeps the latest copy of each item with a revision from the
+account's own counter. Each pass (at sign-in, 2 s after a change made in the
+app, and every 30 s) fetches what changed since the last pass, then sends
+what changed here. An item changed only in the cloud is taken as it is; one
+changed only here is sent. One changed on both computers is merged from the
+version both last agreed on: written text (files, instructions, skills) line
+by line, where both changed the same lines keeping both versions; other
+fields (a theme, a date, an address) take the cloud's; and an edit wins
+over a removal. An item that is on a computer but can't be carried (too
+large, a skill with pictures, a server that runs a command) stays there and
+is never taken as removed. The cloud refuses a write based on an old
+revision and returns its copy, which is merged and sent again. Secrets and
+payment details are refused before sending, as for chats. Privacy Mode pauses
+account sync, as it does chat sync. If every item of a kind disappears at
+once (a deleted folder), the removals aren't sent. At sign-in the first pass
+runs before chat sync, so restored chats find their agents. A cloud function
+without the route (404/410) is waited out quietly.
 
 ```
 timewarp/app/
@@ -44,7 +105,7 @@ From `timewarp`:
 
     npm run engine:dev               # build and open (separate "Timewarp Dev" profile)
     npm run engine:preview           # signed-in sample account, scripted model, real Codex
-    npm run engine:e2e               # end-to-end harness check in a preview build (27 scenarios)
+    npm run engine:e2e               # end-to-end harness check in a preview build (28 scenarios)
     npm run test:engine              # engine tests, including a real Codex conversation
     npm run engine:audit             # build and check the engine contains nothing from Energy
     npm run engine:package:draft     # unsigned Windows installer (build/engine-installer-draft)
@@ -112,21 +173,21 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Warm chat session on open | Energy | Same |
 | Attachments | Files, drag and drop, paste | Same: images to the model, other files copied into the agent's workspace; files can be dropped on the chat or Home and pasted into the composer (up to 10, 100 MB each) |
 | Dictation | Cloud transcription; Retry after a failure; Transcribe and send; level meter | Same service and controls: a failed transcription keeps the recording for Retry |
-| Chat history sync, restore, Privacy Mode | Timewarp sync | Same format and service. What sync knew of each chat is kept between launches, so a launch fetches and sends only chats that changed (the previous app fetched and sent every chat at each start, since the cloud's reordered keys made every chat look changed) |
-| Built-in browser (tabs, profiles, recent sites, downloads) | Energy browser | Rebuilt on `WebContentsView` with the same tab strip and toolbar; searches go to Google and pages see a Chrome user agent. Settings → Browser and setup list the Chrome, Edge, Brave and Vivaldi profiles on the computer to import; profiles are renamed and removed in Settings → Browser and chosen from the chat's profile button, which reopens the chat's pages in that profile. Agents link the tabs they open (`timewarp://conversation/…/browser/…`); the link opens the tab in the pane. The previous app's browser profiles are imported once and keep their storage, so sites stay signed in, and its open tabs come back once with their pins and back/forward pages. Pop-ups (such as "Sign in with Google" and PayPal) open as tabs that keep their link to the page that opened them; Google's sign-in page gets the app's own user agent, as before. A page's alert, confirm and prompt never block: in the user's tab on screen they show as a dialog, beforeunload asks "Leave site?", and in a hidden tab they're dismissed as Chrome does. Right-click offers spelling suggestions, open or copy a link, copy an image, cut, copy, paste, select all, back, forward, reload and "Open page in default browser". Camera and microphone are asked per site in the user's own tab (an Allow is remembered per profile); pages can't show notifications, read the clipboard or use the location. Tabs can be pinned from the tab's menu. Background tabs sleep after 16 open pages, but never while on screen, pinned, loading, playing media, edited, showing a dialog, downloading, a pop-up or its opener, or used by an agent, and they wake with their back/forward history. The home button opens a separate home tab instead of replacing the page. Removing a profile deletes its storage folder |
+| Chat history sync, restore, Privacy Mode | Timewarp sync | Same format and service; the account's agents, memory, settings and more follow it too (account sync, above). What sync knew of each chat is kept between launches, so a launch fetches and sends only chats that changed (the previous app fetched and sent every chat at each start, since the cloud's reordered keys made every chat look changed) |
+| Built-in browser (tabs, profiles, recent sites, downloads) | Energy browser | Rebuilt on `WebContentsView` with the same tab strip and toolbar; searches go to Google and pages see a Chrome user agent. Settings → Browser and setup list the Chrome, Edge, Brave and Vivaldi profiles on the computer to import; profiles are renamed and removed in Settings → Browser and chosen from the chat's profile button, which reopens the chat's pages in that profile. Agents link the tabs they open (`timewarp://conversation/…/browser/…`); the link opens the tab in the pane. The previous app's browser profiles are imported once and keep their storage, so sites stay signed in, and its open tabs come back once with their pins and back/forward pages. Pop-ups (such as "Sign in with Google" and PayPal) open as tabs that keep their link to the page that opened them; Google's sign-in page gets the app's own user agent, as before. A page's alert, confirm and prompt never block: in the user's tab on screen they show as a dialog, beforeunload asks "Leave site?", and in a hidden tab they're dismissed as Chrome does. Right-click offers spelling suggestions, open or copy a link, copy an image, cut, copy, paste, select all, back, forward, reload and "Open page in default browser". Camera and microphone are asked per site in the user's own tab (an Allow is remembered per profile); pages can't show notifications, read the clipboard or use the location. Tabs can be pinned from the tab's menu. Background tabs sleep after 16 open pages, but never while on screen, pinned, loading, playing media, edited, showing a dialog, downloading, a pop-up or its opener, or used by an agent, and they wake with their back/forward history. The home button opens a separate home tab instead of replacing the page. Removing a profile deletes its storage folder. Each account has its own profiles and default profile, so one account's site sign-ins are never another's |
 | Agent browser control, agent cursor, take over / hand back | agent-browser and Timewarp cursor | Rebuilt as in-process tools (open, snapshot with link addresses and focus, click including double click and checkboxes, type into a field or the focused element, press keys and combinations such as Control+A or Shift+Tab, scroll, read a page, an element's attribute or another address without leaving the tab, screenshot, tabs, back, forward, wait for text, an address or a load, close, choose from dropdowns, hover, upload from the workspace, answer a page's dialog); a page dialog never stalls an agent: an alert is reported, a confirm or prompt waits for the agent's answer up to 60 s; key presses reach background and worker tabs too (they're laid out off screen, with in-page fallbacks when the window is minimized); cursor in the page; take over supported; works with the pane closed (and on macOS with the window closed). Snapshots and actions reach into frames, including other sites' frames such as hosted card forms. Files an agent downloads go to `downloads` in its workspace without a Save dialog, and the next tool result names them |
 | Files view and previews (PDF, Excel, CSV, Word, images, code, markdown) | Energy UI | Rebuilt as a tree that remembers open folders, with Search files and closable file tabs, remembered per chat; refreshes as the agent works. Programs and scripts an agent wrote don't open from Files (Show in folder instead), as with chat cards |
 | Vault (sign-ins, cards, secrets, agent access, fill without revealing values) | Energy vault | Rebuilt; the previous vault's sign-ins, cards and secrets import once after sign-in, the newest copy of a duplicate winning, with every agent's access unless the previous app had it turned off (items the key store can't open are retried at later starts, up to five times; cards that fail the checksum are kept); each item is sealed together with its kind, site and username, so an edited database row fails its integrity check instead of filling elsewhere; notes, cardholder and expiry are encrypted, only the label, site, username and a card's brand and last four digits are readable; a sign-in fills on the same protocol, port and host (ignoring "www."), as before; cards and secrets need permission each time; passwords fill only into password fields, never into new-password fields; a card fill checks each field (choosing list options, two- or four-digit years) and reports any it couldn't fill; values filled from the vault are hidden from every browser tool result, including page addresses, and a page showing a filled value, whether in its field, copied elsewhere on the page or shown again after a reload, isn't captured by screenshots; sign-ins for plain-http sites (routers, NAS, intranet) are kept and fill only on the same protocol; address-bar fill; password import from browser CSV exports; card security codes are never stored, as before |
 | Passkeys | Energy (macOS 13.3+) | Not carried over |
-| Memory (notes, daily logs, background memory writer, imports from ChatGPT / Codex, Claude, Cursor; Enabled, Read only, Write only or None) | Energy memory, kept in a Git store per user (`runtime/personal-memory`) | Rebuilt on `memories/user.md`, `memories/daily-logs` and `memories/imports`. The previous app's memory store is read once per user without Git (`legacy-memory.cjs`, never modified): its notes replace placeholder notes, other files go to `imports/timewarp-previous`. Each turn carries the full notes, today's log and the last seven days' summaries. A background writer (`memory-writer.cjs`) updates the notes and the daily log after a chat has been idle four minutes, one job at a time on the funding source's small model (titles have their own queue, so a long memory job never holds up a new chat's title); it is skipped in Privacy Mode and when memory is read only or off, and refuses rewrites that would drop most of the notes. The memory folder (when it may be written) and the skills folder are writable for agents without a review. Imports find the same memory files, skills (including skills linked in by skill installers) and MCP servers (Codex `config.toml`, Claude Code including `~/.claude/.mcp.json`, Claude's desktop app, Cursor) on Windows and macOS; a Cursor project folder can be chosen |
-| Skills (list, enable, import, view) | Codex skills | Same; previously connected skill folders stay available. The previous app's built-in browser, vault and memory-writer skills (for its browser command, vault and memory writer) are turned off once, since Timewarp's own tools replace them; they can be turned on again |
+| Memory (notes, daily logs, background memory writer, imports from ChatGPT / Codex, Claude, Cursor; Enabled, Read only, Write only or None) | Energy memory, kept in a Git store per user (`runtime/personal-memory`) | Rebuilt on `memories/user.md`, `memories/daily-logs` and `memories/imports`, in each account's own folder and synced to its other computers. The previous app's memory store is read once per user without Git (`legacy-memory.cjs`, never modified): its notes replace placeholder notes, other files go to `imports/timewarp-previous`. Each turn carries the full notes, today's log and the last seven days' summaries. A background writer (`memory-writer.cjs`) updates the notes and the daily log after a chat has been idle four minutes, one job at a time on the funding source's small model (titles have their own queue, so a long memory job never holds up a new chat's title); it is skipped in Privacy Mode and when memory is read only or off, and refuses rewrites that would drop most of the notes. The memory folder (when it may be written) and the skills folder are writable for agents without a review. Imports find the same memory files, skills (including skills linked in by skill installers) and MCP servers (Codex `config.toml`, Claude Code including `~/.claude/.mcp.json`, Claude's desktop app, Cursor) on Windows and macOS; a Cursor project folder can be chosen |
+| Skills (list, enable, import, view) | Codex skills | Same, per account, and skills made or imported in Timewarp follow the account to its other computers; previously connected skill folders stay available. The previous app's built-in browser, vault and memory-writer skills (for its browser command, vault and memory writer) are turned off once, since Timewarp's own tools replace them; they can be turned on again |
 | Chat tools for agents (find chats, search messages, read a chat) | Built-in tools | Same, read-only, over the user's chats that aren't archived; a chat can be read around a message or a time |
 | Reactions, thread replies, report-an-issue and open tools for agents | Built-in tools | Not carried over |
 | Running a command with vault secrets (`vault run`), `energy://` links opened from outside the app, the previous app's bundled default skills | Energy | Not carried over: running commands from Timewarp itself would bypass Codex's sandbox and approval reviews, and output redaction can't be made reliable (needs its own design); the links and the default skills were Energy's own |
-| Instructions for every agent | Energy | Same (Codex global `AGENTS.md`) |
+| Instructions for every agent | Energy | Same (Codex global `AGENTS.md`), per account and synced to its other computers |
 | Automations (schedules with a time zone, count or end date; run now; history; retries) | Energy | Rebuilt. Previous automations keep their schedule (date and recurrence rules are mapped to once, hourly, daily, weekdays, weekly, monthly or interval in their time zone) and their on/off state when the mapping is exact; the rest (Slack event triggers, every other day and similar) come over paused with the closest schedule. A run that finds its chat busy waits for the reply to end ("queued"), and a run that can't start is retried every minute until the next one is due. The agent knows a run is scheduled and can mark it as having nothing to report: the chat then isn't marked unread and no notification shows. An automation an agent creates runs in the chat where the user asked; one made on the agent page has its own chat. Each automation opens from its agent's page in a dialog with Enabled, schedule, recent runs, Test run, Save and Delete, as before. Archiving a chat with an automation asks first and pauses the automation |
-| Connected apps (Composio), per-agent access | Timewarp Composio | Same service and agent tools; the calling agent is worked out from its chat thread, so an agent can't use another agent's accounts; reconnecting an account keeps its agents' access; sign-in opens in an app window with the default browser profile, its title bar naming the site, as before; access UI rebuilt. Accounts that need signing in again show above the composer, and Skip removes the account, as before (the previous app also listed them a second time through the agent, without Skip; the engine lists each once) |
-| MCP servers (URL with sign-in, or local command) | Energy | Rebuilt on the Codex config. Removing a server signs it out; a server whose sign-in expired shows Sign in again; servers the previous app added with names such as "GitHub" can be managed; imports keep a server's off switch, keep `${VAR}` placeholders as environment references and skip SSE-only servers; plain HTTP is allowed on the local network; a local command is confirmed in a system dialog showing the command before it runs |
+| Connected apps (Composio), per-agent access | Timewarp Composio | Same service and agent tools; the calling agent is worked out from its chat thread, so an agent can't use another agent's accounts; reconnecting an account keeps its agents' access, and which accounts each agent may use follows the account to its other computers; sign-in opens in an app window with the default browser profile, its title bar naming the site, as before; access UI rebuilt. Accounts that need signing in again show above the composer, and Skip removes the account, as before (the previous app also listed them a second time through the agent, without Skip; the engine lists each once) |
+| MCP servers (URL with sign-in, or local command) | Energy | Rebuilt on the Codex config. Removing a server signs it out; a server whose sign-in expired shows Sign in again; servers the previous app added with names such as "GitHub" can be managed; imports keep a server's off switch, keep `${VAR}` placeholders as environment references and skip SSE-only servers; plain HTTP is allowed on the local network; a local command is confirmed in a system dialog showing the command before it runs. Each account has its own; servers added by address follow the account to its other computers, where each is signed in to once |
 | Codex's plugin catalog | Not offered (the previous app listed its own bundled catalog) | Not offered: Settings → Tools lists the user's connected apps and MCP servers |
 | Windows command sandbox | Codex's unelevated sandbox, set up without administrator rights by the onboarding row "Protect work with Windows security" (Energy's onboarding step; Timewarp's own setup screens replaced it, and the previous app's profiles on the reference PC never had it set up) | Set up in setup's knowledge step with the same row, wording, Ready and Retry (`sandbox.cjs`); accounts that finished setup get it at their next start. Codex uses Windows' own app container sandbox (MXC) instead where Windows offers it, as Codex's own app does, which needs no setup. The official Codex applies a setup only after a restart (the engine restarts it once no chat is replying) and never finishes one without a folder. Every Codex start runs one sandboxed command: where it fails or stalls (security software can stall every sandboxed command), the sandbox is turned off for that Codex version and commands are reviewed instead of hanging; Retry tries again |
 | macOS command sandbox | Codex's Seatbelt sandbox, no setup | Same (a test runs the chat's permission profile on the macOS CI runners: writes in the workspace, none elsewhere, network allowed) |
@@ -170,7 +231,7 @@ prompts. Menus can be used with the arrow keys. Invitations to another organizat
   an added MCP server, files, automations, workers, connector sign-in, the log
   file and diagnostics, automatic approval review allowing and denying, and
   asking the user, workers using the browser, vault and connected apps, and
-  workspace and network access for commands, a sandboxed command kept out of other folders without a review, apply_patch file edits, Stop pressed before a reply starts, a message sent while the agent works, and page dialogs, key combinations, checkboxes, double clicks, background reads and address waits with the pane hidden and on screen (25 scenarios, all passing).
+  workspace and network access for commands, a sandboxed command kept out of other folders without a review, apply_patch file edits, Stop pressed before a reply starts, a message sent while the agent works, and page dialogs, key combinations, checkboxes, double clicks, background reads and address waits with the pane hidden and on screen, and two computers of one account sharing a cloud while one of them switches to a second account (`accounts`: agents, chats, memory merged after both computers changed it, instructions, skills, theme, app access and MCP servers follow; the second account sees none of them).
 - 497 tests (`npm test`), including the engine tests (`npm run test:engine`)
   and a real Codex conversation against a local model.
 - On 10 October the previous app's code (its bundle and Timewarp's patches)
@@ -361,6 +422,9 @@ have no updater; their users install the next DMG once.
    Include the live model evaluation (`engine:eval`, Luna and Sol) for the
    new base prompt, turn context and background memory writer, and an upgrade
    from a profile of the previous app with memory, automations and vault items.
+   Account sync with a real account on two computers, and a second account
+   signed in on one of them (needs the `20261012160000_account_data_sync`
+   migration and the `timewarp-energy` function deployed).
 2. Try the Windows command sandbox on a PC where Windows' app container
    sandbox isn't available (Codex then uses its restricted-token sandbox), and
    the signed Mac builds on a real Apple Silicon and Intel Mac, including an

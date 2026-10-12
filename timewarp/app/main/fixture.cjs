@@ -4,7 +4,11 @@
 // model. Real Codex runs the agents and tools. Release builds refuse it.
 const crypto = require("node:crypto");
 
-const USER = { id: "00000000-0000-4000-8000-00000000f1a7", email: "preview@timewarp.invalid", name: "Preview" };
+const FIRST = { id: "00000000-0000-4000-8000-00000000f1a7", email: "preview@timewarp.invalid", name: "Preview" };
+// A second account, signed in to with its email (or from the start with
+// TIMEWARP_FIXTURE_USER=second), for checking that accounts keep their own data.
+const SECOND = { id: "00000000-0000-4000-8000-0000000002b7", email: "second@timewarp.invalid", name: "Second" };
+let USER = process.env.TIMEWARP_FIXTURE_USER === "second" ? SECOND : FIRST;
 const ORGANIZATION = { id: "00000000-0000-4000-8000-0000000001a6", name: "Preview Studio", logo: null, role: "owner" };
 
 const sse = events => events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
@@ -138,8 +142,58 @@ function billingStatus() {
   };
 }
 
+// The cloud's account data (cloud/accountData.ts and its SQL function: a
+// revision per account, writes refused when the item changed meanwhile,
+// removals kept) and, with a file, its chat history. Two preview builds given
+// the same TIMEWARP_FIXTURE_CLOUD_FILE act as two computers of one account.
+function fixtureCloudStore(file) {
+  const fs = require("node:fs");
+  const empty = () => ({ accountData: {}, revisions: {}, history: {} });
+  let kept = empty();
+  const load = () => { if (!file) return kept; try { return { ...empty(), ...JSON.parse(fs.readFileSync(file, "utf8")) }; } catch { return empty(); } };
+  const save = data => { if (!file) { kept = data; return; } const temporary = `${file}.${process.pid}.tmp`; fs.writeFileSync(temporary, JSON.stringify(data)); fs.renameSync(temporary, file); };
+  return {
+    file,
+    accountData(user, input) {
+      const data = load(), rows = data.accountData[user] ||= {};
+      if (input.operation === "changes") {
+        const after = Number(input.after) || 0;
+        const changed = Object.values(rows).filter(row => row.revision > after).sort((a, b) => a.revision - b.revision);
+        const items = changed.slice(0, 50);
+        return { items, cursor: items.length ? items[items.length - 1].revision : after, more: changed.length > items.length };
+      }
+      if (input.operation !== "put" || !Array.isArray(input.items) || !input.items.length || input.items.length > 25) throw new Error("Invalid account data.");
+      const results = input.items.map(({ kind, key, value, base }) => {
+        const id = kind + "\0" + key, stored = rows[id];
+        if (stored && stored.revision !== (Number(base) || 0)) return { kind, key, conflict: true, revision: stored.revision, value: stored.value };
+        const revision = data.revisions[user] = (data.revisions[user] || 0) + 1;
+        rows[id] = { kind, key, revision, value: value ?? null };
+        return { kind, key, revision };
+      });
+      save(data);
+      return { results };
+    },
+    history(user, input) {
+      const data = load(), chats = data.history[user] ||= {};
+      if (input.operation === "list") return { protocol: 2, manifest: Object.values(chats).map(chat => ({ id: chat.conversation.id, version: chat.version })), nextOffset: null };
+      if (input.operation === "get") return { protocol: 2, chats: (input.ids || []).map(id => chats[id]).filter(Boolean) };
+      const { conversation, agents, entries } = input.snapshot;
+      const before = chats[conversation.id], merged = new Map((before?.entries || []).map(entry => [entry.id, entry]));
+      for (const entry of entries) merged.set(entry.id, entry);
+      chats[conversation.id] = {
+        conversation: !before || conversation.updatedAt >= before.conversation.updatedAt ? conversation : before.conversation, agents,
+        entries: [...merged.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)),
+        version: new Date().toISOString() + "#" + crypto.randomUUID().slice(0, 8),
+      };
+      save(data);
+      return { saved: true };
+    },
+  };
+}
+
 function createFixture() {
   let signedIn = true, onChange = async () => {};
+  const shared = fixtureCloudStore(process.env.TIMEWARP_FIXTURE_CLOUD_FILE || null);
   const members = [{ id: "member-1", userId: USER.id, email: USER.email, name: USER.name, image: null, roles: ["owner"], createdAt: "2026-01-01T00:00:00.000Z" }];
   const invites = [];
   const auth = {
@@ -151,7 +205,7 @@ function createFixture() {
     capability: () => "fixture-capability", expiresAt: () => Math.floor(Date.now() / 1000) + 3600,
     hasPendingFlow: () => false, passwordRecovery: () => false,
     providers: async () => ({ google: true, email: true, signup: true }),
-    signIn: async () => { signedIn = true; await onChange({ signedIn: true, changedUser: true }); return { user: { ...USER } }; },
+    signIn: async input => { USER = String(input?.email || "").toLowerCase() === SECOND.email ? SECOND : FIRST; members[0] = { ...members[0], userId: USER.id, email: USER.email, name: USER.name }; signedIn = true; await onChange({ signedIn: true, changedUser: true }); return { user: { ...USER } }; },
     signUp: async () => ({ confirmationRequired: true }),
     signOut: async () => { signedIn = false; await onChange({ signedIn: false, changedUser: true }); return { signedOut: true }; },
     sendOtp: async () => ({ sent: true }), resendConfirmation: async () => ({ sent: true }), sendRecovery: async () => ({ sent: true }),
@@ -196,7 +250,8 @@ function createFixture() {
     if (route === "/billing") return json({ plan: "max", included: 504, purchased: 20, monthlyIncluded: 700, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
     if (route === "/billing/service") return json(billingStatus());
     if (route === "/billing/history") return json({ events: [{ id: "e1", kind: "usage", description: "AI usage", credits: -3.2, createdAt: new Date(Date.now() - 3600000).toISOString() }, { id: "e2", kind: "purchase", description: "Extra credits", credits: 20, createdAt: new Date(Date.now() - 86400000).toISOString() }] });
-    if (route === "/history") return json(payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
+    if (route === "/history") return json(shared.file ? shared.history(USER.id, payload || {}) : payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
+    if (route === "/account-data") { try { return json(shared.accountData(USER.id, payload || {})); } catch (error) { return json({ error: error.message }, 400); } }
     if (route === "/native/rpc") return json(rpc(payload.rpc, payload.input || {}));
     if (route === "/v1/transcriptions") return json({ text: `Preview dictation (${payload?.length || 0} bytes of audio).` });
     if (route === "/connectors") {
@@ -220,7 +275,7 @@ function createFixture() {
     write(".codex/skills/release-notes/SKILL.md", "---\nname: release-notes\ndescription: Draft release notes from a list of changes.\n---\n\nGroup changes by area.\n");
     return directory;
   }
-  return { auth, cloud, user: USER, sampleHome };
+  return { auth, cloud, get user() { return USER; }, sampleHome };
 }
 
-module.exports = { createFixture, scriptedResponse };
+module.exports = { createFixture, scriptedResponse, fixtureCloudStore };

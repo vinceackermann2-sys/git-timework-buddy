@@ -1,11 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Archive, Bell, BellDot, Blocks, Building2, CalendarClock, ChevronRight, ChevronUp, CircleFadingArrowUp, GripVertical, LoaderCircle, LogOut, MailOpen, Pencil, Plus, Search, Settings2, UserPlus, UserRound } from "lucide-react";
-import { call, relativeTime, useEvent } from "../api.js";
+import { call, readScoped, relativeTime, useEvent, writeScoped } from "../api.js";
 import { Avatar, ContextMenu, Dialog, Menu, Tip, menuKeys, modKey, useToast } from "./common.jsx";
 import { PAGE, activityGroups, byActivity, dropSide, moveId, shownCount } from "../shell.mjs";
 
-const readList = key => { try { const value = JSON.parse(localStorage.getItem(key) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } };
-const writeList = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
 const readFlag = key => { try { return localStorage.getItem(key) === "1"; } catch { return false; } };
 const writeFlag = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch {} };
 
@@ -278,14 +276,14 @@ export function Sidebar({ account, agents, conversations, selectedId, view, home
   // The activity view is remembered, as before.
   const [mode, setModeState] = useState(() => readFlag("tw.activityView") ? "activity" : "tasks");
   const setMode = value => { setModeState(value); writeFlag("tw.activityView", value === "activity"); };
-  const [collapsed, setCollapsed] = useState(() => new Set(readList("tw.collapsed")));
+  const [collapsed, setCollapsed] = useState(() => { try { const value = JSON.parse(readScoped("tw.collapsed") || "[]"); return new Set(Array.isArray(value) ? value : []); } catch { return new Set(); } });
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const agentById = new Map(agents.map(agent => [agent.id, agent]));
   const toggle = id => setCollapsed(current => {
     const next = new Set(current);
     if (next.has(id)) next.delete(id); else next.add(id);
-    writeList("tw.collapsed", [...next]);
+    writeScoped("tw.collapsed", JSON.stringify([...next]));
     return next;
   });
   const ids = agents.map(item => item.id);

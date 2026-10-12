@@ -445,11 +445,13 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "mcp.setEnabled": ({ name, enabled }) => { signedIn(); return mcp.setEnabled(name, enabled); },
     "mcp.remove": ({ name }) => { signedIn(); return mcp.remove(name); },
     "mcp.signIn": ({ name }) => { signedIn(); return mcp.signIn(name); },
-    "instructions.get": () => { signedIn(); try { return { text: fs.readFileSync(path.join(codexHome, "AGENTS.md"), "utf8") }; } catch { return { text: "" }; } },
+    // The signed-in account's own (codexHome() is its Codex home).
+    "instructions.get": () => { signedIn(); try { return { text: fs.readFileSync(path.join(codexHome(), "AGENTS.md"), "utf8") }; } catch { return { text: "" }; } },
     "instructions.save": ({ text: value }) => {
       signedIn();
       if (typeof value !== "string" || value.length > 20000) throw fail(400, "Instructions must be text under 20,000 characters.");
-      const file = path.join(codexHome, "AGENTS.md"), temporary = file + "." + process.pid + ".tmp";
+      const file = path.join(codexHome(), "AGENTS.md"), temporary = file + "." + process.pid + ".tmp";
+      fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(temporary, value.trim() ? value.trim() + "\n" : "");
       fs.renameSync(temporary, file);
       return { text: fs.readFileSync(file, "utf8") };

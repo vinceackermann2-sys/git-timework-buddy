@@ -183,3 +183,21 @@ test('the subscription proxy fails closed with no Timewarp inference call',async
   const response=await fetch('http://127.0.0.1:'+server.address().port+'/v1/responses',{method:'POST',headers:{authorization:'Bearer local','content-type':'application/json'},body:JSON.stringify({model:'gpt-codex',input:'Hello'})});
   assert.equal(response.status,409);assert.equal(cloudInference,0);
 });
+
+test('each Timewarp account keeps its own ChatGPT connection, and the single binding saved before still counts',async t=>{
+  const chatgpt={type:'chatgpt',email:'owner@example.test',planType:'plus'};
+  const f=fixture({owner:'timewarp-owner',selected:true});t.after(()=>f.service.stop());
+  f.account=chatgpt;await f.service.refresh(true);
+  assert.equal(f.service.connection().status,'available');
+  // Another account signs in; in the app it has its own Codex home and connects there.
+  f.service.stop();f.owner='second-owner';f.account=null;await f.service.refresh(true);
+  assert.equal(f.service.connection().status,'disconnected','The second account never uses the first one\'s connection');
+  await f.login();
+  assert.equal(f.service.connection().status,'available');
+  assert.deepEqual(Object.keys(f.metadata).sort(),['second-owner','timewarp-owner'],'Both accounts keep their binding');
+  assert.equal(f.metadata['timewarp-owner'].selected,true);
+  // The first account is back: its connection is still there, unchanged.
+  f.service.stop();f.owner='timewarp-owner';f.account=chatgpt;await f.service.refresh(true);
+  assert.equal(f.service.connection().status,'available');
+  assert.equal(f.calls.filter(c=>c.method==='account/logout').length,1,'Only the second account\'s empty home was signed out, once');
+});

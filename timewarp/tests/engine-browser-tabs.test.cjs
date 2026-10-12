@@ -69,7 +69,7 @@ function memoryStore({ agents = {} } = {}) {
   const values = new Map();
   return {
     settings: { get: (key, fallback = null) => values.has(key) ? JSON.parse(values.get(key)) : fallback, set: (key, value) => { values.set(key, JSON.stringify(value)); return value; } },
-    browserProfiles: { list: () => [{ id: "default" }, { id: "work" }], ensureDefault: () => ({ id: "default" }) },
+    browserProfiles: { list: () => [{ id: "default" }, { id: "work" }], get(id) { return this.list().find(profile => profile.id === id) || null; }, ensureDefault: () => ({ id: "default" }) },
     conversations: { get: () => ({ browserProfileId: null, agentId: "agent-1" }), update() {} },
     agents: { get: id => agents[id] || null },
     recentSites: { record() {}, list: () => [] },

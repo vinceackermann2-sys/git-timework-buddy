@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
-import { call } from "../api.js";
+import { call, readScoped, writeScoped } from "../api.js";
 
 // The model and thinking picker, as in the previous app (its Timewarp picker,
 // desktop/model-picker.cjs): the trigger shows the model, effort and speed;
@@ -56,9 +56,9 @@ function readSaved() {
 // The last catalog's names and levels, so the trigger reads the same while a
 // new one loads after starting.
 const CACHE = "tw.modelCatalog";
-function cachedCatalog() { try { const value = JSON.parse(localStorage.getItem(CACHE) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } }
+function cachedCatalog() { try { const value = JSON.parse(readScoped(CACHE) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } }
 function rememberCatalog(choices) {
-  try { localStorage.setItem(CACHE, JSON.stringify(choices.map(({ id, displayName, supportedReasoningEfforts, defaultReasoningEffort, featured, serviceTiers, defaultServiceTier }) => ({ id, displayName, supportedReasoningEfforts, defaultReasoningEffort, featured, serviceTiers, defaultServiceTier })))); } catch {}
+  writeScoped(CACHE, JSON.stringify(choices.map(({ id, displayName, supportedReasoningEfforts, defaultReasoningEffort, featured, serviceTiers, defaultServiceTier }) => ({ id, displayName, supportedReasoningEfforts, defaultReasoningEffort, featured, serviceTiers, defaultServiceTier }))));
 }
 
 // The saved choice in a catalog, as requests resolve it (resolveModelSettings

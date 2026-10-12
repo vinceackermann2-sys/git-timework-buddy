@@ -38,10 +38,15 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
   const refusedGzip = async response => response.status === 400 && (await response.clone().json().catch(() => null))?.error === "Invalid JSON.";
   // A content type marks payload as already-encoded bytes (dictation audio).
   // A model reply may stream for up to five minutes (Claude thinking deeply).
-  async function cloud(route, payload, method = "POST", contentType) {
+  // account: the call is for that account only, and isn't sent once another
+  // is signed in (its token would put the data in that account).
+  async function cloud(route, payload, method = "POST", contentType, { account = null } = {}) {
     await ready;
+    const still = () => { if (account && auth.userId() !== account) throw Object.assign(new Error("The active account changed."), { code: "account-changed" }); };
+    still();
     if (fixture) return fixture.cloud(route, payload, method);
     const token = await auth.accessToken();
+    still();
     const body = payload === undefined || contentType ? payload : JSON.stringify(checked.delete(payload) ? payload : assertCloudSafe(payload));
     const signal = AbortSignal.timeout(route === "/v1/responses" ? 310000 : 140000);
     const send = (data, encoding) => fetch(`${config.supabaseUrl}/functions/v1/timewarp-energy${route}`, {
@@ -59,8 +64,8 @@ function createServices({ profile, config, onAccountChanged = async () => {}, on
     }
     return send(body);
   }
-  async function cloudJson(route, input, method = "POST") {
-    const response = await cloud(route, input, method), value = await response.json().catch(() => ({}));
+  async function cloudJson(route, input, method = "POST", options) {
+    const response = await cloud(route, input, method, undefined, options), value = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(typeof value.error === "string" ? value.error : value.error?.message || "Cloud request failed."), { status: response.status });
     return value;
   }
