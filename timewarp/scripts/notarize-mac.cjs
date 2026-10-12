@@ -32,7 +32,20 @@ function notarize(){
   if(response.status==='In Progress')response=json(['notarytool','wait',id,...credentials,'--timeout','45m','--output-format','json']);
   if(response.id!==id||response.status!=='Accepted')throw new Error('Apple notarization was not accepted; inspect retained submission '+id);
   save(response);
-  const run=args=>cp.execFileSync('/usr/bin/xcrun',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']});
+  // Stapler asks Apple's ticket service, which can lag behind an accepted
+  // submission and fails now and then on hosted runners: each step is tried
+  // a few times, and Apple's own message is kept when it still fails.
+  const run=args=>{
+    for(let attempt=1;;attempt++){
+      try{return cp.execFileSync('/usr/bin/xcrun',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']});}
+      catch(error){
+        const detail=(String(error.stdout||'')+String(error.stderr||'')).trim();
+        if(attempt>=6)throw new Error(args.slice(0,2).join(' ')+' failed: '+(detail||error.message));
+        console.error(args.slice(0,2).join(' ')+' failed (attempt '+attempt+' of 6), trying again in 30 seconds: '+(detail.split('\n').pop()||error.message));
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30000);
+      }
+    }
+  };
   run(['stapler','staple',file]);run(['stapler','validate',file]);
   cp.execFileSync('/usr/sbin/spctl',['--assess','--type','open','--context','context:primary-signature','--verbose=2',file],{stdio:'pipe'});
   const report={verifiedAt:new Date().toISOString(),artifact:file,sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),submissionId:id,status:response.status,stapled:true,gatekeeperAccepted:true,published:false};
