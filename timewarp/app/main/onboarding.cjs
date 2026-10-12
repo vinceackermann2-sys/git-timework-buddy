@@ -12,7 +12,7 @@ const { bindOnboardingSettings, readOwners } = require("../../desktop/onboarding
 const { createOnboardingService } = require("../../desktop/onboarding-service.cjs");
 const { rememberName } = require("../../desktop/setup-imports.cjs");
 
-function createOnboarding({ profile, store, services, agents, knowledge, browserImport, importPasswords = null, dialog, shell, defaultAppearance, encryption = safeStorage, retryMs = 1000 }) {
+function createOnboarding({ profile, store, services, agents, knowledge, browserImport, importPasswords = null, dialog, shell, defaultAppearance, encryption = safeStorage, retryMs = 1000, askMs = 15000 }) {
   const storage = protectedStore(path.join(profile, "onboarding.bin"), encryption);
   const userId = () => services.auth.userId();
   const settings = {
@@ -47,15 +47,27 @@ function createOnboarding({ profile, store, services, agents, knowledge, browser
     await services.accountRpc("product.onboarding.complete", {});
     if (id === userId()) await settings.update({ onboarding: { cloud: true } });
   }
-  // Whether the account finished setup elsewhere. A cloud that doesn't answer
-  // this (an older one) or can't be reached leaves setup to run, as before.
+  // A computer signing in soon after shouldn't run setup again because the
+  // cloud couldn't be told: it's told again a few times, and at the next launch.
+  function shareSoon(id, attempt = 0) {
+    return share(id).catch(() => {
+      if (attempt < 3) setTimeout(() => void shareSoon(id, attempt + 1), retryMs * 10 ** attempt).unref?.();
+    });
+  }
+  // Whether the account finished setup elsewhere: true or false as the cloud
+  // says, or null when it can't say now. A cloud without these calls (an older
+  // one) leaves setup to run, as before. The window waits on this, so each try
+  // waits askMs at most.
   async function finishedElsewhere() {
     for (let attempt = 0; ; attempt++) {
-      try { return !!(await services.accountRpc("product.onboarding.status", {}))?.done; }
+      let timer;
+      const late = new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error("The cloud didn't answer.")), askMs); });
+      try { return !!(await Promise.race([services.accountRpc("product.onboarding.status", {}), late]))?.done; }
       catch (error) {
-        if (attempt || (error.status >= 400 && error.status < 500)) return false;
-        await new Promise(resolve => setTimeout(resolve, retryMs));
-      }
+        if (error.status === 404 || error.status === 410) return false;
+        if (attempt === 2) return null;
+      } finally { clearTimeout(timer); }
+      await new Promise(resolve => setTimeout(resolve, retryMs * 2 ** attempt));
     }
   }
   // The window and the sandbox ask at the same moment after sign-in.
@@ -80,11 +92,13 @@ function createOnboarding({ profile, store, services, agents, knowledge, browser
       ...service,
       async run(action, input) {
         const id = userId(), result = await service.run(action, input);
-        // Setup stays finished here if the cloud can't be told now; the next launch tells it.
-        if (action === "complete") await share(id).catch(() => {});
+        // Setup stays finished here if the cloud can't be told now.
+        if (action === "complete") await shareSoon(id);
         return result;
       },
     },
+    // Setup runs once per account: only when this computer has no finished
+    // setup for it and the cloud says it never finished one.
     async done() {
       const id = userId();
       if (!id) return true;
@@ -92,10 +106,16 @@ function createOnboarding({ profile, store, services, agents, knowledge, browser
       if (saved.done) { if (!saved.cloud) void share(id).catch(() => {}); return true; }
       // "Run setup again" runs it on this computer whatever the cloud says,
       // also when it's chosen while the cloud is answering.
-      if (saved.restarted || !await askCloud(id) || id !== userId()) return false;
+      if (saved.restarted) return false;
+      const finished = await askCloud(id);
+      if (id !== userId()) return false;
       const latest = record(id);
       if (latest.done) return true;
       if (latest.restarted) return false;
+      // A cloud that can't say now doesn't bring setup back for an account that
+      // may have finished it; it's asked again at the next sign-in or launch.
+      if (finished === null) return true;
+      if (!finished) return false;
       await settings.update({ onboarding: { done: true, conversationId: null, cloud: true } });
       return true;
     },
