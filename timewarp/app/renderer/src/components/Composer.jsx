@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowUp, ArrowUpRight, Check, ChevronDown, Clipboard, CreditCard, Gauge, LoaderCircle, Mic, Plus, Reply, RotateCcw, Search, Sparkles, Square, TriangleAlert, UserRound, X } from "lucide-react";
-import { accountText, call, initials, request, useEvent } from "../api.js";
+import { accountText, call, initials, readScoped, request, useEvent, writeScoped } from "../api.js";
 import { Avatar, Dialog, Menu, useToast } from "./common.jsx";
 import { useDictation } from "../dictation.js";
 import { FileIcon } from "../widgets.jsx";
@@ -14,25 +14,26 @@ const MAX_ATTACHMENT = 100 * 1024 * 1024, MAX_FILES = 10;
 export { EFFORT_LABELS, ModelPicker, modelName };
 
 // Prompts sent from a composer, newest first, recalled with the arrow keys
-// as before (50 per chat, kept on this device).
+// as before (50 per chat, kept on this device for the signed-in account).
 const PROMPTS = 50;
 const promptsKey = key => "tw.prompts." + key;
-function readPrompts(key) { try { const list = JSON.parse(localStorage.getItem(promptsKey(key)) || "[]"); return Array.isArray(list) ? list.filter(item => typeof item === "string") : []; } catch { return []; } }
+function readPrompts(key) { try { const list = JSON.parse(readScoped(promptsKey(key)) || "[]"); return Array.isArray(list) ? list.filter(item => typeof item === "string") : []; } catch { return []; } }
 export function rememberPrompt(key, text) {
   if (!key || !String(text || "").trim()) return;
   const list = readPrompts(key);
   if (list[0] === text) return;
-  try { localStorage.setItem(promptsKey(key), JSON.stringify([text, ...list].slice(0, PROMPTS))); } catch {}
+  writeScoped(promptsKey(key), JSON.stringify([text, ...list].slice(0, PROMPTS)));
 }
 
 // What was typed and not sent, kept per chat (and for the home screen) on
-// this device, as before: its text, files, references and pasted text.
+// this device for the signed-in account, as before: its text, files,
+// references and pasted text.
 const draftKey = key => "tw.draft." + key;
 const EMPTY_DRAFT = { text: "", attachments: [], mentions: [], clips: [] };
 function readDraft(key) {
   if (!key) return EMPTY_DRAFT;
   try {
-    const value = JSON.parse(localStorage.getItem(draftKey(key)) || "null");
+    const value = JSON.parse(readScoped(draftKey(key)) || "null");
     if (!value || typeof value !== "object") return EMPTY_DRAFT;
     const list = (items, valid) => Array.isArray(items) ? items.filter(valid) : [];
     return {
@@ -45,10 +46,7 @@ function readDraft(key) {
 }
 function writeDraft(key, draft) {
   if (!key) return;
-  try {
-    if (draft.text.trim() || draft.attachments.length || draft.clips.length) localStorage.setItem(draftKey(key), JSON.stringify(draft));
-    else localStorage.removeItem(draftKey(key));
-  } catch {}
+  writeScoped(draftKey(key), draft.text.trim() || draft.attachments.length || draft.clips.length ? JSON.stringify(draft) : null);
 }
 
 // What the @ and $ menu offers: installed skills, the organization's people

@@ -289,6 +289,20 @@ function createComposio({ cloud, userId, storage, getAgent, listAgents=async()=>
     async completeConnect() { throw fail(400, 'Composio completes approval through its browser callback. Refresh Tools after approval.'); },
     async connectWithCredential() { throw fail(400, 'Connect this app through Composio’s secure connection page.'); },
     async remove(input) { return disconnect(input); },
+    // Which connected accounts each of an account's agents may use, for account
+    // sync (app/main/account-sync.cjs): agent id -> its items, or null for all.
+    accessMap(account) { if (account !== userId()) throw fail(401, 'The active account changed.'); init(); return { ...(database[account] || {}) }; },
+    // An agent's access from another computer of the same account; undefined
+    // removes the entry, so the agent may use all of the accounts.
+    restoreAccess(account, agentId, items) {
+      if (account !== userId()) throw fail(401, 'The active account changed.');
+      const valid = item => item && item.kind === 'integration' && item.owner === 'user' && typeof item.integrationId === 'string' && typeof item.accountId === 'string';
+      if (items !== undefined && items !== null && (!Array.isArray(items) || items.length > 100 || !items.every(valid))) throw fail(400, 'Invalid connected-app access.');
+      init(); database[account] ||= {};
+      if (items === undefined) delete database[account][agentId];
+      else database[account][agentId] = items === null ? null : items.map(({ kind, integrationId, accountId, owner }) => ({ kind, integrationId, accountId, owner }));
+      save(); catalogCache = null;
+    },
     async legacyAccounts(agentId) { return { connections: (await connections(agentId)).map(account => ({ authStatus: 'ready', displayName: account.name || account.label || account.app, email: account.email, id: account.connectionId, nangoIntegrationId: integrationId(account.toolkit), oauthScopes: [], organization: null, pluginIds: [integrationId(account.toolkit)], provider: 'composio', connectionOwnerId: userId() })) }; },
     invalidate() { catalogCache = null; },
   };

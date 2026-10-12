@@ -2,7 +2,7 @@
 // loads it once someone is signed in.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, PanelLeft, Pencil } from "lucide-react";
-import { accountText, call, initials, request, useEvent } from "./api.js";
+import { accountText, call, initials, readScoped, request, useEvent, writeScoped } from "./api.js";
 import { applyAppearance } from "./theme.js";
 import { loadHighlighter } from "./highlighter.js";
 import { SIDEBAR, byActivity, shortcutFor, sidebarCollapses, sidebarWidth } from "./shell.mjs";
@@ -32,7 +32,6 @@ function useMedia(query) {
 
 const read = (key, fallback) => { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } };
 const write = (key, value) => { try { localStorage.setItem(key, String(value)); } catch {} };
-const readList = key => { try { const value = JSON.parse(localStorage.getItem(key) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } };
 
 function parseRoute() {
   const [, view, id] = (location.hash.replace(/^#\/?/, "") || "").match(/^([a-z]*)\/?(.*)$/) || [];
@@ -115,7 +114,7 @@ function ProfileDialog({ open, onClose, account, onAccount }) {
 // previous app: "Join <organization>?" with Not now and Join.
 function Invitation({ onAccount }) {
   const [pending, setPending] = useState([]);
-  const [dismissed, setDismissed] = useState(() => readList("tw.dismissedInvitations"));
+  const [dismissed, setDismissed] = useState(() => { try { const value = JSON.parse(readScoped("tw.dismissedInvitations") || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = useCallback(() => call("organizations.pending").then(list => setPending(Array.isArray(list) ? list : [])).catch(() => {}), []);
@@ -123,7 +122,7 @@ function Invitation({ onAccount }) {
   const invite = pending.find(item => item?.id && !dismissed.includes(item.id)) || null;
   const name = invite?.organization?.name || "an organization";
   const inviter = invite?.inviter?.name || invite?.inviter?.email || "Someone";
-  const dismiss = () => { if (!invite || busy) return; const next = [...dismissed, invite.id]; setDismissed(next); write("tw.dismissedInvitations", JSON.stringify(next)); setError(""); };
+  const dismiss = () => { if (!invite || busy) return; const next = [...dismissed, invite.id]; setDismissed(next); writeScoped("tw.dismissedInvitations", JSON.stringify(next)); setError(""); };
   const join = () => {
     setBusy(true); setError("");
     call("organizations.acceptInvite", { invitationId: invite.id }).then(value => { onAccount(value); return load(); })
@@ -162,7 +161,7 @@ function Shell({ account, setAccount, settings, setSettings }) {
   const [agentsReady, setAgentsReady] = useState(false);
   // Automations, to warn before archiving a chat one runs in.
   const [automations, setAutomations] = useState([]);
-  const [homeAgent, setHomeAgentState] = useState(() => read("tw.agent", ""));
+  const [homeAgent, setHomeAgentState] = useState(() => readScoped("tw.agent") ?? "");
   // Each chat remembers whether its pane is open, as in the previous app; new chats start without it.
   const [pane, setPaneState] = useState(() => { const start = parseRoute(); return start.view === "chat" && read("tw.pane." + start.id, "closed") === "open" ? "open" : "closed"; });
   // How much of the stage the pane takes, dragged at the divider (half by default).
@@ -191,7 +190,7 @@ function Shell({ account, setAccount, settings, setSettings }) {
   const refreshTimer = useRef(null);
   const history = useHistoryButtons();
 
-  const setHomeAgent = id => { setHomeAgentState(id); write("tw.agent", id); };
+  const setHomeAgent = id => { setHomeAgentState(id); writeScoped("tw.agent", String(id)); };
   const setPane = value => { setPaneState(value); if (value !== "full" && route.view === "chat") write("tw.pane." + route.id, value === "open" ? "open" : "closed"); };
   const setSidebar = value => { setSidebarState(value); write("tw.sidebar", value); };
   const toggleSidebar = () => { if (narrow) setSliding(value => !value); else setSidebar(sidebar === "hidden" ? "shown" : "hidden"); };
@@ -258,6 +257,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
   });
   useEvent("app.navigate", ({ route: target } = {}) => { if (typeof target === "string" && target.startsWith("#/")) go(target); });
   useEvent("history.status", state => { if (state.state === "synced") { void loadAgents(); void loadConversations(); void loadRunning(); } });
+  // Agents changed on the account's other computer.
+  useEvent("account.synced", () => { void loadAgents(); });
   useEvent("funding.changed", () => { void loadModels(); loadFunding(); });
   // A sign-in that just connected an app says which account it connected.
   useEvent("integrations.changed", ({ connected } = {}) => {

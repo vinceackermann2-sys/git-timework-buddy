@@ -7,6 +7,7 @@ import { assertCloudSafe } from './privacy.ts';
 import { nativeCall, nativeStream } from './nativeResponses.ts';
 import { accountProduct, nativeAccountSnapshot, productionService } from './nativeAccount.ts';
 import { nativeHistory } from './nativeHistory.ts';
+import { accountData } from './accountData.ts';
 import { nativeBilling } from './nativeBilling.ts';
 import { transcribe } from './transcription.ts';
 const url=Deno.env.get('SUPABASE_URL')||'',serviceKey=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
@@ -56,7 +57,7 @@ Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response(null,{headers:cors});
   const route=new URL(req.url).pathname.split('/timewarp-energy')[1]||'/';
   try{
-    if(route==='/healthz')return response({ok:true,execution:'local',services:['auth','history','billing','models','transcription']});
+    if(route==='/healthz')return response({ok:true,execution:'local',services:['auth','history','account-data','billing','models','transcription']});
     const token=(req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'');
     // The body arrives while the session is checked; it is only unpacked and
     // parsed once the user is known.
@@ -80,6 +81,7 @@ Deno.serve(async(req:Request)=>{
     if(['/document','/workspace','/memory','/enqueue','/cancel','/internal/worker'].includes(route))throw fail(410,'Files, memory and task execution are local.');
     if(route==='/account')return response(await nativeAccountSnapshot(admin,user,token));
     if(route==='/history')return response(await nativeHistory(admin,user,body));
+    if(route==='/account-data')return response(await accountData(admin,user,body));
     if(route==='/connectors'){
       if(!['list-apps','list-connections','initiate-connection','connection-status','disconnect','list-tools','execute'].includes(body.action))throw fail(400,'Invalid connected-app action.');
       // The production service derives the personal Composio identity from this

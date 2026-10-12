@@ -139,7 +139,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
 
   function sessionFor(profileId) {
     // Profiles from the previous app keep their storage, and with it their sign-ins.
-    const legacy = store.browserProfiles.list().find(item => item.id === profileId)?.source?.partition;
+    const legacy = store.browserProfiles.get(profileId)?.source?.partition;
     const partition = LEGACY_PARTITION.test(legacy || "") ? "persist:" + legacy : "persist:tw-browser-" + profileId.replace(/[^a-zA-Z0-9_-]/g, "_");
     const value = electronSession.fromPartition(partition);
     if (!partitions.has(partition)) {
@@ -247,6 +247,12 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
   const SAVED_KEY = "browserTabs", SAVED_CHATS = 50, SAVED_TABS = 12, SAVED_HISTORY = 10;
   const restored = new Set(), dirty = new Set();
   let saveTimer = null;
+  // The chat's profile when it is one of the signed-in account's own (a chat
+  // can name one from before each account had its own), else its default.
+  function chatProfile(conversationId) {
+    const chosen = store.conversations.get(conversationId)?.browserProfileId;
+    return chosen && store.browserProfiles.list().some(profile => profile.id === chosen) ? chosen : store.browserProfiles.ensureDefault().id;
+  }
   function restore(conversationId) {
     if (!conversationId || restored.has(conversationId)) return;
     restored.add(conversationId);
@@ -254,7 +260,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     try { saved = store.settings.get(SAVED_KEY, {})?.[conversationId]; } catch { return; }
     if (!Array.isArray(saved?.tabs) || !saved.tabs.length) return;
     const profiles = new Set(store.browserProfiles.list().map(profile => profile.id));
-    const fallback = () => store.conversations.get(conversationId)?.browserProfileId || store.browserProfiles.ensureDefault().id;
+    const fallback = () => chatProfile(conversationId);
     let active = null;
     saved.tabs.slice(-SAVED_TABS).forEach((item, index) => {
       const url = item.kind === "web" && recordable(item.url) ? item.url : null;
@@ -595,7 +601,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
   // after: the tab it opens from, to place it right after that one.
   function openTab(conversationId, { url = null, profileId, activate = true, worker = false, after = null } = {}) {
     restore(conversationId);
-    const profile = profileId || store.conversations.get(conversationId)?.browserProfileId || store.browserProfiles.ensureDefault().id;
+    const profile = profileId || chatProfile(conversationId);
     const tab = { id: crypto.randomUUID(), conversationId, profileId: profile, kind: url ? "web" : "home", url: url ? safeUrl(url) : null, title: "", order: after ? orderAfter(after) : nextOrder(), usedAt: Date.now(), worker: !!worker };
     tabs.set(tab.id, tab);
     if (!groups.has(conversationId)) groups.set(conversationId, { active: null });
@@ -733,7 +739,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
       log?.warn("browser-profile", "A removed profile's storage is in use; it's removed at the next start");
       try { store.settings.set(REMOVE_LATER, [...new Set([...(store.settings.get(REMOVE_LATER, []) || []), folder])]); } catch {}
     },
-    recent: (conversationId, profileId) => store.recentSites.list(profileId || store.conversations.get(conversationId)?.browserProfileId || store.browserProfiles.ensureDefault().id, conversationId).slice(0, 4),
+    recent: (conversationId, profileId) => store.recentSites.list(profileId || chatProfile(conversationId), conversationId).slice(0, 4),
     // Agent tools act on the conversation's active web tab.
     webContents(conversationId, tabId) {
       const tab = tabFor(conversationId, tabId);
@@ -779,8 +785,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     // without a tab or changing the visible page; it closes once read.
     async readAway(conversationId, url, read) {
       const address = safeUrl(url);
-      const chosen = store.conversations.get(conversationId)?.browserProfileId;
-      const profileId = chosen && store.browserProfiles.list().some(profile => profile.id === chosen) ? chosen : store.browserProfiles.ensureDefault().id;
+      const profileId = chatProfile(conversationId);
       const view = new WebContentsView({ webPreferences: preferences(profileId) });
       const contents = view.webContents;
       away.add(contents);
@@ -832,6 +837,9 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
       return { bounds: tab.view.getBounds(), visible: tab.view.getVisible(), image: image.resize({ width: 480 }).toDataURL() };
     },
     destroy() { if (saveTimer) { clearTimeout(saveTimer); save(); } for (const tab of tabs.values()) discard(tab); tabs.clear(); groups.clear(); },
+    // Another account signed in: every tab closes, and each chat's tabs come
+    // back when its account opens it again.
+    closeAll() { this.destroy(); restored.clear(); notes.clear(); userControl.clear(); shown = null; },
   };
 }
 

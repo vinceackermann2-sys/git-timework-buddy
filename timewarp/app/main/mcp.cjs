@@ -153,12 +153,14 @@ async function nativeConfirm({ name, command, args, envKeys }) {
 
 // Removes a server's saved sign-in with Codex's own command, for Codex
 // versions without the app server's mcpServer/oauth/deleteTokens. It reads the
-// server from the config, so it runs before the server is removed.
+// server from the config, so it runs before the server is removed, and the
+// sign-in from where the running Codex keeps them (client.mcpCredentials).
 function codexLogout(client) {
   return name => new Promise(resolve => {
     if (!client.executable) return resolve(false);
     let child;
-    try { child = require("node:child_process").spawn(client.executable, ["mcp", "logout", name], { env: { ...process.env, ...client.env }, stdio: "ignore", windowsHide: true }); }
+    const store = client.mcpCredentials ? ["-c", `mcp_oauth_credentials_store="${client.mcpCredentials}"`] : [];
+    try { child = require("node:child_process").spawn(client.executable, [...store, "mcp", "logout", name], { env: { ...process.env, ...client.env }, stdio: "ignore", windowsHide: true }); }
     catch { return resolve(false); }
     const timer = setTimeout(() => { child.kill(); resolve(false); }, 15000);
     child.on("error", () => { clearTimeout(timer); resolve(false); });
@@ -283,6 +285,83 @@ function createMcp({ client, openExternal, notify = () => {}, confirmCommand = n
       await openExternal(authorizationUrl);
       return { opened: true };
     },
+    // Servers added by address, as account sync carries them to the
+    // account's other computers (account-sync.cjs): the address, whether it's
+    // on, and the names of the environment variables it reads a token or
+    // headers from. Never a sign-in, a header's value, a command, or a server
+    // on this computer or its local network: those are listed as kept here.
+    // guard() throws once the account the sync is for isn't signed in; Codex
+    // is asked only while it runs (in that account's home), never started.
+    async shared({ guard = () => {} } = {}) {
+      const send = synced(guard), servers = {}, kept = [];
+      for (const [name, value] of Object.entries((await send("config/read", {})).config?.mcp_servers || {})) {
+        if (RESERVED.test(name) || INTERNAL.has(name)) continue;
+        const url = shareable(name, value) ? sharedUrl(value.url) : null;
+        if (url) servers[name] = { url, enabled: value.enabled !== false, ...sharedReferences(value) };
+        else kept.push(name);
+      }
+      return { servers, kept };
+    },
+    // A server from the account's other computer: added, changed or removed
+    // (with its sign-in here). A server of this computer that can't be
+    // carried (one that runs a command) keeps its name and is left as it is.
+    async applyShared(name, value, { guard = () => {} } = {}) {
+      if (!SHARED_NAME.test(name) || RESERVED.test(name) || INTERNAL.has(name)) return;
+      const send = synced(guard);
+      const servers = (await send("config/read", {})).config?.mcp_servers || {}, current = Object.hasOwn(servers, name) ? servers[name] : null;
+      if (current && !(shareable(name, current) && sharedUrl(current.url))) return;
+      const save = async config => {
+        await send("config/value/write", { keyPath: `mcp_servers.${name}`, value: config, mergeStrategy: "replace" });
+        await send("config/mcpServer/reload", undefined);
+        notify("mcp.changed", {});
+      };
+      if (value === null) {
+        if (!current) return;
+        try { await send("mcpServer/oauth/deleteTokens", { name, url: current.url }); }
+        catch { guard(); if (!await logout(name)) log("The server's sign-in could not be removed:", name); }
+        await save(null);
+        failures.delete(name);
+        return;
+      }
+      const url = sharedUrl(value?.url);
+      if (!url) return;
+      const { bearer_token_env_var: _bearer, env_http_headers: _headers, ...kept } = current || {};
+      const references = sharedReferences({ bearer_token_env_var: value.bearerTokenEnvVar, env_http_headers: value.envHttpHeaders });
+      await save({
+        ...kept, url, enabled: value.enabled !== false,
+        ...(references.bearerTokenEnvVar ? { bearer_token_env_var: references.bearerTokenEnvVar } : {}),
+        ...(references.envHttpHeaders ? { env_http_headers: references.envHttpHeaders } : {}),
+      });
+    },
+  };
+  // A request for account sync: checked against its account just before it
+  // goes, to the Codex that runs now, which is that account's.
+  function synced(guard) {
+    return (method, params) => {
+      guard();
+      if (client.status && client.status !== "ready") throw new Error("Codex is starting.");
+      return typeof client.call === "function" ? client.call(method, params) : client.request(method, params);
+    };
+  }
+}
+
+// A server account sync can carry: a plain name and an address without fixed headers.
+const shareable = (name, value) => SHARED_NAME.test(name) && typeof value?.url === "string" && !(value.http_headers && typeof value.http_headers === "object" && Object.keys(value.http_headers).length);
+
+// What account sync may carry of a server: names (no dots, which config
+// paths can't hold), public HTTPS addresses, and environment variable names.
+const SHARED_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+function sharedUrl(value) {
+  let url;
+  try { url = new URL(String(value || "")); } catch { return null; }
+  return url.protocol === "https:" && !url.username && !url.password && !localHost(url.hostname) ? url.href : null;
+}
+function sharedReferences(config) {
+  const headers = config.env_http_headers && typeof config.env_http_headers === "object" && !Array.isArray(config.env_http_headers)
+    ? Object.entries(config.env_http_headers).filter(([header, variable]) => /^[A-Za-z0-9-]{1,64}$/.test(header) && typeof variable === "string" && ENV_KEY.test(variable)) : [];
+  return {
+    ...(typeof config.bearer_token_env_var === "string" && ENV_KEY.test(config.bearer_token_env_var) ? { bearerTokenEnvVar: config.bearer_token_env_var } : {}),
+    ...(headers.length ? { envHttpHeaders: Object.fromEntries(headers) } : {}),
   };
 }
 

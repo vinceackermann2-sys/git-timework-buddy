@@ -97,7 +97,17 @@ page and no separate cloud agent workspace.
   table. Sync pulls updates on every pass, including all chat pages, and uploads
   long conversations in retryable batches without truncating older messages.
   Signing in on a fresh device restores messages into its local database.
-  Assistant workspaces and instructions remain local.
+- An account's agents (name, responsibilities, picture), memory (notes, daily
+  logs, imported knowledge), instructions for every agent, skills made in
+  Timewarp, appearance and memory settings, which connected accounts each agent
+  may use, and MCP servers added by address follow it to its other computers
+  (`/account-data`, `timewarp_energy_account_data`). Each item has a
+  revision; a change made on two computers at once is merged on the desktop.
+  Agent workspace files, attachments, the vault, browser sign-ins, automations,
+  the ChatGPT connection and MCP sign-ins stay on each computer.
+- Several accounts on one computer each keep their own Codex home (MCP servers,
+  skills, instructions, ChatGPT connection, transcripts), memory, settings and
+  browser profiles (`app/main/accounts.cjs`).
 - Real plan status, personal credits, usage and credit activity. Checkout and
   subscription management open Stripe's hosted pages. Tasks spend personal
   credits; organization billing remains separate.
@@ -117,7 +127,7 @@ page and no separate cloud agent workspace.
   to every member. `npm run verify:organizations` checks this live with
   disposable accounts and removes them afterwards.
 
-Chat synchronization pauses in Privacy Mode. Local tasks require the desktop to
+Chat and account synchronization pause in Privacy Mode. Local tasks require the desktop to
 remain running. Model calls require a connection and either available Timewarp
 credits or a connected ChatGPT account with provider-approved plan access.
 
@@ -125,12 +135,12 @@ credits or a connected ChatGPT account with provider-approved plan access.
 
 | Saved in the cloud | Stored on this computer |
 | --- | --- |
-| Chat text and display metadata, account/profile, organizations, billing/plan and credit usage | Harness state and tool traces, assistant instructions, workspace files, memory, browser profiles/cookies, vault and saved payment details, encrypted login session |
+| Chat text and display metadata, account/profile, organizations, billing/plan and credit usage; agents, memory, instructions for every agent, skills, appearance and memory settings, connected-app access per agent and MCP server addresses (unless Privacy Mode is on) | Harness state and tool traces, workspace files and attachments, browser profiles/cookies, vault and saved payment details, automations, ChatGPT and MCP sign-ins, encrypted login session |
 
 The model receives conversation context and selected tool results needed to
-answer. Keeping files and memory locally does not mean content used in a cloud
-model request stays offline. They are not copied into a cloud document or memory
-store. Timewarp proxy requests use `store: false`; Codex owns its native subscription
+answer. Keeping files locally does not mean content used in a cloud model
+request stays offline. Files are not copied into a cloud document store; memory
+is copied only to the account's own synced data, checked for secrets first. Timewarp proxy requests use `store: false`; Codex owns its native subscription
 transport. On the Timewarp proxy, known payment and credential patterns
 are rejected before transport; this is not a complete sensitive-data detector.
 New local card saves omit verification codes.
