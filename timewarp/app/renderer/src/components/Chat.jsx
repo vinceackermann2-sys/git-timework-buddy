@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { AlarmClock, ArrowDown, Check, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Copy, EllipsisVertical, LoaderCircle, MessageSquareWarning, PanelRight, Pencil, Reply, Search, ShieldCheck, X } from "lucide-react";
+import { AlarmClock, ArrowDown, Check, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Copy, EllipsisVertical, LoaderCircle, MessageSquareWarning, PanelRight, Pencil, Reply, Search, Share, ShieldCheck, X } from "lucide-react";
 import { call, errorText, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { copyText, stripCitations, userMessageText } from "../cards.mjs";
@@ -12,6 +12,7 @@ import { ApprovalCard } from "./Approval.jsx";
 import { AutomationDialog } from "./Automations.jsx";
 import { Composer, FundingBanner, ReconnectBanner, rememberPrompt } from "./Composer.jsx";
 import { Trace } from "./Trace.jsx";
+import { shareItem, sharedBy, useSharedChat } from "./Share.jsx";
 import { useWorkers } from "./Workers.jsx";
 import { Avatar, Dialog, Menu, useToast } from "./common.jsx";
 
@@ -462,6 +463,8 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
   const [limit, setLimit] = useState(PAGE);
   const hidden = finding ? 0 : Math.max(0, rows.length - limit);
   const shown = hidden ? rows.slice(hidden) : rows;
+  // A chat a member shared: who shared it, and where their messages end.
+  const shared = useSharedChat(id);
   // Older messages appear above without moving what's in view.
   const keep = useRef(null);
   const showOlder = (count = PAGE) => { const node = scroller.current; if (node) keep.current = node.scrollHeight - node.scrollTop; setLimit(value => value + count); };
@@ -606,6 +609,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
         <button type="button" className="tw-head-btn" aria-label="View task activity" title="View task activity" onClick={() => setDialog("trace")}>Activity</button>
         <Menu align="right" width={224} trigger={({ toggle, open }) => <button type="button" className="tw-icon-button" aria-label="Thread actions" aria-expanded={open} onClick={toggle}><EllipsisVertical size={18} /></button>}>
           <button type="button" className="tw-menu-item" data-close onClick={() => onEditAgent(agent)}><Pencil size={16} /><span className="grow">Edit agent</span></button>
+          <button type="button" className="tw-menu-item" data-close onClick={() => shareItem("chat", id, conversation.title?.trim() || agent.name)}><Share size={16} /><span className="grow">Share conversation</span></button>
           <button type="button" className="tw-menu-item" data-close onClick={() => { setFinding(true); setFindFocus(value => value + 1); }}><Search size={16} /><span className="grow">Search conversation</span><kbd className="tw-kbd">{window.tw?.platform === "darwin" ? "⌘F" : "Ctrl F"}</kbd></button>
         </Menu>
         {paneOpen ? null : <button type="button" className="tw-icon-button" title="Show pane" aria-label="Show pane" onClick={onTogglePane}><PanelRight size={18} strokeWidth={1.6} /></button>}
@@ -618,11 +622,16 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
               <Avatar agent={agent} />
               <strong>{agent.name}</strong>
             </button>
-            <span>You created this conversation</span>
+            <span>{sharedBy(shared) || "You created this conversation"}</span>
           </div>
           {notice ? <div className="tw-date">{notice}</div> : null}
           {hidden ? <div className="tw-older"><button type="button" className="tw-pill-button" onClick={() => showOlder()}>Load older messages</button></div> : null}
-          {shown.map(row => <ChatRow key={row.key} row={row} day={day} agent={agent} conversationId={id} onRetry={onRetry} onReply={setReply} onJump={onJump} onAutomation={onAutomation} />)}
+          {shown.map(row => (
+            <React.Fragment key={row.key}>
+              <ChatRow row={row} day={day} agent={agent} conversationId={id} onRetry={onRetry} onReply={setReply} onJump={onJump} onAutomation={onAutomation} />
+              {shared?.through && row.key === shared.through ? <div className="tw-date tw-shared-end">Shared messages end here. New messages are only in your copy.</div> : null}
+            </React.Fragment>
+          ))}
           {approvals.map(approval => <ApprovalCard key={approval.id} approval={approval} />)}
           {loading ? null : (
             <AgentActivity state={state} commentary={commentaryLine(turns)} workers={workers} browserTab={browserTab} working={running}

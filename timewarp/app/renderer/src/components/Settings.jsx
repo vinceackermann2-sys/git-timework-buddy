@@ -8,6 +8,7 @@ import { Avatar, Dialog, Menu, PageHead, Row, SearchField, Select, Switch, useCo
 import { AppIcon, ModelPicker, useApps } from "./Composer.jsx";
 import { Memories, Skills } from "./Knowledge.jsx";
 import { Automations } from "./Automations.jsx";
+import { SharesSection } from "./Share.jsx";
 import { McpServers } from "./Mcp.jsx";
 import { Vault } from "./Vault.jsx";
 
@@ -509,7 +510,7 @@ function Organization({ account, onAccount, action, onActionDone }) {
   };
   return (
     <div className="tw-page tw-org-page">
-      <PageHead title="Organization" subtitle={organization ? `Inviting people to ${organization.name} adds them to this organization. Chats and AI credits stay personal.${members ? ` You have ${members.length} member${members.length === 1 ? "" : "s"} in this organization.` : ""}` : "Create or join an organization."} />
+      <PageHead title="Organization" subtitle={organization ? `Inviting people to ${organization.name} adds them to this organization. Agents, chats, connected apps and AI credits stay personal; share a copy of a chat, an agent or an automation from its menu.${members ? ` You have ${members.length} member${members.length === 1 ? "" : "s"} in this organization.` : ""}` : "Create or join an organization."} />
       {organization ? (
         <div className="tw-rows-card tw-org-card">
           <div className="tw-list-row">
@@ -568,6 +569,7 @@ function Organization({ account, onAccount, action, onActionDone }) {
           </div>
         </>
       ) : null}
+      <SharesSection />
       {organization ? null : <div><button type="button" className="tw-btn ghost" onClick={() => setDialog("create")}><Plus size={15} />New organization</button></div>}
       <Dialog open={dialog === "edit"} onClose={() => setDialog(null)} title="Edit organization">
         <form className="tw-import" onSubmit={event => { event.preventDefault(); call("organizations.update", { name }).then(() => call("account.get")).then(refresh).then(() => { toast("Organization saved."); setDialog(null); }).catch(error => toast(error, "error")); }}>

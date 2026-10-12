@@ -13,6 +13,7 @@ import { Chat, FeedbackDialog } from "./components/Chat.jsx";
 import { ALIASES, CreateOrganizationDialog, InviteDialog, SECTIONS, Settings, sectionHref, uploadPicture } from "./components/Settings.jsx";
 import { AgentDialog } from "./components/AgentDialog.jsx";
 import { Pane } from "./components/Pane.jsx";
+import { IncomingShares, ShareDialog } from "./components/Share.jsx";
 
 // What a new agent is asked first, so it opens with an introduction, as before.
 // The chat doesn't show the request (turns.mjs), only the agent's introduction.
@@ -133,7 +134,7 @@ function Invitation({ onAccount }) {
       {invite ? (
         <>
           <div className="tw-dialog-head">
-            <div><OrgPicture organization={invite.organization} /><h2>Join {name}?</h2><p>{inviter} invited you to {name}. Joining adds you to its members. Your chats and AI credits stay personal.</p></div>
+            <div><OrgPicture organization={invite.organization} /><h2>Join {name}?</h2><p>{inviter} invited you to {name}. Joining adds you to its members. Your agents, chats, connected apps and AI credits stay personal.</p></div>
           </div>
           {error ? <p className="tw-alert" role="alert">{error}</p> : null}
           <div className="tw-dialog-actions">
@@ -178,6 +179,9 @@ function Shell({ account, setAccount, settings, setSettings }) {
   // Dialogs the account menu opens over the current page, and Send feedback (Ctrl/⌘+Alt+F).
   const [orgDialog, setOrgDialog] = useState(null);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  // A chat, agent or automation being shared ({ kind, id, title }), from any of their menus.
+  const [sharing, setSharing] = useState(null);
+  useEffect(() => { const open = ({ detail }) => { if (detail?.kind && detail.id) setSharing(detail); }; window.addEventListener("tw:share", open); return () => window.removeEventListener("tw:share", open); }, []);
   // A message picked in search, shown once its chat has loaded it.
   const [reveal, setReveal] = useState(null);
   // The pane's tool to show for a chat, such as the agent page from the sidebar's Edit.
@@ -456,6 +460,12 @@ function Shell({ account, setAccount, settings, setSettings }) {
     if (messageId) setReveal({ conversationId: conversation.id, messageId, at: Date.now() });
     go("#/conversation/" + conversation.id);
   };
+  // An accepted share opens its copy: the chat, the agent on Home, or the automation's chat.
+  async function openShared(result) {
+    await Promise.all([loadAgents(), loadConversations(), loadAutomations()]);
+    if (result?.conversationId) go("#/conversation/" + result.conversationId);
+    else if (result?.agentId) newTask(result.agentId);
+  }
   // The account menu: switching organization goes home, as before.
   const switchOrganization = organizationId => call("organizations.setActive", { organizationId }).then(value => { setAccount(value); go("#/"); })
     .catch(error => toast("Could not switch organization: " + (error?.message || error), "error"));
@@ -515,6 +525,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
         onSaved={agent => { const created = !dialog.agent; setDialog({ open: false, agent: null }); void loadAgents().then(() => { if (created) void introduce(agent); }); }} />
       <SearchDialog open={searching} onClose={() => setSearching(false)} agents={agents} agentById={agentById} conversations={chatConversations} onOpenConversation={openFromSearch} onAgent={newTask} />
       <Invitation onAccount={setAccount} />
+      <IncomingShares agents={agents} onAccepted={result => void openShared(result)} />
+      <ShareDialog request={sharing} account={account} onClose={() => setSharing(null)} onInvite={() => setOrgDialog("invite")} />
       <ProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} account={account} onAccount={setAccount} />
       {organization ? <InviteDialog open={orgDialog === "invite"} organization={organization} onClose={() => setOrgDialog(null)} onInvited={() => { setOrgDialog(null); settingsPage("organization"); window.dispatchEvent(new Event("tw:members")); }} /> : null}
       <CreateOrganizationDialog open={orgDialog === "create"} current={organization} onClose={() => setOrgDialog(null)} onCreated={value => { setAccount(value); setOrgDialog(null); settingsPage("organization"); }} />

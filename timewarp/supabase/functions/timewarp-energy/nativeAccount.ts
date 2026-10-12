@@ -45,8 +45,27 @@ export async function nativeAccountSnapshot(admin:any,user:any,token:string){
   const billing=checked(await admin.rpc('timewarp_ai_usage',{p_user_id:user.id,p_workspace_id:null}));
   return {organizations,activeOrganization:active&&{...active,billing:{plan:['pro','max','ultra'].includes(billing?.plan)?'pro':'free',status:null}},image:await signedImage(admin,user.id,user.user_metadata?.timewarp_energy_picture).catch(()=>null)};
 }
+// Share invites between members of an organization: a copy of a chat, an agent
+// or an automation, which the recipient accepts or declines. The workspace
+// service checks that both people are in the organization.
+async function shareProduct(token:string,rpc:string,input:any){
+  if(rpc==='product.shares.list')return await productionService(token,'timewarp-workspaces',{action:'listShares'});
+  if(rpc==='product.shares.open')return(await productionService(token,'timewarp-workspaces',{action:'openShare',shareId:id(input.shareId)})).share;
+  if(rpc==='product.shares.respond'){
+    if(!['accept','decline','cancel'].includes(input.response))throw fail(400,'Invalid answer.');
+    await productionService(token,'timewarp-workspaces',{action:'respondShare',shareId:id(input.shareId),response:input.response});return null;
+  }
+  if(rpc==='product.shares.create'){
+    if(!['chat','agent','automation'].includes(input.kind)||!Array.isArray(input.recipientUserIds)||!input.recipientUserIds.length||input.recipientUserIds.length>20)throw fail(400,'Choose what to share and up to 20 members.');
+    if(!input.payload||typeof input.payload!=='object'||Array.isArray(input.payload))throw fail(400,'Invalid share.');
+    const result=await productionService(token,'timewarp-workspaces',{action:'createShares',workspaceId:id(input.organizationId),kind:input.kind,recipientUserIds:input.recipientUserIds.map(id),title:String(input.title||'').slice(0,200),summary:input.summary&&typeof input.summary==='object'?input.summary:{},payload:input.payload});
+    return{ids:Array.isArray(result.ids)?result.ids:[]};
+  }
+  throw fail(422,'This sharing action is unavailable.');
+}
 export async function accountProduct(admin:any,user:any,token:string,rpc:string,input:any){
   if(!input||typeof input!=='object'||Array.isArray(input))throw fail(400,'Invalid account input.');
+  if(rpc.startsWith('product.shares.'))return shareProduct(token,rpc,input);
   if(rpc==='product.images.beginUpload'){
     const imageId=`${user.id}/${crypto.randomUUID()}`;const upload=checked(await admin.storage.from('timewarp-energy-pictures').createSignedUploadUrl(imageId));return{imageId,uploadUrl:upload.signedUrl};
   }

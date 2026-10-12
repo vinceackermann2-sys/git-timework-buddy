@@ -1767,3 +1767,22 @@ button.tw-reply-quote:hover { background: color-mix(in srgb, var(--surface) 80%,
 .tw-trace-note { margin: 0; padding: 6px 12px; font-size: 12px; color: var(--muted); }
 .tw-trace-more { padding: 4px 12px 8px; font-size: 13px; }
 .tw-mono { font: 11px var(--font-mono); overflow-wrap: anywhere; }
+
+/* Share invites (Share.jsx): choosing members, and a share that arrived. */
+.tw-share-people { max-height: 280px; overflow-y: auto; }
+.tw-share-person { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; font-weight: 400; }
+.tw-share-person + .tw-share-person { border-top: 0.67px solid var(--border); }
+.tw-share-person:hover { background: var(--hover); }
+.tw-share-person input { accent-color: var(--accent-strong); flex: none; margin: 0; }
+.tw-share-person .grow, .tw-share-item .grow { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.tw-share-person strong, .tw-share-item strong { font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-share-person small, .tw-share-item small { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-share-none { margin: 0; padding: 12px 14px; }
+.tw-share-empty { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; }
+.tw-share-item { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; }
+.tw-share-icon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none; background: var(--selected); color: var(--muted); overflow: hidden; }
+.tw-share-icon img { width: 100%; height: 100%; object-fit: cover; }
+.tw-share-preview { color: var(--muted); font-size: 13px; line-height: 18px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; }
+.tw-share-instructions { max-height: 180px; overflow-y: auto; padding: 10px 12px; border: 0.67px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 400; line-height: 19px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tw-shared-end { margin: 18px 0; }
+.tw-share-table td:nth-child(3) { white-space: nowrap; }
