@@ -23,9 +23,9 @@
 
   <main id="main" class="wrap legal">
     <h1>Privacy Policy</h1>
-    <p class="updated">Last updated: 11 October 2026</p>
+    <p class="updated">Last updated: 12 October 2026</p>
 
-    <p class="summary">Timewarp runs on your computer. Your files, memory, saved passwords and browser data stay there. To do a task, your agent sends your request and the content it's working with to an AI model provider. We keep your account, your billing records and, unless you turn on Privacy Mode, a copy of your chat history. That data is stored in the EU. We don't sell your data, use it for advertising, or train AI models on it.</p>
+    <p class="summary">Timewarp runs on your computer. Your files, saved passwords and browser data stay there. To do a task, your agent sends your request and the content it's working with to an AI model provider. We keep your account, your billing records and, unless you turn on Privacy Mode, a copy of your chat history and of your agents, memory, skills and settings, so they follow you to your other computers. That data is stored in the EU. We don't sell your data, use it for advertising, or train AI models on it.</p>
 
     <ol class="toc" aria-label="On this page">
       <li><a href="#who">Who we are</a></li>
@@ -55,12 +55,13 @@
     <p>The app keeps the following on your computer only. We don't receive it and can't see it:</p>
     <ul>
       <li>Your workspace files and any files you give your agents.</li>
-      <li>Your agents' memory and daily notes.</li>
       <li>The vault: passwords, cards and other secrets, encrypted with your operating system's key store (Windows DPAPI or the macOS Keychain). Card security codes are never saved.</li>
       <li>Browser profiles, cookies, history and saved sites in the built-in browser.</li>
-      <li>Memory, skills and settings you import from other tools.</li>
+      <li>Your sign-ins to ChatGPT and to MCP servers, and MCP servers that run a command on your computer.</li>
+      <li>Automations, which run on the computer they were made on.</li>
       <li>The app's technical log. It doesn't contain your messages or content.</li>
     </ul>
+    <p>Your agents, their memory and daily notes, skills and some settings are kept on your computer and, unless you turn on Privacy Mode, also synced to your account (<a href="#collect">section 4</a>). When several accounts use the same computer, each account's data is kept apart.</p>
     <p>Keeping data locally doesn't mean it never leaves your computer. When your agent works on a task, the content it needs goes to an AI model provider (<a href="#ai">section 5</a>). When it uses a website or app for you, that service receives what the agent sends it.</p>
     <p>The desktop app doesn't send us analytics, usage tracking or crash reports.</p>
 
@@ -72,6 +73,8 @@
           <tr><td><strong>Account</strong>: name, email address, password (stored only as a hash), profile picture, and when you agreed to this policy. If you sign in with Google: your Google name, email address and profile picture.</td><td>To create your account, sign you in and keep it secure.</td><td>Contract (Art. 6(1)(b))</td></tr>
           <tr><td><strong>Organisations</strong>: organisation name and picture, members' names, email addresses and roles, and invitations, including the invited person's email address.</td><td>To let you work in an organisation and invite people to it.</td><td>Contract. For invited people: our and the inviting member's legitimate interest in sending the invitation (Art. 6(1)(f)).</td></tr>
           <tr><td><strong>Chat history</strong>: conversation titles, the text of messages, agent names, model settings and timestamps. Files, memory and the vault are not included.</td><td>To back up your chats and restore them when you sign in on another computer or reinstall. Turn on Privacy Mode in Settings to stop syncing.</td><td>Contract</td></tr>
+          <tr><td><strong>Agents, memory and settings</strong>: your agents' names, instructions, pictures and order; their memory notes, daily notes and imported memory; instructions for every agent; skills (text files only); appearance, preference, notification and memory settings; which connected-app accounts each agent may use; and the addresses of MCP servers you add. The vault, files, browser data, sign-ins and secrets are not included.</td><td>So the same account has the same agents, memory, skills and settings on every computer you sign in on. Turn on Privacy Mode in Settings to stop syncing.</td><td>Contract</td></tr>
+          <tr><td><strong>Shares in an organisation</strong>: what you share with other members (a chat's messages, an agent's name, picture, instructions and workflows, or an automation's name, instructions and schedule), who shared it, who it's for and their answer.</td><td>To deliver the share to the members you chose. Accepting makes their own copy.</td><td>Contract</td></tr>
           <tr><td><strong>AI usage</strong>: which model was used, token counts, cost, credits charged and when. Not the content of your requests.</td><td>To run the service, charge credits, show your usage and prevent abuse.</td><td>Contract; legitimate interest in preventing abuse</td></tr>
           <tr><td><strong>Payments</strong>: your Stripe customer ID, plan, subscription status, renewal date, credit balance and purchase history. Stripe handles your card details. We never see or store them.</td><td>To sell and manage plans and credits, and to keep accounting records.</td><td>Contract; legal obligation under the Swedish Bookkeeping Act (Art. 6(1)(c))</td></tr>
           <tr><td><strong>Emails</strong>: your email address, which email we sent and whether it was delivered.</td><td>To send sign-in links, confirmations, invitations, receipts and security notices.</td><td>Contract; legitimate interest in keeping accounts secure</td></tr>
@@ -89,7 +92,7 @@
     <h3>On Timewarp credits</h3>
     <ul>
       <li><strong>GPT models and dictation</strong>: Microsoft, through the Azure OpenAI Service.</li>
-      <li><strong>Claude models</strong> (paid plans): Anthropic. Anthropic receives a pseudonymous account ID, not your name or email address.</li>
+      <li><strong>Claude models</strong>: Anthropic. Anthropic receives a pseudonymous account ID, not your name or email address.</li>
     </ul>
     <p>These requests pass through our servers on the way to the provider. We don't store their content. We keep only the usage record described above. Microsoft and Anthropic process the content for us under their business terms. Those terms don't allow them to train models on it. They may keep it for a limited time to detect abuse.</p>
     <h3>On your own ChatGPT plan</h3>
@@ -128,9 +131,10 @@
 
     <h2 id="retention">9. How long we keep data</h2>
     <ul>
-      <li><strong>Account, organisation and chat history</strong>: while your account exists. After you ask us to delete your account, we delete this data within 30 days.</li>
+      <li><strong>Account, organisation, chat history, and synced agents, memory, skills and settings</strong>: while your account exists. After you ask us to delete your account, we delete this data within 30 days.</li>
       <li><strong>Payment and accounting records</strong>, including the usage behind a charge: for seven years after the end of the financial year, as the Swedish Bookkeeping Act requires.</li>
       <li><strong>Other usage records</strong>: while your account exists.</li>
+      <li><strong>Shares</strong>: what you shared is deleted when the member accepts or declines it, or when you cancel it. A share that isn't answered expires after 30 days, and its content is deleted after that. The record of who shared what with whom is kept while your account exists.</li>
       <li><strong>Invitations</strong>: they expire after 14 days. We delete them with the organisation or when you ask.</li>
       <li><strong>Support requests and email delivery records</strong>: as long as we need them to help you and handle follow-up questions, and no longer than two years after the case is closed.</li>
       <li><strong>Data on your computer</strong>: until you delete it or uninstall the app.</li>
@@ -147,7 +151,7 @@
       <li>get your data in a portable format</li>
       <li>withdraw consent at any time, without affecting earlier processing</li>
     </ul>
-    <p>To use any of these, email <a href="mailto:support@timewarpdev.com">support@timewarpdev.com</a> from the address on your account. We'll reply within one month. You can change your name and picture in the app, and Privacy Mode stops chat syncing. Archiving or deleting a chat in the app doesn't yet remove its synced copy, so ask us and we'll delete synced chats or your whole account.</p>
+    <p>To use any of these, email <a href="mailto:support@timewarpdev.com">support@timewarpdev.com</a> from the address on your account. We'll reply within one month. You can change your name and picture in the app, and Privacy Mode stops syncing chats, agents, memory, skills and settings. Archiving or deleting a chat in the app doesn't yet remove its synced copy, so ask us and we'll delete synced chats or your whole account.</p>
     <p>You can complain to the Swedish Authority for Privacy Protection (Integritetsskyddsmyndigheten, <a href="https://www.imy.se/en/">imy.se</a>) or the data protection authority where you live. We'd appreciate the chance to sort it out with you first.</p>
 
     <h2 id="security">11. Security</h2>
