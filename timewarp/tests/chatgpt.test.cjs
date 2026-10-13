@@ -63,11 +63,11 @@ test('a repeated Codex catalog cursor fails instead of looping',async t=>{
   await assert.rejects(f.service.models(),/invalid model catalog page/);assert.equal(f.calls.filter(c=>c.method==='model/list').length,2);
 });
 
-test('account catalog speed ids and defaults survive discovery and actual requests',async t=>{
+test('account catalog speed ids survive discovery and actual requests, and the default speed is Standard',async t=>{
   const f=fixture();t.after(()=>f.service.stop());await f.login();
   f.modelPage=()=>({data:[{model:'gpt-codex',defaultReasoningEffort:'high',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],serviceTiers:[{id:'priority',name:'Fast',description:'Higher usage'},{id:'ultrafast',name:'Ultrafast',description:'Highest speed'}],defaultServiceTier:'priority'}]});
   const [model]=await f.service.models();
-  assert.deepEqual(model.serviceTiers.map(tier=>tier.value),[null,'priority','ultrafast']);assert.equal(model.defaultServiceTier,'priority');
+  assert.deepEqual(model.serviceTiers.map(tier=>tier.value),[null,'priority','ultrafast']);assert.equal(model.defaultServiceTier,null,'Standard until the bolt turns Fast on, though the catalog defaults to Fast');
   const created=await f.client.request('thread/start',{model:'gpt-codex',serviceTier:'ultrafast',config:{model_reasoning_effort:'high'}});
   assert.equal(f.threads.get(created.thread.id).serviceTier,'ultrafast');
   await f.client.request('turn/start',{threadId:created.thread.id,model:'gpt-codex',effort:'high',serviceTier:'priority',input:[]});
@@ -86,7 +86,8 @@ test('catalog pages cannot leak across a Timewarp owner change',async t=>{
 });
 test('uses built-in Codex browser login, keeps Timewarp authentication separate and stores no tokens',async t=>{
   const f=fixture();t.after(()=>f.service.stop());await f.login();
-  assert.deepEqual(f.calls.find(c=>c.method==='account/login/start').params,{type:'chatgpt',useHostedLoginSuccessPage:true,appBrand:'chatgpt'});
+  // Codex's own success page: the hosted one opens the ChatGPT app.
+  assert.deepEqual(f.calls.find(c=>c.method==='account/login/start').params,{type:'chatgpt'});
   assert.equal(f.service.connection().status,'available');assert.equal(f.connected,1);
   assert.equal(f.service.details().backend,'codex-app-server');
   assert.equal(f.service.details().rateLimits.primary.usedPercent,25);
@@ -100,6 +101,13 @@ test('cancels the pending native login and ignores a late completion',async t=>{
   f.client.emit('notification',{method:'account/login/completed',params:{loginId:'login-1',success:true}});
   await tick();assert.equal(f.connected,0);assert.equal(f.service.currentBrowserLogin().status,'idle');
   assert.deepEqual(f.calls.find(c=>c.method==='account/login/cancel').params,{loginId:'login-1'});
+});
+test('a closed sign-in window cancels only its own login',async t=>{
+  const f=fixture();t.after(()=>f.service.stop());const started=await f.service.startBrowserLogin();assert.equal(started.loginId,'login-1');
+  assert.deepEqual(await f.service.cancelLogin('older-login'),{cancelled:false});
+  assert.equal(f.service.currentBrowserLogin().status,'waiting_for_user');assert.equal(f.calls.some(c=>c.method==='account/login/cancel'),false);
+  assert.deepEqual(await f.service.cancelLogin('login-1'),{cancelled:true});
+  assert.equal(f.service.currentBrowserLogin().status,'idle');assert.deepEqual(f.calls.find(c=>c.method==='account/login/cancel').params,{loginId:'login-1'});
 });
 test('provider login failure is visible and cannot silently switch to purchased credits',async t=>{
   const f=fixture();t.after(()=>f.service.stop());f.loginError='Provider rejected approval';await f.login();
@@ -182,4 +190,22 @@ test('the subscription proxy fails closed with no Timewarp inference call',async
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>server.close());
   const response=await fetch('http://127.0.0.1:'+server.address().port+'/v1/responses',{method:'POST',headers:{authorization:'Bearer local','content-type':'application/json'},body:JSON.stringify({model:'gpt-codex',input:'Hello'})});
   assert.equal(response.status,409);assert.equal(cloudInference,0);
+});
+
+test('each Timewarp account keeps its own ChatGPT connection, and the single binding saved before still counts',async t=>{
+  const chatgpt={type:'chatgpt',email:'owner@example.test',planType:'plus'};
+  const f=fixture({owner:'timewarp-owner',selected:true});t.after(()=>f.service.stop());
+  f.account=chatgpt;await f.service.refresh(true);
+  assert.equal(f.service.connection().status,'available');
+  // Another account signs in; in the app it has its own Codex home and connects there.
+  f.service.stop();f.owner='second-owner';f.account=null;await f.service.refresh(true);
+  assert.equal(f.service.connection().status,'disconnected','The second account never uses the first one\'s connection');
+  await f.login();
+  assert.equal(f.service.connection().status,'available');
+  assert.deepEqual(Object.keys(f.metadata).sort(),['second-owner','timewarp-owner'],'Both accounts keep their binding');
+  assert.equal(f.metadata['timewarp-owner'].selected,true);
+  // The first account is back: its connection is still there, unchanged.
+  f.service.stop();f.owner='timewarp-owner';f.account=chatgpt;await f.service.refresh(true);
+  assert.equal(f.service.connection().status,'available');
+  assert.equal(f.calls.filter(c=>c.method==='account/logout').length,1,'Only the second account\'s empty home was signed out, once');
 });

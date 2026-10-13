@@ -33,11 +33,12 @@ if(process.versions.electron){
         nativeTheme.themeSource=scheme;
         for(const width of [960,390,320]){
           window.setContentSize(width,900);await load(scheme==='dark'?'dark=1':'');
-          await snapshot(`sign-in-${scheme}-${width}`);
+          assert.equal(await evaluate('document.querySelector("h1").textContent'),'Create your Timewarp account','The app opens on account creation');
+          await snapshot(`sign-up-${scheme}-${width}`);
           await evaluate('document.querySelector(".timewarp-auth-google").click()');
           assert.equal(await evaluate('window.authCalls.filter(call=>call.action==="beginOAuth").length'),1);
-          await evaluate('[...document.querySelectorAll("button")].find(node=>node.textContent==="Create account").click()');
-          await snapshot(`sign-up-${scheme}-${width}`);
+          await evaluate('document.querySelector(".timewarp-auth-switch button").click()');
+          await snapshot(`sign-in-${scheme}-${width}`);
           await evaluate('document.querySelector(".timewarp-auth-google").click()');
           assert.equal(await evaluate('window.authCalls.filter(call=>call.action==="beginOAuth").length'),2);
           assert.equal(await evaluate('window.authCalls.find(call=>call.action==="beginOAuth").input.provider'),'google');
@@ -45,10 +46,13 @@ if(process.versions.electron){
       }
       console.log('Checking unavailable providers');
       await load('google=0');assert.equal(await evaluate('getComputedStyle(document.querySelector(".timewarp-auth-providers")).display'),'none');
-      await evaluate('[...document.querySelectorAll("button")].find(node=>node.textContent==="Create account").click()');
+      await evaluate('document.querySelector(".timewarp-auth-switch button").click()');
       assert.equal(await evaluate('getComputedStyle(document.querySelector(".timewarp-auth-providers")).display'),'none');
+      console.log('Checking disabled sign-ups');await load('signup=0');
+      assert.equal(await evaluate('document.querySelector("h1").textContent'),'Welcome to Timewarp','Closed sign-ups open on sign-in');
+      assert.equal(await evaluate('[...document.querySelectorAll(".timewarp-auth-links button")].find(node=>node.textContent==="Create account").hidden'),true);
       console.log('Checking email links');await load();
-      await evaluate('[...document.querySelectorAll("button")].find(node=>node.textContent==="Use email link").click()');console.log('Email form opened');
+      await evaluate('document.querySelector(".timewarp-auth-switch button").click();[...document.querySelectorAll("button")].find(node=>node.textContent==="Use email link").click()');console.log('Email form opened');
       assert.equal(await evaluate('document.querySelector(".timewarp-auth-google")'),null);
       await evaluate('document.querySelector("input[type=email]").value="fixture@example.com";document.querySelector("form").requestSubmit()');console.log('Email form submitted');
       assert.equal(await evaluate('window.authCalls.some(call=>call.action==="sendOtp")'),true);
@@ -59,7 +63,7 @@ if(process.versions.electron){
       await evaluate('document.querySelector("input[autocomplete=one-time-code]").value="01234-56789";document.querySelector("input[autocomplete=one-time-code]").dispatchEvent(new Event("input"));document.querySelector("form").requestSubmit()');
       assert.equal(await evaluate('window.authCalls.find(call=>call.action==="verifyOtp")?.input.code'),'0123456789','Grouped codes submit with leading zeroes preserved');
       await load();
-      await evaluate('const original=window.timewarp.request;window.timewarp.request=async(action,input)=>action==="signUp"?(window.authCalls.push({action,input}),{confirmationRequired:true}):original(action,input);[...document.querySelectorAll("button")].find(node=>node.textContent==="Create account").click();document.querySelector("input[type=email]").value="fixture@example.com";document.querySelectorAll("input[type=password]").forEach(node=>node.value="Password123");document.querySelector("input[type=checkbox]").checked=true;document.querySelector("form").requestSubmit()');
+      await evaluate('const original=window.timewarp.request;window.timewarp.request=async(action,input)=>action==="signUp"?(window.authCalls.push({action,input}),{confirmationRequired:true}):original(action,input);document.querySelector("input[type=email]").value="fixture@example.com";document.querySelectorAll("input[type=password]").forEach(node=>node.value="Password123");document.querySelector("input[type=checkbox]").checked=true;document.querySelector("form").requestSubmit()');
       await evaluate('Date.now=()=>new Date().getTime()+61000;[...document.querySelectorAll("button")].find(node=>node.textContent.startsWith("Resend")).click()');
       assert.equal(await evaluate('window.authCalls.filter(call=>call.action==="resendConfirmation").length'),1,'Signup resends still send confirmation emails');
       console.log('Checking account dialog');await load();
@@ -101,7 +105,7 @@ if(process.versions.electron){
     ['desktop/appearance.css','desktop/auth.css'].map(file=>`<link rel="stylesheet" href="${pathToFileURL(path.join(root,file)).href}">`).join('');
   fs.writeFileSync(path.join(reports,'index.html'),`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${styles}<title>Timewarp account preview</title><script>
     if(new URLSearchParams(location.search).has('dark'))document.documentElement.classList.add('dark');
-    window.authCalls=[];window.timewarp={request:async(action,input={})=>{window.authCalls.push({action,input});if(action==='authProviders')return{google:!new URLSearchParams(location.search).has('google'),signup:true};if(action==='state')return{user:null};return{};}};
+    window.authCalls=[];window.timewarp={request:async(action,input={})=>{window.authCalls.push({action,input});if(action==='authProviders')return{google:!new URLSearchParams(location.search).has('google'),signup:!new URLSearchParams(location.search).has('signup')};if(action==='state')return{user:null};return{};}};
     </script><script src="${pathToFileURL(path.join(root,'desktop/auth-ui.js')).href}" defer></script></head><body class="bg-background text-foreground"><main id="timewarp-auth-view" style="height:100vh"></main></body></html>`);
   const dependencyRoot=path.resolve(__dirname,'..');
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;

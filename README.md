@@ -84,11 +84,12 @@ page and no separate cloud agent workspace.
 
 - Supabase authentication with encrypted device sessions. Email confirmation,
   sign-in links, password recovery and Google sign-in return to the desktop callback.
-- GPT models use the production Azure provider credentials: GPT-5.6 Sol and
-  Luna on Free, GPT-6 Astra, GPT-6.1 Sol and GPT-6 Luna on paid plans (Azure
+- GPT models use the production Azure provider credentials: GPT-6 Astra,
+  GPT-6.1 Sol and GPT-6 Luna on every plan, Free on purchased credits (Azure
   deployments `gpt-6-astra`, `gpt-6.1-sol` and `gpt-6-luna`, renamed with the
-  `GPT_ASTRA_MODEL`, `GPT_SOL_6_1_MODEL` and `GPT_LUNA_6_MODEL` secrets). Claude
-  models (paid plans) use the `ANTHROPIC_API_KEY` secret of `timewarp-energy`,
+  `GPT_ASTRA_MODEL`, `GPT_SOL_6_1_MODEL` and `GPT_LUNA_6_MODEL` secrets); GPT-5.6
+  Sol and Luna remain for older desktops and approval reviews. Claude models
+  (every plan) use the `ANTHROPIC_API_KEY` secret of `timewarp-energy`,
   which turns Codex's Responses requests into Anthropic Messages requests
   (`cloud/claudeResponses.ts`). Provider keys and service-role credentials
   remain on the server.
@@ -96,7 +97,17 @@ page and no separate cloud agent workspace.
   table. Sync pulls updates on every pass, including all chat pages, and uploads
   long conversations in retryable batches without truncating older messages.
   Signing in on a fresh device restores messages into its local database.
-  Assistant workspaces and instructions remain local.
+- An account's agents (name, responsibilities, picture), memory (notes, daily
+  logs, imported knowledge), instructions for every agent, skills made in
+  Timewarp, appearance and memory settings, which connected accounts each agent
+  may use, and MCP servers added by address follow it to its other computers
+  (`/account-data`, `timewarp_energy_account_data`). Each item has a
+  revision; a change made on two computers at once is merged on the desktop.
+  Agent workspace files, attachments, the vault, browser sign-ins, automations,
+  the ChatGPT connection and MCP sign-ins stay on each computer.
+- Several accounts on one computer each keep their own Codex home (MCP servers,
+  skills, instructions, ChatGPT connection, transcripts), memory, settings and
+  browser profiles (`app/main/accounts.cjs`).
 - Real plan status, personal credits, usage and credit activity. Checkout and
   subscription management open Stripe's hosted pages. Tasks spend personal
   credits; organization billing remains separate.
@@ -116,7 +127,7 @@ page and no separate cloud agent workspace.
   to every member. `npm run verify:organizations` checks this live with
   disposable accounts and removes them afterwards.
 
-Chat synchronization pauses in Privacy Mode. Local tasks require the desktop to
+Chat and account synchronization pause in Privacy Mode. Local tasks require the desktop to
 remain running. Model calls require a connection and either available Timewarp
 credits or a connected ChatGPT account with provider-approved plan access.
 
@@ -124,12 +135,12 @@ credits or a connected ChatGPT account with provider-approved plan access.
 
 | Saved in the cloud | Stored on this computer |
 | --- | --- |
-| Chat text and display metadata, account/profile, organizations, billing/plan and credit usage | Harness state and tool traces, assistant instructions, workspace files, memory, browser profiles/cookies, vault and saved payment details, encrypted login session |
+| Chat text and display metadata, account/profile, organizations, billing/plan and credit usage; agents, memory, instructions for every agent, skills, appearance and memory settings, connected-app access per agent and MCP server addresses (unless Privacy Mode is on) | Harness state and tool traces, workspace files and attachments, browser profiles/cookies, vault and saved payment details, automations, ChatGPT and MCP sign-ins, encrypted login session |
 
 The model receives conversation context and selected tool results needed to
-answer. Keeping files and memory locally does not mean content used in a cloud
-model request stays offline. They are not copied into a cloud document or memory
-store. Timewarp proxy requests use `store: false`; Codex owns its native subscription
+answer. Keeping files locally does not mean content used in a cloud model
+request stays offline. Files are not copied into a cloud document store; memory
+is copied only to the account's own synced data, checked for secrets first. Timewarp proxy requests use `store: false`; Codex owns its native subscription
 transport. On the Timewarp proxy, known payment and credential patterns
 are rejected before transport; this is not a complete sensitive-data detector.
 New local card saves omit verification codes.
@@ -213,8 +224,10 @@ The production `auth-email-hook`, `timewarp-workspaces`, and `contact` functions
 share the email shell in `timewarp/supabase/functions/_shared/email-templates`.
 Authentication emails, account security notices, workspace invitations,
 contact receipts, support submissions, and waitlist confirmations use the
-Timewarp name, app icon, Ice blue accent, and support/legal footer. Each message
-has HTML and plain-text versions. Confirmation and passwordless sign-in emails
+Timewarp name and the desktop app's branding (the app icon, Pale lilac buttons
+with dark text, purple ink labels and links, white cards with hairline
+borders on white, no blue, Segoe UI) and the support/legal footer. Each message has
+HTML and plain-text versions. Confirmation and passwordless sign-in emails
 include both a secure link and the service-issued one-time code. Recovery uses
 the password-reset link accepted by the app; reauthentication uses its
 service-issued code. Desktop links preserve the
@@ -222,8 +235,11 @@ loopback callback and PKCE flow. Secure email changes keep separate links for
 the current and new addresses.
 
 `TIMEWARP_EMAIL_FROM` supplies the branded sender. The public logo is the app
-icon in the `timewarp-brand-assets` storage bucket; run
-`node scripts/publish-email-brand-assets.cjs` from `timewarp` when it changes.
+icon at 128 px (`assets/icons/app-icon-128.png`) in the `timewarp-brand-assets`
+storage bucket; run `node scripts/publish-email-brand-assets.cjs` from
+`timewarp` when it changes, under a new file name so mail clients that cached
+the old icon don't keep it. Addresses on reserved test domains (`example.com`,
+`.test`, `.invalid` and the like) are logged as suppressed and never sent.
 `TIMEWARP_EMAIL_LOGO_URL` can override its public URL. Publishing requires the
 existing authenticated Supabase CLI; credentials are never embedded in emails.
 
@@ -274,11 +290,14 @@ connection ownership is rechecked by the server. Connected-app OAuth tokens
 are held by Composio. Custom MCP servers remain managed by the original local
 desktop interface.
 
-The model picker lists only the models the current plan runs: the connected
-Codex catalog on Free with a Codex account, GPT-5.6 Sol and Luna on Free with
-Timewarp credits, and on paid plans, most intelligent first: Claude Opus 5.5,
-Claude Sonnet 5.5, Claude Fable 5.1, GPT-6 Astra, GPT-6.1 Sol (the default),
-Claude Haiku 5.5 and GPT-6 Luna. Each of Timewarp's models rates its
+The model picker lists only the connected Codex catalog on Free with a Codex
+account. Otherwise every plan, Free included, lists all of Timewarp's models,
+most intelligent first: Claude Opus 5.5, Claude Sonnet 5.5, Claude Fable 5.1,
+GPT-6 Astra, GPT-6.1 Sol (the default), Claude Haiku 5.5 and GPT-6 Luna. Free
+runs them on purchased credits; without credits or a Codex account nothing
+runs, and sending a message says how to fund it. The speed is always Standard
+unless the picker's bolt turns Fast on, for the models that have it (Claude
+Opus 5.5 and the GPT-6 models, or a Codex model's own Fast tier). Each of Timewarp's models rates its
 intelligence, speed and low cost as a percentage of the best, worked out from
 Artificial Analysis's benchmarks (`shared/model-benchmarks.json`). A chat saved
 with a model outside that catalog shows the model it is routed to.

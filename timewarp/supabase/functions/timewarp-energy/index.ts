@@ -1,12 +1,13 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.106.2';
 import { REVIEW_OUTPUT_TOKENS, responseOutputLimit } from './agentAiReservation.ts';
 import { azureRoute, azureSolModel, azureLunaModel, promptCacheKey } from './azureAgentAi.ts';
-import { claudeRoute, PAID_PLANS } from './claudeAgentAi.ts';
+import { claudeRoute } from './claudeAgentAi.ts';
 import { claudeCall, claudeStream, isClaudeReasoning } from './claudeResponses.ts';
 import { assertCloudSafe } from './privacy.ts';
 import { nativeCall, nativeStream } from './nativeResponses.ts';
 import { accountProduct, nativeAccountSnapshot, productionService } from './nativeAccount.ts';
 import { nativeHistory } from './nativeHistory.ts';
+import { accountData } from './accountData.ts';
 import { nativeBilling } from './nativeBilling.ts';
 import { transcribe } from './transcription.ts';
 const url=Deno.env.get('SUPABASE_URL')||'',serviceKey=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'';
@@ -37,11 +38,6 @@ async function requestJson(raw:Uint8Array<ArrayBuffer>){
   }
   try{return JSON.parse(new TextDecoder().decode(bytes));}catch{throw fail(400,'Invalid JSON.');}
 }
-// Claude and the GPT-6 models are part of the paid plans.
-async function paidPlan(userId:string){
-  const usage=check(await admin.rpc('timewarp_ai_usage',{p_user_id:userId,p_workspace_id:null})) as any;
-  if(!PAID_PLANS.has(usage?.plan))throw fail(403,'This model is part of the paid plans. Choose GPT-5.6 Sol or Luna, or upgrade in Billing.');
-}
 
 
 function catalog() {
@@ -61,7 +57,7 @@ Deno.serve(async(req:Request)=>{
   if(req.method==='OPTIONS')return new Response(null,{headers:cors});
   const route=new URL(req.url).pathname.split('/timewarp-energy')[1]||'/';
   try{
-    if(route==='/healthz')return response({ok:true,execution:'local',services:['auth','history','billing','models','transcription']});
+    if(route==='/healthz')return response({ok:true,execution:'local',services:['auth','history','account-data','billing','models','transcription']});
     const token=(req.headers.get('authorization')||'').replace(/^Bearer\s+/i,'');
     // The body arrives while the session is checked; it is only unpacked and
     // parsed once the user is known.
@@ -85,6 +81,7 @@ Deno.serve(async(req:Request)=>{
     if(['/document','/workspace','/memory','/enqueue','/cancel','/internal/worker'].includes(route))throw fail(410,'Files, memory and task execution are local.');
     if(route==='/account')return response(await nativeAccountSnapshot(admin,user,token));
     if(route==='/history')return response(await nativeHistory(admin,user,body));
+    if(route==='/account-data')return response(await accountData(admin,user,body));
     if(route==='/connectors'){
       if(!['list-apps','list-connections','initiate-connection','connection-status','disconnect','list-tools','execute'].includes(body.action))throw fail(400,'Invalid connected-app action.');
       // The production service derives the personal Composio identity from this
@@ -104,12 +101,10 @@ Deno.serve(async(req:Request)=>{
     if(route==='/billing'){const usage=check(await admin.rpc('timewarp_ai_usage',{p_user_id:user.id,p_workspace_id:null})) as any;return response({plan:usage?.plan||'free',included:Number(usage?.included_balance_credits)||0,purchased:Number(usage?.purchased_balance_credits)||0});}
     if(route==='/native/rpc'){const result=await accountProduct(admin,user,token,String(body.rpc||''),body.input||{});if(result===undefined)throw fail(410,'This feature uses the local desktop harness.');return response(result);}
     if(route==='/v1/responses'){
-      // Claude (claudeResponses.ts) and the GPT-6 models are part of the paid
-      // plans. The plan is checked alongside the call's reservation, and the
-      // model is only called once it has passed (reserveAgentAi).
+      // Every plan runs every model (Claude through claudeResponses.ts), Free on
+      // purchased credits; the call's reservation checks the balance first.
       const claude=claudeRoute(body.model),azure=claude?null:azureRoute(body.model,body.service_tier);
-      const allowed=claude||azure?.paid?paidPlan(user.id):undefined;allowed?.catch(()=>{});
-      if(claude)return body.stream?await claudeStream(admin,user.id,body,cors,allowed):response(await claudeCall(admin,user.id,body,allowed));
+      if(claude)return body.stream?await claudeStream(admin,user.id,body,cors):response(await claudeCall(admin,user.id,body));
       // Execution belongs to the desktop. Forward its client-executed tools,
       // excluding inherited upstream hosted search/image tools. Claude's
       // thinking from earlier turns of the chat stays out; the model's own
@@ -121,7 +116,7 @@ Deno.serve(async(req:Request)=>{
           ...(azure!.review?{max_output_tokens:Math.min(responseOutputLimit(body),REVIEW_OUTPUT_TOKENS)}:body.max_output_tokens!==undefined?{max_output_tokens:body.max_output_tokens}:{}),
           ...(Array.isArray(body.include)&&body.include.includes('reasoning.encrypted_content')?{include:['reasoning.encrypted_content']}:{}),
           prompt_cache_key:await promptCacheKey(user.id,azure!.review?'codex-auto-review':azure!.slug)};
-      if(body.stream)return await nativeStream(admin,user.id,azure!,payload,cors,allowed);return response(await nativeCall(admin,user.id,azure!,payload,allowed));
+      if(body.stream)return await nativeStream(admin,user.id,azure!,payload,cors);return response(await nativeCall(admin,user.id,azure!,payload));
     }
     throw fail(404,'This endpoint is unavailable.');
   }catch(error){return response({error:error instanceof Error?error.message:'Cloud request failed.'},(error as any)?.status||500);}

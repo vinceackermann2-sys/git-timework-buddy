@@ -38,8 +38,8 @@ const chatgpt=require('./chatgpt.cjs').createChatgpt({storage:protectedStore(pat
 const disconnectCodex=chatgpt.disconnect;
 chatgpt.disconnect=async()=>{const result=await disconnectCodex();await selectModel().catch(()=>console.error('[timewarp] The default model could not be updated.'));return result;};
 const integrations=require('./composio.cjs').createComposio({cloud:cloudJson,userId:()=>auth.userId(),storage:protectedStore(path.join(profile,'connector-access.bin'),safeStorage),getAgent:id=>(nativeRuntime?.entities.agents||integrationAgents)?.get(id),listAgents:owner=>(nativeRuntime?.entities.agents||integrationAgents)?.listActiveByOwner(owner)||[],ensureCallback,onChanged:async()=>{focusApp();},mcpToken});
-// Free with a connected Codex account lists the Codex catalog; every other
-// plan lists Timewarp's Sol and Luna.
+// Free with a connected Codex account lists the Codex catalog; otherwise every
+// plan lists all of Timewarp's models.
 async function modelChoices(){await ready;return auth.userId()&&(await aiFunding.current()).source==='chatgpt'?chatgpt.models():require('../shared/models.cjs').models();}
 // The picker refetches on open. Realign the default model with the current
 // plan's catalog so a plan or Codex change never leaves a stale selection.

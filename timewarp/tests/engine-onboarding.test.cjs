@@ -10,19 +10,21 @@ const encryption = { isEncryptionAvailable: () => true, encryptString: text => B
 
 // One computer's profile signed in to a cloud that remembers finished setups.
 // Several computers can share one cloud.
-function cloudDouble({ finished = [], failures = [] } = {}) {
-  return { finished: new Set(finished), failures: [...failures], calls: [] };
+// A failure is an HTTP status, or "offline" for a request that never arrives.
+function cloudDouble({ finished = [], failures = [], completeFailures = [] } = {}) {
+  return { finished: new Set(finished), failures: [...failures], completeFailures: [...completeFailures], calls: [] };
 }
-function computer(cloud = cloudDouble(), { profile = fs.mkdtempSync(path.join(os.tmpdir(), "tw-onboarding-")), user = "alice" } = {}) {
+function computer(cloud = cloudDouble(), { profile = fs.mkdtempSync(path.join(os.tmpdir(), "tw-onboarding-")), user = "alice", askMs = 1000 } = {}) {
   let owner = user;
   const agents = [], values = new Map();
+  const fail = failure => { throw Object.assign(new Error("Cloud request failed."), failure === "offline" ? {} : { status: failure }); };
   const services = {
     auth: { userId: () => owner, refreshUser: async () => {} },
     accountRpc: async (rpc, input) => {
       cloud.calls.push({ user: owner, rpc });
       if (rpc === "product.onboarding.status") await cloud.hold;
-      const failure = rpc === "product.onboarding.status" && cloud.failures.shift();
-      if (failure) throw Object.assign(new Error("Cloud request failed."), { status: failure });
+      const failure = rpc === "product.onboarding.status" ? cloud.failures.shift() : rpc === "product.onboarding.complete" ? cloud.completeFailures.shift() : null;
+      if (failure) fail(failure);
       if (rpc === "product.onboarding.status") return { done: cloud.finished.has(owner) };
       if (rpc === "product.onboarding.complete") { cloud.finished.add(owner); return null; }
       if (rpc === "product.profile.update") return null;
@@ -35,7 +37,7 @@ function computer(cloud = cloudDouble(), { profile = fs.mkdtempSync(path.join(os
     },
   };
   const onboarding = createOnboarding({
-    profile, services, encryption, retryMs: 1,
+    profile, services, encryption, retryMs: 1, askMs,
     store: { settings: { get: key => values.get(key), set: (key, value) => values.set(key, value) } },
     agents: { list: () => agents, create: agent => agents.push(agent), update: () => {} },
     knowledge: { memoriesRoot: path.join(profile, "memories"), detect: async () => ({ items: [] }), importItems: async () => ({}) },
@@ -61,9 +63,11 @@ test("finishing setup on one computer skips it on another and after signing in a
   assert.equal(await first.onboarding.done(), false);
   assert.equal((await finishSetup(first.onboarding)).completed, true);
   assert.ok(cloud.finished.has("alice"));
-  // Signing out and back in on the same computer.
+  // Signing out and back in on the same computer, which knows without asking.
+  const before = statusCalls(cloud);
   first.signIn(null); assert.equal(await first.onboarding.done(), true);
   first.signIn("alice"); assert.equal(await first.onboarding.done(), true);
+  assert.equal(statusCalls(cloud), before);
 
   const second = computer(cloud);
   assert.equal(await second.onboarding.done(), true);
@@ -116,19 +120,45 @@ test("Run setup again while the cloud is still answering keeps setup to run", as
   assert.equal(await onboarding.done(), false);
 });
 
-test("setup runs as before when the cloud can't answer", async () => {
+test("setup runs as before with a cloud that doesn't keep it", async () => {
   // An older cloud doesn't know the request: no retry.
   const old = cloudDouble({ finished: ["alice"], failures: [410] }), first = computer(old);
   assert.equal(await first.onboarding.done(), false);
   assert.equal(statusCalls(old), 1);
   // Nothing is kept, so the next check asks again.
   assert.equal(await first.onboarding.done(), true);
+});
 
-  // A passing outage is retried once.
-  const flaky = cloudDouble({ finished: ["alice"], failures: [503] });
+test("a cloud that can't answer now doesn't bring setup back", async () => {
+  // A passing outage is retried.
+  const flaky = cloudDouble({ finished: ["alice"], failures: [503, "offline"] });
   assert.equal(await computer(flaky).onboarding.done(), true);
-  const down = cloudDouble({ finished: ["alice"], failures: [503, 503] });
-  assert.equal(await computer(down).onboarding.done(), false);
+  assert.equal(statusCalls(flaky), 3);
+  // Still no answer (an outage, no network, a sign-in the cloud refuses): setup
+  // doesn't show now. Nothing is kept, so the next check asks again, and an
+  // account that never finished setup gets it then.
+  for (const failure of [503, "offline", 401]) {
+    const down = cloudDouble({ failures: [failure, failure, failure] }), { onboarding } = computer(down);
+    assert.equal(await onboarding.done(), true, String(failure));
+    assert.equal(await onboarding.done(), false, String(failure));
+  }
+});
+
+test("a cloud that doesn't answer in time counts as not answering", async () => {
+  const cloud = cloudDouble();
+  cloud.hold = new Promise(() => {});
+  assert.equal(await computer(cloud, { askMs: 5 }).onboarding.done(), true);
+  assert.equal(statusCalls(cloud), 3);
+});
+
+test("a finished setup the cloud couldn't be told is told again", async () => {
+  const cloud = cloudDouble({ completeFailures: [503, "offline"] }), first = computer(cloud);
+  assert.equal((await finishSetup(first.onboarding)).completed, true);
+  assert.ok(!cloud.finished.has("alice"));
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.ok(cloud.finished.has("alice"));
+  // Another computer signing in now skips setup.
+  assert.equal(await computer(cloud).onboarding.done(), true);
 });
 
 test("the window and the sandbox asking together reach the cloud once", async () => {

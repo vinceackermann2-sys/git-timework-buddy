@@ -4,7 +4,11 @@
 // model. Real Codex runs the agents and tools. Release builds refuse it.
 const crypto = require("node:crypto");
 
-const USER = { id: "00000000-0000-4000-8000-00000000f1a7", email: "preview@timewarp.invalid", name: "Preview" };
+const FIRST = { id: "00000000-0000-4000-8000-00000000f1a7", email: "preview@timewarp.invalid", name: "Preview" };
+// A second account, signed in to with its email (or from the start with
+// TIMEWARP_FIXTURE_USER=second), for checking that accounts keep their own data.
+const SECOND = { id: "00000000-0000-4000-8000-0000000002b7", email: "second@timewarp.invalid", name: "Second" };
+let USER = process.env.TIMEWARP_FIXTURE_USER === "second" ? SECOND : FIRST;
 const ORGANIZATION = { id: "00000000-0000-4000-8000-0000000001a6", name: "Preview Studio", logo: null, role: "owner" };
 
 const sse = events => events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
@@ -138,10 +142,81 @@ function billingStatus() {
   };
 }
 
+// The cloud's account data (cloud/accountData.ts and its SQL function: a
+// revision per account, writes refused when the item changed meanwhile,
+// removals kept) and, with a file, its chat history. Two preview builds given
+// the same TIMEWARP_FIXTURE_CLOUD_FILE act as two computers of one account.
+function fixtureCloudStore(file) {
+  const fs = require("node:fs");
+  const empty = () => ({ accountData: {}, revisions: {}, history: {} });
+  let kept = empty();
+  const load = () => { if (!file) return kept; try { return { ...empty(), ...JSON.parse(fs.readFileSync(file, "utf8")) }; } catch { return empty(); } };
+  const save = data => { if (!file) { kept = data; return; } const temporary = `${file}.${process.pid}.tmp`; fs.writeFileSync(temporary, JSON.stringify(data)); fs.renameSync(temporary, file); };
+  return {
+    file,
+    accountData(user, input) {
+      const data = load(), rows = data.accountData[user] ||= {};
+      if (input.operation === "changes") {
+        const after = Number(input.after) || 0;
+        const changed = Object.values(rows).filter(row => row.revision > after).sort((a, b) => a.revision - b.revision);
+        const items = changed.slice(0, 50);
+        return { items, cursor: items.length ? items[items.length - 1].revision : after, more: changed.length > items.length };
+      }
+      if (input.operation !== "put" || !Array.isArray(input.items) || !input.items.length || input.items.length > 25) throw new Error("Invalid account data.");
+      const results = input.items.map(({ kind, key, value, base }) => {
+        const id = kind + "\0" + key, stored = rows[id];
+        if (stored && stored.revision !== (Number(base) || 0)) return { kind, key, conflict: true, revision: stored.revision, value: stored.value };
+        const revision = data.revisions[user] = (data.revisions[user] || 0) + 1;
+        rows[id] = { kind, key, revision, value: value ?? null };
+        return { kind, key, revision };
+      });
+      save(data);
+      return { results };
+    },
+    history(user, input) {
+      const data = load(), chats = data.history[user] ||= {};
+      if (input.operation === "list") return { protocol: 2, manifest: Object.values(chats).map(chat => ({ id: chat.conversation.id, version: chat.version })), nextOffset: null };
+      if (input.operation === "get") return { protocol: 2, chats: (input.ids || []).map(id => chats[id]).filter(Boolean) };
+      const { conversation, agents, entries } = input.snapshot;
+      const before = chats[conversation.id], merged = new Map((before?.entries || []).map(entry => [entry.id, entry]));
+      for (const entry of entries) merged.set(entry.id, entry);
+      chats[conversation.id] = {
+        conversation: !before || conversation.updatedAt >= before.conversation.updatedAt ? conversation : before.conversation, agents,
+        entries: [...merged.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)),
+        version: new Date().toISOString() + "#" + crypto.randomUUID().slice(0, 8),
+      };
+      save(data);
+      return { saved: true };
+    },
+  };
+}
+
 function createFixture() {
-  let signedIn = true, onChange = async () => {};
+  // plan: the account's plan; debug.plan changes it (Free offers Connect ChatGPT).
+  let signedIn = true, plan = "max", onChange = async () => {};
+  const shared = fixtureCloudStore(process.env.TIMEWARP_FIXTURE_CLOUD_FILE || null);
   const members = [{ id: "member-1", userId: USER.id, email: USER.email, name: USER.name, image: null, roles: ["owner"], createdAt: "2026-01-01T00:00:00.000Z" }];
   const invites = [];
+  // TIMEWARP_FIXTURE_SHARES: a colleague in the organization who has shared a
+  // conversation, an agent and an automation, for trying share invites.
+  const shares = [];
+  if (process.env.TIMEWARP_FIXTURE_SHARES) {
+    const colleague = { userId: "00000000-0000-4000-8000-00000000a1e7", name: "Alex Rivera", email: "alex@preview.invalid" };
+    members.push({ id: "member-2", ...colleague, image: null, roles: ["member"], createdAt: "2026-02-01T00:00:00.000Z" });
+    const sent = new Date(Date.now() - 2 * 3600000).toISOString();
+    const incoming = (kind, title, summary, payload) => ({ id: crypto.randomUUID(), workspaceId: ORGANIZATION.id, organizationName: ORGANIZATION.name, kind, title, summary, payload, createdAt: sent, sender: colleague, recipient: { userId: USER.id, name: USER.name, email: USER.email }, status: "pending" });
+    shares.push(
+      incoming("chat", "Q3 launch checklist", { agentName: "Orbit", messages: 2, omitted: 0, preview: "Draft a launch checklist for the Q3 release." }, { version: 1, title: "Q3 launch checklist", agentName: "Orbit", omitted: 0, messages: [
+        { role: "user", text: "Draft a launch checklist for the Q3 release.", createdAt: new Date(Date.now() - 3 * 3600000).toISOString() },
+        { role: "agent", text: "Here is a checklist:\n\n1. Freeze features\n2. Update the changelog\n3. Brief support", createdAt: new Date(Date.now() - 3 * 3600000 + 60000).toISOString() },
+      ] }),
+      incoming("agent", "Research Scout", { mascot: "Nova", description: "Finds and summarizes market research.", workflows: ["weekly-digest"] }, { version: 1, name: "Research Scout", responsibilities: "Finds and summarizes market research.", instructions: "Find and summarize market research. Cite every source.", avatar: { mascot: "Nova" }, workflows: [
+        { name: "weekly-digest", files: [{ path: "SKILL.md", content: "---\nname: weekly-digest\ndescription: Summarize the week's research.\n---\n\nCollect the week's findings into five bullet points.\n" }] },
+      ] }),
+      incoming("automation", "Morning inbox summary", { agentName: "Orbit", schedule: { kind: "weekdays", time: "08:30" }, preview: "Summarize unread email from the last day." }, { version: 1, name: "Morning inbox summary", instructions: "Summarize unread email from the last day in five bullet points. Say nothing new when there is nothing new.", schedule: { kind: "weekdays", time: "08:30" }, agentName: "Orbit" }),
+    );
+  }
+  const shareFail = () => { throw Object.assign(new Error("This share is no longer available."), { status: 404 }); };
   const auth = {
     bind(handler) { onChange = handler; },
     init: async () => {},
@@ -151,7 +226,7 @@ function createFixture() {
     capability: () => "fixture-capability", expiresAt: () => Math.floor(Date.now() / 1000) + 3600,
     hasPendingFlow: () => false, passwordRecovery: () => false,
     providers: async () => ({ google: true, email: true, signup: true }),
-    signIn: async () => { signedIn = true; await onChange({ signedIn: true, changedUser: true }); return { user: { ...USER } }; },
+    signIn: async input => { USER = String(input?.email || "").toLowerCase() === SECOND.email ? SECOND : FIRST; members[0] = { ...members[0], userId: USER.id, email: USER.email, name: USER.name }; signedIn = true; await onChange({ signedIn: true, changedUser: true }); return { user: { ...USER } }; },
     signUp: async () => ({ confirmationRequired: true }),
     signOut: async () => { signedIn = false; await onChange({ signedIn: false, changedUser: true }); return { signedOut: true }; },
     sendOtp: async () => ({ sent: true }), resendConfirmation: async () => ({ sent: true }), sendRecovery: async () => ({ sent: true }),
@@ -170,6 +245,35 @@ function createFixture() {
     if (name === "product.profile.update") { if (input.name) USER.name = input.name; return null; }
     // TIMEWARP_FIXTURE_SETUP_DONE: the preview account finished setup on another computer.
     if (name === "product.onboarding.status") return { done: !!process.env.TIMEWARP_FIXTURE_SETUP_DONE };
+    if (name === "product.shares.list") {
+      const waiting = shares.filter(share => share.status === "pending");
+      return {
+        incoming: waiting.filter(share => share.recipient.userId === USER.id).map(({ payload, recipient, status, ...share }) => share),
+        outgoing: waiting.filter(share => share.sender.userId === USER.id).map(({ payload, sender, summary, status, ...share }) => share),
+      };
+    }
+    if (name === "product.shares.create") {
+      const ids = input.recipientUserIds.map(userId => {
+        const person = members.find(member => member.userId === userId);
+        if (!person || userId === USER.id) throw Object.assign(new Error("Choose people who are in this organization."), { status: 404 });
+        const id = crypto.randomUUID();
+        shares.push({ id, workspaceId: input.organizationId, organizationName: ORGANIZATION.name, kind: input.kind, title: input.title, summary: input.summary, payload: input.payload, createdAt: new Date().toISOString(), sender: { userId: USER.id, name: USER.name, email: USER.email }, recipient: { userId, name: person.name, email: person.email }, status: "pending" });
+        return id;
+      });
+      return { ids };
+    }
+    if (name === "product.shares.open") {
+      const share = shares.find(item => item.id === input.shareId && item.status === "pending" && item.recipient.userId === USER.id) || shareFail();
+      const { recipient, status, ...open } = share;
+      return open;
+    }
+    if (name === "product.shares.respond") {
+      const share = shares.find(item => item.id === input.shareId && item.status === "pending") || shareFail();
+      if ((input.response === "cancel" ? share.sender : share.recipient).userId !== USER.id) shareFail();
+      share.status = { accept: "accepted", decline: "declined", cancel: "canceled" }[input.response];
+      share.payload = null;
+      return null;
+    }
     if (name === "product.images.beginUpload") throw Object.assign(new Error("Pictures can't be uploaded in preview mode."), { status: 400 });
     return null;
   };
@@ -180,6 +284,10 @@ function createFixture() {
   // Speed measurements (scripts/perf-engine.cjs): each cloud call waits as
   // long as a round trip to the real cloud, and is logged by its route.
   const latency = Math.max(0, Number(process.env.TIMEWARP_FIXTURE_CLOUD_LATENCY_MS) || 0);
+  let connectorAccounts = [
+    { toolkit: "gmail", connectionId: "conn-gmail-1", label: "inbox@preview.invalid", name: "Preview inbox", email: "inbox@preview.invalid", status: "ACTIVE", active: true },
+    { toolkit: "gmail", connectionId: "conn-gmail-abandoned", label: "Account ndoned", email: null, status: "INITIATED", active: false },
+  ];
   async function cloud(route, payload, method = "POST") {
     if (process.env.TIMEWARP_FIXTURE_COUNT) console.error("[timewarp] fixture cloud " + route + (route === "/connectors" ? " " + (payload?.action || "") : ""));
     if (latency && !(liveModel && /^\/v1\//.test(route))) await new Promise(resolve => setTimeout(resolve, latency));
@@ -193,18 +301,34 @@ function createFixture() {
     if (route === "/v1/responses") return scriptedResponse(payload || {});
     if (route === "/v1/models") return json({ object: "list", data: [{ id: "openai/gpt-5.6-sol", object: "model" }, { id: "openai/gpt-5.6-luna", object: "model" }] });
     if (route === "/account") return json({ image: null, activeOrganization: { ...ORGANIZATION }, organizations: [{ ...ORGANIZATION }] });
-    if (route === "/billing") return json({ plan: "max", included: 504, purchased: 20, monthlyIncluded: 700, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
+    if (route === "/billing") return json({ plan, included: 504, purchased: 20, monthlyIncluded: 700, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
     if (route === "/billing/service") return json(billingStatus());
     if (route === "/billing/history") return json({ events: [{ id: "e1", kind: "usage", description: "AI usage", credits: -3.2, createdAt: new Date(Date.now() - 3600000).toISOString() }, { id: "e2", kind: "purchase", description: "Extra credits", credits: 20, createdAt: new Date(Date.now() - 86400000).toISOString() }] });
-    if (route === "/history") return json(payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
+    if (route === "/history") return json(shared.file ? shared.history(USER.id, payload || {}) : payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
+    if (route === "/account-data") { try { return json(shared.accountData(USER.id, payload || {})); } catch (error) { return json({ error: error.message }, 400); } }
     if (route === "/native/rpc") return json(rpc(payload.rpc, payload.input || {}));
     if (route === "/v1/transcriptions") return json({ text: `Preview dictation (${payload?.length || 0} bytes of audio).` });
     if (route === "/connectors") {
+      // As the cloud answers: a working account's label is its email, and each
+      // Connect makes an account that stays started until its sign-in is done
+      // (Gmail keeps an abandoned one).
       if (payload?.action === "list-apps") return json({ apps: [
-        { toolkitSlug: "gmail", name: "Gmail", description: "Read and send email.", logo: null, accounts: [{ connectionId: "conn-gmail-1", label: "Preview inbox", email: "inbox@preview.invalid", status: "ACTIVE" }] },
-        { toolkitSlug: "slack", name: "Slack", description: "Read and post messages.", logo: null, authConfigId: "ac_preview_slack", accounts: [] },
+        { toolkitSlug: "gmail", name: "Gmail", description: "Read and send email.", logo: null, accounts: connectorAccounts.filter(account => account.toolkit === "gmail") },
+        { toolkitSlug: "slack", name: "Slack", description: "Read and post messages.", logo: null, authConfigId: "ac_preview_slack", accounts: connectorAccounts.filter(account => account.toolkit === "slack") },
       ] });
-      if (payload?.action === "initiate-connection") return json({ redirectUrl: "https://example.com/?timewarp-connect=1", connectionId: "conn-new-" + crypto.randomUUID() });
+      if (payload?.action === "initiate-connection") {
+        const connectionId = "conn-new-" + crypto.randomUUID();
+        connectorAccounts.push({ toolkit: "slack", connectionId, label: "Account " + connectionId.slice(-6), email: null, status: "INITIATED", active: false });
+        return json({ redirectUrl: "https://example.com/?timewarp-connect=1", connectionId });
+      }
+      // The sign-in returning to Timewarp finishes it.
+      if (payload?.action === "connection-status") {
+        const account = connectorAccounts.find(item => item.connectionId === payload.connectionId);
+        if (!account) return json({ error: "Connection not found." }, 404);
+        Object.assign(account, { status: "ACTIVE", active: true, label: "slack@preview.invalid", email: "slack@preview.invalid", name: "Preview Slack" });
+        return json({ ...account, failed: false });
+      }
+      if (payload?.action === "disconnect") { connectorAccounts = connectorAccounts.filter(item => item.connectionId !== payload.connectionId); return json({ ok: true }); }
       return json(payload?.action === "catalog" ? { apps: [] } : { ok: true });
     }
     return json({ error: "Unavailable in preview mode." }, 404);
@@ -220,7 +344,7 @@ function createFixture() {
     write(".codex/skills/release-notes/SKILL.md", "---\nname: release-notes\ndescription: Draft release notes from a list of changes.\n---\n\nGroup changes by area.\n");
     return directory;
   }
-  return { auth, cloud, user: USER, sampleHome };
+  return { auth, cloud, get user() { return USER; }, sampleHome, setPlan: value => { plan = value; } };
 }
 
-module.exports = { createFixture, scriptedResponse };
+module.exports = { createFixture, scriptedResponse, fixtureCloudStore };

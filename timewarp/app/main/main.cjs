@@ -1,10 +1,11 @@
 "use strict";
 // Timewarp desktop main process.
-const { app, BrowserWindow, Menu, Notification, ipcMain, nativeTheme, net, protocol, session, shell, dialog, safeStorage, clipboard } = require("electron");
+const { app, BrowserWindow, Menu, Notification, ipcMain, nativeImage, nativeTheme, net, protocol, session, shell, dialog, safeStorage, clipboard } = require("electron");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { bindWindowZoom } = require("./window-zoom.cjs");
 
 // Recent app log lines for the diagnostics file, also written to
 // runtime/logs/main.log. The app logs its own state messages only; chat
@@ -69,6 +70,8 @@ function broadcast(name, payload) {
   for (const window of appWindows()) window.webContents.send("tw:event", name, payload);
 }
 let mainWindow = null;
+let windowZoom = null; // the main window's zoom (window-zoom.cjs)
+let pane = null; // the browser pane's pages, once boot has them
 // On Windows the title bar is hidden and the window buttons sit over the top of
 // the app in its colours, as in the previous app; the top bar is the drag area.
 const TITLE_BAR_HEIGHT = 36;
@@ -118,7 +121,15 @@ function createWindow(route = "") {
     if (details.level === "error") appLog.error("renderer:error", String(details.message || "").slice(0, 300), { source: path.basename(String(details.sourceId || "")), line: details.lineNumber });
   });
   mainWindow.webContents.on("did-finish-load", () => appLog.info("startup-timing", `window loaded after ${Date.now() - traceStart}ms`));
-  mainWindow.on("closed", () => { mainWindow = null; });
+  // A window smaller than the screen shows the maximized layout, scaled down
+  // to fit (window-zoom.cjs); the pane's pages zoom with it.
+  const window = mainWindow;
+  windowZoom = bindWindowZoom(window, {
+    screen: require("electron").screen,
+    onFit: fit => pane?.setPageFit(fit),
+    onZoom: factor => { pane?.zoomChanged(); window.webContents.send("tw:event", "window.zoom", { factor }); },
+  });
+  mainWindow.on("closed", () => { mainWindow = null; windowZoom = null; });
   void mainWindow.loadURL("app://app/index.html" + route);
   return mainWindow;
 }
@@ -135,13 +146,25 @@ function openRoute(route) {
   else focusApp(route);
 }
 
+// Ctrl/⌘ +, - and 0 zoom the page that has the focus: a page in the pane, the
+// app (on top of its fit to the window) or a sign-in window's page.
+function zoomFocused(direction) {
+  const contents = require("electron").webContents.getFocusedWebContents();
+  if (contents && pane?.zoomPage(contents, direction)) return;
+  if (windowZoom && mainWindow && (!contents || contents === mainWindow.webContents)) { windowZoom.step(direction); return; }
+  if (contents && !contents.isDestroyed()) contents.zoomLevel = direction ? contents.zoomLevel + direction * 0.5 : 0;
+}
+
 // The menu holds the keyboard shortcuts on every platform, as in the previous
 // app: zoom (Ctrl/⌘ +, -, 0), full screen and editing. On Windows it isn't
 // shown; the title bar is hidden. Ctrl/⌘+W is handled by the window instead.
 function applicationMenu() {
   const openSettings = () => openRoute("#/customize/settings");
   const view = { label: "View", submenu: [
-    { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomIn", accelerator: "CommandOrControl+=", visible: false, acceleratorWorksWhenHidden: true }, { role: "zoomOut" },
+    { label: "Actual Size", accelerator: "CommandOrControl+0", click: () => zoomFocused(0) },
+    { label: "Zoom In", accelerator: "CommandOrControl+Plus", click: () => zoomFocused(1) },
+    { label: "Zoom In", accelerator: "CommandOrControl+=", visible: false, acceleratorWorksWhenHidden: true, click: () => zoomFocused(1) },
+    { label: "Zoom Out", accelerator: "CommandOrControl+-", click: () => zoomFocused(-1) },
     { type: "separator" }, { role: "togglefullscreen" },
     ...(app.isPackaged ? [] : [{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }]),
   ] };
@@ -238,6 +261,8 @@ async function boot() {
   // Timewarp's own agent tools on the bridge, set up once the harness exists.
   let toolServer = null;
   let history = null, historyStatus = { state: "starting" }, toolsRegistered = false, toolsReady = null;
+  // The signed-in account's agents, memory, settings and the like on its other computers (account-sync.cjs).
+  let accountSync = null, accountSyncStatus = { state: "starting" };
   let userId = () => null, harness = null, markBooted;
   // Sign-in can report a change while startup is still wiring services.
   const booted = new Promise(resolve => { markBooted = resolve; });
@@ -253,22 +278,53 @@ async function boot() {
     onAccountChanged: async ({ changedUser }) => {
       await booted;
       // The previous account's runs and approvals end with Codex; it starts
-      // again for the next account's first request.
-      if (changedUser) { await client.stop().catch(() => {}); harness.reset(); toolsRegistered = false; }
+      // again, in the next account's own Codex home, for its first request.
+      // Its browser tabs, reply notifications and sync stop too, and the
+      // window takes the next account's appearance.
+      if (changedUser) {
+        accountSync?.stop(); accountSync = null;
+        await client.stop().catch(() => {}); harness.reset(); toolsRegistered = false;
+        browser.closeAll(); replies.clear();
+        applyThemeSource(store.settings.get("appearance")?.scheme);
+      }
       await accountReady();
       broadcast("account.changed", { signedIn: !!services.auth.user() });
     },
     onCodexConnected: async () => { await booted; services.funding.invalidate(); await selectModel().catch(() => console.error("[timewarp] The default model could not be updated.")); fundingChanged(); },
+    // An app just connected or removed: the next message names the agent's accounts afresh.
+    onIntegrationsChanged: () => { void booted.then(() => appAccounts.clear()); },
   });
   userId = () => services.auth.userId();
 
-  const codexHome = path.join(runtimeDir, "codex");
-  fs.mkdirSync(codexHome, { recursive: true });
+  // Each account keeps its own data on this computer (accounts.cjs): the
+  // settings that are its own, its browser profiles, and its own Codex home
+  // and memory folder. The account that owns the computer's earlier data is
+  // decided the first time someone signs in.
+  const { createAccounts, ACCOUNT_SETTINGS } = require("./accounts.cjs");
+  const accounts = createAccounts({ store, runtimeDir });
+  const signedInAccount = () => { const id = userId(); if (id) accounts.claim(id); return id; };
+  store.settings.scopeTo(signedInAccount, ACCOUNT_SETTINGS);
+  store.browserProfiles.scopeTo(signedInAccount, () => accounts.legacyOwner());
+  const accountPaths = () => accounts.paths(userId());
+  // The signed-in account's Codex home, made when Codex first starts in it.
+  const codexHome = () => accountPaths().codexHome;
   let onboarding = null;
-  const knowledge = createKnowledge({
-    runtimeDir, codexHome, cursorRoot: () => store.settings.get("cursorRoot") || onboarding?.service.cursorRoot(),
-    ...(fixture ? { home: fixture.sampleHome(path.join(profile, "preview-home")), env: {} } : {}),
-  });
+  // The signed-in account's memory and skills, whichever module asks: each
+  // account's are read from its own folders.
+  const knowledgeHome = fixture ? { home: fixture.sampleHome(path.join(profile, "preview-home")), env: {} } : {};
+  const knowledgeOf = new Map();
+  const accountKnowledge = () => {
+    const id = userId() || "";
+    if (!knowledgeOf.has(id)) {
+      const { codexHome: home, memoriesRoot } = accountPaths();
+      knowledgeOf.set(id, createKnowledge({
+        runtimeDir, codexHome: home, memoriesRoot, previousApp: !!id && id === accounts.legacyOwner(),
+        cursorRoot: () => store.settings.get("cursorRoot") || onboarding?.service.cursorRoot(), ...knowledgeHome,
+      }));
+    }
+    return knowledgeOf.get(id);
+  };
+  const knowledge = new Proxy({}, { get: (_target, name) => accountKnowledge()[name] });
   fs.mkdirSync(path.join(runtimeDir, "codex-app-server-cwd"), { recursive: true });
   // The local endpoint Codex uses for Timewarp models and connected apps.
   const bridge = createModelBridge({ token: bridgeToken, cloud: services.cloud, cloudSafe: services.cloudSafe, funding: services.funding, chatgpt: services.chatgpt, integrations: services.integrations, mascots: require("../../desktop/mascots.cjs"), toolServer: () => toolServer });
@@ -285,13 +341,20 @@ async function boot() {
     args: async () => {
       await bridgeReady.catch(() => {});
       const probed = await shellPath;
-      if (probed) Object.assign(client.env, codexEnv(vendor, { ...process.env, PATH: mergePath(process.env.PATH, probed) }, { home: codexHome }));
+      // Codex runs in the signed-in account's own home (accounts.cjs).
+      const home = codexHome();
+      fs.mkdirSync(home, { recursive: true });
+      Object.assign(client.env, { CODEX_HOME: home }, codexEnv(vendor, probed ? { ...process.env, PATH: mergePath(process.env.PATH, probed) } : process.env, { home }));
       // Sign-ins are found where the previous app kept them: installed builds
       // use the system keyring and also read the Codex home's file, development
-      // builds a file only.
+      // builds a file only. The keyring keeps an MCP server's sign-in by the
+      // server's name and address, not by Codex home, so every account but
+      // the one that owns the earlier data keeps those in its own home's file:
+      // two accounts adding the same server never share its sign-in.
       const credentials = app.isPackaged ? "auto" : "file";
+      const serverCredentials = client.mcpCredentials = userId() && userId() !== accounts.legacyOwner() ? "file" : credentials;
       return [
-        "-c", `cli_auth_credentials_store="${credentials}"`, "-c", `mcp_oauth_credentials_store="${credentials}"`,
+        "-c", `cli_auth_credentials_store="${credentials}"`, "-c", `mcp_oauth_credentials_store="${serverCredentials}"`,
         // Each chat picks its provider (codex-funding.cjs): "timewarp" for Timewarp
         // credits, "openai" for a connected ChatGPT plan. The default stays OpenAI so
         // Codex reports the connected ChatGPT account (account/read) and its models.
@@ -306,8 +369,9 @@ async function boot() {
         "-c", "features.multi_agent_v2.subagent_developer_instructions=" + JSON.stringify(WORKER),
       ];
     },
+    // CODEX_HOME and PATH are set as Codex starts (args above).
     env: {
-      CODEX_HOME: codexHome, TIMEWARP_BRIDGE_TOKEN: bridgeToken, TIMEWARP_COMPOSIO_TOKEN: mcpToken, TIMEWARP_TOOLS_TOKEN: toolsToken, ...codexEnv(vendor, process.env, { home: codexHome }),
+      TIMEWARP_BRIDGE_TOKEN: bridgeToken, TIMEWARP_COMPOSIO_TOKEN: mcpToken, TIMEWARP_TOOLS_TOKEN: toolsToken,
       // Git in agent commands handles long Windows paths, as before.
       ...(process.platform === "win32" ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.longpaths", GIT_CONFIG_VALUE_0: "true" } : {}),
     },
@@ -332,6 +396,8 @@ async function boot() {
     if (method === "error" && !params.willRetry) appLog.warn("turn", "Turn error", { thread: String(params.threadId || "").slice(0, 8), info: params.error?.codexErrorInfo || null });
   });
   client.on("notification", ({ method, params }) => { if (method === "windowsSandbox/setupCompleted") broadcast("sandbox.changed", params); });
+  // MCP servers sync once Codex runs (account-sync.cjs mcpServers).
+  client.on("status", state => { if (state.status === "ready") accountSync?.soon(); });
   // Codex's command sandbox (sandbox.cjs): set up and checked once signed in.
   // A change applies when Codex restarts, which waits until no chat is
   // replying (urgent: a minute at most, when sandboxed commands stall).
@@ -403,7 +469,7 @@ async function boot() {
   const appAccounts = new Map(); // agent id -> { at, text, loading }
   const accountsText = ({ items }) => {
     const apps = (items || []).filter(item => item.accounts?.length).map(item => `- ${item.displayName} (app id ${String(item.id).replace(/^composio-/, "")}): `
-      + item.accounts.map(account => account.displayName + (account.authStatus === "ready" ? "" : " (needs reconnecting)")).join(", "));
+      + item.accounts.map(account => account.displayName + (account.email && account.email !== account.displayName ? ` <${account.email}>` : "") + (account.authStatus === "ready" ? "" : " (needs reconnecting)")).join(", "));
     return apps.length
       ? "Connected app accounts this agent can use (one that needs reconnecting can't be used until the user reconnects it):\n" + apps.join("\n") + "\nOther apps aren't connected."
       : "No app accounts are connected for this agent.";
@@ -436,7 +502,9 @@ async function boot() {
     };
   }
 
-  const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast, log: appLog });
+  const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast, log: appLog, zoom: () => mainWindow?.webContents.getZoomFactor() ?? 1 });
+  pane = browser;
+  if (windowZoom) browser.setPageFit(windowZoom.fit());
   const browserTools = createBrowserTools({ browser, onActivity: (conversationId, action) => broadcast("browser.agent", { conversationId, action }) });
   // Raise when the tool set changes: chats then continue in a new thread.
   const cipher = safeStorageCipher(safeStorage);
@@ -493,7 +561,7 @@ async function boot() {
     // What Codex reads as a thread starts besides its settings: its config
     // (MCP servers, skills turned off), instructions for every agent and the
     // agent's own, and the skill folders.
-    spareInputs: agent => [path.join(codexHome, "config.toml"), path.join(codexHome, "AGENTS.md"), path.join(agent.workspace, "AGENTS.md"), knowledge.skillsRoot, path.join(agent.workspace, ".agents", "skills")]
+    spareInputs: agent => [path.join(codexHome(), "config.toml"), path.join(codexHome(), "AGENTS.md"), path.join(agent.workspace, "AGENTS.md"), knowledge.skillsRoot, path.join(agent.workspace, ".agents", "skills")]
       .map(file => { try { const stat = fs.statSync(file); return stat.mtimeMs + ":" + stat.size; } catch { return "-"; } }).join(" "),
     // Late Codex events during quit find the database closed: they're dropped.
     notify: (name, payload) => { if (storeClosed) return; broadcast(name, payload); automations?.observe(name, payload); replies.observe(name, payload); background?.observe(name, payload); },
@@ -536,47 +604,47 @@ async function boot() {
     },
   });
 
-  // App and MCP server sign-ins open in an app window that uses the default
-  // browser profile, as in the previous app, so a site signed in there is
-  // signed in for the agent's browser too. It closes when the sign-in returns
-  // to Timewarp's callback on this computer.
-  function openConnector(link, title = "Connect an app") {
-    let url;
-    try { url = new URL(link); } catch { throw new Error("The sign-in link isn't valid."); }
-    if (url.protocol !== "https:" || url.username || url.password) throw new Error("The sign-in link isn't valid.");
-    const session = browser.sessionFor(store.browserProfiles.ensureDefault().id);
-    const window = new BrowserWindow({
-      parent: mainWindow || undefined, width: 560, height: 780, minWidth: 420, minHeight: 560, title, icon: appIcon, autoHideMenuBar: true, backgroundColor: "#ffffff", show: false,
-      webPreferences: { session, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
+  // ChatGPT, app and MCP server sign-ins open in a Timewarp window
+  // (signin-window.cjs), never in the system browser or another app.
+  const signin = require("./signin-window.cjs").createSigninWindows({
+    BrowserWindow, session: () => browser.sessionFor(store.browserProfiles.ensureDefault().id), parent: () => mainWindow, icon: appIcon, log: appLog,
+    logo: (() => { try { return nativeImage.createFromPath(path.join(assetsDir, "app-icon.png")).resize({ width: 96, quality: "best" }).toDataURL(); } catch { return ""; } })(),
+    css: (() => { try { return fs.readFileSync(path.join(assetsDir, "auth-bridge.css"), "utf8"); } catch { return ""; } })(),
+  });
+  function openConnector(link, title = "Connect an app") { signin.open(link, { title }); return { opened: true }; }
+  // Codex finishes the sign-in, and Timewarp shows how it went. Closing the
+  // window before it comes back stops waiting for it; a new Connect replaces it.
+  let chatgptSignin = null;
+  function openChatgpt({ authUrl, loginId }) {
+    chatgptSignin?.close();
+    chatgptSignin = signin.open(authUrl, {
+      title: "Connect ChatGPT",
+      finish: {
+        done: answer => answer.status === 200 && answer.path === "/success",
+        pending: { title: "Connecting ChatGPT", message: "Finishing your ChatGPT sign-in…" },
+        success: { title: "ChatGPT is connected", message: "Your ChatGPT plan now powers AI in Timewarp.", hint: "This window closes by itself." },
+        failure: { title: "ChatGPT couldn't connect", message: "The sign-in didn't finish." },
+      },
+      onClose: ({ returned }) => { if (!returned) return services.chatgpt.cancelLogin(loginId); },
     });
-    const loopback = address => { try { return ["127.0.0.1", "localhost", "[::1]"].includes(new URL(address).hostname); } catch { return false; } };
-    const web = address => { try { return ["https:", "http:"].includes(new URL(address).protocol); } catch { return false; } };
-    window.once("ready-to-show", () => window.show());
-    // The title bar always names the site being signed in to, as the previous
-    // app's sign-in panel showed its address; pages can't change it.
-    const showAddress = () => { if (window.isDestroyed()) return; try { window.setTitle(`${title} — ${new URL(window.webContents.getURL()).host}`); } catch { window.setTitle(title); } };
-    window.on("page-title-updated", event => event.preventDefault());
-    window.webContents.on("did-navigate", showAddress);
-    window.webContents.on("did-navigate-in-page", showAddress);
-    window.webContents.setWindowOpenHandler(({ url: next }) => web(next) && new URL(next).protocol === "https:"
-      ? { action: "allow", overrideBrowserWindowOptions: { parent: window, autoHideMenuBar: true, webPreferences: { session, sandbox: true, contextIsolation: true, nodeIntegration: false } } }
-      : { action: "deny" });
-    window.webContents.on("will-navigate", (event, next) => { if (!web(next)) event.preventDefault(); });
-    window.webContents.on("did-navigate", (_event, next) => {
-      if (!loopback(next)) return;
-      appLog.info("connector", "Sign-in returned to Timewarp");
-      setTimeout(() => { if (!window.isDestroyed()) window.close(); }, 1500);
-    });
-    window.webContents.on("did-fail-load", (_event, code, description, next, isMainFrame) => { if (isMainFrame && code !== -3) appLog.warn("connector", "The sign-in page didn't load", { code, description, origin: (() => { try { return new URL(next).origin; } catch { return null; } })() }); });
-    appLog.info("connector", "Sign-in window opened", { origin: url.origin });
-    void window.loadURL(url.href);
     return { opened: true };
   }
   // The end-to-end check of a preview build answers the command confirmation;
   // other builds always ask.
   // A server added, removed, turned on or off or signed in to: prepared threads started without it.
   const mcpChanged = (name, payload) => { if (name === "mcp.changed" && (!payload?.name || payload.success)) harness?.discardSpares(); broadcast(name, payload); };
-  const mcp = createMcp({ client, openExternal: url => openConnector(url, "Sign in to a server"), notify: mcpChanged, ...(fixture && process.env.TIMEWARP_FIXTURE_CONFIRM === "allow" ? { confirmCommand: async () => true } : {}) });
+  const mcp = createMcp({
+    client, notify: mcpChanged, ...(fixture && process.env.TIMEWARP_FIXTURE_CONFIRM === "allow" ? { confirmCommand: async () => true } : {}),
+    openExternal: url => signin.open(url, {
+      title: "Sign in to a server",
+      finish: {
+        done: answer => answer.status === 200,
+        pending: { title: "Signing in", message: "Finishing your sign-in to the server…" },
+        success: { title: "You're signed in", message: "Return to Timewarp to use the server's tools.", hint: "This window closes by itself." },
+        failure: { title: "Sign-in couldn't finish", message: "The server didn't accept the sign-in." },
+      },
+    }),
+  });
 
   async function registerTools(force = false) {
     if (!userId() || (toolsRegistered && !force)) return;
@@ -607,9 +675,51 @@ async function boot() {
     store.settings.set("replacedSkillsRetired", true);
   }
 
+  // Account sync for the signed-in account (account-sync.cjs): each kind of
+  // item read from and written to that account's own folders and settings.
+  function startAccountSync() {
+    const sync = require("./account-sync.cjs");
+    const { SYNCED_SETTINGS } = require("./accounts.cjs");
+    const folders = account => accounts.paths(account);
+    const log = message => appLog.info("account-sync", message);
+    // An uploaded agent picture is made at most 256 pixels across before it's synced.
+    const shrinkPicture = dataUrl => {
+      try {
+        const image = nativeImage.createFromDataURL(dataUrl);
+        if (image.isEmpty()) return null;
+        const { width, height } = image.getSize(), scale = Math.min(1, 256 / Math.max(width, height));
+        const smaller = scale < 1 ? image.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), quality: "best" }) : image;
+        const png = smaller.toPNG();
+        return png.length < 140 * 1024 ? "data:image/png;base64," + png.toString("base64") : "data:image/jpeg;base64," + smaller.toJPEG(85).toString("base64");
+      } catch { return null; }
+    };
+    const result = sync.createAccountSync({
+      store, userId: () => userId(), cloud: (account, route, input) => services.cloudJson(route, input, "POST", { account }),
+      // Privacy Mode keeps everything on this computer, as it does chats.
+      paused: () => store.settings.get("privacy")?.mode === "private",
+      adapters: {
+        setting: sync.settingsItems({ settings: store.settings, keys: SYNCED_SETTINGS, onChanged: key => { if (key === "appearance") applyThemeSource(store.settings.get("appearance")?.scheme); } }),
+        agent: sync.agentItems({ store, agents, shrinkPicture, log }),
+        "connector-access": sync.connectorAccess({ integrations: services.integrations, store }),
+        instructions: sync.singleFile({ key: "AGENTS.md", file: account => path.join(folders(account).codexHome, "AGENTS.md") }),
+        memory: sync.textFiles({ root: account => folders(account).memoriesRoot }),
+        skill: sync.skillFolders({ root: account => path.join(folders(account).codexHome, "skills"), onChanged: () => void client.request("skills/list", { forceReload: true }).catch(() => {}) }),
+        mcp: sync.mcpServers({ mcp, ready: () => client.status === "ready", signedIn: () => userId() }),
+      },
+      onStatus: state => { accountSyncStatus = state; if (state.applied) broadcast("account.synced", state); },
+      // Chats prepared before a change start again with it.
+      onApplied: kind => {
+        if (kind === "connector-access") { appAccounts.clear(); broadcast("integrations.changed", {}); }
+        if (["instructions", "skill", "agent"].includes(kind)) harness?.discardSpares();
+      },
+      log,
+    });
+    return result;
+  }
+
   async function accountReady() {
     const account = userId();
-    if (!account) { history?.stop(); history = null; historyStatus = { state: "signed-out" }; return; }
+    if (!account) { history?.stop(); history = null; historyStatus = { state: "signed-out" }; accountSync?.stop(); accountSync = null; accountSyncStatus = { state: "signed-out" }; return; }
     if (!history) {
       history = require("../../desktop/local-history.cjs").createLocalHistory({
         ...adapter, userId: () => userId(), cloud: services.cloudJson,
@@ -626,6 +736,11 @@ async function boot() {
     toolsReady = registerTools().catch(error => appLog.warn("tools", "Connected-app tools are pending; refresh Tools to retry. " + error.message));
     void connectLegacySkills().catch(() => console.error("[timewarp] Previously connected skill folders are unavailable."));
     void retireReplacedSkills().catch(error => appLog.warn("skills", "Replaced skills could not be turned off: " + error.message));
+    // The account's agents, memory, settings and the like from its other
+    // computers come first, so chats restored next find their agents. A slow
+    // first sync doesn't hold up the app; it carries on in the background.
+    accountSync ||= startAccountSync();
+    await Promise.race([accountSync.sync(), new Promise(resolve => { const timer = setTimeout(resolve, 15000); timer.unref?.(); })]);
     await history.sync();
     agents.assignMascots();
     agents.prepareWorkspaces();
@@ -649,7 +764,7 @@ async function boot() {
       runtime: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node, codex: codexVersion },
       system: { platform: process.platform, arch: process.arch, release: require("node:os").release(), memoryGb: Math.round(require("node:os").totalmem() / 1e9) },
       state: {
-        signedIn: !!owner, codex: client.status, history: historyStatus.state, sandbox: sandboxState?.status || sandboxState?.error || null,
+        signedIn: !!owner, codex: client.status, history: historyStatus.state, accountSync: accountSyncStatus.state, sandbox: sandboxState?.status || sandboxState?.error || null,
         agents: owner ? store.agents.list(owner).length : 0, conversations: owner ? store.conversations.list(owner).length : 0,
         automations: owner ? store.automations.list(owner).length : 0,
         mcpServers: servers.map(server => ({ transport: server.transport, enabled: server.enabled, tools: server.tools, failed: !!server.error })),
@@ -698,12 +813,17 @@ async function boot() {
     confirm: confirmRestart,
   });
 
+  // Copies of chats, agents and automations sent to members of the organization.
+  const shares = require("./shares.cjs").createShares({ store, agents, harness, automations, accountRpc: (rpc, input) => services.accountRpc(rpc, input), userId: () => userId() });
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates, shares,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();
+  if (fixture) methods["debug.plan"] = ({ plan }) => { fixture.setPlan(plan); services.funding.invalidate(); return { plan }; };
+  // A pass of account sync now, and where it stands.
+  if (fixture) methods["debug.accountSync"] = async () => { await accountSync?.sync(); return accountSyncStatus; };
   // Preview builds have no updates; debug.updates shows one (such as a ready
   // update) in Settings and the sidebar, and counts Update clicks.
   if (fixture) {
@@ -715,10 +835,15 @@ async function boot() {
   }
   // The window frame and native dialogs follow a theme change at once; reading
   // a chat clears its reply notification and the unread badge.
-  const setSetting = methods["settings.set"], markRead = methods["conversations.markRead"];
+  const setSetting = methods["settings.set"], markRead = methods["conversations.markRead"], getSettings = methods["settings.get"];
+  // ownsEarlierData: the signed-in account owns what this computer kept before
+  // each account had its own (accounts.cjs), so the interface's earlier drafts
+  // and lists are its.
+  methods["settings.get"] = async (input, event) => ({ ...(await getSettings(input, event)), ownsEarlierData: !!userId() && accounts.legacyOwner() === userId() });
+  // The sign-in screen keeps the last account's appearance.
   methods["settings.set"] = async (input, event) => {
     const value = await setSetting(input, event);
-    if (input?.key === "appearance") applyThemeSource(value?.scheme);
+    if (input?.key === "appearance") { applyThemeSource(value?.scheme); store.settings.setDevice("appearance", value); }
     return value;
   };
   methods["conversations.markRead"] = async (input, event) => {
@@ -733,13 +858,20 @@ async function boot() {
     void Promise.resolve(harness?.unloadIdle?.()).catch(error => appLog.warn("funding", "Chats could not be reloaded: " + error.message));
     broadcast("funding.changed", {});
   }
-  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, onFundingChanged: fundingChanged, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service, openConnector, sandbox });
+  const legacy = require("./legacy-requests.cjs").createLegacyRequests({ services, harness, guard, version: VERSION, selectModel, onFundingChanged: fundingChanged, registerTools, historyStatus: () => historyStatus, onboarding: onboarding.service, openConnector, openChatgpt, sandbox });
   const trusted = event => event.senderFrame && event.senderFrame === event.sender.mainFrame && event.senderFrame.url.startsWith("app://app/");
+  // Actions that change what account sync carries send it a moment later;
+  // changes made otherwise (agents writing memory) go at the next pass.
+  const SYNCED_ACTIONS = /^(agents\.(create|update|archive|reorder)|memory\.(save|removeImport)|knowledge\.import|instructions\.save|skills\.|mcp\.(add|setEnabled|remove)|integrations\.(setAccess|disconnect|beginConnect)|settings\.set|onboarding\.)/;
   ipcMain.handle("tw:call", async (event, method, input) => {
     if (!trusted(event)) return { ok: false, error: { message: "Untrusted window.", status: 403 } };
     const handler = Object.hasOwn(methods, method) ? methods[method] : null;
     if (!handler) return { ok: false, error: { message: "Unknown action.", status: 404 } };
-    try { trace("call " + method); await services.ready; const value = await handler(input ?? {}, event); trace("answered " + method); return { ok: true, value }; }
+    try {
+      trace("call " + method); await services.ready; const value = await handler(input ?? {}, event); trace("answered " + method);
+      if (SYNCED_ACTIONS.test(method)) accountSync?.soon();
+      return { ok: true, value };
+    }
     catch (error) { return { ok: false, error: { message: error.message || "Request failed.", status: error.status || 500 } }; }
   });
   ipcMain.handle("timewarp:request", async (event, action, input = {}) => {

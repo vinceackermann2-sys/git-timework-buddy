@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { BookMarked, CalendarClock, Check, ChevronLeft, ChevronRight, FileText, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Pin, PinOff, Plus, RotateCw, Settings, Trash2, UserRound, Volume2, VolumeX, X } from "lucide-react";
-import { call, relativeTime, useEvent } from "../api.js";
+import { BookMarked, CalendarClock, Check, ChevronLeft, ChevronRight, FileText, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Pin, PinOff, Plus, RotateCw, Settings, Share, Trash2, UserRound, Volume2, VolumeX, X } from "lucide-react";
+import { accountText, call, relativeTime, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { Avatar, ContextMenu, Dialog, Menu, Switch, useConfirm, useToast } from "./common.jsx";
 import { AppIcon, useApps } from "./Composer.jsx";
 import { AutomationDialog, describeSchedule } from "./Automations.jsx";
+import { shareItem } from "./Share.jsx";
 import { Files, recentFiles } from "./Files.jsx";
 
 const host = url => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url || ""; } };
@@ -117,7 +118,7 @@ function AgentPage({ agent, conversationId, onEditAgent, onAgentChanged, onSetti
   const waiting = (items || []).filter(app => app.pendingAccounts?.length).flatMap(app => app.pendingAccounts.map(account => ({ app, account, pending: true })));
   const rows = [...using, ...waiting].sort((a, b) => a.app.displayName.localeCompare(b.app.displayName));
   // The account comes back connected for this agent.
-  const reconnect = entry => call("integrations.beginConnect", { integrationId: entry.app.id, agentId: agent.id, reconnectAccountId: entry.account.id }).then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"));
+  const reconnect = entry => call("integrations.beginConnect", { integrationId: entry.app.id, agentId: agent.id, reconnectAccountId: entry.account.id }).then(() => toast("Finish connecting in the window that opened.")).catch(error => toast(error, "error"));
   const setVault = value => call("agents.update", { id: agent.id, vaultAccess: value }).then(() => onAgentChanged?.()).catch(error => toast(error, "error"));
   const confirm = useConfirm();
   // Instructions are its AGENTS.md, edited here as Markdown, as before.
@@ -176,7 +177,7 @@ function AgentPage({ agent, conversationId, onEditAgent, onAgentChanged, onSetti
         <Menu align="right" width={260} trigger={({ toggle }) => <button type="button" className="tw-agent-add" onClick={toggle}><Plus size={12} />Add</button>}>
           {other.map(entry => (
             <button key={entry.app.id + entry.account.id} type="button" className="tw-menu-item" data-close onClick={() => void save([...using, entry])}>
-              <AppIcon app={entry.app} /><span className="grow">{entry.app.displayName}<small>{entry.account.displayName}</small></span>
+              <AppIcon app={entry.app} /><span className="grow">{entry.app.displayName}<small>{accountText(entry.account)}</small></span>
             </button>
           ))}
           {other.length ? <div className="tw-menu-sep" /> : null}
@@ -186,11 +187,11 @@ function AgentPage({ agent, conversationId, onEditAgent, onAgentChanged, onSetti
       <div className="tw-agent-card tw-agent-tools">
         {rows.map(entry => entry.pending ? (
           <button key={entry.app.id + entry.account.id} type="button" className="tw-agent-tool tw-agent-tool-button" title="Reconnect" onClick={() => void reconnect(entry)}>
-            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc">{entry.account.displayName} (Authentication expired — reconnect required)</span>
+            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc" title={accountText(entry.account)}>{accountText(entry.account)} (Authentication expired — reconnect required)</span>
           </button>
         ) : (
           <div key={entry.app.id + entry.account.id} className="tw-agent-tool">
-            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc">{entry.account.displayName}</span>
+            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc" title={accountText(entry.account)}>{accountText(entry.account)}</span>
             <button type="button" className="tw-icon-button" title="Remove" aria-label={`Remove ${entry.app.displayName} ${entry.account.displayName}`} onClick={() => void save(using.filter(item => item !== entry))}><X size={12} /></button>
           </div>
         ))}
@@ -235,7 +236,10 @@ function AgentPage({ agent, conversationId, onEditAgent, onAgentChanged, onSetti
         {recent.length ? null : <button type="button" className="tw-agent-action" onClick={() => onOpenFiles(null)}><Plus size={16} />Add files</button>}
       </div>
       <h3 className="tw-agent-section">Manage agent</h3>
-      <button type="button" className="tw-agent-card tw-agent-action tw-danger-hover" onClick={() => void remove()}><Trash2 size={16} />Remove agent</button>
+      <div className="tw-agent-card">
+        <button type="button" className="tw-agent-action" onClick={() => shareItem("agent", agent.id, agent.name)}><Share size={16} />Share agent</button>
+        <button type="button" className="tw-agent-action inner tw-danger-hover" onClick={() => void remove()}><Trash2 size={16} />Remove agent</button>
+      </div>
     </div>
   );
 }

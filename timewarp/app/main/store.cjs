@@ -171,6 +171,18 @@ function openStore(file) {
     "create trigger messages_search_delete after delete on messages begin insert or ignore into search_pending(id) values (old.rowid); end",
     "insert into search_pending(id) select rowid from messages",
   ]);
+  // Each account has its own browser profiles (and with them its own site
+  // sign-ins); profiles made before belong to the account that owns the
+  // computer's earlier data (accounts.cjs). Account sync (account-sync.cjs)
+  // keeps what it last agreed with the cloud for each item, and how far it has
+  // read the cloud's changes.
+  migrate(8, [
+    "alter table browser_profiles add column owner_id text",
+    `create table account_sync(
+      owner_id text not null, kind text not null, key text not null, revision integer not null, hash text not null, base text,
+      primary key(owner_id, kind, key)) without rowid`,
+    "create table account_sync_cursor(owner_id text primary key, revision integer not null) without rowid",
+  ]);
   return createStore(db);
 }
 
@@ -393,10 +405,38 @@ function createStore(db) {
     },
   };
 
+  // Settings that belong to an account (its appearance, memory mode, default
+  // model…) are kept per account once scopeTo names them: while someone is
+  // signed in they read and write that account's own copy, and signed out the
+  // device's copy (the sign-in screen's appearance). Every other setting is
+  // the device's.
+  let settingsScope = null; // { owner: () => id | null, keys: Set }
+  const settingKey = key => {
+    const owner = settingsScope?.keys.has(key) ? settingsScope.owner() : null;
+    return owner ? `account:${owner}:${key}` : key;
+  };
   const settings = {
-    get(key, fallback = null) { const row = one("select value from settings where key = ?", key); return row ? parse(row.value) : fallback; },
-    set(key, value) { run("insert or replace into settings(key, value) values (?, ?)", key, JSON.stringify(value)); changed("settings", key); return value; },
-    all() { return Object.fromEntries(all("select key, value from settings").map(row => [row.key, parse(row.value)])); },
+    get(key, fallback = null) { const row = one("select value from settings where key = ?", settingKey(key)); return row ? parse(row.value) : fallback; },
+    set(key, value) { run("insert or replace into settings(key, value) values (?, ?)", settingKey(key), JSON.stringify(value)); changed("settings", key); return value; },
+    // The settings as the signed-in account sees them, without other accounts' copies.
+    all() {
+      const values = Object.fromEntries(all("select key, value from settings").filter(row => !row.key.startsWith("account:") && !settingsScope?.keys.has(row.key)).map(row => [row.key, parse(row.value)]));
+      for (const key of settingsScope?.keys || []) { const value = settings.get(key); if (value !== null) values[key] = value; }
+      return values;
+    },
+    scopeTo(owner, keys) { settingsScope = { owner, keys: new Set(keys) }; },
+    // The device's copy of an account setting, whoever is signed in.
+    setDevice(key, value) { run("insert or replace into settings(key, value) values (?, ?)", key, JSON.stringify(value)); return value; },
+    // The device's copies become this account's own where it has none, so the
+    // account that owns the computer's earlier data keeps its settings.
+    adopt(ownerId) {
+      transaction(() => {
+        for (const key of settingsScope?.keys || []) {
+          const row = one("select value from settings where key = ?", key);
+          if (row) run("insert or ignore into settings(key, value) values (?, ?)", `account:${ownerId}:${key}`, row.value);
+        }
+      });
+    },
   };
 
   const automationOf = row => row && {
@@ -460,16 +500,34 @@ function createStore(db) {
     },
   };
 
+  // Once scopeTo names the signed-in account, its profiles are those it made
+  // and, for the account that owns the computer's earlier data, those made
+  // before profiles had an owner. Each account has its own default profile.
+  let profileScope = null; // { owner: () => id | null, legacy: () => id | null }
+  const profileOf = row => row && { id: row.id, label: row.label, source: parse(row.source) || { type: "timewarp" }, isDefault: !!row.is_default, createdAt: row.created_at, ownerId: row.owner_id || null };
+  const profileOwner = () => profileScope ? profileScope.owner() || null : null;
+  const ownProfiles = () => {
+    if (!profileScope) return ["1 = 1", []];
+    const owner = profileOwner();
+    if (!owner) return ["owner_id is null", []];
+    return owner === profileScope.legacy() ? ["(owner_id = ? or owner_id is null)", [owner]] : ["owner_id = ?", [owner]];
+  };
   const browserProfiles = {
-    list: () => all("select * from browser_profiles where deleted_at is null order by is_default desc, created_at").map(row => ({ id: row.id, label: row.label, source: parse(row.source) || { type: "timewarp" }, isDefault: !!row.is_default, createdAt: row.created_at })),
+    list() { const [where, args] = ownProfiles(); return all(`select * from browser_profiles where deleted_at is null and ${where} order by is_default desc, created_at`, ...args).map(profileOf); },
+    // Any account's profile, for the browser's own use (its storage, its permissions).
+    get: id => profileOf(one("select * from browser_profiles where id = ? and deleted_at is null", id)),
     create({ id = crypto.randomUUID(), label, source = { type: "timewarp" }, isDefault = false }) {
-      run("insert into browser_profiles(id, label, source, is_default, created_at) values (?,?,?,?,?)", id, label, JSON.stringify(source), isDefault ? 1 : 0, now());
+      run("insert into browser_profiles(id, label, source, is_default, created_at, owner_id) values (?,?,?,?,?,?)", id, label, JSON.stringify(source), isDefault ? 1 : 0, now(), profileOwner());
       changed("browserProfiles", id);
       return browserProfiles.list().find(item => item.id === id);
     },
-    rename(id, label) { run("update browser_profiles set label = ? where id = ? and deleted_at is null", label, id); changed("browserProfiles", id); return browserProfiles.list().find(item => item.id === id); },
+    rename(id, label) {
+      if (!browserProfiles.list().some(item => item.id === id)) return null;
+      run("update browser_profiles set label = ? where id = ? and deleted_at is null", label, id); changed("browserProfiles", id); return browserProfiles.list().find(item => item.id === id);
+    },
     // Chats that used a removed profile go back to the default one.
     remove(id) {
+      if (!browserProfiles.list().some(item => item.id === id)) return;
       transaction(() => {
         run("update browser_profiles set deleted_at = ? where id = ? and is_default = 0", now(), id);
         run("update conversations set browser_profile_id = null where browser_profile_id = ?", id);
@@ -478,8 +536,11 @@ function createStore(db) {
     },
     ensureDefault() {
       const existing = browserProfiles.list().find(item => item.isDefault);
-      return existing || browserProfiles.create({ id: "timewarp:default", label: "Timewarp", isDefault: true });
+      if (existing) return existing;
+      const owner = profileOwner();
+      return browserProfiles.create({ id: owner && owner !== profileScope.legacy() ? `timewarp:default:${owner}` : "timewarp:default", label: "Timewarp", isDefault: true });
     },
+    scopeTo(owner, legacy) { profileScope = { owner, legacy }; },
   };
 
   const recentSites = {
@@ -545,8 +606,24 @@ function createStore(db) {
     },
   };
 
+  // What account sync (account-sync.cjs) last agreed with the cloud for each
+  // of an account's items: the cloud's revision, the value's digest and the
+  // value itself (the base a change made on both sides is merged from), and
+  // the cloud revision it has read every change up to.
+  const accountSync = {
+    items: ownerId => all("select kind, key, revision, hash, base from account_sync where owner_id = ?", ownerId)
+      .map(row => ({ kind: row.kind, key: row.key, revision: row.revision, hash: row.hash, base: parse(row.base) })),
+    save(ownerId, kind, key, { revision, hash, base }) {
+      run(`insert into account_sync(owner_id, kind, key, revision, hash, base) values (?, ?, ?, ?, ?, ?)
+        on conflict(owner_id, kind, key) do update set revision = excluded.revision, hash = excluded.hash, base = excluded.base`, ownerId, kind, key, revision, hash, json(base));
+    },
+    forget(ownerId, kind, key) { run("delete from account_sync where owner_id = ? and kind = ? and key = ?", ownerId, kind, key); },
+    cursor: ownerId => one("select revision from account_sync_cursor where owner_id = ?", ownerId)?.revision ?? 0,
+    setCursor(ownerId, revision) { run("insert into account_sync_cursor(owner_id, revision) values (?, ?) on conflict(owner_id) do update set revision = excluded.revision", ownerId, revision); },
+  };
+
   return {
-    db, events, transaction, agents, conversations, messages, settings, automations, browserProfiles, recentSites, turnUsage, historySync,
+    db, events, transaction, agents, conversations, messages, settings, automations, browserProfiles, recentSites, turnUsage, historySync, accountSync,
     on: (name, fn) => events.on(name, fn), off: (name, fn) => events.off(name, fn),
     close: () => { closed = true; clearTimeout(backlog); db.close(); },
   };

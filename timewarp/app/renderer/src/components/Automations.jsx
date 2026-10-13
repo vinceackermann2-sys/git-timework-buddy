@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { MessageSquare, Play, Plus } from "lucide-react";
+import { MessageSquare, Play, Plus, Share } from "lucide-react";
 import { call, relativeTime, useEvent } from "../api.js";
 import { Avatar, Dialog, PageHead, Switch, useConfirm, useToast } from "./common.jsx";
 
@@ -128,8 +128,8 @@ function Runs({ automation }) {
 }
 
 // An automation opened from its agent's page, as in the previous app: name,
-// instructions, on or off, when it runs and recent runs, with Delete, Test run
-// and Save changes. Imported automations arrive paused and are turned on here.
+// instructions, on or off, when it runs and recent runs, with Delete, Share
+// (a copy for a member of the organization), Test run and Save changes. Imported automations arrive paused and are turned on here.
 // onRan(conversationId) follows a test run to the automation's chat.
 export function AutomationDialog({ automation, onClose, onRan }) {
   return (
@@ -178,6 +178,7 @@ function AutomationDetails({ automation, onClose, onRan }) {
       <div className="tw-field"><span>Recent runs</span><Runs automation={automation} /></div>
       <div className="tw-dialog-actions">
         <button type="button" className="tw-btn ghost danger tw-push-left" disabled={busy} onClick={() => void remove()}>Delete automation</button>
+        <button type="button" className="tw-btn ghost" disabled={busy} onClick={() => { onClose(); window.dispatchEvent(new CustomEvent("tw:share", { detail: { kind: "automation", id: automation.id, title: automation.name } })); }}><Share size={14} />Share</button>
         <button type="button" className="tw-btn ghost" disabled={busy || dirty} title={dirty ? "Save your changes first" : undefined} onClick={() => void run()}><Play size={14} />Test run</button>
         <button type="submit" className="tw-btn primary" disabled={busy || !dirty || !draft.name.trim() || !draft.instructions.trim()}>Save changes</button>
       </div>

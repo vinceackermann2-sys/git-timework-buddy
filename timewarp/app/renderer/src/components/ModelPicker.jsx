@@ -1,12 +1,13 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
-import { call } from "../api.js";
+import { call, readScoped, writeScoped } from "../api.js";
 
 // The model and thinking picker, as in the previous app (its Timewarp picker,
-// desktop/model-picker.cjs): the trigger shows the model, effort and speed;
-// the popover has a thinking slider that drags continuously and saves once on
-// release, a reset to the model's default, the speed when the model offers
-// more than one, and a list of the current connection's models.
+// desktop/model-picker.cjs): the trigger shows the model, effort and Fast when
+// it's on; the popover has a thinking slider that drags continuously and saves
+// once on release, a reset to the model's default, the bolt that turns Fast on
+// and off (otherwise the speed is always Standard), and a list of the current
+// connection's models.
 
 export const EFFORT_LABELS = { none: "None", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra" };
 // "gpt-6.1-sol" and "GPT-5.6-Terra" read "GPT-6.1 Sol" and "GPT-5.6 Terra", as before.
@@ -56,9 +57,9 @@ function readSaved() {
 // The last catalog's names and levels, so the trigger reads the same while a
 // new one loads after starting.
 const CACHE = "tw.modelCatalog";
-function cachedCatalog() { try { const value = JSON.parse(localStorage.getItem(CACHE) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } }
+function cachedCatalog() { try { const value = JSON.parse(readScoped(CACHE) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } }
 function rememberCatalog(choices) {
-  try { localStorage.setItem(CACHE, JSON.stringify(choices.map(({ id, displayName, supportedReasoningEfforts, defaultReasoningEffort, featured, serviceTiers, defaultServiceTier }) => ({ id, displayName, supportedReasoningEfforts, defaultReasoningEffort, featured, serviceTiers, defaultServiceTier })))); } catch {}
+  writeScoped(CACHE, JSON.stringify(choices.map(({ id, displayName, supportedReasoningEfforts, defaultReasoningEffort, featured, serviceTiers, defaultServiceTier }) => ({ id, displayName, supportedReasoningEfforts, defaultReasoningEffort, featured, serviceTiers, defaultServiceTier }))));
 }
 
 // The saved choice in a catalog, as requests resolve it (resolveModelSettings
@@ -119,9 +120,9 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
   const position = draft?.key === catalogKey ? draft.position : index;
   const previewEffort = efforts[Math.round(position)] || effort;
   const effortLabel = shown ? effortName(selected ? previewEffort : shown.effort) || "Thinking" : "";
+  // The trigger names the speed only when Fast is on; Standard isn't named.
   const speed = shown?.tiers.find(tier => tier.value === shown.serviceTier);
-  // The trigger names the speed only when it isn't Standard, so Fast stands out.
-  const speedLabel = shown?.tiers.length > 1 && speed?.value != null ? speed.label || "" : "";
+  const speedLabel = isFast(speed) ? speed.label || "Fast" : "";
   const fastTier = tiers.find(isFast);
   const fast = !!fastTier && serviceTier === fastTier.value;
   const name = modelName(shown?.selected || { id: settings?.name }) || (error ? "Model" : "");
@@ -149,16 +150,16 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
     setDraft({ key: catalogKey, position: efforts.indexOf(value), dragging: false });
     commit({ name: selected.id, reasoningEffort: value, serviceTier });
   };
-  // The bolt turns Fast on and off; off is the model's other speed (Standard).
+  // The bolt turns Fast on and off; off is Standard (null).
   const toggleFast = () => {
     if (disabled || !selected || !fastTier) return;
-    commit({ name: selected.id, reasoningEffort: effort, serviceTier: fast ? tiers.find(tier => !isFast(tier))?.value ?? null : fastTier.value });
+    commit({ name: selected.id, reasoningEffort: effort, serviceTier: fast ? null : fastTier.value });
   };
-  // Picking a model, even the current one, starts from its default effort and
-  // speed; Fast stays on when the new model offers it.
+  // Picking a model, even the current one, starts from its default effort at
+  // Standard; Fast stays on when the bolt had it on and the new model offers it.
   const chooseModel = model => {
     const keepFast = fast && (model.serviceTiers || []).find(isFast);
-    commit({ name: model.id, reasoningEffort: model.defaultReasoningEffort, serviceTier: keepFast ? keepFast.value : model.defaultServiceTier ?? null });
+    commit({ name: model.id, reasoningEffort: model.defaultReasoningEffort, serviceTier: keepFast ? keepFast.value : null });
     setView("thinking");
     requestAnimationFrame(() => modelButton.current?.focus());
   };
@@ -314,16 +315,6 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
           onChange={event => { if (!drag.current) changeEffort(efforts[Math.round(Number(event.target.value))]); }} />
       </div>
       <div className="tw-mp-endpoints" aria-hidden="true"><span>{effortName(efforts[0])}</span><span>{effortName(efforts.at(-1))}</span></div>
-      {tiers.length > 1 ? (
-        <div className="tw-mp-speed">
-          <div className="tw-mp-speed-label">Speed</div>
-          <div className="tw-mp-speed-options" role="group" aria-label="Response speed">
-            {tiers.map(tier => <button key={tier.value || "standard"} type="button" disabled={disabled} aria-pressed={tier.value === serviceTier} data-fast={isFast(tier) || undefined} title={tier.description || undefined}
-              onClick={() => commit({ name: selected.id, reasoningEffort: effort, serviceTier: tier.value })}>{tier.label}</button>)}
-          </div>
-          <p className="tw-mp-speed-description">{tiers.find(tier => tier.value === serviceTier)?.description}</p>
-        </div>
-      ) : null}
     </div>
   );
 
@@ -333,7 +324,7 @@ export function ModelPicker({ models, onSelect, align = "right", up = true, disa
         onClick={() => show(!open)}>
         <span className="tw-model-name">{name}</span>
         {effortLabel ? <span className="tw-model-effort">{effortLabel}</span> : null}
-        {speedLabel ? <span className="tw-model-speed" data-fast={isFast(speed) || undefined}>{isFast(speed) ? <Icon path={BOLT} /> : null}{speedLabel}</span> : null}
+        {speedLabel ? <span className="tw-model-speed" data-fast="true"><Icon path={BOLT} />{speedLabel}</span> : null}
         <ChevronDown aria-hidden="true" />
       </button>
       {open || closing ? (

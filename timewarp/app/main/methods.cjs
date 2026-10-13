@@ -62,7 +62,7 @@ function fillSignIn(username, password, origin) {
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null, updates = null }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null, updates = null, shares = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // Each agent's workspace, so the skills kept there (Settings → Skills → Workspace) are listed, as before.
   const skillFolders = () => store.agents.list(services.auth.userId()).filter(agent => !agent.archivedAt && fs.existsSync(agent.workspace)).map(agent => agent.workspace);
@@ -291,6 +291,15 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "organizations.setActive": async ({ organizationId }) => { signedIn(); await services.accountRpc("product.organizations.setActive", { organizationId: text(organizationId, 100) }); return services.account(); },
     "organizations.update": ({ name, logo }) => { signedIn(); return services.accountRpc("product.organizations.update", { name: text(name, 120), ...(logo !== undefined ? { logo: logo ? text(logo, 200) : null } : {}) }); },
     "organizations.create": async ({ name, logo }) => { signedIn(); await services.accountRpc("product.organizations.create", { name: text(name, 120), ...(logo ? { logo: text(logo, 200) } : {}) }); return services.account(); },
+    // Share invites: a copy of a chat, an agent or an automation sent to
+    // members of the organization, who accept or decline it (shares.cjs).
+    "shares.list": () => { signedIn(); return shares.list(); },
+    "shares.send": ({ kind, id, organizationId, recipientUserIds } = {}) => { signedIn(); return shares.send({ kind, id, organizationId, recipientUserIds }); },
+    "shares.open": ({ shareId } = {}) => { signedIn(); return shares.open(shareId); },
+    "shares.accept": ({ shareId, agentId, enabled } = {}) => { signedIn(); return shares.accept({ shareId: text(shareId, 100), agentId: typeof agentId === "string" ? agentId : undefined, enabled: enabled !== false }); },
+    "shares.decline": ({ shareId } = {}) => { signedIn(); return shares.decline({ shareId: text(shareId, 100) }); },
+    "shares.cancel": ({ shareId } = {}) => { signedIn(); return shares.cancel({ shareId: text(shareId, 100) }); },
+    "shares.chatInfo": ({ conversationId } = {}) => { signedIn(); return shares.chatInfo(conversationId); },
     "images.beginUpload": () => { signedIn(); return services.accountRpc("product.images.beginUpload"); },
     "profile.update": async ({ name, imageId }) => {
       signedIn();
@@ -445,11 +454,13 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "mcp.setEnabled": ({ name, enabled }) => { signedIn(); return mcp.setEnabled(name, enabled); },
     "mcp.remove": ({ name }) => { signedIn(); return mcp.remove(name); },
     "mcp.signIn": ({ name }) => { signedIn(); return mcp.signIn(name); },
-    "instructions.get": () => { signedIn(); try { return { text: fs.readFileSync(path.join(codexHome, "AGENTS.md"), "utf8") }; } catch { return { text: "" }; } },
+    // The signed-in account's own (codexHome() is its Codex home).
+    "instructions.get": () => { signedIn(); try { return { text: fs.readFileSync(path.join(codexHome(), "AGENTS.md"), "utf8") }; } catch { return { text: "" }; } },
     "instructions.save": ({ text: value }) => {
       signedIn();
       if (typeof value !== "string" || value.length > 20000) throw fail(400, "Instructions must be text under 20,000 characters.");
-      const file = path.join(codexHome, "AGENTS.md"), temporary = file + "." + process.pid + ".tmp";
+      const file = path.join(codexHome(), "AGENTS.md"), temporary = file + "." + process.pid + ".tmp";
+      fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(temporary, value.trim() ? value.trim() + "\n" : "");
       fs.renameSync(temporary, file);
       return { text: fs.readFileSync(file, "utf8") };

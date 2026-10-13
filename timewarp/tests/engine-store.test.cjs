@@ -155,10 +155,11 @@ test("an existing database upgrades: thread lookups use an index, and its messag
   const raw = new DatabaseSync(file);
   raw.exec(`drop index conversations_thread; drop table history_sync; drop table history_entries; drop table history_changed; drop table message_search; drop table search_pending;
     drop trigger messages_search_insert; drop trigger messages_search_text; drop trigger messages_search_delete;
-    drop trigger history_message_insert; drop trigger history_message_update; drop trigger history_message_delete; drop trigger history_conversation_update; drop trigger history_agent_update; update meta set value = '5' where key = 'schema'`);
+    drop trigger history_message_insert; drop trigger history_message_update; drop trigger history_message_delete; drop trigger history_conversation_update; drop trigger history_agent_update;
+    drop table account_sync; drop table account_sync_cursor; alter table browser_profiles drop column owner_id; update meta set value = '5' where key = 'schema'`);
   raw.close();
   store = openStore(file);
-  assert.equal(store.db.prepare("select value from meta where key = 'schema'").get().value, "7");
+  assert.equal(store.db.prepare("select value from meta where key = 'schema'").get().value, "8");
   assert.equal(store.db.prepare("pragma synchronous").get().synchronous, 1, "synchronous = normal");
   assert.match(store.db.prepare("explain query plan select * from conversations where codex_thread_id = ?").all("x").map(row => row.detail).join(), /conversations_thread/);
   assert.equal(store.conversations.byThread("thread-1").id, chat.id);

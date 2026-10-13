@@ -26,6 +26,8 @@ class FakeContents extends EventEmitter {
   isDestroyed() { return this.destroyed; }
   close() { this.destroyed = true; this.emit("destroyed"); }
   reload() { this.reloaded = true; }
+  zoom = 1;
+  setZoomFactor(value) { this.zoom = value; } getZoomFactor() { return this.zoom; }
 }
 class FakeView {
   constructor(options = {}) { this.options = options; this.webContents = options.webContents || new FakeContents(); }
@@ -69,7 +71,7 @@ function memoryStore({ agents = {} } = {}) {
   const values = new Map();
   return {
     settings: { get: (key, fallback = null) => values.has(key) ? JSON.parse(values.get(key)) : fallback, set: (key, value) => { values.set(key, JSON.stringify(value)); return value; } },
-    browserProfiles: { list: () => [{ id: "default" }, { id: "work" }], ensureDefault: () => ({ id: "default" }) },
+    browserProfiles: { list: () => [{ id: "default" }, { id: "work" }], get(id) { return this.list().find(profile => profile.id === id) || null; }, ensureDefault: () => ({ id: "default" }) },
     conversations: { get: () => ({ browserProfileId: null, agentId: "agent-1" }), update() {} },
     agents: { get: id => agents[id] || null },
     recentSites: { record() {}, list: () => [] },
@@ -459,6 +461,40 @@ test("pages outlive a closed window, keep working for the agent and go into the 
   browser.close("chat-1", page.id);
   assert.equal(second.contentView.children.size, 0);
   assert.equal(contents.isDestroyed(), true);
+  browser.destroy();
+});
+
+test("the pane's page sits where the zoomed interface puts it and zooms with the window", () => {
+  const window = fakeWindow();
+  let zoom = 1;
+  const browser = createBrowser({ window: () => window, store: memoryStore(), zoom: () => zoom });
+  const page = browser.openTab("chat-1", { url: "https://example.com/" });
+  const other = browser.openTab("chat-1", { url: "https://example.org/" });
+  browser.activate("chat-1", page.id);
+  browser.show("chat-1");
+  const view = [...window.contentView.children].find(item => item.webContents === browser.webContents("chat-1", page.id).contents);
+  const contents = view.webContents, otherContents = browser.webContents("chat-1", other.id).contents;
+  // The interface measures in its own pixels, two thirds of the window's here.
+  zoom = 2 / 3;
+  browser.setBounds({ x: 600, y: 54, width: 1200.5, height: 1050 });
+  assert.deepEqual(view.bounds, { x: 400, y: 36, width: 800, height: 700 });
+  // The window's zoom changes: the page moves with it before the interface measures again.
+  zoom = 0.5;
+  browser.zoomChanged();
+  assert.deepEqual(view.bounds, { x: 300, y: 27, width: 600, height: 525 });
+  // Pages zoom by the window's fit, each tab also by its own Ctrl/⌘ +, - steps.
+  browser.setPageFit(0.75);
+  assert.deepEqual([contents.zoom, otherContents.zoom], [0.75, 0.75]);
+  assert.equal(browser.zoomPage(contents, 1), true);
+  assert.equal(contents.zoom.toFixed(3), (0.75 * 1.2 ** 0.5).toFixed(3));
+  assert.equal(otherContents.zoom, 0.75);
+  // Chromium sets a site's own zoom as a page commits; the tab's comes back.
+  contents.zoom = 1;
+  contents.emit("did-navigate", {}, "https://example.com/next");
+  assert.equal(contents.zoom.toFixed(3), (0.75 * 1.2 ** 0.5).toFixed(3));
+  browser.zoomPage(contents, 0);
+  assert.equal(contents.zoom, 0.75);
+  assert.equal(browser.zoomPage(new FakeContents(), 1), false, "Not a page of the pane");
   browser.destroy();
 });
 

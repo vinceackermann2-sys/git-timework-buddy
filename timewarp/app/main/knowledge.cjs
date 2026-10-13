@@ -79,8 +79,9 @@ function claudeDesktopConfig(home, env, platform) {
   return path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "Claude", "claude_desktop_config.json");
 }
 
-function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home = os.homedir(), env = process.env, platform = process.platform }) {
-  const memoriesRoot = path.join(runtimeDir, "entities", "memories");
+// memoriesRoot and codexHome are the account's own (accounts.cjs).
+// previousApp: the account owns the previous app's data on this computer.
+function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runtimeDir, "entities", "memories"), previousApp = true, cursorRoot = () => null, home = os.homedir(), env = process.env, platform = process.platform }) {
   const importsRoot = path.join(memoriesRoot, "imports");
   const notesFile = path.join(memoriesRoot, "user.md");
   // Dated logs of what happened each day (memory-writer.cjs), YYYY-MM-DD.md.
@@ -342,6 +343,7 @@ function createKnowledge({ runtimeDir, codexHome, cursorRoot = () => null, home 
     },
     // Skill folders the previous app kept connected to their source.
     legacySkillRoots() {
+      if (!previousApp) return [];
       let saved;
       try { saved = JSON.parse(fs.readFileSync(path.join(runtimeDir, "setup-import-sync.json"), "utf8")); } catch { return []; }
       const all = sources();

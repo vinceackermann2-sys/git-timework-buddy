@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Globe, KeyRound } from "lucide-react";
-import { call, request } from "../api.js";
+import { call, readScoped, request, writeScoped } from "../api.js";
 import { durationText, upcomingAutomations } from "../shell.mjs";
 import { AgentPicker, Composer, FundingBanner, ReconnectBanner, ToolsPicker } from "./Composer.jsx";
 import { Avatar, Dialog, useToast } from "./common.jsx";
@@ -45,7 +45,7 @@ const HEADINGS = ["Let's knock something off your to-do list", "Today's forecast
   "Time to carpe the diem", "Whatever you're thinking, go bigger", "Ready when you are, boss", "Let's get started", "Tell me what you need done"];
 // Home offers ChatGPT/Codex and Claude setups, as the previous app did; Cursor is offered during setup.
 const SOURCES = { "codex-chatgpt": "ChatGPT/Codex", "claude-code": "Claude" };
-const readDismissed = () => { try { return new Set(JSON.parse(localStorage.getItem("tw.dismissed") || "[]")); } catch { return new Set(); } };
+const readDismissed = () => { try { return new Set(JSON.parse(readScoped("tw.dismissed") || "[]")); } catch { return new Set(); } };
 
 function plural(count, word) { return `${count} ${word}${count === 1 ? "" : "s"}`; }
 
@@ -75,7 +75,7 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, autom
   }, []);
   const dismiss = id => setDismissed(current => {
     const next = new Set(current).add(id);
-    try { localStorage.setItem("tw.dismissed", JSON.stringify([...next])); } catch {}
+    writeScoped("tw.dismissed", JSON.stringify([...next]));
     return next;
   });
   const counts = source => {
@@ -87,7 +87,7 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, autom
   const suggestions = [];
   if (funding?.subscriptionAllowed && funding.source !== "chatgpt") suggestions.push({
     id: "connect-chatgpt", icon: <Icon name="chatgpt" />, title: "Connect ChatGPT to use Timewarp for free", action: "Connect",
-    run: () => request("connectChatgpt").then(() => toast("Finish connecting ChatGPT in your browser.")).catch(error => toast(error, "error")),
+    run: () => request("connectChatgpt").then(() => toast("Finish connecting ChatGPT in the window that opened.")).catch(error => toast(error, "error")),
   });
   for (const source of Object.keys(SOURCES)) {
     const count = counts(source);

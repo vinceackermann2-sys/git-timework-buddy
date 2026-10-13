@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Blocks, BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Ellipsis, Globe, KeyRound, LayoutGrid, Monitor, Moon, Pencil, Plus, Search, Settings2, Sun, Trash2, TriangleAlert, UserPlus, UserRound } from "lucide-react";
 import { presets, hexToAccent } from "../../../../shared/appearance.cjs";
-import { call, initials, relativeTime, request, useEvent } from "../api.js";
+import { accountText, call, initials, relativeTime, request, useEvent } from "../api.js";
 import { applyAppearance } from "../theme.js";
 import { splitEmails, updateRow } from "../shell.mjs";
 import { Avatar, Dialog, Menu, PageHead, Row, SearchField, Select, Switch, useConfirm, useToast } from "./common.jsx";
 import { AppIcon, ModelPicker, useApps } from "./Composer.jsx";
 import { Memories, Skills } from "./Knowledge.jsx";
 import { Automations } from "./Automations.jsx";
+import { SharesSection } from "./Share.jsx";
 import { McpServers } from "./Mcp.jsx";
 import { Vault } from "./Vault.jsx";
 
@@ -41,7 +42,7 @@ function ChatGptRow() {
   const allowed = state?.funding?.subscriptionAllowed === true;
   const description = !state ? "…" : !allowed ? "Your plan uses Timewarp AI credits. A ChatGPT plan can power AI usage on the Free plan."
     : state.status === "available" ? `Connected${state.account?.email ? " as " + state.account.email : ""}${state.account?.planType ? ` (${state.account.planType})` : ""}` : state.status === "reauth_required" ? "Sign in again to keep using your ChatGPT plan" : "Not connected";
-  const run = action => { setBusy(true); request(action).then(() => { if (action === "connectChatgpt") toast("Finish connecting ChatGPT in your browser."); return load(); }).catch(error => toast(error, "error")).finally(() => setBusy(false)); };
+  const run = action => { setBusy(true); request(action).then(() => { if (action === "connectChatgpt") toast("Finish connecting ChatGPT in the window that opened."); return load(); }).catch(error => toast(error, "error")).finally(() => setBusy(false)); };
   return (
     <Row title="ChatGPT" description={description}>
       {allowed ? (connected && state.status === "available"
@@ -253,20 +254,22 @@ function AppDetails({ app, agents, onClose, onChanged }) {
     setAccess(state => ({ ...state, [agentId]: items }));
     try { await call("integrations.setAccess", { agentId, items }); } catch (error) { setAccess(state => ({ ...state, [agentId]: previous })); toast(error, "error"); }
   }
+  // Each account shows the name and the email it signs in with.
+  const email = account => account.email && account.email !== account.displayName ? <span className="desc">{account.email}</span> : null;
   return (
     <>
       <div className="tw-list-panel">
         {app.accounts.map(account => (
           <div key={account.id} className="tw-list-row compact">
             <span className="tw-face">{initials(account.displayName).slice(0, 1)}</span>
-            <div className="grow"><strong>{account.displayName}</strong><span className="desc">{agents.filter(agent => allowed(agent.id, account)).map(agent => agent.name).join(", ") || "No agents"}</span></div>
+            <div className="grow"><strong>{account.displayName}</strong>{email(account)}<span className="desc">{agents.filter(agent => allowed(agent.id, account)).map(agent => agent.name).join(", ") || "No agents"}</span></div>
             <button type="button" className="tw-btn" onClick={() => void disconnect(account, false)}>Disconnect</button>
           </div>
         ))}
         {(app.pendingAccounts || []).map(account => (
           <div key={account.id} className="tw-list-row compact">
             <span className="tw-face">{initials(account.displayName).slice(0, 1)}</span>
-            <div className="grow"><strong>{account.displayName}</strong><span className="desc">Needs signing in again</span></div>
+            <div className="grow"><strong>{account.displayName}</strong>{email(account)}<span className="desc">Needs signing in again</span></div>
             <button type="button" className="tw-btn" onClick={() => void disconnect(account, true)}>Remove</button>
           </div>
         ))}
@@ -281,7 +284,7 @@ function AppDetails({ app, agents, onClose, onChanged }) {
                 <div className="grow" style={{ gap: 6 }}>
                   <strong>{agent.name}</strong>
                   {app.accounts.map(account => (
-                    <label key={account.id} className="tw-check"><input type="checkbox" checked={allowed(agent.id, account)} onChange={event => void toggle(agent.id, account, event.target.checked)} /><span>{account.displayName}</span></label>
+                    <label key={account.id} className="tw-check"><input type="checkbox" checked={allowed(agent.id, account)} onChange={event => void toggle(agent.id, account, event.target.checked)} /><span>{accountText(account)}</span></label>
                   ))}
                 </div>
               </div>
@@ -290,7 +293,7 @@ function AppDetails({ app, agents, onClose, onChanged }) {
         </>
       ) : null}
       <div className="tw-dialog-actions">
-        <button type="button" className="tw-btn" onClick={() => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in your browser.")).catch(error => toast(error, "error"))}><Plus size={15} />Add account</button>
+        <button type="button" className="tw-btn" onClick={() => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in the window that opened.")).catch(error => toast(error, "error"))}><Plus size={15} />Add account</button>
       </div>
     </>
   );
@@ -315,7 +318,7 @@ function Tools({ agents }) {
   const list = (needle ? all : tabs[tab] || []).filter(entry => !needle || entry.title.toLowerCase().includes(needle) || entry.description.toLowerCase().includes(needle));
   const detail = open && (items || []).find(app => app.id === open);
   const choose = entry => entry.connected ? setOpen(entry.app.id) : connect(entry.app);
-  const connect = app => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in your browser.")).catch(failure => toast(failure, "error"));
+  const connect = app => call("integrations.beginConnect", { integrationId: app.id }).then(() => toast("Finish connecting in the window that opened.")).catch(failure => toast(failure, "error"));
   return (
     <div className="tw-page">
       <PageHead title="Tools" subtitle="Connect apps and manage connected accounts available to Timewarp." />
@@ -334,7 +337,7 @@ function Tools({ agents }) {
             <div key={entry.key} className="tw-tile clickable" role="button" tabIndex={0} onClick={() => choose(entry)} onKeyDown={event => { if (event.key === "Enter") choose(entry); }}>
               <AppIcon app={entry.app} size={36} />
               <div><strong>{entry.title}</strong><span className="desc">{entry.description}</span></div>
-              {entry.app.accounts?.length ? <span className="tw-faces">{entry.app.accounts.slice(0, 3).map(account => <span key={account.id} title={account.displayName}>{initials(account.displayName).slice(0, 1)}</span>)}</span> : null}
+              {entry.app.accounts?.length ? <span className="tw-faces">{entry.app.accounts.slice(0, 3).map(account => <span key={account.id} title={accountText(account)}>{initials(account.displayName).slice(0, 1)}</span>)}</span> : null}
               {entry.pending ? (
                 <button type="button" className="tw-tile-reconnect" aria-label={"Reconnect " + entry.title} onClick={event => { event.stopPropagation(); connect(entry.app); }}><TriangleAlert size={16} />Reconnect</button>
               ) : (
@@ -507,7 +510,7 @@ function Organization({ account, onAccount, action, onActionDone }) {
   };
   return (
     <div className="tw-page tw-org-page">
-      <PageHead title="Organization" subtitle={organization ? `Inviting people to ${organization.name} adds them to this organization. Chats and AI credits stay personal.${members ? ` You have ${members.length} member${members.length === 1 ? "" : "s"} in this organization.` : ""}` : "Create or join an organization."} />
+      <PageHead title="Organization" subtitle={organization ? `Inviting people to ${organization.name} adds them to this organization. Agents, chats, connected apps and AI credits stay personal; share a copy of a chat, an agent or an automation from its menu.${members ? ` You have ${members.length} member${members.length === 1 ? "" : "s"} in this organization.` : ""}` : "Create or join an organization."} />
       {organization ? (
         <div className="tw-rows-card tw-org-card">
           <div className="tw-list-row">
@@ -566,6 +569,7 @@ function Organization({ account, onAccount, action, onActionDone }) {
           </div>
         </>
       ) : null}
+      <SharesSection />
       {organization ? null : <div><button type="button" className="tw-btn ghost" onClick={() => setDialog("create")}><Plus size={15} />New organization</button></div>}
       <Dialog open={dialog === "edit"} onClose={() => setDialog(null)} title="Edit organization">
         <form className="tw-import" onSubmit={event => { event.preventDefault(); call("organizations.update", { name }).then(() => call("account.get")).then(refresh).then(() => { toast("Organization saved."); setDialog(null); }).catch(error => toast(error, "error")); }}>

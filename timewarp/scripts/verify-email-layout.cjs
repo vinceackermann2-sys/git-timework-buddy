@@ -15,7 +15,7 @@ if (process.versions.electron) {
       // Reuse those same logo bytes here so per-template network latency cannot
       // turn a successful browser check into a timeout during Electron cleanup.
       const asset = JSON.parse(fs.readFileSync(path.join(reports, 'email-brand-asset.json')));
-      const cachedLogo = 'data:image/png;base64,' + fs.readFileSync(path.join(root, 'assets/app-icon.png')).toString('base64');
+      const cachedLogo = 'data:image/png;base64,' + fs.readFileSync(path.join(root, 'assets/icons/app-icon-128.png')).toString('base64');
       const files = fs.readdirSync(path.join(reports, 'email-previews')).filter(name => name.endsWith('.html') && name !== 'index.html');
       for (const width of [600, 320]) {
         window.setContentSize(width, 1120);
@@ -25,7 +25,7 @@ if (process.versions.electron) {
           const result = await window.webContents.executeJavaScript(`(() => {
             const image = document.querySelector('img[alt="Timewarp"]');
             const code = document.querySelector('.timewarp-email-code');
-            const button = [...document.querySelectorAll('a')].find(node => getComputedStyle(node).backgroundColor === 'rgb(183, 214, 255)');
+            const button = [...document.querySelectorAll('a')].find(node => getComputedStyle(node).backgroundColor === 'rgb(233, 210, 255)');
             const luminance = color => color.match(/\\d+/g).slice(0,3).map(Number).map(n=>n/255).map(n=>n<=.04045?n/12.92:((n+.055)/1.055)**2.4).reduce((sum,n,i)=>sum+n*[.2126,.7152,.0722][i],0);
             const style = button && getComputedStyle(button);
             const foreground = style && luminance(style.color), background = style && luminance(style.backgroundColor);

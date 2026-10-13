@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Archive, Bell, BellDot, Blocks, Building2, CalendarClock, ChevronRight, ChevronUp, CircleFadingArrowUp, GripVertical, LoaderCircle, LogOut, MailOpen, Pencil, Plus, Search, Settings2, UserPlus, UserRound } from "lucide-react";
-import { call, relativeTime, useEvent } from "../api.js";
+import { Archive, Bell, BellDot, Blocks, Building2, CalendarClock, ChevronRight, ChevronUp, CircleFadingArrowUp, GripVertical, LoaderCircle, LogOut, MailOpen, Pencil, Plus, Search, Settings2, Share, UserPlus, UserRound } from "lucide-react";
+import { call, readScoped, relativeTime, useEvent, writeScoped } from "../api.js";
 import { Avatar, ContextMenu, Dialog, Menu, Tip, menuKeys, modKey, useToast } from "./common.jsx";
 import { PAGE, activityGroups, byActivity, dropSide, moveId, shownCount } from "../shell.mjs";
+import { shareItem } from "./Share.jsx";
 
-const readList = key => { try { const value = JSON.parse(localStorage.getItem(key) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } };
-const writeList = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
 const readFlag = key => { try { return localStorage.getItem(key) === "1"; } catch { return false; } };
 const writeFlag = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch {} };
 
@@ -41,7 +40,7 @@ function RenameDialog({ conversation, onClose, onChanged }) {
 
 // A chat row: in its agent's group, or with the agent's picture and the latest
 // message in the activity feed. Right-click: mark as read or unread, rename,
-// archive. A chat an automation runs in shows "Has automation" with its names.
+// share with a member of the organization, archive. A chat an automation runs in shows "Has automation" with its names.
 function ConversationRow({ conversation, agent = null, current, working, automations = [], onArchive, onChanged }) {
   const [menu, setMenu] = useState(null);
   const [renaming, setRenaming] = useState(false);
@@ -71,6 +70,7 @@ function ConversationRow({ conversation, agent = null, current, working, automat
       <ContextMenu at={menu} onClose={closeMenu}>
         <button type="button" className="tw-menu-item" data-close onClick={() => void setRead(unread)}>{unread ? <MailOpen size={16} /> : <BellDot size={16} />}<span className="grow">{unread ? "Mark as read" : "Mark as unread"}</span></button>
         <button type="button" className="tw-menu-item" data-close onClick={() => setRenaming(true)}><Pencil size={16} /><span className="grow">Rename</span></button>
+        <button type="button" className="tw-menu-item" data-close onClick={() => shareItem("chat", conversation.id, title)}><Share size={16} /><span className="grow">Share</span></button>
         <button type="button" className="tw-menu-item" data-close onClick={() => onArchive(conversation)}><Archive size={16} /><span className="grow">Archive</span></button>
       </ContextMenu>
       {renaming ? <RenameDialog conversation={conversation} onClose={() => setRenaming(false)} onChanged={onChanged} /> : null}
@@ -80,7 +80,7 @@ function ConversationRow({ conversation, agent = null, current, working, automat
 
 // An agent and its chats, newest first: five, then five more per "Show more"
 // (with a dot when the hidden ones include unread chats), always including the
-// open chat. Hover shows the drag handle and New task; right-click: Edit, Archive.
+// open chat. Hover shows the drag handle and New task; right-click: Edit, Share, Archive.
 function AgentGroup({ agent, conversations, selectedId, current, collapsed, onToggle, running, automationsFor, onArchive, onChanged, onNewChat, onEditAgent, onArchiveAgent, drag }) {
   const [count, setCount] = useState(PAGE);
   const [menu, setMenu] = useState(null);
@@ -105,6 +105,7 @@ function AgentGroup({ agent, conversations, selectedId, current, collapsed, onTo
       </div>
       <ContextMenu at={menu} onClose={closeMenu}>
         <button type="button" className="tw-menu-item" data-close onClick={() => onEditAgent(agent)}><Pencil size={16} /><span className="grow">Edit</span></button>
+        <button type="button" className="tw-menu-item" data-close onClick={() => shareItem("agent", agent.id, agent.name)}><Share size={16} /><span className="grow">Share</span></button>
         <button type="button" className="tw-menu-item" data-close onClick={() => onArchiveAgent(agent)}><Archive size={16} /><span className="grow">Archive</span></button>
       </ContextMenu>
       {collapsed ? null : (
@@ -278,14 +279,14 @@ export function Sidebar({ account, agents, conversations, selectedId, view, home
   // The activity view is remembered, as before.
   const [mode, setModeState] = useState(() => readFlag("tw.activityView") ? "activity" : "tasks");
   const setMode = value => { setModeState(value); writeFlag("tw.activityView", value === "activity"); };
-  const [collapsed, setCollapsed] = useState(() => new Set(readList("tw.collapsed")));
+  const [collapsed, setCollapsed] = useState(() => { try { const value = JSON.parse(readScoped("tw.collapsed") || "[]"); return new Set(Array.isArray(value) ? value : []); } catch { return new Set(); } });
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const agentById = new Map(agents.map(agent => [agent.id, agent]));
   const toggle = id => setCollapsed(current => {
     const next = new Set(current);
     if (next.has(id)) next.delete(id); else next.add(id);
-    writeList("tw.collapsed", [...next]);
+    writeScoped("tw.collapsed", JSON.stringify([...next]));
     return next;
   });
   const ids = agents.map(item => item.id);

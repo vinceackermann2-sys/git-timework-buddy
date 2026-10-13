@@ -406,15 +406,15 @@ const withoutThinking = (messages: Message[]) => messages.map(message => message
 // Opens Claude's stream with a reservation for its worst-case cost. Fast mode
 // falls back to the standard speed when Anthropic can't serve it, at once
 // rather than after the SDK's retries, and thinking from another Anthropic
-// account (after a key change) is left out. `allowed`: see reserveAgentAi.
-async function openClaude(admin: any, userId: string, body: any, allowed?: Promise<unknown>) {
+// account (after a key change) is left out.
+async function openClaude(admin: any, userId: string, body: any) {
   const named = claudeRoute(body.model);
   if (!named) throw fail(400, 'Unknown Claude model.');
   let route = named.fast && (fastPaused.get(named.model) || 0) > Date.now() ? { ...named, fast: false, billing: named.id } : named;
   const [claude, userKey] = await Promise.all([anthropic(), accountKey(userId)]);
   let { params, tools } = claudeRequest(route, body, userKey);
   for (let attempt = 0; ; attempt++) {
-    const reservation = await reserveAgentAi(admin, userId, route.billing, params, { outputTokens: params.max_tokens, allowed });
+    const reservation = await reserveAgentAi(admin, userId, route.billing, params, { outputTokens: params.max_tokens });
     try {
       const stream = await claude.beta.messages.create({ ...params, stream: true } as any, { signal: AbortSignal.timeout(STREAM_LIMIT_MS), ...(route.fast ? { maxRetries: 0 } : {}) });
       return { stream: stream as unknown as AsyncIterable<any>, reservation, tools };
@@ -459,8 +459,8 @@ const sse = (events: Block[]) => events.map(event => `event: ${event.type}\ndata
 
 // Streams Claude's reply as Responses events. Claude's stream is read to the
 // end even when the desktop stops listening, so every call is metered.
-export async function claudeStream(admin: any, userId: string, body: any, cors: Record<string, string>, allowed?: Promise<unknown>) {
-  const { stream, reservation, tools } = await openClaude(admin, userId, body, allowed);
+export async function claudeStream(admin: any, userId: string, body: any, cors: Record<string, string>) {
+  const { stream, reservation, tools } = await openClaude(admin, userId, body);
   const translated = responsesTranslator(tools.byClaude, String(body.model));
   const encoder = new TextEncoder();
   let output: ReadableStreamDefaultController<Uint8Array> | null = null, listening = true;
@@ -486,8 +486,8 @@ export async function claudeStream(admin: any, userId: string, body: any, cors: 
 }
 
 // The same reply as one Responses object, for clients that don't stream.
-export async function claudeCall(admin: any, userId: string, body: any, allowed?: Promise<unknown>) {
-  const { stream, reservation, tools } = await openClaude(admin, userId, body, allowed);
+export async function claudeCall(admin: any, userId: string, body: any) {
+  const { stream, reservation, tools } = await openClaude(admin, userId, body);
   const translated = responsesTranslator(tools.byClaude, String(body.model));
   let failed: Block[] = [];
   try {

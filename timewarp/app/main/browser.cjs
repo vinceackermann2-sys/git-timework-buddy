@@ -100,14 +100,26 @@ async function removeFolder(folder, attempts = 8) {
   }
 }
 
-function createBrowser({ window: getWindow, store, notify = () => {}, log = null }) {
+// zoom: the window's page zoom, window pixels per pixel of the interface.
+function createBrowser({ window: getWindow, store, notify = () => {}, log = null, zoom = () => 1 }) {
   const tabs = new Map(); // tab id -> tab
   const groups = new Map(); // conversation id -> { active: tab id | null }
   const partitions = new Set();
   let shown = null; // conversation id whose tabs are on screen
   let bounds = null;
+  let rect = null; // where the interface last put the pane, in its own (zoomed) pixels
   let visible = false;
   let host = null; // the window the pages are in
+  // Pages zoom with the window (window-zoom.cjs), and each tab also by its own
+  // Ctrl/⌘ +, - steps. Chromium keeps a zoom per site, so it's set again as
+  // each page commits and as its tab comes on screen.
+  let pageFit = 1;
+  const pageZoom = tab => Math.min(5, Math.max(0.25, pageFit * 1.2 ** (tab.zoomLevel || 0)));
+  function applyZoom(tab) {
+    const contents = tab.view?.webContents;
+    if (!contents?.setZoomFactor || contents.isDestroyed?.()) return;
+    if (Math.abs((contents.getZoomFactor?.() ?? 1) - pageZoom(tab)) >= 0.001) contents.setZoomFactor(pageZoom(tab));
+  }
   // Tabs are ordered by when they opened; two can open in the same millisecond.
   let lastOrder = 0;
   const nextOrder = () => (lastOrder = Math.max(Date.now(), lastOrder + 1));
@@ -127,7 +139,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
 
   function sessionFor(profileId) {
     // Profiles from the previous app keep their storage, and with it their sign-ins.
-    const legacy = store.browserProfiles.list().find(item => item.id === profileId)?.source?.partition;
+    const legacy = store.browserProfiles.get(profileId)?.source?.partition;
     const partition = LEGACY_PARTITION.test(legacy || "") ? "persist:" + legacy : "persist:tw-browser-" + profileId.replace(/[^a-zA-Z0-9_-]/g, "_");
     const value = electronSession.fromPartition(partition);
     if (!partitions.has(partition)) {
@@ -235,6 +247,12 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
   const SAVED_KEY = "browserTabs", SAVED_CHATS = 50, SAVED_TABS = 12, SAVED_HISTORY = 10;
   const restored = new Set(), dirty = new Set();
   let saveTimer = null;
+  // The chat's profile when it is one of the signed-in account's own (a chat
+  // can name one from before each account had its own), else its default.
+  function chatProfile(conversationId) {
+    const chosen = store.conversations.get(conversationId)?.browserProfileId;
+    return chosen && store.browserProfiles.list().some(profile => profile.id === chosen) ? chosen : store.browserProfiles.ensureDefault().id;
+  }
   function restore(conversationId) {
     if (!conversationId || restored.has(conversationId)) return;
     restored.add(conversationId);
@@ -242,7 +260,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     try { saved = store.settings.get(SAVED_KEY, {})?.[conversationId]; } catch { return; }
     if (!Array.isArray(saved?.tabs) || !saved.tabs.length) return;
     const profiles = new Set(store.browserProfiles.list().map(profile => profile.id));
-    const fallback = () => store.conversations.get(conversationId)?.browserProfileId || store.browserProfiles.ensureDefault().id;
+    const fallback = () => chatProfile(conversationId);
     let active = null;
     saved.tabs.slice(-SAVED_TABS).forEach((item, index) => {
       const url = item.kind === "web" && recordable(item.url) ? item.url : null;
@@ -326,6 +344,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
       else if (!tab.parkedAt) tab.parkedAt = Date.now();
       tab.view.setVisible(show || park);
       tab.view.setBounds(show ? bounds : { x: park ? PARKED : 0, y: park ? PARKED : 0, ...size });
+      if (show) applyZoom(tab);
     }
   }
 
@@ -356,6 +375,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     contents.on("page-favicon-updated", (_event, favicons) => { tab.favicon = favicons.find(icon => /^https:/.test(icon)) || null; changed(tab.conversationId); });
     contents.on("did-navigate", (_event, url) => {
       tab.url = url;
+      applyZoom(tab);
       // A new page: nothing typed in it yet, no sound, and it may ask again for what was refused.
       Object.assign(tab, { edited: false, playing: false, mediaRefused: null, dialogs: 0, quiet: false });
       // The title arrives later (page-title-updated); until then the page has none.
@@ -379,6 +399,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     // A tab that slept comes back with its back and forward history.
     const history = tab.history;
     tab.history = null;
+    applyZoom(tab);
     if (adopted) return;
     if (history && contents.navigationHistory.restore) void contents.navigationHistory.restore(history).catch(() => {});
     else if (tab.url && tab.url !== "about:blank") void contents.loadURL(tab.url).catch(() => {});
@@ -580,7 +601,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
   // after: the tab it opens from, to place it right after that one.
   function openTab(conversationId, { url = null, profileId, activate = true, worker = false, after = null } = {}) {
     restore(conversationId);
-    const profile = profileId || store.conversations.get(conversationId)?.browserProfileId || store.browserProfiles.ensureDefault().id;
+    const profile = profileId || chatProfile(conversationId);
     const tab = { id: crypto.randomUUID(), conversationId, profileId: profile, kind: url ? "web" : "home", url: url ? safeUrl(url) : null, title: "", order: after ? orderAfter(after) : nextOrder(), usedAt: Date.now(), worker: !!worker };
     tabs.set(tab.id, tab);
     if (!groups.has(conversationId)) groups.set(conversationId, { active: null });
@@ -633,14 +654,32 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     safeUrl,
     state: conversationId => groupState(conversationId),
     show(conversationId) { hostWindow(); shown = conversationId; restore(conversationId); wake(); layout(); return groupState(conversationId); },
-    setBounds(rect) {
+    // The interface measures in its zoomed pixels; the page goes there in the window's.
+    setBounds(next) {
       hostWindow();
+      rect = next || null;
       if (!rect) { visible = false; layout(); return; }
-      const round = value => Math.max(0, Math.round(Number(value) || 0));
-      bounds = { x: round(rect.x), y: round(rect.y), width: round(rect.width), height: round(rect.height) };
+      const factor = zoom() || 1, at = value => Math.max(0, Math.round((Number(value) || 0) * factor));
+      const x = at(rect.x), y = at(rect.y);
+      bounds = { x, y, width: at((Number(rect.x) || 0) + (Number(rect.width) || 0)) - x, height: at((Number(rect.y) || 0) + (Number(rect.height) || 0)) - y };
       visible = bounds.width > 40 && bounds.height > 40 && rect.visible !== false;
       wake();
       layout();
+    },
+    // The window's zoom changed: the pane goes where the interface last put
+    // it, at the new zoom, until the interface measures it again.
+    zoomChanged() { if (rect) this.setBounds(rect); },
+    setPageFit(fit) {
+      pageFit = Number(fit) || 1;
+      for (const tab of tabs.values()) applyZoom(tab);
+    },
+    // Ctrl/⌘ +, - and 0 in a page of the pane; false for any other page.
+    zoomPage(contents, direction) {
+      const tab = tabOf(contents);
+      if (!tab) return false;
+      tab.zoomLevel = direction ? Math.min(5, Math.max(-5, (tab.zoomLevel || 0) + direction * 0.5)) : 0;
+      applyZoom(tab);
+      return true;
     },
     openTab, navigate, close, sessionFor,
     activate(conversationId, tabId) { const tab = tabFor(conversationId, tabId); groups.get(conversationId).active = tab.id; if (tab.kind === "web" && !tab.view) { attach(tab); evict(tab); } layout(); changed(conversationId); return groupState(conversationId); },
@@ -700,7 +739,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
       log?.warn("browser-profile", "A removed profile's storage is in use; it's removed at the next start");
       try { store.settings.set(REMOVE_LATER, [...new Set([...(store.settings.get(REMOVE_LATER, []) || []), folder])]); } catch {}
     },
-    recent: (conversationId, profileId) => store.recentSites.list(profileId || store.conversations.get(conversationId)?.browserProfileId || store.browserProfiles.ensureDefault().id, conversationId).slice(0, 4),
+    recent: (conversationId, profileId) => store.recentSites.list(profileId || chatProfile(conversationId), conversationId).slice(0, 4),
     // Agent tools act on the conversation's active web tab.
     webContents(conversationId, tabId) {
       const tab = tabFor(conversationId, tabId);
@@ -746,8 +785,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     // without a tab or changing the visible page; it closes once read.
     async readAway(conversationId, url, read) {
       const address = safeUrl(url);
-      const chosen = store.conversations.get(conversationId)?.browserProfileId;
-      const profileId = chosen && store.browserProfiles.list().some(profile => profile.id === chosen) ? chosen : store.browserProfiles.ensureDefault().id;
+      const profileId = chatProfile(conversationId);
       const view = new WebContentsView({ webPreferences: preferences(profileId) });
       const contents = view.webContents;
       away.add(contents);
@@ -799,6 +837,9 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
       return { bounds: tab.view.getBounds(), visible: tab.view.getVisible(), image: image.resize({ width: 480 }).toDataURL() };
     },
     destroy() { if (saveTimer) { clearTimeout(saveTimer); save(); } for (const tab of tabs.values()) discard(tab); tabs.clear(); groups.clear(); },
+    // Another account signed in: every tab closes, and each chat's tabs come
+    // back when its account opens it again.
+    closeAll() { this.destroy(); restored.clear(); notes.clear(); userControl.clear(); shown = null; },
   };
 }
 
