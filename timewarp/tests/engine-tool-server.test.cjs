@@ -48,10 +48,10 @@ test("a chat's workers learn its agent, and its writable folders follow the memo
 
 test("Timewarp's MCP servers point at the bridge and skip approval reviews for its own tools", () => {
   const servers = toolServers(7788);
-  assert.deepEqual(Object.keys(servers), ["timewarp_composio", "timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats"]);
+  assert.deepEqual(Object.keys(servers), ["timewarp_composio", "timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats", "timewarp_team", "timewarp_app"]);
   assert.equal(servers.timewarp_composio.url, "http://127.0.0.1:7788/mcp/composio");
   assert.equal(servers.timewarp_composio.default_tools_approval_mode, undefined, "connected-app actions keep Codex's review");
-  for (const name of ["timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats"]) {
+  for (const name of ["timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats", "timewarp_team", "timewarp_app"]) {
     assert.equal(servers[name].url, "http://127.0.0.1:7788/mcp/" + name);
     assert.equal(servers[name].bearer_token_env_var, "TIMEWARP_TOOLS_TOKEN");
     assert.equal(servers[name].default_tools_approval_mode, "approve");
@@ -59,6 +59,8 @@ test("Timewarp's MCP servers point at the bridge and skip approval reviews for i
     assert.equal(servers[name].required, true, "chats start once the tools are connected");
   }
   assert.ok(servers.timewarp_vault.tool_timeout_sec >= 600, "vault calls wait for the user's answer");
+  assert.ok(servers.timewarp_app.tool_timeout_sec >= 660, "a settings card waits up to 10 minutes for the user's answer");
+  assert.ok(servers.timewarp_team.tool_timeout_sec > 840, "ask waits up to 840 seconds for another chat's answer");
 });
 
 test("tool results become MCP content, with images and failures", () => {

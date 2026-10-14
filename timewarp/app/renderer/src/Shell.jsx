@@ -260,6 +260,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
   // Agents changed on the account's other computer.
   useEvent("account.synced", () => { void loadAgents(); });
   useEvent("funding.changed", () => { void loadModels(); loadFunding(); });
+  // The default model changed from an agent's card (app-tools.cjs).
+  useEvent("settings.changed", ({ key } = {}) => { if (key === "modelSettings") void loadModels(); });
   // A sign-in that just connected an app says which account it connected.
   useEvent("integrations.changed", ({ connected } = {}) => {
     for (const account of connected || []) toast({ title: `${account.app || "App"} connected`, body: accountText(account) || "Your account is ready for your agents." });

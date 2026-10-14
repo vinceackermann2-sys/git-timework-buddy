@@ -17,6 +17,9 @@ A card to connect one of the user's apps (or add or update an account) by its ap
 <widget-mcp-connection url="https://mcp.example.com/mcp" />
 A card that adds a remote MCP server (HTTPS) and signs the user in to it.
 
+<usage />
+The user's live plan usage and credits, as the sidebar shows them, with a button to Billing. Show it when the user asks about their usage or credits, or when credits run low; don't repeat its numbers in text.
+
 <select name="focus">
 <option>Pricing</option>
 <option>Competitors</option>

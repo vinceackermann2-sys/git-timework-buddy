@@ -518,6 +518,25 @@ a { color: var(--accent-strong); }
 .tw-approval { width: 100%; border: 0.67px solid color-mix(in srgb, var(--accent-strong) 40%, var(--border)); background: var(--surface); border-radius: 14px; padding: 12px 14px; display: grid; gap: 10px; margin: 0 0 18px 35px; max-width: calc(100% - 99px); }
 .tw-approval h3 { margin: 0; font-size: 14px; font-weight: 500; }
 .tw-approval-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Timewarp's own question for an agent's request: each change, from → to. */
+.tw-confirm-changes { margin: 0; display: grid; gap: 4px; padding: 8px 10px; border-radius: 10px; background: var(--soft); font-size: 13px; line-height: 20px; }
+.tw-confirm-changes > div { display: flex; justify-content: space-between; gap: 12px; }
+.tw-confirm-changes dt { color: var(--muted); }
+.tw-confirm-changes dd { margin: 0; display: inline-flex; align-items: center; gap: 6px; text-align: right; }
+.tw-confirm-changes dd > span { color: var(--muted); text-decoration: line-through; }
+
+/* A message from another of the user's agents (team tools). */
+.tw-peer-label { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; line-height: 16px; color: var(--muted); }
+.tw-peer-source { padding: 0; border: none; background: none; color: inherit; font: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); cursor: pointer; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-peer-source:hover { color: var(--ink); }
+.tw-peer-bubble { background: color-mix(in srgb, var(--accent-strong) 6%, var(--surface)); border: 0.67px solid color-mix(in srgb, var(--accent-strong) 22%, var(--border)); }
+.tw-peer-avatar { display: inline-flex; align-items: center; justify-content: center; background: var(--soft); color: var(--muted); }
+
+/* The usage card in a chat (<usage />). */
+.tw-usage-card { width: 480px; max-width: 100%; }
+.tw-usage-card > .tw-usage { margin-top: 0; background: var(--surface); border: 0.67px solid var(--border); box-shadow: 0 1px 3px rgb(0 0 0 / 0.04); }
+.tw-usage-card > .tw-usage:hover { background: color-mix(in srgb, var(--ink) 3%, var(--surface)); }
+.tw-usage-card-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
 
 /* Trace (Activity) */
 .tw-trace-head { display: flex; align-items: flex-start; gap: 16px; padding: 22px 24px 18px; border-bottom: 0.67px solid var(--border); }

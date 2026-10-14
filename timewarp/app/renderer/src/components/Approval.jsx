@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { call } from "../api.js";
 import { useToast } from "./common.jsx";
 
@@ -84,6 +85,29 @@ export function ApprovalCard({ approval }) {
         </div>
       );
     }
+    // Timewarp's own question for an agent's request (app/main/app-tools.cjs):
+    // the changes are Timewarp's checked values; only the reason is the agent's words.
+    case "timewarp/confirm":
+      return (
+        <div className="tw-approval tw-confirm-card" role="alert">
+          <h3>{p.title || "Allow this change?"}</h3>
+          {p.reason ? <div className="tw-hint"><strong>{p.agent || "Your agent"}:</strong> {p.reason}</div> : null}
+          {p.changes?.length ? (
+            <dl className="tw-confirm-changes">
+              {p.changes.map(change => (
+                <div key={change.key}>
+                  <dt>{change.label}</dt>
+                  <dd><span>{change.from}</span><ArrowRight size={13} aria-label="to" /><strong>{change.to}</strong></dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          <Actions busy={busy} options={[
+            { label: "Allow", primary: true, run: () => respond({ decision: "accept" }) },
+            { label: "Don't allow", run: () => respond({ decision: "decline" }) },
+          ]} />
+        </div>
+      );
     case "item/tool/requestUserInput":
       return (
         <div className="tw-approval" role="alert">

@@ -546,6 +546,8 @@ async function boot() {
   };
 
   let automations = null, storeClosed = false;
+  // Set up with the tool servers below; it follows what working chats are doing.
+  let teamTools = null;
   const replies = require("./notifications.cjs").createReplyNotifications({
     Notification, store, userId: () => userId(),
     enabled: () => store.settings.get("notifications")?.replies !== false,
@@ -574,7 +576,7 @@ async function boot() {
     spareInputs: agent => [path.join(codexHome(), "config.toml"), path.join(codexHome(), "AGENTS.md"), path.join(agent.workspace, "AGENTS.md"), knowledge.skillsRoot, path.join(agent.workspace, ".agents", "skills")]
       .map(file => { try { const stat = fs.statSync(file); return stat.mtimeMs + ":" + stat.size; } catch { return "-"; } }).join(" "),
     // Late Codex events during quit find the database closed: they're dropped.
-    notify: (name, payload) => { if (storeClosed) return; broadcast(name, payload); automations?.observe(name, payload); replies.observe(name, payload); background?.observe(name, payload); },
+    notify: (name, payload) => { if (storeClosed) return; broadcast(name, payload); automations?.observe(name, payload); replies.observe(name, payload); background?.observe(name, payload); teamTools?.observe(name, payload); },
     log: (...args) => console.error("[timewarp]", ...args),
   });
   // Chat titles and the memory writer run in the background on a small model (memory-writer.cjs).
@@ -598,6 +600,66 @@ async function boot() {
   // included. A call acts for the chat its thread (or its parent) belongs to.
   const automationSpecs = require("./automation-tools.cjs").toolSpecs;
   const chatTools = require("./chat-tools.cjs").createChatTools({ store, userId: () => userId() });
+  // Agents messaging and asking each other's chats while they work (team-tools.cjs).
+  teamTools = require("./team-tools.cjs").createTeamTools({ store, harness, userId: () => userId() });
+  // Timewarp itself for agents (app-tools.cjs): usage, settings and the app's
+  // state to read; a setting changes only through the card the user answers.
+  // When Timewarp isn't in front, a notification points to the card.
+  const cardNotices = new Set();
+  const confirmInChat = (conversationId, card) => {
+    const asked = harness.confirm(conversationId, card);
+    const focused = BrowserWindow.getAllWindows().some(window => !window.isDestroyed() && window.isVisible() && window.isFocused());
+    if (!focused && Notification.isSupported()) {
+      try {
+        const notice = new Notification({ title: String(card.agent || "Timewarp").slice(0, 120), body: `${card.title} Open the chat to answer.` });
+        const drop = () => { cardNotices.delete(notice); try { notice.close(); } catch {} };
+        notice.on("click", () => { drop(); openRoute("#/conversation/" + encodeURIComponent(conversationId)); });
+        notice.on("failed", drop);
+        cardNotices.add(notice);
+        void asked.finally(drop);
+        notice.show();
+      } catch (error) { appLog.warn("notifications", "A card notification couldn't be shown: " + error.message); }
+    }
+    return asked;
+  };
+  const appTools = require("./app-tools.cjs").createAppTools({
+    store, harness, userId: () => userId(),
+    // What the sidebar's usage card shows (methods.cjs funding.get), with the
+    // ChatGPT plan's usage windows when AI runs on it.
+    usage: async () => {
+      const state = await methods["funding.get"]();
+      const chatgpt = state.source === "chatgpt" ? await services.chatgpt.refresh().then(() => services.chatgpt.details(), () => services.chatgpt.details()) : null;
+      const { planUsage = null, ...funding } = state;
+      return { funding, planUsage, chatgpt };
+    },
+    settings: {
+      // With the appearance's defaults, as Settings → General reads it, so a theme change keeps the rest.
+      read: () => { const all = store.settings.all(); return { ...all, appearance: all.appearance || defaultAppearance() }; },
+      // As Settings → General writes them, then the open screens reload them
+      // and account sync carries them.
+      write: async (key, value) => {
+        if (key === "modelSettings") await methods["models.select"](value);
+        else await methods["settings.set"]({ key, value });
+        broadcast("settings.changed", { key });
+        accountSync?.soon();
+      },
+    },
+    models: { choices: () => modelChoices(), choose: (choices, wanted) => require("./model-catalog.cjs").chooseModel(choices, wanted), select: choices => selectModel(choices) },
+    status: async () => {
+      const sandboxState = await sandbox.status().catch(() => null);
+      let update = null;
+      try { update = updates.state(); } catch {}
+      return {
+        version: VERSION, platform: process.platform,
+        updates: update ? { status: update.status, ...(update.available ? { available: update.available } : {}) } : null,
+        agentRuntime: client.status, commandSandbox: sandboxState?.status || null,
+        chatHistorySync: historyStatus.state, accountSync: accountSyncStatus.state,
+        privacyMode: store.settings.get("privacy")?.mode === "private",
+        chatsWorkingNow: harness.conversations.running().length,
+      };
+    },
+    confirm: confirmInChat,
+  });
   toolServer = createToolServer({
     token: toolsToken,
     servers: {
@@ -605,6 +667,8 @@ async function boot() {
       timewarp_vault: { title: "Timewarp vault", instructions: vaultTools.specs()[0].description, specs: vaultTools.specs, call: vaultTools.call, readOnly: new Set(["list"]) },
       timewarp_automations: { title: "Timewarp automations", instructions: automationSpecs()[0].description, specs: automationSpecs, call: automationTools.call, readOnly: new Set(["list"]) },
       timewarp_chats: { title: "Timewarp chats", instructions: chatTools.specs()[0].description, specs: chatTools.specs, call: chatTools.call, readOnly: new Set(["search_conversations", "search_messages", "read_conversation"]) },
+      timewarp_team: { title: "Timewarp team", instructions: teamTools.specs()[0].description, specs: teamTools.specs, call: teamTools.call, readOnly: new Set(["list_agents"]) },
+      timewarp_app: { title: "Timewarp app", instructions: appTools.specs()[0].description, specs: appTools.specs, call: appTools.call, readOnly: new Set(["get_usage", "get_settings", "get_status"]) },
     },
     resolve: (threadId, rootThreadId) => {
       const conversationId = harness.conversationFor(threadId) || harness.conversationFor(rootThreadId);

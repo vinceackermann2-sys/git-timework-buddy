@@ -4,9 +4,9 @@
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const RESERVED = /^timewarp/i;
-// Timewarp's browser, vault, automation and chat tools reach agents as MCP servers
-// too (tool-server.cjs); they are part of the app, not servers to manage.
-const INTERNAL = new Set(["timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats"]);
+// Timewarp's browser, vault, automation, chat, team and app tools reach agents
+// as MCP servers too (tool-server.cjs); they are part of the app, not servers to manage.
+const INTERNAL = new Set(["timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats", "timewarp_team", "timewarp_app"]);
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
 // Plain HTTP is fine for a server on this computer or the local network, as

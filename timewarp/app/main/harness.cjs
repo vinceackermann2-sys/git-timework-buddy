@@ -11,6 +11,8 @@ const APPROVAL_METHODS = new Set([
   "item/tool/requestUserInput", "mcpServer/elicitation/request", "applyPatchApproval", "execCommandApproval",
 ]);
 const TITLE_LENGTH = 60;
+// A message another agent sent to this chat (team-tools.cjs), kept as its input.
+const AGENT_MESSAGE = /^<agent-message\b/;
 const fail = (status, message) => Object.assign(new Error(message), { status });
 
 // A chat's first title: the start of its first message without what isn't
@@ -79,6 +81,27 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   // reported nothing new (quietRun): a quiet run leaves the chat's read state
   // as it was. The last quiet turn ids are kept for isQuietRun after the turn ends.
   const runTurns = new Set(), quietTurns = new Set();
+  // Callers waiting for a chat's turn to end (waitForTurn): turn id -> Set of callbacks.
+  const turnWaiters = new Map();
+  const finishWaits = (turnId, outcome) => {
+    const waiting = turnWaiters.get(turnId);
+    if (!waiting) return;
+    turnWaiters.delete(turnId);
+    for (const done of waiting) done(outcome);
+  };
+  // Questions Timewarp itself asks the user in a chat (confirm), shown with
+  // Codex's approval requests: request id -> { resolve, timer, turnId }.
+  const confirmations = new Map();
+  const settleConfirmation = (id, answer) => {
+    const pending = approvals.get(id), local = confirmations.get(id);
+    if (!local) return false;
+    confirmations.delete(id);
+    approvals.delete(id);
+    clearTimeout(local.timer);
+    local.resolve(answer);
+    if (pending) notify("approval.resolved", { id, conversationId: pending.conversationId });
+    return true;
+  };
 
   const owner = () => { const value = userId(); if (!value) throw fail(401, "Sign in to Timewarp."); return value; };
   const ownedConversation = id => {
@@ -104,6 +127,8 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     dropSpares();
     for (const [conversationId] of active) emit(conversationId, "turn/aborted", { reason: "Codex stopped." });
     active.clear();
+    for (const turnId of [...turnWaiters.keys()]) finishWaits(turnId, { status: "aborted" });
+    for (const id of [...confirmations.keys()]) settleConfirmation(id, { decision: "cancel" });
     for (const [id, pending] of approvals) { approvals.delete(id); notify("approval.resolved", { id, conversationId: pending.conversationId }); }
   });
 
@@ -191,6 +216,9 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       runTurns.delete(params.turn.id);
       if (!quietTurns.has(params.turn.id)) store.conversations.update(conversationId, { read: false });
       tools?.finished?.(conversationId);
+      // A question Timewarp asked for this turn goes with it.
+      for (const [id, local] of confirmations) if (local.turnId === params.turn.id) settleConfirmation(id, { decision: "cancel" });
+      finishWaits(params.turn.id, { status: params.turn.status || "completed", error: params.turn.error || null });
     }
     // Interim notes ("commentary") show only while the agent works, as before;
     // the chat keeps its replies.
@@ -250,7 +278,8 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     for (const message of store.messages.list(conversation.id).filter(item => item.id !== exceptId && item.status !== "failed" && item.status !== "replaced").slice(-HISTORY_MESSAGES).reverse()) {
       if (size + message.text.length > HISTORY_CHARS) break;
       size += message.text.length;
-      const user = message.authorId === conversation.ownerId;
+      // A message another agent sent (team-tools.cjs) was this chat's input, as the user's are.
+      const user = message.authorId === conversation.ownerId || AGENT_MESSAGE.test(message.text);
       items.unshift({ type: "message", role: user ? "user" : "assistant", content: [{ type: user ? "input_text" : "output_text", text: message.text }] });
     }
     return items;
@@ -625,7 +654,10 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     // instructions in a note saying Timewarp started the turn) while the chat
     // keeps message.text; the chat's read state stays as it was, since the user
     // didn't write it.
-    async send(id, message, { steer: join = false, run = null } = {}) {
+    // author: the agent that sent the message from another chat
+    // (team-tools.cjs). The chat keeps it as that agent's, and its read state
+    // stays as it was, as for a run.
+    async send(id, message, { steer: join = false, run = null, author = null } = {}) {
       const conversation = ownedConversation(id);
       if (!join && active.has(id)) throw fail(409, "Wait for the current reply or stop it first.");
       // A reply still starting is waited for, so the message joins it. From
@@ -636,13 +668,13 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       // A retried message replaces the one that failed to send.
       const retried = message.retryOf ? store.messages.get(message.retryOf) : null;
       if (retried?.conversationId === id && retried.status === "failed") { store.messages.update(retried.id, { status: "replaced" }); dropFiles(id, retried.id); }
-      const userMessage = store.messages.append({ id: message.clientId || crypto.randomUUID(), conversationId: id, authorId: owner(), text: message.text || "" });
+      const userMessage = store.messages.append({ id: message.clientId || crypto.randomUUID(), conversationId: id, authorId: author || owner(), text: message.text || "" });
       if (!conversation.title) store.conversations.update(id, { title: titleFrom(message.text || attached.map(file => path.basename(file)).join(", ")) });
-      if (!run) store.conversations.update(id, { read: true });
+      if (!run && !author) store.conversations.update(id, { read: true });
       const running = active.get(id);
       if (running?.turnId) {
         // The user joined a run's turn: it's theirs now, and its reply counts.
-        if (!run) { runTurns.delete(running.turnId); quietTurns.delete(running.turnId); }
+        if (!run && !author) { runTurns.delete(running.turnId); quietTurns.delete(running.turnId); }
         try { return await steer(id, running, input, userMessage, message); }
         catch (error) {
           if (!turnEnded(error)) { undelivered(id, userMessage.id, message); throw error; }
@@ -665,6 +697,41 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       return true;
     },
     isQuietRun: turnId => quietTurns.has(turnId),
+    // The chat's turn in progress, { turnId, run } (run: an automation started
+    // it), or null. turnId is null while the reply is still starting.
+    activeTurn(id) {
+      const entry = active.get(id);
+      return entry ? { turnId: entry.turnId || null, run: !!entry.turnId && runTurns.has(entry.turnId) } : null;
+    },
+    // Resolves with { status, error } when the chat's turn ends, at once when
+    // it isn't running any more, or with { status: "timeout" }.
+    waitForTurn(id, turnId, timeoutMs = 5 * 60 * 1000) {
+      if (!turnId || active.get(id)?.turnId !== turnId) return Promise.resolve({ status: "ended" });
+      return new Promise(resolve => {
+        const done = outcome => { clearTimeout(timer); turnWaiters.get(turnId)?.delete(done); resolve(outcome); };
+        const timer = setTimeout(() => done({ status: "timeout" }), timeoutMs);
+        timer.unref?.();
+        if (!turnWaiters.has(turnId)) turnWaiters.set(turnId, new Set());
+        turnWaiters.get(turnId).add(done);
+      });
+    },
+    // A question Timewarp asks the user in the chat for one of its tools (a
+    // setting an agent wants to change, say), shown as a card beside Codex's
+    // approval requests. request: { kind, title, ... } for the card. Resolves
+    // with the user's answer ({ decision: "accept" | "decline" }), or with
+    // "timeout", or "cancel" when the turn that asked ends or Codex stops.
+    confirm(id, request, { timeoutMs = 10 * 60 * 1000 } = {}) {
+      ownedConversation(id);
+      const requestId = "timewarp-" + crypto.randomUUID();
+      return new Promise(resolve => {
+        const timer = setTimeout(() => settleConfirmation(requestId, { decision: "timeout" }), timeoutMs);
+        timer.unref?.();
+        confirmations.set(requestId, { resolve, timer, turnId: active.get(id)?.turnId || null });
+        const pending = { id: requestId, method: "timewarp/confirm", params: request, conversationId: id, requestedAt: Date.now() };
+        approvals.set(requestId, pending);
+        notify("approval.requested", pending);
+      });
+    },
     async interrupt(id) {
       ownedConversation(id);
       const turn = active.get(id);
@@ -688,6 +755,11 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       const pending = approvals.get(requestId);
       if (!pending) throw fail(404, "This request was already answered.");
       ownedConversation(pending.conversationId);
+      // Timewarp's own question: only its two answers count.
+      if (confirmations.has(requestId)) {
+        settleConfirmation(requestId, { decision: response?.decision === "accept" ? "accept" : "decline" });
+        return { answered: true };
+      }
       approvals.delete(requestId);
       client.respond(requestId, response);
       notify("approval.resolved", { id: requestId, conversationId: pending.conversationId });
@@ -698,7 +770,10 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     busy: () => active.size > 0,
     // The chat a Codex thread belongs to, including its workers' threads.
     conversationFor: threadId => conversationForThread(threadId),
-    reset() { active.clear(); approvals.clear(); loaded.clear(); threadOwner.clear(); notChats.clear(); workers.clear(); steered.clear(); dropSpares(); },
+    reset() {
+      for (const turnId of [...turnWaiters.keys()]) finishWaits(turnId, { status: "aborted" });
+      for (const id of [...confirmations.keys()]) settleConfirmation(id, { decision: "cancel" });
+      active.clear(); approvals.clear(); loaded.clear(); threadOwner.clear(); notChats.clear(); workers.clear(); steered.clear(); dropSpares(); },
   };
 }
 
@@ -707,4 +782,4 @@ function agentWorkspace(root, name, id) {
   return path.join(root, `${slug}-${id}`);
 }
 
-module.exports = { createHarness, agentWorkspace, titleFrom, APPROVAL_METHODS, ATTACHED };
+module.exports = { createHarness, agentWorkspace, titleFrom, APPROVAL_METHODS, ATTACHED, AGENT_MESSAGE };

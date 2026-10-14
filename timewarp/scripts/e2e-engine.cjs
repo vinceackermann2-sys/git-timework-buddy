@@ -578,6 +578,64 @@ async function main() {
       if (!state.tabs.some(tab => /\/form/.test(tab.url || ""))) throw new Error("The worker's tab isn't in the chat's browser.");
       return `a worker opened and read a page in the chat's browser and has ${value.browser} browser tools, the vault and connected apps`;
     },
+    // Agents working together (team-tools.cjs): a chat finds another agent,
+    // asks it something in a new chat and gets its answer back; the other
+    // chat keeps the question as the asking agent's, not the user's.
+    async teamAsk() {
+      const helper = await call("agents.create", { name: "Budget helper", instructions: "Keeps the travel budget." });
+      const id = await chat();
+      const result = await turn(id, script(`
+        const listed = JSON.parse(out(await tools.mcp__timewarp_team__list_agents({})));
+        const target = listed.agents.find(item => item.name === "Budget helper");
+        const answer = JSON.parse(out(await tools.mcp__timewarp_team__ask({ agentId: target.agentId, question: "What is the hotel budget?", timeoutSeconds: 120 })));
+        text(JSON.stringify({ agents: listed.agents.map(item => item.name), about: target.about, answer }));
+      `), { timeout: 180000 });
+      const value = json(result.reply);
+      if (!value.agents.includes("Budget helper") || value.about !== "Keeps the travel budget.") throw new Error("list_agents didn't show the helper: " + JSON.stringify(value));
+      if (value.answer.status !== "answered" || !/Preview reply/.test(value.answer.answer || "")) throw new Error("No answer came back: " + JSON.stringify(value.answer));
+      const other = await call("conversations.get", { id: value.answer.conversationId });
+      if (other.agentId !== helper.id) throw new Error("The question went to the wrong agent's chat.");
+      const asked = (await call("conversations.history", { id: other.id })).messages[0];
+      if (asked.authorId !== agent.id || !/^<agent-message\b/.test(asked.text)) throw new Error("The other chat didn't keep the question as the asking agent's.");
+      // The user's message that led to the question (here, the check's own message) goes with it.
+      if (!/<user-request at="[^"]+" source="user">Run this check\./.test(asked.text)) throw new Error("The user's request didn't go with the question.");
+      // A chat can't message itself.
+      const self = await turn(id, script(`text(out(await tools.mcp__timewarp_team__send_message({ conversationId: ${JSON.stringify(id)}, message: "Hi me" })));`));
+      if (!/That's this chat/.test(output(self.reply))) throw new Error("A chat could message itself: " + output(self.reply).slice(0, 200));
+      return "a chat found the helper agent, asked it in a new chat and got its answer; the helper's chat kept the question as the asking agent's, with the user's request";
+    },
+    // Timewarp itself for agents (app-tools.cjs): usage in credits, and a
+    // setting changes only after Allow on the card Timewarp shows.
+    async appSettings() {
+      const id = await chat();
+      const usage = await turn(id, script(`text(out(await tools.mcp__timewarp_app__get_usage({})));`));
+      if (/\$|USD|dollar/i.test(output(usage.reply))) throw new Error("Usage showed money: " + output(usage.reply).slice(0, 300));
+      const value = json(usage.reply);
+      if (value.credits?.unit !== "credits" || !Number.isFinite(value.credits.left)) throw new Error("Usage didn't show the credits: " + JSON.stringify(value).slice(0, 300));
+      const before = (await call("settings.get")).appearance?.scheme || "system", wanted = before === "dark" ? "light" : "dark";
+      const ask = script(`text(out(await tools.mcp__timewarp_app__change_settings({ theme: "${wanted}", reason: "Checking the settings card." })));`);
+      try {
+        // Don't allow: the card goes and nothing changes.
+        const declining = turn(id, ask, { approve: false, timeout: 60000 });
+        let card = null;
+        for (const deadline = Date.now() + 30000; !card && Date.now() < deadline; await pause(300)) card = (await call("conversations.status", { id })).approvals.find(item => item.method === "timewarp/confirm");
+        if (!card) throw new Error("No settings card was shown.");
+        const change = card.params.changes?.[0];
+        if (card.params.changes.length !== 1 || change.label !== "Theme" || change.to !== (wanted === "dark" ? "Dark" : "Light") || card.params.reason !== "Checking the settings card.") throw new Error("The card didn't show the change: " + JSON.stringify(card.params));
+        await call("approvals.respond", { id: card.id, response: { decision: "decline" } });
+        const declined = await declining;
+        if (((await call("settings.get")).appearance?.scheme || "system") !== before) throw new Error("The theme changed without Allow.");
+        if (!/nothing changed/.test(output(declined.reply))) throw new Error("The agent wasn't told nothing changed: " + output(declined.reply).slice(0, 200));
+        // Allow: the theme changes.
+        const allowed = await turn(id, ask);
+        if (!allowed.approvals.some(item => item.method === "timewarp/confirm")) throw new Error("Allow went without a card.");
+        if ((await call("settings.get")).appearance?.scheme !== wanted) throw new Error("The theme didn't change after Allow: " + output(allowed.reply).slice(0, 200));
+      } finally {
+        const appearance = (await call("settings.get")).appearance || {};
+        await call("settings.set", { key: "appearance", value: { ...appearance, scheme: before } });
+      }
+      return `usage read as ${value.credits.left} credits; the theme stayed after Don't allow on the card and changed to ${wanted} after Allow`;
+    },
     async connectorSignIn() {
       const slack = (await call("integrations.list", {})).items.find(item => /slack/i.test(item.displayName));
       if (!slack) throw new Error("The preview Slack app is missing.");
