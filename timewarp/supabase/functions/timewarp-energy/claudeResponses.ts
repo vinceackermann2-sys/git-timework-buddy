@@ -403,6 +403,31 @@ function providerError(status: number, message: string) {
 const withoutThinking = (messages: Message[]) => messages.map(message => message.role === 'assistant' ? { ...message, content: message.content.filter(block => !isThinking(block)) } : message)
   .filter(message => message.content.length);
 
+// A request's input tokens as Claude counts them (free of charge), with room
+// for the count being an estimate. Null when it can't be counted.
+async function countedInput(claude: Anthropic, params: Record<string, any>) {
+  const { max_tokens: _limit, metadata: _metadata, ...request } = params;
+  try {
+    const { input_tokens: tokens } = await claude.beta.messages.countTokens(request as any, { timeout: 10_000, maxRetries: 0 });
+    return Number.isSafeInteger(tokens) && tokens > 0 ? Math.ceil(tokens * 1.05) + 1024 : null;
+  } catch { return null; }
+}
+
+// The reservation's input ceiling counts the request's bytes, often several
+// times its tokens. With too little left for that, Claude's own count is
+// reserved instead (still priced as cache writes), so a small balance isn't
+// refused a call it can pay for. Calls with enough left never wait for a count.
+async function reserveClaude(admin: any, userId: string, billing: string, params: Record<string, any>, claude: Anthropic) {
+  try {
+    return await reserveAgentAi(admin, userId, billing, params, { outputTokens: params.max_tokens });
+  } catch (error) {
+    if ((error as any)?.status !== 402) throw error;
+    const inputTokens = await countedInput(claude, params);
+    if (!inputTokens) throw error;
+    return reserveAgentAi(admin, userId, billing, params, { inputTokens, outputTokens: params.max_tokens });
+  }
+}
+
 // Opens Claude's stream with a reservation for its worst-case cost. Fast mode
 // falls back to the standard speed when Anthropic can't serve it, at once
 // rather than after the SDK's retries, and thinking from another Anthropic
@@ -414,7 +439,7 @@ async function openClaude(admin: any, userId: string, body: any) {
   const [claude, userKey] = await Promise.all([anthropic(), accountKey(userId)]);
   let { params, tools } = claudeRequest(route, body, userKey);
   for (let attempt = 0; ; attempt++) {
-    const reservation = await reserveAgentAi(admin, userId, route.billing, params, { outputTokens: params.max_tokens });
+    const reservation = await reserveClaude(admin, userId, route.billing, params, claude);
     try {
       const stream = await claude.beta.messages.create({ ...params, stream: true } as any, { signal: AbortSignal.timeout(STREAM_LIMIT_MS), ...(route.fast ? { maxRetries: 0 } : {}) });
       return { stream: stream as unknown as AsyncIterable<any>, reservation, tools };

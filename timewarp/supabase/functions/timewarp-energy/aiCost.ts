@@ -43,7 +43,8 @@ const MODEL_RATES: Record<string, ModelRate> = {
 };
 
 // Cache reads as a share of the input rate, Fast included, for the models
-// whose cache use is priced (Claude's writes are 5-minute ones).
+// whose cache use is priced (Claude's writes are 5-minute ones). Claude's
+// shares were checked against Anthropic's pricing page on 2026-10-14.
 const CACHE_READ: Record<string, number> = {
   'openai/gpt-5.6-sol': 0.1,
   'openai/gpt-luna': 0.1,
@@ -53,7 +54,7 @@ const CACHE_READ: Record<string, number> = {
   'openai/gpt-6-luna': 0.1,
   'anthropic/claude-fable-5-1': 0.025,
   'anthropic/claude-opus-5-5': 0.05,
-  'anthropic/claude-sonnet-5-5': 0.1,
+  'anthropic/claude-sonnet-5-5': 0.05,
   'anthropic/claude-haiku-5-5': 0.1,
 };
 // GPT prompts over 272K tokens cost twice as much input and 1.5x output.

@@ -9,6 +9,12 @@ const path = require("node:path");
 const MAX_SNAPSHOT = 24000, MAX_TEXT = 20000, MAX_UPLOADS = 10;
 // The longest value the vault keeps (vault.cjs).
 const MAX_SECRET = 10000;
+// Characters a page can hide text in: the user sees nothing, but the model
+// reads it. Unicode tag characters, zero-width spaces and joiners that join
+// nothing, bidirectional overrides, and variation selectors beyond the one a
+// character takes. Joiners that shape emoji and scripts stay.
+const HIDDEN = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}​⁠-⁤﻿᠎‪-‮⁦-⁩]|(?<=[︀-️])[︀-️]+/gu;
+const unhidden = text => String(text).replace(HIDDEN, "");
 // Chooses a dropdown option by its text or value and tells the page.
 const SELECT_IN_PAGE = `function (wanted) {
   const select = this.tagName === "SELECT" ? this : this.closest("select") || this.querySelector("select");
@@ -358,8 +364,10 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
   // A field showing a short vault value (a PIN) the page copied in: values
   // under 6 characters aren't hidden in page text, as they'd hide ordinary words.
   const showsShortSecret = (conversationId, value) => [...(sensitive.get(conversationId) || [])].some(secret => secret.length >= 3 && secret.length < 6 && value.includes(secret));
+  // Hidden characters go first, so a vault value the page spelled out with
+  // them in between is hidden too.
   const redactResult = (conversationId, result) => !Array.isArray(result?.contentItems) ? result : {
-    ...result, contentItems: result.contentItems.map(item => item.type === "inputText" ? { ...item, text: redact(conversationId, item.text) } : item),
+    ...result, contentItems: result.contentItems.map(item => item.type === "inputText" ? { ...item, text: redact(conversationId, unhidden(item.text)) } : item),
   };
   async function cdp(contents, method, params = {}, session) {
     if (!contents.debugger.isAttached()) {
@@ -1010,4 +1018,4 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
   };
 }
 
-module.exports = { createBrowserTools, toolSpecs, patternFor, workspaceFiles, parseKey };
+module.exports = { createBrowserTools, toolSpecs, patternFor, workspaceFiles, parseKey, unhidden };

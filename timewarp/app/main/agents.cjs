@@ -4,6 +4,7 @@
 const crypto = require("node:crypto");
 const { execFile } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { agentWorkspace } = require("./harness.cjs");
 const { choices } = require("../../shared/mascots.cjs");
@@ -28,12 +29,27 @@ function workspaceInstructions(name, responsibilities = "") {
     ...(extra ? ["", extra] : []), "",
   ].join("\n");
 }
-const git = (cwd, args) => new Promise(resolve => execFile("git", args, { cwd, windowsHide: true, timeout: 15000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, error => resolve(!error)));
-// Best effort: without Git on the computer the workspace is still a plain folder.
+// Timewarp commits from its own process, outside the command sandbox, in a
+// folder the agent writes to. Nothing the agent could have put in the
+// repository runs there: no hooks, file system monitor or signing program.
+const SAFE_GIT = ["-c", `core.hooksPath=${os.devNull}`, "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false"];
+const git = (cwd, args) => new Promise(resolve => execFile("git", [...SAFE_GIT, ...args], { cwd, windowsHide: true, timeout: 15000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, (error, stdout) => resolve({ ok: !error, code: error ? error.code : 0, stdout: String(stdout || "") })));
+// Filter commands defined by the repository's own config (or a file it
+// includes), which Git would run on add. Git exits with 1 when there are none;
+// any other failure (an old Git) counts as having some.
+async function ownFilters(workspace) {
+  const found = await git(workspace, ["config", "--show-scope", "--get-regexp", "^filter\\."]);
+  return found.ok ? found.stdout.split("\n").some(line => /^(local|worktree)\t/.test(line)) : found.code !== 1;
+}
+// Best effort: without Git on the computer the workspace is still a plain
+// folder. A workspace whose .git isn't its own folder, or that defines filter
+// commands, isn't committed.
 async function commitWorkspace(workspace, message) {
-  if (!fs.existsSync(path.join(workspace, ".git")) && !(await git(workspace, ["init", "-q"]))) return false;
+  const dotGit = path.join(workspace, ".git");
+  if (!fs.existsSync(dotGit) && !(await git(workspace, ["init", "-q"])).ok) return false;
+  if (!fs.statSync(dotGit).isDirectory() || await ownFilters(workspace)) return false;
   await git(workspace, ["add", "-A"]);
-  return git(workspace, ["-c", "user.name=Timewarp", "-c", "user.email=agents@timewarp.local", "commit", "-q", "-m", message]);
+  return (await git(workspace, ["-c", "user.name=Timewarp", "-c", "user.email=agents@timewarp.local", "commit", "-q", "-m", message])).ok;
 }
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
