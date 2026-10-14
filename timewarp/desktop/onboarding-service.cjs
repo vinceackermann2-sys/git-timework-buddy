@@ -3,7 +3,7 @@ const crypto=require('node:crypto');
 const {readOwners}=require('./onboarding.cjs');
 const {presets,hexToAccent}=require('../shared/appearance.cjs');
 const steps=['agent','user','knowledge','theme','reaction','plans','finish'];
-function createOnboardingService({storage,userId,native,browsers,cloud,updateProfile,rememberName,openPayment,chooseCursorRoot,importPasswords=null}){
+function createOnboardingService({storage,userId,native,browsers,cloud,updateProfile,rememberName,openPayment,chooseCursorRoot,importPasswords=null,assistantImport=null}){
   let pending=Promise.resolve();
   const owner=()=>{const id=userId();if(!id)throw Error('Sign in to Timewarp.');return id};
   const check=id=>{if(id!==userId())throw Error('Your account changed. Reopen setup to continue.')};
@@ -13,7 +13,7 @@ function createOnboardingService({storage,userId,native,browsers,cloud,updatePro
   const name=value=>{if(typeof value!=='string'||!value.trim()||value.trim().length>80||/[\r\n\x00-\x1f]/.test(value))throw Error('Enter a name between 1 and 80 characters.');return value.trim()};
   const billing=input=>cloud('/billing/service',input);
   const profileId=source=>crypto.createHash('sha256').update(source.browserId+'\0'+source.profilePath).digest('hex');
-  async function read(){const id=owner(),saved=draft(id),settings=await native().settings.get();check(id);return {...saved,cursorRoot:undefined,completed:!!record(id).done,step:steps.includes(saved.step)?saved.step:'agent',presets,appearance:settings.appearance};}
+  async function read(){const id=owner(),saved=draft(id),settings=await native().settings.get();check(id);return {...saved,cursorRoot:undefined,assistantImport:!!assistantImport,completed:!!record(id).done,step:steps.includes(saved.step)?saved.step:'agent',presets,appearance:settings.appearance};}
   async function detect(){
     const id=owner(),[profiles,imports]=await Promise.all([browsers().profileManager.detect(),native().caller().codex.setupImport.detect()]);check(id);
     return {profiles:profiles.profiles.map(item=>({id:profileId(item.source),name:item.label||item.name||item.source.browserId,browser:item.source.browserId})),items:imports.items.filter(item=>['memory','skills'].includes(item.category)),errors:[...(profiles.errors||[]).map(item=>item.message),...(imports.errors||[]).map(item=>item.message)]};
@@ -29,6 +29,13 @@ function createOnboardingService({storage,userId,native,browsers,cloud,updatePro
     }else if(action==='user'){
       const userName=name(input.name);await updateProfile(userName);check(id);await rememberName(userName,draft(id).agentName);save(id,{userName,step:'knowledge'});
     }else if(action==='import-passwords'){if(!importPasswords)throw Error('Password import is unavailable here.');const result=await importPasswords();check(id);return result;
+    }else if(action==='assistant-prompt'||action==='assistant-preview'||action==='assistant-import'){
+      // An online assistant's memory, projects and scheduled tasks, pasted as its reply to a prompt (app/main/assistant-import.cjs).
+      if(!assistantImport)throw Error('Importing from an assistant is unavailable here.');
+      if(action==='assistant-prompt')return assistantImport.prompt();
+      if(action==='assistant-preview')return assistantImport.preview(input.text);
+      const result=await assistantImport.apply({source:input.source,text:input.text,memory:input.memory!==false,projects:input.projects,tasks:input.tasks,agentId:draft(id).agentId||null});check(id);
+      save(id,{imports:{...draft(id).imports,['assistant:'+input.source]:{kind:'assistant',at:Date.now()}}});return result;
     }else if(action==='cursor-folder'){
       const root=await chooseCursorRoot();check(id);if(root)save(id,{cursorRoot:root});return detect();
     }else if(action==='import'){

@@ -1855,3 +1855,12 @@ button.tw-reply-quote:hover { background: color-mix(in srgb, var(--surface) 80%,
 @keyframes tw-first-steps-in { from { opacity: 0; transform: translateY(4px); } }
 @media (max-width: 600px) { .tw-first-steps-prompts { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .tw-first-steps-spot, .tw-first-steps-card { transition: none; } .tw-first-steps-dim, .tw-first-steps-spot, .tw-first-steps-swap { animation: none; } }
+/* Memory from an online assistant, brought with a prompt (Knowledge.jsx). */
+.tw-assistant-import section { display: grid; gap: 6px; }
+.tw-assistant-import section > strong { font-weight: 500; font-size: 14px; }
+.tw-assistant-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tw-assistant-prompt { font-size: 13px; color: var(--muted); }
+.tw-assistant-prompt summary { cursor: pointer; width: fit-content; }
+.tw-assistant-prompt pre { margin: 6px 0 0; padding: 10px 12px; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 0.67px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); font: 12px/1.5 var(--font-mono, ui-monospace, Consolas, monospace); }
+.tw-assistant-reply { min-height: 140px; font: 12px/1.5 var(--font-mono, ui-monospace, Consolas, monospace); }
+.tw-assistant-import .tw-check em { font-style: normal; color: var(--muted); }

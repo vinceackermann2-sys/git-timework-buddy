@@ -12,7 +12,7 @@ const { bindOnboardingSettings, readOwners } = require("../../desktop/onboarding
 const { createOnboardingService } = require("../../desktop/onboarding-service.cjs");
 const { rememberName } = require("../../desktop/setup-imports.cjs");
 
-function createOnboarding({ profile, store, services, agents, knowledge, browserImport, importPasswords = null, dialog, shell, defaultAppearance, encryption = safeStorage, retryMs = 1000, askMs = 15000 }) {
+function createOnboarding({ profile, store, services, agents, knowledge, browserImport, assistantImport = null, importPasswords = null, dialog, shell, defaultAppearance, encryption = safeStorage, retryMs = 1000, askMs = 15000 }) {
   const storage = protectedStore(path.join(profile, "onboarding.bin"), encryption);
   const userId = () => services.auth.userId();
   const settings = {
@@ -85,7 +85,7 @@ function createOnboarding({ profile, store, services, agents, knowledge, browser
     storage, userId, native: () => native, browsers: () => browserImport, cloud: services.cloudJson,
     updateProfile: async name => { await services.accountRpc("product.profile.update", { name }); await services.auth.refreshUser(); },
     rememberName: (name, agent) => rememberName(knowledge.memoriesRoot, name, agent),
-    openPayment: url => shell.openExternal(url), chooseCursorRoot, importPasswords,
+    openPayment: url => shell.openExternal(url), chooseCursorRoot, importPasswords, assistantImport,
   });
   return {
     service: {

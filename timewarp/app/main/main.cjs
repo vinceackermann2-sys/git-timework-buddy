@@ -858,8 +858,11 @@ async function boot() {
   const defaultAppearance = () => ({ scheme: "system", accent: defaultAccent, radiance: 0.5, texture: { type: "dots", step: 0 } });
   // Browser profile import arrives with the profile importer.
   const browserImport = require("./browser-import.cjs").createBrowserImport({ store });
+  // Memory, projects and scheduled tasks pasted from ChatGPT, Claude and the
+  // like, in setup and on the Memories page.
+  const assistantImport = require("./assistant-import.cjs").createAssistantImport({ knowledge, agents, automations });
   // Setup can import saved passwords the same way Settings → Vault does.
-  onboarding = createOnboarding({ profile, store, services, agents, knowledge, browserImport, importPasswords: () => methods["vault.importPasswords"](), dialog, shell, defaultAppearance });
+  onboarding = createOnboarding({ profile, store, services, agents, knowledge, browserImport, assistantImport, importPasswords: () => methods["vault.importPasswords"](), dialog, shell, defaultAppearance });
 
   // Restarting into a downloaded update asks first, from the notification or
   // the Update button. Agents still working are mentioned, so a restart doesn't
@@ -900,7 +903,7 @@ async function boot() {
   const shares = require("./shares.cjs").createShares({ store, agents, harness, automations, accountRpc: (rpc, input) => services.accountRpc(rpc, input), userId: () => userId() });
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates, shares,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, assistantImport, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates, shares,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();

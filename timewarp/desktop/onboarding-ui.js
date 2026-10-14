@@ -11,10 +11,12 @@
     const content=el('div',null,'tw-journey-content'),error=el('p',null,'tw-journey-error');error.setAttribute('role','alert');view.append(content,error);
     let state={},busy=false,detection=null,detecting=false,disposed=false,typing=null,poll=null,frame=null,epoch=0,planAudience='individual';
     let security=null,securityRow=null,securityLoading=false,securityPending=false,securityStarted=false,securityError=null;
+    let paste=null,pastePrompt=null,pasteNotice='',pasteTimer=null;
+    const ASSISTANTS={chatgpt:'ChatGPT',claude:'Claude',gemini:'Gemini',copilot:'Copilot',cursor:'Cursor',other:'Other'};
     const spoken=new Set();
     const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
     const icon=name=>{const img=el('img');img.src='./onboarding-icons/'+name+'.svg';img.alt='';img.className='tw-service-icon';return img;};
-    const cleanup=()=>{disposed=true;clearInterval(typing);clearTimeout(poll);cancelAnimationFrame(frame);observer.disconnect();window.removeEventListener('focus',focus);window.removeEventListener('timewarp:organization-ready',load)};
+    const cleanup=()=>{disposed=true;clearInterval(typing);clearTimeout(poll);clearTimeout(pasteTimer);cancelAnimationFrame(frame);observer.disconnect();window.removeEventListener('focus',focus);window.removeEventListener('timewarp:organization-ready',load)};
     const observer=new MutationObserver(()=>{if(!host.isConnected)cleanup()});observer.observe(document.body,{childList:true,subtree:true});
     function button(label,action,kind='primary'){const node=el('button',label,'tw-journey-button '+kind);node.type='button';node.onclick=()=>void run(action);return node;}
     async function run(action){if(busy||disposed)return;busy=true;error.textContent='';view.setAttribute('aria-busy','true');view.querySelectorAll('button,input').forEach(node=>node.disabled=true);try{await action()}catch(failure){error.textContent=failure.message||'Something went wrong. Try again.';}finally{busy=false;view.removeAttribute('aria-busy');view.querySelectorAll('button,input').forEach(node=>node.disabled=false);}}
@@ -70,13 +72,68 @@
       if(!securityStarted&&['notConfigured','updateRequired'].includes(security.status)){securityStarted=true;setUpSecurity(false);}
     }
     function setUpSecurity(retry){securityPending=true;securityError=null;paintSecurity();request('sandboxSetup',{retry}).then(data=>{security=data},failure=>{securityError=failure.message||'Windows security setup failed.'}).finally(()=>{securityPending=false;paintSecurity()});}
+    // Online assistants keep their memory on their servers: the user asks theirs
+    // with Timewarp's prompt and pastes the reply (app/main/assistant-import.cjs).
+    function openPaste(source){paste={source,text:'',preview:null,previewText:null,problem:'',picked:null,slot:null};pasteNotice='';if(!pastePrompt)request('onboardingAction',{action:'assistant-prompt'}).then(data=>{pastePrompt=data;if(paste&&!disposed)render()}).catch(()=>{});render();}
+    async function copyPrompt(){if(!pastePrompt)pastePrompt=await request('onboardingAction',{action:'assistant-prompt'});await navigator.clipboard.writeText(pastePrompt.text);}
+    function renderPaste(){
+      const panel=el('section',null,'tw-journey-paste');content.append(panel);paintPaste(panel);
+      const row=el('footer',null,'tw-journey-footer');row.append(button('Back',async()=>{paste=null;render()},'text'),button('Import',importPaste));content.append(row);
+    }
+    function paintPaste(panel){
+      const name=ASSISTANTS[paste.source],who=paste.source==='other'?'your assistant':name,site=pastePrompt?.sources?.find(item=>item.id===paste.source)?.url;
+      const sources=el('div',null,'tw-audiences');sources.setAttribute('role','group');sources.setAttribute('aria-label','Assistant');
+      for(const [id,label] of Object.entries(ASSISTANTS)){const choice=button(label,async()=>{paste.source=id;paintPaste(panel)},'secondary');choice.setAttribute('aria-pressed',String(paste.source===id));sources.append(choice);}
+      const ask=el('div',null,'tw-paste-step'),actions=el('div',null,'tw-paste-actions'),copied=el('span','','tw-journey-found');
+      actions.append(button('Copy prompt',async()=>{await copyPrompt();copied.textContent=paste.source==='cursor'?'Copied. Send it in Cursor’s chat.':'Copied. Send it in a new chat.';}));
+      if(site)actions.append(button('Open '+name+' ↗',async()=>{await copyPrompt();await request('openLink',{url:site});copied.textContent='Prompt copied. Paste it into a new chat.';},'secondary'));
+      actions.append(copied);
+      const shown=el('details',null,'tw-paste-prompt');shown.append(el('summary','See the prompt'),el('pre',pastePrompt?.text||'Loading…'));
+      ask.append(el('h2','1. Ask '+who+' what it knows about you'),el('p','The prompt asks for your memory, instructions, projects and scheduled tasks, written so Timewarp can read them.','tw-journey-card-copy'),actions,shown);
+      const reply=el('div',null,'tw-paste-step'),area=el('textarea');area.value=paste.text;area.rows=7;area.spellcheck=false;area.placeholder=paste.source==='other'?'Paste the reply here':'Paste '+name+'’s reply here';area.setAttribute('aria-label','The assistant’s reply');area.oninput=()=>{paste.text=area.value;clearTimeout(pasteTimer);const mine=paste;pasteTimer=setTimeout(()=>void readPaste(mine),300);};
+      reply.append(el('h2','2. Paste its reply'),area);
+      paste.slot=el('div',null,'tw-paste-step');panel.replaceChildren(sources,ask,reply,paste.slot);paintPreview();
+    }
+    async function readPaste(mine){
+      const text=mine.text;if(paste!==mine||disposed)return;
+      if(!text.trim()){mine.preview=null;mine.previewText=null;mine.problem='';paintPreview();return;}
+      try{const found=await request('onboardingAction',{action:'assistant-preview',text});if(paste!==mine||mine.text!==text)return;mine.preview=found;mine.previewText=text;mine.problem='';mine.picked={memory:true,projects:new Set(found.projects.filter(item=>!item.exists).map(item=>item.index)),tasks:new Set(found.tasks.filter(item=>!item.exists).map(item=>item.index))};}
+      catch(failure){if(paste!==mine||mine.text!==text)return;mine.preview=null;mine.previewText=null;mine.problem=failure.message;}
+      paintPreview();
+    }
+    function paintPreview(){
+      const slot=paste?.slot;if(!slot)return;slot.replaceChildren();const found=paste.preview;
+      if(paste.problem)slot.append(el('p',paste.problem,'tw-paste-problem'));if(!found)return;
+      const list=el('div',null,'tw-journey-selections tw-paste-list'),taken=[];
+      const option=(label,detail,checked,toggle)=>{const row=el('label'),check=el('input'),text=el('span');check.type='checkbox';check.checked=checked;check.onchange=()=>toggle(check.checked);text.append(el('strong',label),el('small',detail?' · '+detail:''));row.append(check,text);list.append(row);};
+      if(found.memory||found.instructions)option('Memory',[found.memory&&found.memory.items+' item'+(found.memory.items===1?'':'s'),found.instructions&&'how you like replies'].filter(Boolean).join(', '),paste.picked.memory,on=>paste.picked.memory=on);
+      for(const project of found.projects)if(project.exists)taken.push(project.name);else option('Agent: '+project.name,'from a project',paste.picked.projects.has(project.index),on=>on?paste.picked.projects.add(project.index):paste.picked.projects.delete(project.index));
+      for(const task of found.tasks)if(task.exists)taken.push(task.name);else option('Automation: '+task.name,task.schedule+(task.unclear?' · check the time':''),paste.picked.tasks.has(task.index),on=>on?paste.picked.tasks.add(task.index):paste.picked.tasks.delete(task.index));
+      slot.append(el('h2','3. Choose what to bring'));
+      if(list.children.length)slot.append(list);else slot.append(el('p',taken.length?'Everything in this reply is already in Timewarp.':'Nothing to bring was found. Paste the whole code block from the reply.','tw-journey-card-copy'));
+      if(taken.length&&list.children.length)slot.append(el('p','Already in Timewarp: '+taken.join(', ')+'.','tw-journey-card-copy'));
+      if(found.tasks.some(task=>!task.exists))slot.append(el('p','Automations arrive turned off so nothing runs twice. Turn them on in Automations when you’re ready.','tw-journey-card-copy'));
+    }
+    async function importPaste(){
+      if(!paste?.text.trim())throw Error('Paste the assistant’s reply first.');
+      // A reply pasted a moment ago is read first, so the user sees what comes in.
+      if(paste.previewText!==paste.text){clearTimeout(pasteTimer);await readPaste(paste);return;}
+      const found=paste.preview,memory=!!(paste.picked.memory&&(found.memory||found.instructions)),projects=[...paste.picked.projects],tasks=[...paste.picked.tasks];
+      if(!memory&&!projects.length&&!tasks.length)throw Error('Choose something to bring.');
+      const result=await request('onboardingAction',{action:'assistant-import',source:paste.source,text:paste.text,memory,projects,tasks});
+      const count=(n,word)=>n+' '+word+(n===1?'':'s'),parts=[result.notes&&'memory',result.agents.length&&count(result.agents.length,'agent'),result.automations.length&&count(result.automations.length,'automation')].filter(Boolean);
+      pasteNotice=(parts.length?'Brought in '+parts.join(', ').replace(/, ([^,]*)$/,' and $1')+(paste.source==='other'?'':' from '+ASSISTANTS[paste.source])+'.':'Nothing new to bring.')+(result.automations.length?' Automations are off until you turn them on.':'')+(result.skipped.length?' Already in Timewarp: '+result.skipped.join(', ')+'.':'');
+      paste=null;state=await request('onboardingState');render();
+    }
     function renderKnowledge(){
       renderSecurity();
+      if(paste){renderPaste();return;}
       const list=el('div',null,'tw-journey-import-grid');content.append(list);const note=el('p','Selected browser sessions and saved logins are copied into Timewarp on this device. Memory and skills stay local.','tw-journey-fineprint');content.append(note);
       footer('user',button(Object.keys(state.imports||{}).length?'Continue →':'Skip for now →',()=>advance('knowledge-done')));
       if(!detection){list.append(el('p','Looking for profiles and local knowledge…','tw-journey-subtitle'));if(!detecting){detecting=true;const version=epoch;request('onboardingDetect').then(data=>{detection=data;if(!disposed&&version===epoch)render()}).catch(failure=>{if(version===epoch){list.replaceChildren(el('p',failure.message),button('Try again',async()=>{detection=await request('onboardingDetect');render()},'secondary'));}}).finally(()=>detecting=false);}return;}
       for(const group of [{id:'browser',name:'Browser profiles',mark:'↗',description:'Use your Chrome and Edge profiles in Timewarp’s browser.'},{id:'codex',name:'ChatGPT / Codex',mark:'✳',description:'Local instructions, memories and skills.'},{id:'claude',name:'Claude',mark:'✦',description:'Bring your local Claude knowledge.'},{id:'cursor',name:'Cursor',mark:'⌘',description:'Rules and skills from your computer.'}]){
         const card=el('section',null,'tw-journey-import-card'),head=el('div',null,'tw-journey-card-head');head.append(icon(group.id==='browser'?'browser':group.id==='codex'?'chatgpt':group.id),el('h2',group.name));card.append(head,el('p',group.description,'tw-journey-card-copy'));
+        const online=state.assistantImport?{codex:'chatgpt',claude:'claude',cursor:'cursor'}[group.id]:null;
         const items=group.id==='browser'?detection.profiles:(detection.items||[]).filter(item=>group.id==='codex'?item.source==='codex-chatgpt':group.id==='claude'?item.source.startsWith('claude'):item.source==='cursor');
         const selections=el('div',null,'tw-journey-selections');
         for(const item of items){const names=group.id==='browser'?[item.name]:item.names;for(const name of names){const row=el('label'),check=el('input');check.type='checkbox';check.checked=true;check.dataset.id=item.id;check.dataset.name=name;const label=group.id==='browser'?item.name:name;row.append(check);if(group.id==='browser'){const browser=item.browser.toLowerCase();row.append(icon(['edge','firefox','safari','brave','arc','opera','vivaldi','chromium','chrome'].find(name=>browser.includes(name))||'browser'));}row.append(el('span',label));selections.append(row);}}
@@ -88,9 +145,15 @@
           card.append(el('p','Sign in once in Timewarp’s browser and it stays signed in. You can also bring saved passwords from Chrome, Edge, Safari or a password manager.','tw-journey-empty'));
           const status=el('p','','tw-journey-found');
           card.append(button('Import saved passwords',async()=>{try{const result=await request('onboardingAction',{action:'import-passwords'});if(!result?.cancelled)status.textContent='Imported '+result.imported+' sign-in'+(result.imported===1?'':'s')+' into the Vault. Delete the exported file now; it isn’t encrypted.';}catch(failure){status.textContent=failure.message||'The passwords couldn’t be imported.';}},'secondary'),status);
+        }else if(online){
+          // Nothing on this computer: what the assistant knows, through a prompt
+          // (ChatGPT and Claude on the web, Cursor in its own chat).
+          const brought=state.imports?.['assistant:'+online],where={chatgpt:'chatgpt.com',claude:'claude.ai',cursor:'Cursor’s chat'}[online],what=online==='cursor'?'rules and memories':'memory, projects and scheduled tasks';
+          card.append(el('p',brought?'Brought in from '+where+'. You can bring updates any time.':'Nothing on this computer. Bring your '+what+' from '+where+' with a prompt instead.','tw-journey-empty'),button(brought?'Bring updates':'Bring from '+ASSISTANTS[online],async()=>openPaste(online),'secondary'));
         }else card.append(el('p',group.id==='codex'?'No local setup found. Online ChatGPT memories aren’t stored on this computer.':'No local setup found.','tw-journey-empty'));
         if(group.id==='cursor')card.append(button('Choose a Cursor project',async()=>{detection=await request('onboardingAction',{action:'cursor-folder'});render()},'text'));list.append(card);
       }
+      if(state.assistantImport){const other=el('p',null,'tw-journey-other');other.append(el('span','Use Gemini, Copilot or another assistant? '),button('Bring it with a prompt →',async()=>openPaste('gemini'),'text'));list.after(other);if(pasteNotice)list.after(el('p',pasteNotice,'tw-journey-notice'));}
       if(detection.errors?.length)error.textContent=detection.errors.join(' ');
     }
     function renderPlans(){const audiences=el('div',null,'tw-audiences');audiences.setAttribute('role','group');audiences.setAttribute('aria-label','Plan type');for(const type of ['individual','enterprise']){const choice=button(type==='individual'?'Individual':'Enterprise',async()=>{planAudience=type;render()},'secondary');choice.setAttribute('aria-pressed',String(planAudience===type));audiences.append(choice);}content.append(audiences);const slot=el('div',null,'tw-journey-plan-grid');content.append(slot);footer('theme');const version=epoch;

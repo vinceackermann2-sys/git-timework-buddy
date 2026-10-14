@@ -69,7 +69,7 @@ function fillSignIn(username, password, origin) {
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null, updates = null, shares = null }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, assistantImport = null, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null, updates = null, shares = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // A chat's browser, or the tabs of First steps' browser step, which belong to no chat.
   const browserOf = conversationId => { if (conversationId !== FIRST_STEPS_BROWSER) harness.conversations.get(conversationId); };
@@ -398,6 +398,15 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "memory.removeImport": ({ path: file }) => { signedIn(); return knowledge.removeImport(file); },
     "memory.openFolder": async () => { signedIn(); fs.mkdirSync(knowledge.memoriesRoot, { recursive: true }); const error = await shell.openPath(knowledge.memoriesRoot); if (error) throw fail(500, error); return { opened: true }; },
     "knowledge.detect": () => { signedIn(); return knowledge.detect(); },
+    // What ChatGPT, Claude and the like know about the user, from a reply to
+    // the prompt Timewarp gives (assistant-import.cjs).
+    "assistantImport.prompt": () => { signedIn(); if (!assistantImport) throw fail(404, "Importing from an assistant is unavailable."); return assistantImport.prompt(); },
+    "assistantImport.preview": ({ text: reply } = {}) => { signedIn(); if (!assistantImport) throw fail(404, "Importing from an assistant is unavailable."); return assistantImport.preview(reply); },
+    "assistantImport.apply": ({ source, text: reply, memory, projects, tasks, agentId } = {}) => {
+      signedIn();
+      if (!assistantImport) throw fail(404, "Importing from an assistant is unavailable.");
+      return assistantImport.apply({ source: text(source, 20), text: reply, memory: memory !== false, projects, tasks, agentId: typeof agentId === "string" ? agentId : null });
+    },
     // Memory files and skills are copied; MCP servers are added to the
     // agents' Codex settings.
     "knowledge.import": async ({ items }) => {
