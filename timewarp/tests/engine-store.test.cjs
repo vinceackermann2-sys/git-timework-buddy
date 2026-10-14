@@ -240,3 +240,17 @@ test("turn usage is the growth of the thread's totals", t => {
   store.turnUsage.record(chat.id, "thread", "t2", total(400, 50));
   assert.deepEqual(store.turnUsage.list(chat.id).map(row => [row.turnId, row.input, row.output]), [["t1", 150, 20], ["t2", 250, 30]]);
 });
+
+test("an agent's id can't take its workspace outside the agents folder", async t => {
+  const { root, store } = tempStore(t);
+  const agents = createAgents({ store, root: path.join(root, "agents"), userId: () => "u1" });
+  for (const id of ["x/../../outside", "..\..\outside", "../outside", "a.b", "", "/abs"]) {
+    assert.throws(() => agents.create({ id, name: "Restored" }), error => error.status === 400, JSON.stringify(id));
+  }
+  assert.equal(fs.existsSync(path.join(root, "outside")), false);
+  for (const id of ["00000000-0000-4000-8000-000000000001", "main_assistant", "agent-7"]) {
+    const agent = agents.create({ id, name: "Restored" });
+    assert.equal(path.dirname(agent.workspace), path.join(root, "agents"));
+  }
+  await agents.settled();
+});

@@ -12,7 +12,7 @@ import { accountText, avatarSrc, call, errorText, initials } from "./api.js";
 import { Dialog, Menu, useToast } from "./components/common.jsx";
 import { AppIcon } from "./components/Composer.jsx";
 import { useDictation } from "./dictation.js";
-import { baseName, draftMessage, extensionOf, fileKind, resolveLink, selectAnswer, splitAddresses } from "./cards.mjs";
+import { baseName, draftMessage, extensionOf, fileKind, mcpServerName, resolveLink, selectAnswer, splitAddresses } from "./cards.mjs";
 
 const PdfPreview = lazy(() => import("./previews.jsx").then(module => ({ default: module.PdfPreview })));
 const SpreadsheetPreview = lazy(() => import("./previews.jsx").then(module => ({ default: module.SpreadsheetPreview })));
@@ -358,15 +358,6 @@ function ConnectCard({ card }) {
 
 // ── <widget-mcp-connection> ────────────────────────────────────────────────
 const sameUrl = (a, b) => { try { return new URL(a).href.replace(/\/$/, "") === new URL(b).href.replace(/\/$/, ""); } catch { return false; } };
-function serverName(url, taken) {
-  const parts = host(url).toLowerCase().split(".").filter(Boolean);
-  let base = parts.length > 2 && /^(mcp|api|app|server|www)$/.test(parts[0]) ? parts[1] : parts.length >= 2 ? parts[parts.length - 2] : parts[0] || "server";
-  base = base.replace(/[^a-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 34) || "server";
-  if (/^timewarp/.test(base)) base = "mcp-" + base;
-  let name = base, count = 2;
-  while (taken.has(name)) name = `${base}-${count++}`;
-  return name;
-}
 function McpCard({ card }) {
   const { chat, canSend, save, send } = useCard(card);
   const url = httpsUrl(card.attrs.url);
@@ -397,7 +388,7 @@ function McpCard({ card }) {
     if (!servers || server) return;
     setBusy(true); setError("");
     try {
-      const added = serverName(url, new Set(servers.map(item => item.name)));
+      const added = mcpServerName(url, new Set(servers.map(item => item.name)));
       const list = await call("mcp.add", { name: added, transport: "http", url });
       setServers(list);
       const entry = list.find(item => item.name === added);

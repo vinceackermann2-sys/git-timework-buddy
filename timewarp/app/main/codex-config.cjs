@@ -10,6 +10,9 @@
 // Also off, as before: the tool that asks for extra permissions mid-turn
 // (approval reviews cover that), fan-out of one task to many workers, and the
 // free-form patch tool (where the Codex version still has those switches).
+// Commands the agent runs don't get Timewarp's own tokens (TIMEWARP_*): Codex
+// reads them for the model bridge and tool servers, but a sandboxed command
+// holding them could call those servers past the chat and its approvals.
 const CODEX_FEATURES = [
   "features.apps=false", "features.tool_suggest=false", "features.remote_plugin=false", "features.goals=false",
   "features.browser_use=false", "features.browser_use_external=false", "features.in_app_browser=false", "features.computer_use=false",
@@ -17,6 +20,7 @@ const CODEX_FEATURES = [
   "features.request_permissions_tool=false", "features.enable_fanout=false", "features.apply_patch_freeform=false",
   "features.multi_agent_v2.max_concurrent_threads_per_session=4", "features.multi_agent_v2.expose_spawn_agent_model_overrides=false",
   "agents.max_depth=1",
+  'shell_environment_policy.exclude=["TIMEWARP_*"]',
 ];
 
 // On Windows, commands run in Windows' own app container sandbox (MXC)

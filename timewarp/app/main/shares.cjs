@@ -22,6 +22,26 @@ const SEGMENT = /^[\w][\w .-]{0,99}$/;
 const bytes = value => Buffer.byteLength(JSON.stringify(value));
 const text = (value, max) => typeof value === "string" ? value.slice(0, max) : "";
 const preview = value => String(value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+const object = value => value && typeof value === "object" && !Array.isArray(value) ? value : null;
+const count = value => Number.isSafeInteger(value) && value > 0 ? value : 0;
+const person = value => object(value) ? { ...value, name: text(value.name, 200), email: text(value.email, 320) } : null;
+// Waiting shares as the cloud lists them, kept to the shapes the accept dialog
+// and Settings show. The summary is what the sender's app wrote, so a
+// malformed one must not break the window that offers the share.
+function listed(shares) {
+  return (Array.isArray(shares) ? shares : []).filter(share => object(share) && UUID.test(String(share.id)) && KINDS.has(share.kind)).map(share => {
+    const summary = object(share.summary) || {}, schedule = object(summary.schedule);
+    return {
+      ...share, title: text(share.title, 200), organizationName: text(share.organizationName, 200), sender: person(share.sender), recipient: person(share.recipient),
+      summary: {
+        messages: count(summary.messages), omitted: count(summary.omitted), agentName: text(summary.agentName, 200) || null,
+        mascot: /^(orbit|nova|cosmo)$/.test(summary.mascot) ? summary.mascot : null, description: text(summary.description, 200), preview: text(summary.preview, 200),
+        workflows: (Array.isArray(summary.workflows) ? summary.workflows : []).filter(name => typeof name === "string").slice(0, MAX_WORKFLOWS).map(name => name.slice(0, 100)),
+        schedule: schedule ? { ...schedule, days: Array.isArray(schedule.days) ? schedule.days.filter(Number.isInteger) : [] } : null,
+      },
+    };
+  });
+}
 
 function createShares({ store, agents, harness, automations, accountRpc: cloudRpc, userId }) {
   const owner = () => { const value = userId(); if (!value) throw fail(401, "Sign in to Timewarp."); return value; };
@@ -208,8 +228,8 @@ function createShares({ store, agents, harness, automations, accountRpc: cloudRp
       const value = await accountRpc("product.shares.list");
       const done = accepted();
       return {
-        incoming: (Array.isArray(value?.incoming) ? value.incoming : []).map(share => ({ ...share, acceptedHere: !!done[share.id] })),
-        outgoing: Array.isArray(value?.outgoing) ? value.outgoing : [],
+        incoming: listed(value?.incoming).map(share => ({ ...share, acceptedHere: !!done[share.id] })),
+        outgoing: listed(value?.outgoing),
       };
     },
     open,

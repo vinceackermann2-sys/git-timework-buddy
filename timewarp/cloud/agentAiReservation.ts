@@ -58,24 +58,37 @@ export function imageSize(data: string): [number, number] | null {
 // patch count covers both.
 export const imageTokens = (width: number, height: number) => 2 * Math.ceil(width / 28) * Math.ceil(height / 28);
 
+// An image whose size can't be read here (a link the provider fetches, a file
+// id, a header this can't parse) counts as the most GPT bills for one image,
+// 30,000 patches times 1.2, which is more than Claude's 4,784.
+export const UNSIZED_IMAGE_TOKENS = 36_000;
+// The most input any model takes: Claude's 1M context, GPT's 872K. A file
+// bills by its pages, not its bytes (a small PDF can hold hundreds), so a
+// request with one reserves this much.
+export const MODEL_INPUT_TOKENS = 1_000_000;
+
 // A request's input token ceiling. UTF-8 bytes are a conservative ceiling for
 // the byte-based tokenizers; add schema/message framing. An image whose size
 // can be read (in Responses input or Claude messages, tool results included)
-// counts by imageTokens instead of its bytes; any other keeps its bytes.
+// counts by imageTokens instead of its bytes; any other image counts as at
+// least UNSIZED_IMAGE_TOKENS, and a file raises the request to
+// MODEL_INPUT_TOKENS, so a call can't cost more than its reservation.
 export function requestInputTokens(body: any, text = JSON.stringify(body)) {
-  let tokens = new TextEncoder().encode(text).length + 4096;
+  let tokens = new TextEncoder().encode(text).length + 4096, file = false;
   const count = (part: any) => {
     const url = part?.type === 'input_image' && typeof part.image_url === 'string' ? part.image_url : null;
     const prefix = url ? /^data:[^,;]*;base64,/.exec(url) : null;
     const data = prefix ? url!.slice(prefix[0].length) : part?.type === 'image' && part.source?.type === 'base64' && typeof part.source.data === 'string' ? part.source.data : null;
     const size = data === null ? null : imageSize(data);
     if (size) tokens += imageTokens(...size) - (url ?? data)!.length;
+    else if (part?.type === 'input_image' || part?.type === 'image') tokens += Math.max(0, UNSIZED_IMAGE_TOKENS - (url ?? data ?? '').length);
+    else if (part?.type === 'input_file' || part?.type === 'document') file = true;
     else if (part?.type === 'tool_result' && Array.isArray(part.content)) part.content.forEach(count);
   };
   for (const item of Array.isArray(body?.input) ? body.input : Array.isArray(body?.messages) ? body.messages : []) {
     for (const parts of [item?.content, item?.output]) if (Array.isArray(parts)) parts.forEach(count);
   }
-  return tokens;
+  return file ? Math.max(tokens, MODEL_INPUT_TOKENS) : tokens;
 }
 
 export async function reserveAgentAi(admin: any, userId: string, model: string, body: unknown, bounds?: { inputTokens?: number; outputTokens?: number }) {
@@ -85,11 +98,21 @@ export async function reserveAgentAi(admin: any, userId: string, model: string, 
   // Reserve the worst case (all input written to cache); settle actual categories.
   const credits = computeCostUsd(model, inputCeiling, bounds?.outputTokens ?? responseOutputLimit(body), { cache_write_tokens: inputCeiling }) * AI_COST_MARKUP / USD_PER_CREDIT;
   const id = crypto.randomUUID();
+  // The most this call can be charged. The ledger refuses a cost above the
+  // reservation, which would leave the call unbilled, so usage past it is
+  // charged the whole reservation (just under, for rounding) and logged.
+  const reservedUsd = credits * USD_PER_CREDIT / AI_COST_MARKUP;
+  const charged = (input: number, output: number, details?: { cached_tokens?: number; cache_write_tokens?: number; speed?: string }) => {
+    const cost = computeCostUsd(model, input, output, details);
+    if (cost <= reservedUsd) return cost;
+    console.error('[timewarp] AI usage exceeded its reservation; the reservation is charged.', { reservationId: id, model, inputTokens: input, outputTokens: output, costUsd: cost, reservedUsd });
+    return reservedUsd * (1 - 1e-9);
+  };
   let known: { outcome: 'settled' | 'released'; input: number; output: number; cost: number } | null = null;
   const reservation = {
     id,
     async finish(outcome: 'settled' | 'released' | 'uncertain', input = 0, output = 0, details?: { cached_tokens?: number; cache_write_tokens?: number; speed?: string }) {
-      const candidate = known || { outcome, input, output, cost: computeCostUsd(model, input, output, details) };
+      const candidate = known || { outcome, input, output, cost: charged(input, output, details) };
       if (candidate.outcome !== 'uncertain') known = { ...candidate, outcome: candidate.outcome };
       const desired = candidate;
       const params = { p_id: id, p_user_id: userId, p_model: model, p_input: desired.input,

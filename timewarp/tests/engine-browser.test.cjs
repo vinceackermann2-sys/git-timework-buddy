@@ -294,6 +294,14 @@ test("the agent can upload only files inside its own workspace", t => {
   assert.throws(() => workspaceFiles(agent, [path.join(root, "secret.txt")]), /workspace folder/);
   assert.throws(() => workspaceFiles(agent, ["docs"]), /isn't a file/);
   assert.throws(() => workspaceFiles(agent, []), /Choose 1/);
+  // A network path is refused before it is looked up, which would connect to
+  // that computer with the user's Windows sign-in.
+  const looked = [], realpath = fs.realpathSync;
+  fs.realpathSync = (target, ...rest) => { looked.push(String(target)); if (/^[\\/]{2}/.test(String(target))) throw Object.assign(new Error("unreachable"), { code: "ENOENT" }); return realpath(target, ...rest); };
+  try {
+    for (const share of ["\\\\192.0.2.1\\share\\cv.pdf", "//192.0.2.1/share/cv.pdf", "\\\\?\\UNC\\192.0.2.1\\share\\cv.pdf"]) assert.throws(() => workspaceFiles(agent, [share]), /workspace folder/);
+  } finally { fs.realpathSync = realpath; }
+  assert.deepEqual(looked.filter(target => /^[\\/]{2}/.test(target)), []);
 });
 
 test("keys and combinations are read as the agent writes them", () => {

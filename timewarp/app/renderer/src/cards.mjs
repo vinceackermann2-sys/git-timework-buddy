@@ -410,3 +410,21 @@ export function draftMessage({ mode = "chat", title = "", url = "", from = "", t
   const where = [title.trim(), url.trim() ? `(${url.trim()})` : ""].filter(Boolean).join(" ");
   return "Send this message:" + (where ? "\nConversation: " + where : "") + "\n\n" + body.trim();
 }
+
+// A name for an MCP server a chat card adds, from its address: the site's own
+// name ("https://mcp.notion.com/mcp" → "notion"), counted from the end of the
+// host so a longer address can't borrow another site's name
+// ("mcp.notion.com.example.dev" → "example"). Numbered when taken.
+export function mcpServerName(url, taken = new Set()) {
+  let hostname = "";
+  try { hostname = new URL(url).hostname; } catch {}
+  const parts = hostname.toLowerCase().replace(/^www\./, "").split(".").filter(Boolean);
+  // Country domains with a second level, as in example.co.uk.
+  const site = parts.length >= 3 && /^[a-z]{2}$/.test(parts.at(-1)) && /^(co|com|net|org|gov|edu|ac|or|ne|go)$/.test(parts.at(-2)) ? parts.length - 3 : parts.length - 2;
+  let base = parts[Math.max(0, site)] || "server";
+  base = base.replace(/[^a-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 34) || "server";
+  if (/^timewarp/.test(base)) base = "mcp-" + base;
+  let name = base, count = 2;
+  while (taken.has(name)) name = `${base}-${count++}`;
+  return name;
+}

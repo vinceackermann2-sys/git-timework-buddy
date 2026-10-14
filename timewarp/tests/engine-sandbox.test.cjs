@@ -169,7 +169,7 @@ test("commands run in Codex's sandbox with a chat's permissions", { skip: !avail
   const client = new CodexClient({
     executable: codexExecutable(vendor), cwd: workspace,
     args: () => [...CODEX_FEATURES, ...(process.platform === "win32" ? WINDOWS_SANDBOX_FEATURES : [])].flatMap(setting => ["-c", setting]).concat(withProfile ? permissions : []),
-    env: { CODEX_HOME: home, ...codexEnv(vendor) }, clientInfo: { name: "timewarp", title: "Timewarp", version: "0.0.0-test" },
+    env: { CODEX_HOME: home, TIMEWARP_TOOLS_TOKEN: "timewarp-test-secret", ...codexEnv(vendor) }, clientInfo: { name: "timewarp", title: "Timewarp", version: "0.0.0-test" },
   });
   t.after(async () => {
     await client.stop(); server.close();
@@ -203,4 +203,8 @@ test("commands run in Codex's sandbox with a chat's permissions", { skip: !avail
   assert.deepEqual(fs.readdirSync(workspace), ["inside.txt"], "The write outside landed in the workspace instead");
   const fetched = await run(`curl -s ${url}`);
   assert.match(fetched.stdout, /timewarp-network-ok/, "The command couldn't reach the network: " + fetched.stderr);
+  // Timewarp's own tokens stay with Codex, out of the commands it runs.
+  const env = await run(windows ? "set" : "env");
+  assert.match(env.stdout, /CODEX_HOME|PATH/i, "The command printed no environment");
+  assert.doesNotMatch(env.stdout, /timewarp-test-secret/, "A command got a Timewarp token");
 });

@@ -195,3 +195,24 @@ test("shares need people in the organization and keep secrets on the device", as
   await assert.rejects(sam.shares.send({ kind: "chat", id: empty.id, organizationId: ORG, recipientUserIds: [CAM] }), /no messages/);
   assert.equal(cloud.shares.length, 0);
 });
+
+test("a malformed share from another member's app is listed in the shapes the dialog shows", async t => {
+  const cloud = createCloud(), cam = computer(t, cloud, CAM);
+  const base = { sender: people[SAM], recipient: people[CAM], status: "pending", createdAt: new Date().toISOString() };
+  cloud.shares.push(
+    { ...base, id: "00000000-0000-4000-8000-0000000000d1", kind: "agent", title: { text: "x" }, summary: { workflows: "evil", mascot: "../../x", preview: { a: 1 }, description: ["x"] } },
+    { ...base, id: "00000000-0000-4000-8000-0000000000d2", kind: "automation", title: "Report", summary: { schedule: { kind: "weekly", days: "1", time: "09:00" }, agentName: 7 } },
+    { ...base, id: "00000000-0000-4000-8000-0000000000d3", kind: "chat", title: "Chat", summary: "not an object", sender: { name: { first: "Sam" }, email: "sam@example.invalid" } },
+    { ...base, id: "00000000-0000-4000-8000-0000000000d4", kind: "vault", title: "Unknown kind", summary: {} },
+    { ...base, id: "../not-a-share", kind: "chat", title: "Bad id", summary: {} },
+  );
+  const { incoming } = await cam.shares.list();
+  assert.deepEqual(incoming.map(share => share.id), ["00000000-0000-4000-8000-0000000000d1", "00000000-0000-4000-8000-0000000000d2", "00000000-0000-4000-8000-0000000000d3"]);
+  const [agent, automation, chat] = incoming;
+  assert.equal(agent.title, "");
+  assert.deepEqual([agent.summary.workflows, agent.summary.mascot, agent.summary.preview, agent.summary.description], [[], null, "", ""]);
+  assert.deepEqual(automation.summary.schedule, { kind: "weekly", days: [], time: "09:00" });
+  assert.equal(automation.summary.agentName, null);
+  assert.deepEqual(chat.summary, { messages: 0, omitted: 0, agentName: null, mascot: null, description: "", preview: "", workflows: [], schedule: null });
+  assert.deepEqual(chat.sender, { name: "", email: "sam@example.invalid" });
+});
