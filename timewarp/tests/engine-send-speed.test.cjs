@@ -212,6 +212,11 @@ test("chat titles don't wait for a memory job", async () => {
   await assert.rejects(memory, /took too long/);
 });
 
+// Windows stamps file times from a clock that may move only every 15.6 ms, so
+// an edit right after Timewarp's read can keep the same times. An edit from
+// outside comes later than that.
+const laterEdit = () => new Promise(resolve => setTimeout(resolve, 20));
+
 test("imported memory files are listed for new threads without walking them each time, and changes show", async t => {
   const { createKnowledge } = require("../app/main/knowledge.cjs");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tw-knowledge-"));
@@ -221,6 +226,7 @@ test("imported memory files are listed for new threads without walking them each
   knowledge.saveImport("claude-code", "CLAUDE.md", "Prefers metric units.");
   assert.match(knowledge.instructions("enabled"), /- claude-code\/CLAUDE\.md/);
   // Added outside Timewarp (an agent or the user, in the memory folder).
+  await laterEdit();
   const folder = path.join(knowledge.importsRoot, "cursor", "rules");
   fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(path.join(folder, "style.md"), "Tabs.");
@@ -242,6 +248,7 @@ test("each message's memory follows the files, also an edit in place of the same
   assert.match(knowledge.context("enabled"), /Likes tea/);
   assert.match(knowledge.context("enabled"), /Likes tea/);
   // An agent's edit, written in place.
+  await laterEdit();
   fs.writeFileSync(knowledge.notesFile, "# User\n- Likes tee\n");
   assert.match(knowledge.context("enabled"), /Likes tee/);
   const { day } = knowledge.dailyLog();
