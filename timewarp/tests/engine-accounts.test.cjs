@@ -18,6 +18,10 @@ const { createMcp } = require("../app/main/mcp.cjs");
 
 const A = "00000000-0000-4000-8000-0000000000a1", B = "00000000-0000-4000-8000-0000000000b2";
 const read = file => fs.readFileSync(file, "utf8");
+// Windows stamps file times from a clock that may move only every 15.6 ms, so
+// an edit right after sync wrote a file can keep the same times. A person's
+// edit comes later than that.
+const laterEdit = () => new Promise(resolve => setTimeout(resolve, 20));
 const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
 
 // A computer: its own profile (database and runtime folder), wired as main.cjs
@@ -165,6 +169,7 @@ test("a change made on both computers at once is merged, and removals follow", a
   await first.sync(); await second.sync();
 
   // Both computers change the notes and the agent before either syncs.
+  await laterEdit();
   write(first.memory("user.md"), "# User\n\n- Lives in Stockholm\n- Has a dog called Rex\n- Drinks tea\n");
   write(second.memory("user.md"), "# User\n\n- Lives in Göteborg\n- Has a dog\n");
   first.agents.update(agent.id, { instructions: "Be brief." });
