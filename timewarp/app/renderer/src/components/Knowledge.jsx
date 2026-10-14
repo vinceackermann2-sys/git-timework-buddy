@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BookMarked, Download, FolderOpen, Plus, Trash2, X } from "lucide-react";
+import { BookMarked, Copy, Download, ExternalLink, FolderOpen, Plus, Trash2, X } from "lucide-react";
 import { call, errorText } from "../api.js";
 import { Dialog, PageHead, SearchField, Switch, useConfirm, useToast } from "./common.jsx";
 import { Markdown } from "../markdown.jsx";
@@ -7,6 +7,101 @@ import { Markdown } from "../markdown.jsx";
 // Where imported memory came from; "timewarp-previous" is the previous Timewarp app's (knowledge.cjs).
 const SOURCES = { "codex-chatgpt": "ChatGPT / Codex", "claude-code": "Claude", cursor: "Cursor", "timewarp-previous": "Previous Timewarp app" };
 const KINDS = { skills: "Skills", memory: "Memory files", mcp: "MCP servers" };
+const ASSISTANTS = { chatgpt: "ChatGPT", claude: "Claude", gemini: "Gemini", copilot: "Copilot", cursor: "Cursor", other: "Other" };
+// The local setups whose assistant can also be asked with a prompt, when nothing of theirs is here.
+const ONLINE = [{ source: "codex-chatgpt", id: "chatgpt", label: "ChatGPT", site: "chatgpt.com" }, { source: "claude-code", id: "claude", label: "Claude", site: "claude.ai" }, { source: "cursor", id: "cursor", label: "Cursor", site: "Cursor's chat" }];
+const count = (value, word) => `${value} ${word}${value === 1 ? "" : "s"}`;
+
+// What an online assistant (ChatGPT, Claude, Gemini…) knows about the user:
+// they send it Timewarp's prompt and paste the reply here. Memory goes into
+// the notes, projects become agents and scheduled tasks automations, turned
+// off (assistant-import.cjs).
+export function AssistantImport({ source: initial = "chatgpt", onImported }) {
+  const [source, setSource] = useState(initial);
+  const [prompt, setPrompt] = useState(null);
+  const [reply, setReply] = useState("");
+  const [found, setFound] = useState(null); // { text, preview } or { text, error }
+  const [picked, setPicked] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+  useEffect(() => { call("assistantImport.prompt").then(setPrompt).catch(error => toast(error, "error")); }, []);
+  // What the pasted reply holds, read again a moment after it changes.
+  useEffect(() => {
+    if (!reply.trim()) { setFound(null); return; }
+    let current = true;
+    const timer = setTimeout(() => call("assistantImport.preview", { text: reply }).then(preview => {
+      if (!current) return;
+      setFound({ text: reply, preview });
+      setPicked({ memory: true, projects: new Set(preview.projects.filter(item => !item.exists).map(item => item.index)), tasks: new Set(preview.tasks.filter(item => !item.exists).map(item => item.index)) });
+    }).catch(error => { if (current) setFound({ text: reply, error: errorText(error) }); }), 300);
+    return () => { current = false; clearTimeout(timer); };
+  }, [reply]);
+  const name = ASSISTANTS[source], site = prompt?.sources.find(item => item.id === source)?.url;
+  const preview = found?.text === reply ? found.preview : null;
+  const copy = () => navigator.clipboard.writeText(prompt.text).then(() => setCopied(true));
+  const open = () => copy().then(() => call("links.open", { url: site })).catch(error => toast(error, "error"));
+  const toggle = (kind, index) => setPicked(current => {
+    const next = new Set(current[kind]);
+    if (next.has(index)) next.delete(index); else next.add(index);
+    return { ...current, [kind]: next };
+  });
+  async function run() {
+    const memory = !!(picked.memory && (preview.memory || preview.instructions)), projects = [...picked.projects], tasks = [...picked.tasks];
+    if (!memory && !projects.length && !tasks.length) { toast("Choose something to bring.", "error"); return; }
+    setBusy(true);
+    try {
+      const result = await call("assistantImport.apply", { source, text: reply, memory, projects, tasks });
+      const parts = [result.notes ? "memory" : "", result.agents.length ? count(result.agents.length, "agent") : "", result.automations.length ? count(result.automations.length, "automation") : ""].filter(Boolean);
+      toast((parts.length ? `Brought in ${parts.join(", ").replace(/, ([^,]*)$/, " and $1")}${source === "other" ? "" : " from " + name}.` : "Nothing new to bring.")
+        + (result.automations.length ? " Automations are off until you turn them on." : "") + (result.skipped.length ? ` Already in Timewarp: ${result.skipped.join(", ")}.` : ""));
+      if (result.agents.length) window.dispatchEvent(new CustomEvent("tw:agents-changed"));
+      onImported?.(result);
+    } catch (error) { toast(error, "error"); }
+    finally { setBusy(false); }
+  }
+  const options = preview ? [
+    ...(preview.memory || preview.instructions ? [{ key: "memory", label: "Memory", detail: [preview.memory ? count(preview.memory.items, "item") : "", preview.instructions ? "how you like replies" : ""].filter(Boolean).join(", "), checked: picked.memory, toggle: () => setPicked(current => ({ ...current, memory: !current.memory })) }] : []),
+    ...preview.projects.filter(item => !item.exists).map(item => ({ key: "p" + item.index, label: "Agent: " + item.name, detail: "from a project", checked: picked.projects.has(item.index), toggle: () => toggle("projects", item.index) })),
+    ...preview.tasks.filter(item => !item.exists).map(item => ({ key: "t" + item.index, label: "Automation: " + item.name, detail: item.schedule + (item.unclear ? " · check the time" : ""), checked: picked.tasks.has(item.index), toggle: () => toggle("tasks", item.index) })),
+  ] : [];
+  const taken = preview ? [...preview.projects, ...preview.tasks].filter(item => item.exists).map(item => item.name) : [];
+  return (
+    <div className="tw-import tw-assistant-import">
+      <div className="tw-segmented" role="group" aria-label="Assistant">
+        {Object.entries(ASSISTANTS).map(([id, label]) => <button key={id} type="button" aria-pressed={source === id} onClick={() => setSource(id)}>{label}</button>)}
+      </div>
+      <section>
+        <strong>1. Ask {source === "other" ? "your assistant" : name} what it knows about you</strong>
+        <p className="tw-hint">The prompt asks for your memory, instructions, projects and scheduled tasks, written so Timewarp can read them.</p>
+        <div className="tw-assistant-actions">
+          <button type="button" className="tw-btn" disabled={!prompt} onClick={() => copy().catch(error => toast(error, "error"))}><Copy size={15} />{copied ? "Copied" : "Copy prompt"}</button>
+          {site ? <button type="button" className="tw-btn" disabled={!prompt} onClick={open}><ExternalLink size={15} />Open {name}</button> : null}
+          {copied ? <span className="tw-hint">Send it in a new chat, then paste the reply below.</span> : null}
+        </div>
+        <details className="tw-assistant-prompt"><summary>See the prompt</summary><pre>{prompt?.text || "Loading…"}</pre></details>
+      </section>
+      <section>
+        <strong>2. Paste its reply</strong>
+        <textarea className="tw-textarea tw-assistant-reply" value={reply} onChange={event => setReply(event.target.value)} spellCheck={false} aria-label="The assistant's reply" placeholder={source === "other" ? "Paste the reply here" : `Paste ${name}'s reply here`} />
+      </section>
+      {found?.error && found.text === reply ? <div className="tw-alert">{found.error}</div> : null}
+      {preview ? (
+        <fieldset className="tw-import-group">
+          <legend>3. Choose what to bring</legend>
+          {options.map(option => <label key={option.key} className="tw-check"><input type="checkbox" checked={option.checked} onChange={option.toggle} /><span>{option.label}{option.detail ? <em> · {option.detail}</em> : null}</span></label>)}
+          {!options.length ? <span className="tw-hint">{taken.length ? "Everything in this reply is already in Timewarp." : "Nothing to bring was found. Paste the whole code block from the reply."}</span> : null}
+          {taken.length && options.length ? <span className="tw-hint">Already in Timewarp: {taken.join(", ")}.</span> : null}
+        </fieldset>
+      ) : null}
+      {preview?.tasks.some(item => !item.exists) ? <span className="tw-hint">Automations arrive turned off so nothing runs twice. Turn them on in Automations when you're ready.</span> : null}
+      <div className="tw-dialog-actions">
+        <span className="grow" />
+        <button type="button" className="tw-btn primary" disabled={busy || !preview || !options.length} onClick={run}>{busy ? "Importing…" : "Import"}</button>
+      </div>
+    </div>
+  );
+}
 
 // Memory files and skills found from other assistants on this computer,
 // optionally from one source or of one kind.
@@ -14,6 +109,8 @@ export function ImportKnowledge({ category, source, onImported }) {
   const [found, setFound] = useState(null);
   const [selected, setSelected] = useState({});
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState(null);
+  const [assistant, setAssistant] = useState(null);
   const toast = useToast();
   const detect = () => call("knowledge.detect").then(value => {
     const items = value.items.filter(item => (!category || item.category === category) && (!source || item.source === source));
@@ -32,8 +129,7 @@ export function ImportKnowledge({ category, source, onImported }) {
     setBusy(true);
     try {
       const { imported, skipped = [] } = await call("knowledge.import", { items });
-      const count = (value, word) => value ? `${value} ${word}${value === 1 ? "" : "s"}` : "";
-      const parts = [count(imported.skills, "skill"), count(imported.memoryFiles, "memory file"), count(imported.mcpServers, "MCP server")].filter(Boolean);
+      const parts = [imported.skills ? count(imported.skills, "skill") : "", imported.memoryFiles ? count(imported.memoryFiles, "memory file") : "", imported.mcpServers ? count(imported.mcpServers, "MCP server") : ""].filter(Boolean);
       toast((parts.length ? "Imported " + parts.join(", ") + "." : "Nothing new to import.") + (skipped.length ? " Skipped " + skipped.join("; ") + "." : ""));
       onImported?.();
     } catch (error) { toast(error, "error"); }
@@ -43,14 +139,35 @@ export function ImportKnowledge({ category, source, onImported }) {
   const chooseCursor = () => call("knowledge.chooseCursorFolder").then(value => { if (!value.cancelled) void detect(); }).catch(error => toast(error, "error"));
   const cursorButton = !source || source === "cursor" ? <button type="button" className="tw-btn" onClick={chooseCursor}>Choose a Cursor folder…</button> : null;
   if (!found) return <p className="tw-hint">Looking for other assistants on this computer…</p>;
+  // Memory can also come from an assistant that keeps it online, through a
+  // prompt; that's where this opens when nothing is on this computer. With
+  // some found, each assistant without anything here offers its prompt.
+  const shown = category === "mcp" ? "local" : mode || (found.items.length ? "local" : "online");
+  const missing = category === "mcp" ? [] : ONLINE.filter(item => (!source || source === item.source) && !found.items.some(entry => entry.source === item.source));
+  const bring = id => { setAssistant(id); setMode("online"); };
+  const modes = category === "mcp" ? null : (
+    <div className="tw-segmented" role="group" aria-label="Import from">
+      <button type="button" aria-pressed={shown === "local"} onClick={() => setMode("local")}>On this computer</button>
+      <button type="button" aria-pressed={shown === "online"} onClick={() => setMode("online")}>ChatGPT, Claude and others</button>
+    </div>
+  );
+  if (shown === "online") return (
+    <div className="tw-import">
+      {modes}
+      {!found.items.length ? <p className="tw-hint">Nothing was found on this computer. ChatGPT, Claude and Gemini keep what they know about you online: ask yours with Timewarp's prompt and paste the reply.</p> : null}
+      <AssistantImport key={assistant || ""} source={assistant || ({ "claude-code": "claude", cursor: "cursor" }[source] || "chatgpt")} onImported={onImported} />
+    </div>
+  );
   if (!found.items.length) return (
     <div className="tw-import">
+      {modes}
       <p className="tw-hint">{category === "mcp" ? "No MCP servers were found" : "Nothing to import was found"} in {source ? SOURCES[source] : "ChatGPT / Codex, Claude or Cursor"} on this computer.{cursorButton ? " Cursor keeps rules and servers in each project; choose a project or its .cursor folder to look there." : ""}</p>
       {cursorButton ? <div className="tw-dialog-actions">{cursorButton}</div> : null}
     </div>
   );
   return (
     <div className="tw-import">
+      {modes}
       {found.items.map(item => (
         <fieldset key={item.id} className="tw-import-group">
           <legend>{source ? KINDS[item.category] || item.category : `${SOURCES[item.source] || item.source} · ${(KINDS[item.category] || item.category).toLowerCase()}`}</legend>
@@ -59,6 +176,9 @@ export function ImportKnowledge({ category, source, onImported }) {
           ))}
           {item.names.length > 200 ? <span className="tw-hint">…and {item.names.length - 200} more</span> : null}
         </fieldset>
+      ))}
+      {missing.map(item => (
+        <p key={item.id} className="tw-hint">Nothing from {item.label} on this computer. <button type="button" className="tw-link" onClick={() => bring(item.id)}>Bring it from {item.site} with a prompt</button></p>
       ))}
       {found.errors.length ? <div className="tw-alert">{found.errors.map(error => error.message || error).join(" ")}</div> : null}
       {found.items.some(item => item.category === "mcp") ? <span className="tw-hint">MCP servers keep their commands and settings, including environment values, and become available to every agent. Only import servers you trust.</span> : null}
@@ -87,7 +207,7 @@ export function Memories() {
   const noteMatch = !query.trim() || (memory?.notes || "").toLowerCase().includes(query.trim().toLowerCase()) || "user".includes(query.trim().toLowerCase());
   return (
     <div className="tw-page">
-      <PageHead title="Memories" />
+      <PageHead title="Memories"><button type="button" className="tw-btn" onClick={() => setDialog("import")}><Download size={15} />Import</button></PageHead>
       <div className="tw-memory-search"><SearchField value={query} onChange={setQuery} placeholder="Search memories" shortcut /></div>
       {memory && !memory.files.length && !memory.notes?.trim() || (!files.length && !noteMatch) ? <div className="tw-empty-box dashed">No memories found.</div> : (
       <div className="tw-memory-cards">

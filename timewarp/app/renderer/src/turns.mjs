@@ -1,6 +1,6 @@
 // Builds the visible conversation from Codex turns and streaming events.
 // Pure functions: no DOM, no React.
-import { stripCitations } from "./cards.mjs";
+import { agentMessageOf, stripCitations } from "./cards.mjs";
 
 const cloneTurn = turn => ({ ...turn, items: [...(turn.items || [])] });
 
@@ -182,6 +182,9 @@ export function transcript(turns, { conversationId = null, runs = new Map() } = 
           group = null;
           continue;
         }
+        // Another agent's message (app/main/team-tools.cjs) shows as that agent's.
+        const peer = agentMessageOf(userText(item));
+        if (peer) { message({ key: item.clientId || item.id, sender: "peer", item, text: peer.body, peer, turn }, startedAt); continue; }
         const text = shownText(userText(item));
         if (!text && !userImages(item).length && !userFiles(item).length) continue;
         message({ key: item.clientId || item.id, sender: "user", item, text, turn, undelivered: !!turn.undelivered }, startedAt);
@@ -198,6 +201,10 @@ export function transcript(turns, { conversationId = null, runs = new Map() } = 
       } else if (scheduled(item)) {
         rows.push({ kind: "event", key: "event-" + item.id, text: item.arguments?.name ? `Scheduled ${item.arguments.name}` : "Automation scheduled", automation: { id: createdAutomation(item), name: item.arguments?.name || null } });
         group = null;
+      } else {
+        // A message this chat's agent sent or a question it asked another chat: opens that chat.
+        const sent = teamMessage(item);
+        if (sent) { rows.push({ kind: "event", key: "event-" + item.id, text: sent.text, chat: sent.conversationId ? { id: sent.conversationId } : null }); group = null; }
       }
     }
     // Automatic approval reviews that stopped an action (allowed ones stay quiet).
@@ -215,6 +222,17 @@ const sameDay = (a, b) => { const x = new Date(a), y = new Date(b); return x.get
 // An automation the agent created from this chat.
 const scheduled = item => (item.type === "mcpToolCall" && item.server === "timewarp_automations" || item.type === "dynamicToolCall" && item.namespace === "timewarp_automations")
   && item.tool === "create" && item.status === "completed" && item.success !== false && !item.error;
+
+// A message sent to another chat or a question asked of it (timewarp_team),
+// once it went: "Messaged Nova" or "Asked Nova", with the chat it went to.
+function teamMessage(item) {
+  if (item.type !== "mcpToolCall" || item.server !== "timewarp_team" || !["send_message", "ask"].includes(item.tool) || item.status !== "completed" || item.error) return null;
+  let result = null;
+  try { result = JSON.parse((item.result?.content || []).map(part => part?.text || "").join("")); } catch {}
+  if (!result || typeof result !== "object" || item.result?.isError) return null;
+  const name = String(result.agent || "an agent");
+  return { text: item.tool === "ask" ? `Asked ${name}` : `Messaged ${name}`, conversationId: typeof result.conversationId === "string" ? result.conversationId : null };
+}
 
 // The automation a create call made, from its result ("Created:\n<id> | <name> | …",
 // see automation-tools.cjs), so its event can open it.
@@ -375,7 +393,12 @@ export function friendlyError(error, retrying = false) {
 // ---- Tool rows ---------------------------------------------------------
 
 // Timewarp's own tool servers, shown by their tool names alone.
-const OWN = new Set(["timewarp_browser", "timewarp_vault", "timewarp_automations"]);
+const OWN = new Set(["timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_team", "timewarp_app"]);
+// The team and app tools (app/main/team-tools.cjs, app-tools.cjs) by what they do.
+const TEAM_ROWS = {
+  timewarp_team: { list_agents: ["bot", "Checked agents"], send_message: ["messageSquareText", "Messaged an agent"], ask: ["messageSquareText", "Asked an agent"] },
+  timewarp_app: { get_usage: ["eye", "Checked usage"], get_settings: ["eye", "Checked settings"], get_status: ["eye", "Checked Timewarp"], change_settings: ["wrench", "Asked to change settings"] },
+};
 const row = (icon, title, detail = null, extra = {}) => ({ icon, title, detail: detail == null || detail === "" ? null : String(detail), pageUrl: extra.pageUrl || null, app: extra.app || null });
 // Icons by browser action, as before.
 const BROWSER_ICONS = {
@@ -444,6 +467,7 @@ function toolCall(server, tool, args = {}, dynamic = false) {
   args = args && typeof args === "object" ? args : {};
   if (server === "timewarp_browser") return browserRow(tool, args);
   if (server === "timewarp_composio") return appRow(tool, args);
+  if (TEAM_ROWS[server]?.[tool]) return row(...TEAM_ROWS[server][tool]);
   if (OWN.has(server)) return row("wrench", titleCase(tool));
   // Other tool servers: "Used github" with the tool's name, as before.
   return dynamic ? row("wrench", titleCase(tool), `${server}.${tool}`) : row("wrench", `Used ${server}`, tool);
@@ -575,8 +599,9 @@ export function turnsFromMessages(messages, ownerId) {
       id: "message-" + message.id, startedAt: Date.parse(message.createdAt) / 1000 || null, status: failed ? "failed" : "completed",
       ...(failed ? { undelivered: true, error: { message: "This message wasn't sent." }, message: { text: message.text, images, files, ...(skills.length ? { skills } : {}) } } : { error: null }),
       // The stored files keep where they are (a path, or only a name when the
-      // file is gone) for the chat to open them.
-      items: [message.authorId === ownerId
+      // file is gone) for the chat to open them. A message from another agent
+      // was this chat's input, as the user's are.
+      items: [message.authorId === ownerId || agentMessageOf(message.text)
         ? { type: "userMessage", id: message.id, clientId: message.id, content: userContent({ text: message.text, images, files, skills }), ...(files.length ? { files } : {}) }
         : { type: "agentMessage", id: message.id, text: message.text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) }],
     };

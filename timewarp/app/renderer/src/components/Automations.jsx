@@ -19,7 +19,7 @@ export function describeSchedule(schedule = {}) {
   let text;
   if (schedule.kind === "daily") text = `Every day at ${schedule.time}`;
   else if (schedule.kind === "weekdays") text = `Weekdays at ${schedule.time}`;
-  else if (schedule.kind === "weekly") text = `Every ${(schedule.days || []).map(day => DAYS[day]).join(", ")} at ${schedule.time}`;
+  else if (schedule.kind === "weekly") text = `Every ${(Array.isArray(schedule.days) ? schedule.days : []).map(day => DAYS[day]).join(", ")} at ${schedule.time}`;
   else if (schedule.kind === "monthly") text = `Monthly on day ${schedule.day} at ${schedule.time}`;
   else if (schedule.kind === "hourly") text = `Every hour at :${String(schedule.minute).padStart(2, "0")}`;
   else if (schedule.kind === "interval") text = schedule.minutes % 60 === 0 ? `Every ${schedule.minutes / 60} hour${schedule.minutes === 60 ? "" : "s"}` : `Every ${schedule.minutes} minutes`;

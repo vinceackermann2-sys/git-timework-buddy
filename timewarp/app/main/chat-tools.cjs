@@ -2,6 +2,8 @@
 // Chat tools for agents, as the previous app had: find the user's chats, search
 // their saved messages and read one. Read-only, and only the signed-in user's
 // chats that aren't archived.
+const { parseAgentMessage } = require("./team-tools.cjs");
+
 const fail = (status, message) => Object.assign(new Error(message), { status });
 
 const PAGE = 20, READ_PAGE = 30, PREVIEW = 300;
@@ -32,11 +34,16 @@ function createChatTools({ store, userId }) {
   const text = value => ({ contentItems: [{ type: "inputText", text: JSON.stringify(value) }], success: true });
   const owner = () => { const value = userId(); if (!value) throw fail(401, "Sign in to Timewarp."); return value; };
   const agentNames = account => new Map(store.agents.list(account).map(agent => [agent.id, agent.name]));
-  const entry = (message, conversation, names) => ({
-    messageId: message.id, at: message.createdAt,
-    from: message.authorId === conversation.ownerId ? "user" : names.get(message.authorId) || "agent",
-    text: message.text,
-  });
+  const entry = (message, conversation, names) => {
+    // A message another agent sent this chat (team-tools.cjs): by that agent, in its own words.
+    const peer = parseAgentMessage(message.text);
+    if (peer) return { messageId: message.id, at: message.createdAt, from: `${peer.fromName} (another agent)`, fromConversationId: peer.fromConversationId, text: peer.body };
+    return {
+      messageId: message.id, at: message.createdAt,
+      from: message.authorId === conversation.ownerId ? "user" : names.get(message.authorId) || "agent",
+      text: message.text,
+    };
+  };
   const visible = (account, id) => {
     const conversation = store.conversations.get(String(id || ""));
     if (!conversation || conversation.ownerId !== account || conversation.archivedAt) throw fail(404, "That chat isn't available.");
@@ -71,7 +78,8 @@ function createChatTools({ store, userId }) {
           for (const conversation of store.conversations.list(account, { search: query })) {
             if ((only && !only.has(conversation.id)) || (agentIds && !agentIds.has(conversation.agentId))) continue;
             for (const message of shown(store.messages.list(conversation.id))) {
-              if (String(message.text).toLowerCase().includes(query)) hits.push({ conversationId: conversation.id, title: conversation.title || "New conversation", ...entry(message, conversation, names) });
+              const item = entry(message, conversation, names);
+              if (String(item.text).toLowerCase().includes(query)) hits.push({ conversationId: conversation.id, title: conversation.title || "New conversation", ...item });
             }
           }
           hits.sort((a, b) => String(b.at).localeCompare(String(a.at)));

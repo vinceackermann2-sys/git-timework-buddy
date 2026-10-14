@@ -14,6 +14,7 @@ import { ALIASES, CreateOrganizationDialog, InviteDialog, SECTIONS, Settings, se
 import { AgentDialog } from "./components/AgentDialog.jsx";
 import { Pane } from "./components/Pane.jsx";
 import { IncomingShares, ShareDialog } from "./components/Share.jsx";
+import { FirstSteps } from "./components/FirstSteps.jsx";
 
 // What a new agent is asked first, so it opens with an introduction, as before.
 // The chat doesn't show the request (turns.mjs), only the agent's introduction.
@@ -189,6 +190,21 @@ function Shell({ account, setAccount, settings, setSettings }) {
   const paneClose = useRef(null);
   const refreshTimer = useRef(null);
   const history = useHistoryButtons();
+  // First steps (FirstSteps.jsx): once after setup, and from Settings →
+  // General → Tour. A task picked there goes into Home's message box.
+  const [firstSteps, setFirstSteps] = useState(false);
+  const [homeText, setHomeText] = useState(null);
+  // Its browser step shows the browser pane beside Home, with tabs of its own that close when it ends.
+  const [firstStepsBrowser, setFirstStepsBrowser] = useState(false);
+  useEffect(() => { call("firstSteps.get").then(value => setFirstSteps(!!value?.show)).catch(() => {}); }, []);
+  useEffect(() => { const show = () => { go("#/"); setFirstSteps(true); }; window.addEventListener("tw:first-steps", show); return () => window.removeEventListener("tw:first-steps", show); }, []);
+  const endFirstSteps = () => {
+    setFirstSteps(false); setFirstStepsBrowser(false);
+    void call("firstSteps.done").catch(() => {});
+    void call("firstSteps.browser", { step: "done" }).catch(() => {});
+  };
+  // The box keeps it as its draft from then on; Home shown again starts from that.
+  useEffect(() => { if (route.view !== "home") setHomeText(null); }, [route.view]);
 
   const setHomeAgent = id => { setHomeAgentState(id); writeScoped("tw.agent", String(id)); };
   const setPane = value => { setPaneState(value); if (value !== "full" && route.view === "chat") write("tw.pane." + route.id, value === "open" ? "open" : "closed"); };
@@ -227,6 +243,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
   useEffect(() => { void loadConversations(); }, [loadConversations]);
   useEffect(() => { void loadAutomations(); }, [loadAutomations]);
   useEvent("automations.changed", () => void loadAutomations());
+  // Agents made from another assistant's projects (Knowledge.jsx).
+  useEffect(() => { const again = () => void loadAgents(); window.addEventListener("tw:agents-changed", again); return () => window.removeEventListener("tw:agents-changed", again); }, [loadAgents]);
   useEffect(() => { const change = () => setRoute(parseRoute()); window.addEventListener("hashchange", change); return () => window.removeEventListener("hashchange", change); }, []);
   useEffect(() => { if (route.view === "chat") setPaneState(read("tw.pane." + route.id, "closed") === "open" ? "open" : "closed"); }, [route.view, route.id]);
   useEffect(() => { const reload = () => void loadConversations(); window.addEventListener("tw:conversations", reload); return () => window.removeEventListener("tw:conversations", reload); }, [loadConversations]);
@@ -260,6 +278,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
   // Agents changed on the account's other computer.
   useEvent("account.synced", () => { void loadAgents(); });
   useEvent("funding.changed", () => { void loadModels(); loadFunding(); });
+  // The default model changed from an agent's card (app-tools.cjs).
+  useEvent("settings.changed", ({ key } = {}) => { if (key === "modelSettings") void loadModels(); });
   // A sign-in that just connected an app says which account it connected.
   useEvent("integrations.changed", ({ connected } = {}) => {
     for (const account of connected || []) toast({ title: `${account.app || "App"} connected`, body: accountText(account) || "Your account is ready for your agents." });
@@ -489,12 +509,15 @@ function Shell({ account, setAccount, settings, setSettings }) {
     main = null;
   } else {
     main = <Home agents={agents} agentId={agentById.has(homeAgent) ? homeAgent : agents[0]?.id} onAgent={setHomeAgent} models={models} onModel={selectModel} funding={funding}
-      automations={automations} conversations={chatConversations} onStart={start} onNewAgent={() => setDialog({ open: true, agent: null })} onSettings={settingsPage} />;
+      automations={automations} conversations={chatConversations} onStart={start} onNewAgent={() => setDialog({ open: true, agent: null })} onSettings={settingsPage} text={homeText} />;
   }
+  const homeAgentShown = agentById.get(homeAgent) || agents[0];
   const showPane = route.view === "chat" && pane !== "closed" && opened && chatAgent;
+  // First steps' browser step: the pane beside Home, on the tour's own tabs (methods.cjs).
+  const tourPane = !showPane && firstSteps && firstStepsBrowser && route.view === "home" && homeAgentShown ? { id: "first-steps", agentId: homeAgentShown.id, title: "First steps" } : null;
   const sidebarShown = narrow ? sliding : sidebar !== "hidden";
   return (
-    <div className="tw-window" data-sidebar={narrow ? "overlay" : sidebar} data-sliding={narrow && sliding ? "" : undefined} data-pane={showPane ? pane : undefined} style={{ "--sidebar-width": width + "px" }}>
+    <div className="tw-window" data-sidebar={narrow ? "overlay" : sidebar} data-sliding={narrow && sliding ? "" : undefined} data-pane={showPane ? pane : tourPane ? "open" : undefined} style={{ "--sidebar-width": width + "px" }}>
       <header className="tw-topbar">
         <Tip label={sidebarShown ? "Hide sidebar" : "Show sidebar"} keys={[modKey(), "B"]}><button type="button" aria-label={sidebarShown ? "Hide sidebar" : "Show sidebar"} aria-expanded={narrow ? sliding : undefined} onClick={toggleSidebar}><PanelLeft size={18} strokeWidth={1.6} /></button></Tip>
         <Tip label="Go back"><button type="button" aria-label="Go back" disabled={!history.back} onClick={() => window.history.back()}><ChevronLeft size={18} strokeWidth={1.6} /></button></Tip>
@@ -520,6 +543,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
             onClose={() => setPane("closed")} onEditAgent={agent => setDialog({ open: true, agent })} onAgentChanged={loadAgents} onSettings={settingsPage} onStart={start} onArchiveAgent={archiveAgent}
             openFile={paneFile} onFileOpened={() => setPaneFile(null)} openTool={paneTool?.conversationId === opened.id ? paneTool : null} onToolOpened={() => setPaneTool(null)}
             onRegisterClose={handler => { paneClose.current = handler; }} /> : null}
+          {tourPane ? <Pane key="pane-first-steps" conversation={tourPane} agent={homeAgentShown} expanded={false} narrow={narrow} onExpand={() => {}} onClose={() => {}}
+            onEditAgent={agent => setDialog({ open: true, agent })} onAgentChanged={loadAgents} onSettings={settingsPage} onStart={start} onArchiveAgent={archiveAgent} /> : null}
         </div>
       </div>
       <AgentDialog open={dialog.open} agent={dialog.agent} onClose={() => setDialog({ open: false, agent: null })}
@@ -532,6 +557,10 @@ function Shell({ account, setAccount, settings, setSettings }) {
       {organization ? <InviteDialog open={orgDialog === "invite"} organization={organization} onClose={() => setOrgDialog(null)} onInvited={() => { setOrgDialog(null); settingsPage("organization"); window.dispatchEvent(new Event("tw:members")); }} /> : null}
       <CreateOrganizationDialog open={orgDialog === "create"} current={organization} onClose={() => setOrgDialog(null)} onCreated={value => { setAccount(value); setOrgDialog(null); settingsPage("organization"); }} />
       <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} conversationId={route.view === "chat" ? route.id : null} />
+      {firstSteps && route.view === "home" && homeAgentShown ? (
+        <FirstSteps agent={homeAgentShown} userName={account?.user?.name} funding={funding} onEnd={endFirstSteps} onBrowser={setFirstStepsBrowser}
+          onTry={text => { endFirstSteps(); setHomeText({ text, at: Date.now() }); }} onBilling={() => { endFirstSteps(); settingsPage("billing"); }} />
+      ) : null}
     </div>
   );
 }

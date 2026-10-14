@@ -12,7 +12,7 @@ const { bindOnboardingSettings, readOwners } = require("../../desktop/onboarding
 const { createOnboardingService } = require("../../desktop/onboarding-service.cjs");
 const { rememberName } = require("../../desktop/setup-imports.cjs");
 
-function createOnboarding({ profile, store, services, agents, knowledge, browserImport, importPasswords = null, dialog, shell, defaultAppearance, encryption = safeStorage, retryMs = 1000, askMs = 15000 }) {
+function createOnboarding({ profile, store, services, agents, knowledge, browserImport, assistantImport = null, importPasswords = null, dialog, shell, defaultAppearance, encryption = safeStorage, retryMs = 1000, askMs = 15000 }) {
   const storage = protectedStore(path.join(profile, "onboarding.bin"), encryption);
   const userId = () => services.auth.userId();
   const settings = {
@@ -85,15 +85,19 @@ function createOnboarding({ profile, store, services, agents, knowledge, browser
     storage, userId, native: () => native, browsers: () => browserImport, cloud: services.cloudJson,
     updateProfile: async name => { await services.accountRpc("product.profile.update", { name }); await services.auth.refreshUser(); },
     rememberName: (name, agent) => rememberName(knowledge.memoriesRoot, name, agent),
-    openPayment: url => shell.openExternal(url), chooseCursorRoot, importPasswords,
+    openPayment: url => shell.openExternal(url), chooseCursorRoot, importPasswords, assistantImport,
   });
   return {
     service: {
       ...service,
       async run(action, input) {
         const id = userId(), result = await service.run(action, input);
-        // Setup stays finished here if the cloud can't be told now.
-        if (action === "complete") await shareSoon(id);
+        if (action === "complete") {
+          // The workspace then shows First steps (FirstSteps.jsx), once.
+          if (id === userId()) await settings.update({ onboarding: { firstSteps: true } });
+          // Setup stays finished here if the cloud can't be told now.
+          await shareSoon(id);
+        }
         return result;
       },
     },
@@ -121,6 +125,10 @@ function createOnboarding({ profile, store, services, agents, knowledge, browser
     },
     // Marks setup finished for an account that doesn't need it (preview builds).
     async skip() { if (userId()) await settings.update({ onboarding: { done: true, conversationId: null } }); },
+    // Whether the workspace still owes this account First steps: the short
+    // guide after setup finished on this computer, until it's done or skipped.
+    firstSteps: () => { const id = userId(); return !!(id && record(id).firstSteps); },
+    async firstStepsDone() { const id = userId(); if (id && record(id).firstSteps) await settings.update({ onboarding: { firstSteps: false } }); return { done: true }; },
     // Starts setup over for this account (its saved answers are cleared).
     async restart() { if (!userId()) throw new Error("Sign in to Timewarp."); await settings.update({ onboarding: { done: false, conversationId: null, restarted: true } }); return { restarted: true }; },
   };

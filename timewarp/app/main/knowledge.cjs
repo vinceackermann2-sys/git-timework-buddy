@@ -392,6 +392,19 @@ function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runti
       if (earlier.length) parts.push("Earlier days (summaries; the full logs are in those files):\n" + earlier.map(log => `- ${log.day} (${log.file}): ${log.summary}`).join("\n"));
       return parts.length ? parts.join("\n\n") : null;
     },
+    // A block of the notes that setup keeps (<!-- setup-import:<id> -->), such
+    // as an online assistant's memory (assistant-import.cjs). Importing from
+    // the same source again replaces it.
+    saveNotesBlock(id, text) {
+      if (!/^[\w:.-]+$/.test(String(id || "")) || typeof text !== "string" || !text.trim()) throw fail(400, "There's nothing to save to memory.");
+      const open = `<!-- setup-import:${id} -->`, close = `<!-- /setup-import:${id} -->`;
+      const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const rest = notes().replace(new RegExp(`\\n*${escape(open)}[\\s\\S]*?${escape(close)}\\n*`, "g"), "\n\n").replace(PLACEHOLDER, "").replace(/\n{3,}/g, "\n\n").trim();
+      const next = [rest || "# User", `${open}\n${text.trim()}\n${close}`].join("\n\n") + "\n";
+      if (next.length > NOTES_LIMIT) throw fail(413, "Memory is full. Remove some notes, then import again.");
+      writeAtomic(notesFile, next);
+      return { notes: notes() };
+    },
     // Whether the notes hold nothing anyone wrote (empty or the previous app's placeholder).
     notesArePlaceholder: () => placeholderNotes(notes()),
     // Replaces placeholder notes with text, keeping setup's blocks (names, imported sources).

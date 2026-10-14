@@ -10,13 +10,13 @@ export const PLACEHOLDER = /\uE000(\d+)\uE001/g;
 // The previous app's longer names for the same cards.
 const ALIASES = { "widget-file": "file", "widget-connector": "connect-plugin", "widget-citation": "citation", "widget-assistants": "assistants", "widget-suggested-tasks": "suggested-tasks" };
 // Cards that stand on their own line, and cards that sit in a sentence.
-const BLOCK = new Set(["file", "connect-plugin", "widget-mcp-connection", "select", "conversation", "message", "message-input", "tabs", "widget-secret", "suggested-tasks", "assistants"]);
+const BLOCK = new Set(["file", "connect-plugin", "widget-mcp-connection", "select", "conversation", "message", "message-input", "tabs", "widget-secret", "suggested-tasks", "assistants", "usage"]);
 const INLINE = new Set(["button", "citation", "ref", "widget-interaction"]);
 // Steps of the previous app's onboarding chat, which Timewarp does in its own
 // screens: removed from old messages.
 const HIDDEN = new Set(["browser-connection", "widget-browser-connection", "theme-picker", "widget-onboarding-theme", "connect-chatgpt", "widget-onboarding-chatgpt-connection", "onboarding-local-imports", "widget-onboarding-local-imports", "widget-trigger-event"]);
 // Cards whose content is optional: without a closing tag they end at ">".
-const VOID = new Set(["file", "connect-plugin", "widget-mcp-connection", "button", "citation", "ref", "widget-secret", "assistants"]);
+const VOID = new Set(["file", "connect-plugin", "widget-mcp-connection", "button", "citation", "ref", "widget-secret", "assistants", "usage"]);
 const NAMES = [...Object.keys(ALIASES), ...BLOCK, ...INLINE, ...HIDDEN];
 const MAX_CARDS = 200, MAX_OPTIONS = 20, MAX_TASKS = 10, MAX_TABS = 12;
 
@@ -289,6 +289,24 @@ export function userMessageText(source) {
     .trim();
 }
 
+// A message another agent sent to this chat (app/main/team-tools.cjs), or
+// null: who sent it, from which chat, and its own words. Timewarp writes
+// everything before <message-body> with its values escaped, so the words
+// can't change who it's from.
+export function agentMessageOf(source) {
+  const text = String(source ?? "");
+  if (!/^<agent-message\b/.test(text)) return null;
+  const tag = readTag(text, 0);
+  if (!tag || tag === PARTIAL || tag.closing) return null;
+  const start = text.indexOf("<message-body>"), end = text.lastIndexOf("</message-body>");
+  return {
+    agentId: tag.attrs["from-agent"] || null, name: tag.attrs["from-name"] || "Agent",
+    conversationId: tag.attrs["from-conversation"] || null, title: tag.attrs["from-title"] || null,
+    mode: tag.attrs.mode === "ask" ? "ask" : "message",
+    body: start >= 0 && end > start ? text.slice(start + "<message-body>".length, end).replace(/^\n/, "").replace(/\n$/, "") : "",
+  };
+}
+
 // An agent message as copied: the text without its cards, as before. A
 // reference keeps its name and an answer its summary; the rest goes.
 export function copyText(source) {
@@ -409,4 +427,22 @@ export function draftMessage({ mode = "chat", title = "", url = "", from = "", t
   }
   const where = [title.trim(), url.trim() ? `(${url.trim()})` : ""].filter(Boolean).join(" ");
   return "Send this message:" + (where ? "\nConversation: " + where : "") + "\n\n" + body.trim();
+}
+
+// A name for an MCP server a chat card adds, from its address: the site's own
+// name ("https://mcp.notion.com/mcp" → "notion"), counted from the end of the
+// host so a longer address can't borrow another site's name
+// ("mcp.notion.com.example.dev" → "example"). Numbered when taken.
+export function mcpServerName(url, taken = new Set()) {
+  let hostname = "";
+  try { hostname = new URL(url).hostname; } catch {}
+  const parts = hostname.toLowerCase().replace(/^www\./, "").split(".").filter(Boolean);
+  // Country domains with a second level, as in example.co.uk.
+  const site = parts.length >= 3 && /^[a-z]{2}$/.test(parts.at(-1)) && /^(co|com|net|org|gov|edu|ac|or|ne|go)$/.test(parts.at(-2)) ? parts.length - 3 : parts.length - 2;
+  let base = parts[Math.max(0, site)] || "server";
+  base = base.replace(/[^a-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 34) || "server";
+  if (/^timewarp/.test(base)) base = "mcp-" + base;
+  let name = base, count = 2;
+  while (taken.has(name)) name = `${base}-${count++}`;
+  return name;
 }

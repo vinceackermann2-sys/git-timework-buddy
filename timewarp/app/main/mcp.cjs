@@ -4,9 +4,9 @@
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const RESERVED = /^timewarp/i;
-// Timewarp's browser, vault, automation and chat tools reach agents as MCP servers
-// too (tool-server.cjs); they are part of the app, not servers to manage.
-const INTERNAL = new Set(["timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats"]);
+// Timewarp's browser, vault, automation, chat, team and app tools reach agents
+// as MCP servers too (tool-server.cjs); they are part of the app, not servers to manage.
+const INTERNAL = new Set(["timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats", "timewarp_team", "timewarp_app"]);
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
 // Plain HTTP is fine for a server on this computer or the local network, as
@@ -350,7 +350,10 @@ const shareable = (name, value) => SHARED_NAME.test(name) && typeof value?.url =
 
 // What account sync may carry of a server: names (no dots, which config
 // paths can't hold), public HTTPS addresses, and environment variable names.
+// Never Timewarp's own (TIMEWARP_*): Codex would send its internal tokens to
+// whatever server the account's synced data names.
 const SHARED_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const sharedVariable = value => typeof value === "string" && ENV_KEY.test(value) && !/^TIMEWARP_/i.test(value);
 function sharedUrl(value) {
   let url;
   try { url = new URL(String(value || "")); } catch { return null; }
@@ -358,9 +361,9 @@ function sharedUrl(value) {
 }
 function sharedReferences(config) {
   const headers = config.env_http_headers && typeof config.env_http_headers === "object" && !Array.isArray(config.env_http_headers)
-    ? Object.entries(config.env_http_headers).filter(([header, variable]) => /^[A-Za-z0-9-]{1,64}$/.test(header) && typeof variable === "string" && ENV_KEY.test(variable)) : [];
+    ? Object.entries(config.env_http_headers).filter(([header, variable]) => /^[A-Za-z0-9-]{1,64}$/.test(header) && sharedVariable(variable)) : [];
   return {
-    ...(typeof config.bearer_token_env_var === "string" && ENV_KEY.test(config.bearer_token_env_var) ? { bearerTokenEnvVar: config.bearer_token_env_var } : {}),
+    ...(sharedVariable(config.bearer_token_env_var) ? { bearerTokenEnvVar: config.bearer_token_env_var } : {}),
     ...(headers.length ? { envHttpHeaders: Object.fromEntries(headers) } : {}),
   };
 }
