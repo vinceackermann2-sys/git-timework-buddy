@@ -302,9 +302,10 @@ export function FundingBanner({ funding, onOptions }) {
 }
 
 // agentId: the agent whose workspace files "@" offers. draftKey: where an
-// unsent draft is kept (the chat's id, or "home"). Drawn again only when
+// unsent draft is kept (the chat's id, or "home"). fill: text put in the box
+// from outside ({ text, at }), replacing what's typed. Drawn again only when
 // its own props change, not while the chat above it streams.
-export const Composer = React.memo(function Composer({ variant = "compact", disabled, running, models, onModel, onSend, onStop, placeholder, autoFocusKey, historyKey = autoFocusKey, draftKey: draftName = historyKey, agentId = null, tools, banner, reply, onClearReply }) {
+export const Composer = React.memo(function Composer({ variant = "compact", disabled, running, models, onModel, onSend, onStop, placeholder, autoFocusKey, historyKey = autoFocusKey, draftKey: draftName = historyKey, agentId = null, tools, banner, reply, onClearReply, fill = null }) {
   const [draftOf, setDraftOf] = useState(draftName);
   const [initial] = useState(() => readDraft(draftName));
   const [text, setText] = useState(initial.text);
@@ -343,6 +344,12 @@ export const Composer = React.memo(function Composer({ variant = "compact", disa
     setTall(node.scrollHeight > 44);
   }, [text, large]);
   useEffect(() => { area.current?.focus(); }, [autoFocusKey, reply]);
+  useEffect(() => {
+    if (!fill) return;
+    recall.current = { index: -1, draft: null };
+    setText(fill.text); setMenu(null);
+    requestAnimationFrame(() => { const node = area.current; if (node) { node.focus(); node.setSelectionRange(node.value.length, node.value.length); } });
+  }, [fill]);
   const shownMentions = presentMentions(text, mentions);
   const empty = !text.trim() && !attachments.length && !clips.length;
   // While the agent works a message joins its turn; Stop shows when there's nothing to send.

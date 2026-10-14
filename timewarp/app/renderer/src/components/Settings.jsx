@@ -215,6 +215,9 @@ function General({ settings, onSetting, models, onModel, agents }) {
         <Row title="Setup" description="Go through the first-run screens again: your name, what to bring in from other apps, and your theme.">
           <button type="button" className="tw-btn" onClick={() => void runSetup()}>Run setup again</button>
         </Row>
+        <Row title="Tour" description="A short look at how Timewarp works, with a first task to try.">
+          <button type="button" className="tw-btn" onClick={() => window.dispatchEvent(new Event("tw:first-steps"))}>Show me around</button>
+        </Row>
         <UpdatesRow />
       </div>
       <Archived open={dialog === "archived"} onClose={() => setDialog(null)} agents={agents} />

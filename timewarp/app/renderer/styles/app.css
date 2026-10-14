@@ -780,6 +780,8 @@ a { color: var(--accent-strong); }
 .tw-menu.tw-profile-menu .tw-menu-item { min-height: 40px; }
 .tw-menu.tw-profile-menu .tw-profile-face { margin-right: 4px; }
 .tw-pane-content { position: relative; flex: 1; min-height: 0; background: var(--card); }
+/* First steps docks its card under the page in a window too narrow to put it beside (FirstSteps.jsx). */
+.tw-pane-content { margin-bottom: var(--first-steps-dock, 0px); }
 .tw-pane-home { position: absolute; inset: 0; overflow-y: auto; padding: 0 28px 40px; display: grid; align-content: center; gap: 38px; justify-items: center; }
 .tw-pane-home section { width: min(600px, 100%); display: grid; gap: 18px; justify-items: center; }
 .tw-pane-home h2 { margin: 0; font-size: 15px; line-height: 22.5px; font-weight: 600; color: var(--ink); }
@@ -1786,3 +1788,51 @@ button.tw-reply-quote:hover { background: color-mix(in srgb, var(--surface) 80%,
 .tw-share-instructions { max-height: 180px; overflow-y: auto; padding: 10px 12px; border: 0.67px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 400; line-height: 19px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tw-shared-end { margin: 18px 0; }
 .tw-share-table td:nth-child(3) { white-space: nowrap; }
+
+/* First steps after setup (FirstSteps.jsx): the window dimmed around what a
+   step explains, and the agent's card beside it. */
+.tw-first-steps { position: fixed; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; padding: 0; border: none; background: transparent; color: var(--ink); overflow: hidden; }
+.tw-first-steps::backdrop { background: transparent; }
+.tw-first-steps-dim { position: absolute; inset: 0; background: rgb(24 18 36 / 0.45); animation: tw-first-steps-fade 0.3s both; }
+.tw-first-steps-spot { position: absolute; pointer-events: none; box-shadow: 0 0 0 2px var(--theme-accent), 0 0 0 200vmax rgb(24 18 36 / 0.45); transition: left 0.35s cubic-bezier(0.22, 1, 0.36, 1), top 0.35s cubic-bezier(0.22, 1, 0.36, 1), width 0.35s cubic-bezier(0.22, 1, 0.36, 1), height 0.35s cubic-bezier(0.22, 1, 0.36, 1), border-radius 0.35s; animation: tw-first-steps-fade 0.3s both; }
+.tw-first-steps-card { position: absolute; width: min(360px, calc(100vw - 32px)); padding: 16px 16px 12px; display: grid; gap: 12px; border-radius: 16px; background: var(--surface); box-shadow: 0 24px 70px rgb(20 16 40 / 0.3); transition: left 0.35s cubic-bezier(0.22, 1, 0.36, 1), top 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
+.tw-first-steps-card.wide { width: min(560px, calc(100vw - 32px)); }
+.tw-first-steps-card[data-placed="false"] { visibility: hidden; transition: none; }
+.tw-first-steps-head { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; line-height: 16px; }
+.tw-first-steps-head .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--ink); }
+.tw-first-steps-swap { display: grid; gap: 6px; animation: tw-first-steps-in 0.3s both; }
+.tw-first-steps h2 { margin: 0; font: 400 22px/1.2 var(--font-display); letter-spacing: -0.4px; color: var(--ink-strong); }
+.tw-first-steps p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.tw-first-steps p.tw-first-steps-kicker { color: var(--accent-strong); font-size: 13px; font-weight: 500; }
+.tw-first-steps-prompts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tw-first-steps-prompt { display: grid; align-content: start; gap: 4px; padding: 10px 12px; border: 0.67px solid var(--border); border-radius: 12px; background: var(--card); text-align: left; cursor: pointer; transition: background 0.12s, border-color 0.12s; }
+.tw-first-steps-prompt:hover { background: color-mix(in srgb, var(--theme-accent) 24%, var(--card)); border-color: color-mix(in srgb, var(--accent-strong) 30%, var(--border)); }
+.tw-first-steps-prompt strong { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 500; line-height: 16px; }
+.tw-first-steps-prompt strong svg { color: var(--accent-strong); flex: none; }
+.tw-first-steps-prompt span { color: var(--ink); font-size: 13px; line-height: 1.45; }
+.tw-first-steps-note { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border: 0.67px solid var(--border); border-radius: 12px; background: var(--banner); color: var(--muted); font-size: 13px; line-height: 18px; }
+.tw-first-steps-note > svg { flex: none; color: var(--accent-strong); }
+.tw-first-steps-note .grow { flex: 1; min-width: 0; }
+.tw-first-steps-actions { display: flex; align-items: center; gap: 6px; }
+.tw-first-steps-actions .grow { flex: 1; }
+.tw-first-steps-actions .tw-btn.ghost:first-child { margin-left: -6px; }
+:root[data-scheme="dark"] .tw-first-steps-dim { background: rgb(0 0 0 / 0.6); }
+:root[data-scheme="dark"] .tw-first-steps-spot { box-shadow: 0 0 0 2px var(--theme-accent), 0 0 0 200vmax rgb(0 0 0 / 0.6); }
+:root[data-scheme="dark"] .tw-first-steps-card { box-shadow: 0 0 0 0.67px var(--border), 0 24px 70px rgb(0 0 0 / 0.5); }
+/* The browser step's run, beside the real browser: each part as it happens. */
+.tw-first-steps-run { list-style: none; margin: 0; padding: 4px 0; display: grid; gap: 2px; border: 0.67px solid var(--border); border-radius: 12px; background: var(--card); }
+.tw-first-steps-run li { display: flex; align-items: center; gap: 8px; padding: 5px 12px; color: var(--muted); font-size: 13px; line-height: 18px; }
+.tw-first-steps-run li > svg, .tw-first-steps-run li > i { flex: none; width: 14px; height: 14px; }
+.tw-first-steps-run li > i { border: 1.5px solid var(--border); border-radius: 50%; }
+.tw-first-steps-run li .grow { flex: 1; min-width: 0; }
+.tw-first-steps-run li small { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.tw-first-steps-run li[data-state="running"] { color: var(--ink); }
+.tw-first-steps-run li[data-state="running"] > svg, .tw-first-steps-run li[data-state="done"] > svg { color: var(--accent-strong); }
+.tw-first-steps-run li[data-state="done"] { color: var(--ink); }
+.tw-first-steps-run li[data-state="failed"] { color: var(--danger); }
+.tw-first-steps p.tw-first-steps-result { color: var(--accent-strong); font-size: 13px; font-weight: 500; }
+.tw-first-steps p.tw-first-steps-result.failed { color: var(--danger); font-weight: 400; }
+@keyframes tw-first-steps-fade { from { opacity: 0; } }
+@keyframes tw-first-steps-in { from { opacity: 0; transform: translateY(4px); } }
+@media (max-width: 600px) { .tw-first-steps-prompts { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .tw-first-steps-spot, .tw-first-steps-card { transition: none; } .tw-first-steps-dim, .tw-first-steps-spot, .tw-first-steps-swap { animation: none; } }
