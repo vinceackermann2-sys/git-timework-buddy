@@ -10,6 +10,9 @@
 // Also off, as before: the tool that asks for extra permissions mid-turn
 // (approval reviews cover that), fan-out of one task to many workers, and the
 // free-form patch tool (where the Codex version still has those switches).
+// Commands the agent runs don't get Timewarp's own tokens (TIMEWARP_*): Codex
+// reads them for the model bridge and tool servers, but a sandboxed command
+// holding them could call those servers past the chat and its approvals.
 const CODEX_FEATURES = [
   "features.apps=false", "features.tool_suggest=false", "features.remote_plugin=false", "features.goals=false",
   "features.browser_use=false", "features.browser_use_external=false", "features.in_app_browser=false", "features.computer_use=false",
@@ -17,13 +20,14 @@ const CODEX_FEATURES = [
   "features.request_permissions_tool=false", "features.enable_fanout=false", "features.apply_patch_freeform=false",
   "features.multi_agent_v2.max_concurrent_threads_per_session=4", "features.multi_agent_v2.expose_spawn_agent_model_overrides=false",
   "agents.max_depth=1",
+  'shell_environment_policy.exclude=["TIMEWARP_*"]',
 ];
 
 // On Windows, commands run in Windows' own app container sandbox (MXC)
 // wherever Windows offers it, as in Codex's own app; it needs no setup.
-// Elsewhere Codex uses its unelevated sandbox, which onboarding sets up as the
-// previous app did (sandbox.cjs). Left out once the sandbox has been turned off
-// on a PC where it couldn't run commands.
+// Elsewhere Codex uses its unelevated sandbox, which Timewarp sets up by itself
+// once signed in (sandbox.cjs). Left out while the sandbox is turned off on a
+// PC where it couldn't run commands.
 const WINDOWS_SANDBOX_FEATURES = ["features.prefer_mxc=true"];
 
 // Each chat's permissions, as the previous app started them: its workspace
@@ -59,12 +63,13 @@ function workspaceRoots(workspace, { skills = null, memories = null, memoryWrite
 }
 
 // Timewarp's MCP servers on the local bridge (model-bridge.cjs): connected
-// apps, and the browser, vault, automation and chat tools (tool-server.cjs). Their
-// tools are described to the agent in full rather than left for it to look
-// up (omit_tools_from "deferred"). Timewarp's own tools run without an
-// approval review, as they did as dynamic tools; the vault asks the user
-// itself, so its calls may wait for an answer. They are required: a chat
-// starts once they are connected, so its first message has them.
+// apps, and the browser, vault, automation, chat, team and app tools
+// (tool-server.cjs). Their tools are described to the agent in full rather
+// than left for it to look up (omit_tools_from "deferred"). Timewarp's own
+// tools run without an approval review, as they did as dynamic tools; the
+// vault and the app tools ask the user themselves, and the team's ask waits
+// for another chat's answer, so those calls may wait. They are required: a
+// chat starts once they are connected, so its first message has them.
 function toolServers(port) {
   const base = `http://127.0.0.1:${port}/mcp/`;
   const own = (name, timeout) => ({ url: base + name, enabled: true, required: true, bearer_token_env_var: "TIMEWARP_TOOLS_TOKEN", default_tools_approval_mode: "approve", tool_timeout_sec: timeout, omit_tools_from: ["deferred"] });
@@ -74,6 +79,8 @@ function toolServers(port) {
     timewarp_vault: own("timewarp_vault", 900),
     timewarp_automations: own("timewarp_automations", 120),
     timewarp_chats: own("timewarp_chats", 60),
+    timewarp_team: own("timewarp_team", 900),
+    timewarp_app: own("timewarp_app", 900),
   };
 }
 

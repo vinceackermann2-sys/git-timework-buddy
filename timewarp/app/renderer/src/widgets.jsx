@@ -8,11 +8,12 @@ import {
   FileSpreadsheet, FileText, FileVideo, FolderOpen, Globe, KeyRound, Link2, LoaderCircle, Mail, MessageSquare, Mic, Plus, Presentation, Puzzle, RefreshCw,
   Send, Server, Sparkles, Square, UserRound, X,
 } from "lucide-react";
-import { accountText, avatarSrc, call, errorText, initials } from "./api.js";
+import { accountText, avatarSrc, call, errorText, initials, request } from "./api.js";
 import { Dialog, Menu, useToast } from "./components/common.jsx";
 import { AppIcon } from "./components/Composer.jsx";
+import { UsageCard } from "./components/Sidebar.jsx";
 import { useDictation } from "./dictation.js";
-import { baseName, draftMessage, extensionOf, fileKind, resolveLink, selectAnswer, splitAddresses } from "./cards.mjs";
+import { baseName, draftMessage, extensionOf, fileKind, mcpServerName, resolveLink, selectAnswer, splitAddresses } from "./cards.mjs";
 
 const PdfPreview = lazy(() => import("./previews.jsx").then(module => ({ default: module.PdfPreview })));
 const SpreadsheetPreview = lazy(() => import("./previews.jsx").then(module => ({ default: module.SpreadsheetPreview })));
@@ -358,15 +359,6 @@ function ConnectCard({ card }) {
 
 // ── <widget-mcp-connection> ────────────────────────────────────────────────
 const sameUrl = (a, b) => { try { return new URL(a).href.replace(/\/$/, "") === new URL(b).href.replace(/\/$/, ""); } catch { return false; } };
-function serverName(url, taken) {
-  const parts = host(url).toLowerCase().split(".").filter(Boolean);
-  let base = parts.length > 2 && /^(mcp|api|app|server|www)$/.test(parts[0]) ? parts[1] : parts.length >= 2 ? parts[parts.length - 2] : parts[0] || "server";
-  base = base.replace(/[^a-z0-9_-]+/g, "-").replace(/^[-_]+|[-_]+$/g, "").slice(0, 34) || "server";
-  if (/^timewarp/.test(base)) base = "mcp-" + base;
-  let name = base, count = 2;
-  while (taken.has(name)) name = `${base}-${count++}`;
-  return name;
-}
 function McpCard({ card }) {
   const { chat, canSend, save, send } = useCard(card);
   const url = httpsUrl(card.attrs.url);
@@ -397,7 +389,7 @@ function McpCard({ card }) {
     if (!servers || server) return;
     setBusy(true); setError("");
     try {
-      const added = serverName(url, new Set(servers.map(item => item.name)));
+      const added = mcpServerName(url, new Set(servers.map(item => item.name)));
       const list = await call("mcp.add", { name: added, transport: "http", url });
       setServers(list);
       const entry = list.find(item => item.name === added);
@@ -1046,13 +1038,40 @@ export function MarkdownImage({ src, alt = "", title, width, height }) {
   return <span className="tw-image-blocked" data-blocked="true" title={title || (target.type === "url" ? "Only secure (https) images are shown" : undefined)}>{alt || "Image"}</span>;
 }
 
+// ── <usage> ────────────────────────────────────────────────────────────────
+// The user's live plan usage and credits, as the sidebar shows them (always
+// credits, never money), with Billing. The numbers are Timewarp's own, read
+// as the card shows: an agent can't put others in it.
+function UsageInChat() {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState("");
+  const load = useCallback(() => call("funding.get").then(async funding => {
+    const chatgpt = funding.source === "chatgpt" ? await request("chatgptDetails").catch(() => null) : null;
+    setState({ funding, chatgpt });
+    setError("");
+  }).catch(failure => setError(errorText(failure))), []);
+  useEffect(() => { void load(); }, [load]);
+  useEngineEvent("funding.changed", () => void load());
+  const billing = () => { location.hash = "#/customize/billing"; };
+  if (error) return <p className="tw-card-error" role="alert">{error}</p>;
+  if (!state) return <div className="tw-card-wrap tw-usage-card" data-card="usage"><div className="tw-chat-card tw-row-card"><LoaderCircle size={16} className="tw-spin" /><span className="tw-card-text"><small>Loading usage…</small></span></div></div>;
+  return (
+    <div className="tw-card-wrap tw-usage-card" data-card="usage">
+      <UsageCard funding={state.funding} chatgpt={state.chatgpt} onOpen={billing} />
+      <div className="tw-usage-card-actions">
+        <button type="button" className="tw-card-pill secondary" onClick={billing}>{state.funding.plan && state.funding.plan !== "free" ? "Add credits" : "View plans"}</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Registry ───────────────────────────────────────────────────────────────
 function InteractionSummary({ card }) { return card.attrs.summary ? <em className="tw-interaction">{card.attrs.summary}</em> : null; }
 
 const CARDS = {
   file: FileCard, "connect-plugin": ConnectCard, "widget-mcp-connection": McpCard, select: SelectCard, button: ButtonCard,
   conversation: ConversationCard, tabs: TabsCard, "widget-secret": SecretCard, citation: CitationPill, ref: RefChip,
-  "suggested-tasks": SuggestedTasksCard, assistants: AssistantsCard, "widget-interaction": InteractionSummary,
+  "suggested-tasks": SuggestedTasksCard, assistants: AssistantsCard, "widget-interaction": InteractionSummary, usage: UsageInChat,
   message: ({ card }) => <div className="tw-chat-card tw-convo-card bare" data-card="message"><ChatMessage item={{ attrs: card.attrs, body: card.text }} /></div>,
   "message-input": ({ card }) => <div className="tw-convo-card bare" data-card="message-input"><MessageInput card={card} item={{ attrs: card.attrs, body: card.text }} mode="chat" /></div>,
 };

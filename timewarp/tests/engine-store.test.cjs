@@ -115,6 +115,36 @@ test("agents get a workspace with AGENTS.md instructions and a mascot", async t 
   if (require("node:child_process").spawnSync("git", ["--version"]).status === 0) assert.ok(fs.existsSync(path.join(agent.workspace, ".git")), "the workspace is a Git repository");
 });
 
+// Timewarp's own commits run outside the command sandbox, so whatever an
+// agent writes into its repository must not run there.
+test("workspace commits run no hooks, monitor, signing or filter commands the agent planted", { skip: require("node:child_process").spawnSync("git", ["--version"]).status !== 0 && "Git isn't installed" }, async t => {
+  const { execFileSync } = require("node:child_process");
+  const { root, store } = tempStore(t);
+  const agents = createAgents({ store, root: path.join(root, "agents"), userId: () => "u1" });
+  const agent = agents.create({ name: "Orbit", instructions: "Be brief." });
+  await agents.settled();
+  const dotGit = path.join(agent.workspace, ".git"), ran = path.join(root, "ran").replace(/\\/g, "/");
+  const script = (file, name, tail = "") => { fs.writeFileSync(file, `#!/bin/sh\necho ${name} >> "${ran}"\n${tail}`); fs.chmodSync(file, 0o755); return file.replace(/\\/g, "/"); };
+  for (const hook of ["pre-commit", "commit-msg", "post-commit"]) script(path.join(dotGit, "hooks", hook), hook);
+  const config = (...args) => execFileSync("git", ["config", ...args], { cwd: agent.workspace });
+  config("core.fsmonitor", script(path.join(root, "monitor.sh"), "fsmonitor", "exit 1\n"));
+  config("commit.gpgSign", "true");
+  config("gpg.program", script(path.join(root, "gpg.sh"), "gpg", "exit 1\n"));
+  const log = () => execFileSync("git", ["log", "--format=%s"], { cwd: agent.workspace, encoding: "utf8" }).trim().split("\n");
+  agents.update(agent.id, { instructions: "Be thorough." });
+  await agents.settled();
+  assert.equal(fs.existsSync(ran), false, "no hook, monitor or signing program ran");
+  assert.equal(log()[0], "Update agent workspace", "the change is still committed");
+  // A filter command in the repository's own config (here through an include) stops the commit.
+  fs.writeFileSync(path.join(root, "filters.cfg"), `[filter "x"]\n\tclean = ${script(path.join(root, "clean.sh"), "clean", "cat\n")}\n`);
+  config("include.path", path.join(root, "filters.cfg").replace(/\\/g, "/"));
+  fs.writeFileSync(path.join(agent.workspace, ".gitattributes"), "* filter=x\n");
+  agents.update(agent.id, { instructions: "Be quick." });
+  await agents.settled();
+  assert.equal(fs.existsSync(ran), false, "the filter didn't run");
+  assert.equal(log().length, 2, "nothing was committed");
+});
+
 test("browser profiles can be renamed and removed; their chats return to the default", t => {
   const { store } = tempStore(t);
   const fallback = store.browserProfiles.ensureDefault();
@@ -239,4 +269,18 @@ test("turn usage is the growth of the thread's totals", t => {
   store.turnUsage.record(chat.id, "thread", "t1", total(150, 20));
   store.turnUsage.record(chat.id, "thread", "t2", total(400, 50));
   assert.deepEqual(store.turnUsage.list(chat.id).map(row => [row.turnId, row.input, row.output]), [["t1", 150, 20], ["t2", 250, 30]]);
+});
+
+test("an agent's id can't take its workspace outside the agents folder", async t => {
+  const { root, store } = tempStore(t);
+  const agents = createAgents({ store, root: path.join(root, "agents"), userId: () => "u1" });
+  for (const id of ["x/../../outside", "..\..\outside", "../outside", "a.b", "", "/abs"]) {
+    assert.throws(() => agents.create({ id, name: "Restored" }), error => error.status === 400, JSON.stringify(id));
+  }
+  assert.equal(fs.existsSync(path.join(root, "outside")), false);
+  for (const id of ["00000000-0000-4000-8000-000000000001", "main_assistant", "agent-7"]) {
+    const agent = agents.create({ id, name: "Restored" });
+    assert.equal(path.dirname(agent.workspace), path.join(root, "agents"));
+  }
+  await agents.settled();
 });

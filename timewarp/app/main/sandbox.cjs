@@ -4,28 +4,31 @@
 // sandboxes commands without any setup.
 //
 // On Windows the previous app set up Codex's unelevated sandbox in onboarding
-// ("Protect work with Windows security"), without administrator rights; the
-// engine does the same, and once for accounts that finished setup without it.
-// Where Windows offers its own app container sandbox (MXC), Codex uses that
-// instead and nothing needs setting up (features.prefer_mxc, codex-config.cjs).
+// ("Protect work with Windows security"), without administrator rights. The
+// engine sets it up by itself as soon as an account is signed in, whether or
+// not it finished setup; onboarding's row only shows how that went. Where
+// Windows offers its own app container sandbox (MXC), Codex uses that instead
+// and nothing needs setting up (features.prefer_mxc, codex-config.cjs).
 //
 // Unlike the previous app's Codex build, the official one applies a setup only
 // once it restarts, and its setup never finishes without a folder. Every run of
 // Codex first checks that a sandboxed command finishes: security software can
 // stall them all. A sandbox that fails the check is turned off for that Codex
 // version, so commands get an approval review, as without a sandbox, instead
-// of hanging.
+// of hanging. It is tried again by itself a day later, then once a week (a
+// newer Codex at once).
 
 const { CodexError } = require("./codex-client.cjs");
 
 const CHECK_TOKEN = "timewarp-sandbox-ok";
 const UNAVAILABLE = "Windows security isn't available on this PC. Commands are reviewed before they run instead.";
+const DAY = 24 * 60 * 60 * 1000;
 
 // settings: the app's settings store. cwd: a folder for the setup and the
 // check (the agents' folder). restart({ urgent }): restarts Codex, once no
 // reply is running (urgent: within a minute, as replies can't run commands).
 // codexVersion: the bundled Codex's version.
-function createSandbox({ client, settings, cwd, restart, codexVersion = null, log = () => {}, platform = process.platform, setupTimeoutMs = 120000, checkTimeoutMs = 20000 }) {
+function createSandbox({ client, settings, cwd, restart, codexVersion = null, log = () => {}, platform = process.platform, setupTimeoutMs = 120000, checkTimeoutMs = 20000, now = Date.now }) {
   const windows = platform === "win32";
   let checked = null; // this Codex run's check: a promise of true or false
   let running = null; // a setup or check in progress
@@ -34,8 +37,14 @@ function createSandbox({ client, settings, cwd, restart, codexVersion = null, lo
   client.on("status", ({ status }) => { if (status !== "ready") { checked = null; passed = false; } });
 
   const saved = () => settings.get("windowsSandbox") || null;
-  // Turned off for this Codex version; a newer Codex is checked again.
-  const off = () => { const value = saved(); return !!value?.off && value.codex === codexVersion; };
+  // Turned off for this Codex version until it is tried again: a day after
+  // the first failed check, a week after later ones. A newer Codex is checked
+  // again at once.
+  const off = () => {
+    const value = saved();
+    if (!value?.off || value.codex !== codexVersion) return false;
+    return !(now() - Date.parse(value.at) >= ((value.failures || 1) > 1 ? 7 : 1) * DAY);
+  };
 
   function timeout(promise, ms, message) {
     let timer;
@@ -96,17 +105,18 @@ function createSandbox({ client, settings, cwd, restart, codexVersion = null, lo
   }
 
   async function turnOff() {
-    settings.set("windowsSandbox", { off: true, codex: codexVersion, at: new Date().toISOString() });
+    const before = saved();
+    const failures = before?.off && before.codex === codexVersion ? (before.failures || 1) + 1 : 1;
+    settings.set("windowsSandbox", { off: true, codex: codexVersion, at: new Date(now()).toISOString(), failures });
     await client.request("config/value/write", { keyPath: "windows.sandbox", value: null, mergeStrategy: "replace" }).catch(error => log("warn", "The Windows sandbox setting couldn't be removed: " + error.message));
     log("warn", "Windows sandbox turned off; commands are reviewed instead");
     await restart({ urgent: true });
   }
 
-  // setup: set the sandbox up when it isn't yet (onboarding, and accounts that
-  // finished it). retry: also after it was turned off on this PC. Without
-  // setup, a sandbox that is already there (MXC, or one set up earlier) is
-  // still checked.
-  function ensure({ setup = false, retry = false } = {}) {
+  // Sets the sandbox up where it isn't yet (MXC, or one set up earlier, needs
+  // none) and checks it. retry: also when it was turned off on this PC and
+  // isn't due to be tried again yet (Retry in onboarding).
+  function ensure({ retry = false } = {}) {
     if (!windows) return Promise.resolve({ supported: false, status: "ready" });
     if (running) return running;
     running = (async () => {
@@ -117,13 +127,16 @@ function createSandbox({ client, settings, cwd, restart, codexVersion = null, lo
       }
       let current = await readiness();
       if (current !== "ready") {
-        if (!setup || current === "unavailable") return status();
+        if (current === "unavailable") return status();
         await setUp();
         await restart({ urgent: false });
         current = await readiness();
         if (current !== "ready") throw new Error("Windows security setup didn't finish. Try again.");
       }
-      if (await check() === false) { await turnOff(); return status(); }
+      const ok = await check();
+      if (ok === false) { await turnOff(); return status(); }
+      // Working again after it was turned off: failures start over.
+      if (ok && saved()) settings.set("windowsSandbox", null);
       return { supported: true, status: "ready" };
     })().finally(() => { running = null; });
     return running;

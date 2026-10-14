@@ -55,7 +55,8 @@ const Icon = ({ name }) => TINTS[name]
   ? <span className="tw-glyph" style={{ "--glyph": `url(./onboarding-icons/${name}.svg)`, color: TINTS[name] }} aria-hidden="true" />
   : <img src={`./onboarding-icons/${name}.svg`} alt="" />;
 
-export function Home({ agents, agentId, onAgent, models, onModel, funding, automations = [], conversations = [], onStart, onNewAgent, onSettings }) {
+// text: a task put in the message box from outside ({ text, at }), such as one picked in First steps.
+export function Home({ agents, agentId, onAgent, models, onModel, funding, automations = [], conversations = [], onStart, onNewAgent, onSettings, text = null }) {
   const heading = useMemo(() => HEADINGS[Math.floor(Math.random() * HEADINGS.length)], []);
   const [found, setFound] = useState(null);
   const [dismissed, setDismissed] = useState(readDismissed);
@@ -121,7 +122,7 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, autom
       <div className="tw-home-inner" onInput={typing}>
         <h1>{heading}</h1>
         <Composer variant="large" autoFocusKey="home" agentId={agent?.id} placeholder="Tell me what you want to get done..." disabled={!agent}
-          models={models} onModel={onModel} onSend={message => onStart(agent.id, message)}
+          models={models} onModel={onModel} onSend={message => onStart(agent.id, message)} fill={text}
           banner={<><ReconnectBanner agentId={agent?.id} /><FundingBanner funding={funding} onOptions={() => onSettings("billing")} /></>}
           tools={agent ? <><ToolsPicker agentId={agent.id} onBrowse={() => onSettings("tools")} /><AgentPicker agents={agents} value={agent.id} onChange={onAgent} onNewAgent={onNewAgent} /></> : null} />
         {visible.length ? (

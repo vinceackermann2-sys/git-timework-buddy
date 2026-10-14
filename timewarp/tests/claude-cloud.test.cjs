@@ -25,12 +25,12 @@ const route = moduleOf("cloud/claudeAgentAi.ts", { Deno: { env: { get: () => "fi
 class APIError extends Error { constructor(status, error, message, headers) { super(message); this.status = status; this.error = error; this.headers = headers; } }
 // The cloud's Claude module with a scripted Anthropic client, loaded the
 // first time a request needs it (`loads` counts that); `clock` replaces Date.now.
-function claudeModule({ create = async () => { throw new Error("unused"); }, reserved = [], finished = [], pending = [], loads = [], key = route.claudeKey, clock } = {}) {
-  class Anthropic { constructor(options) { this.options = options; this.beta = { messages: { create: (params, options) => create(params, options) } }; } }
+function claudeModule({ create = async () => { throw new Error("unused"); }, count = async () => { throw new Error("unused"); }, reserve, reserved = [], finished = [], pending = [], loads = [], key = route.claudeKey, clock } = {}) {
+  class Anthropic { constructor(options) { this.options = options; this.beta = { messages: { create: (params, options) => create(params, options), countTokens: (params, options) => count(params, options) } }; } }
   return moduleOf("cloud/claudeResponses.ts", {
     loadModule: async name => { loads.push(name); if (name !== "npm:@anthropic-ai/sdk@0.128.0") throw new Error("Unexpected module " + name); return { default: Anthropic }; },
     responseOutputLimit, claudeKey: key, claudeRoute: route.claudeRoute, assertCloudSafe: require("../shared/privacy.cjs").assertCloudSafe,
-    reserveAgentAi: async (_admin, _user, model, body, bounds) => { reserved.push({ model, body: plain(body), bounds }); return { id: "r" + reserved.length, finish: async (...args) => { finished.push([model, ...args]); } }; },
+    reserveAgentAi: reserve || (async (_admin, _user, model, body, bounds) => { reserved.push({ model, body: plain(body), bounds }); return { id: "r" + reserved.length, finish: async (...args) => { finished.push([model, ...args]); } }; }),
     TextEncoder, TextDecoder, btoa, atob, crypto, ReadableStream, Response, AbortSignal, console, EdgeRuntime: { waitUntil: value => pending.push(value) },
     ...(clock ? { Date: { now: clock } } : {}),
   });
@@ -49,7 +49,7 @@ test("Claude usage is priced with each model's cache rates, Haiku's long prompts
   near(cost("anthropic/claude-opus-5-5", 100000, 1000, details), (10000 + 80000 * 0.05 + 10000 * 1.25) / 1e6 * 4 + 1000 / 1e6 * 20);
   near(cost("anthropic/claude-opus-5-5-fast", 100000, 1000, details), (10000 + 80000 * 0.05 + 10000 * 1.25) / 1e6 * 8 + 1000 / 1e6 * 40);
   near(cost("anthropic/claude-opus-5-5-fast", 100000, 1000, { ...details, speed: "standard" }), cost("anthropic/claude-opus-5-5", 100000, 1000, details));
-  near(cost("anthropic/claude-sonnet-5-5", 100000, 1000, details), (10000 + 80000 * 0.1 + 10000 * 1.25) / 1e6 * 2 + 1000 / 1e6 * 10);
+  near(cost("anthropic/claude-sonnet-5-5", 100000, 1000, details), (10000 + 80000 * 0.05 + 10000 * 1.25) / 1e6 * 2 + 1000 / 1e6 * 10);
   near(cost("anthropic/claude-haiku-5-5", 100000, 1000), 100000 / 1e6 * 0.1 + 1000 / 1e6 * 0.5);
   near(cost("anthropic/claude-haiku-5-5", 100001, 1000), 100001 / 1e6 * 0.5 + 1000 / 1e6 * 2.5);
   assert.throws(() => cost("anthropic/claude-opus-5", 1, 1), error => error.status === 503, "an unpriced model is never funded");
@@ -238,6 +238,37 @@ test("Anthropic errors before the reply map to clear messages and release the re
   const reserved = [];
   await assert.rejects(claudeModule({ reserved, key: missingKey.claudeKey }).claudeCall({}, "owner", { model: "anthropic/claude-sonnet-5-5", input: "Hi" }), error => error.status === 503 && /not configured/.test(error.message));
   assert.equal(reserved.length, 0, "a missing key reserves nothing");
+});
+
+test("a balance too small for the byte-based ceiling reserves Claude's own token count instead", async () => {
+  // The balance covers a call whose input is at most 5,000 tokens.
+  const reserved = [], counted = [], created = [];
+  const reserve = async (_admin, _user, model, body, bounds) => {
+    reserved.push(bounds);
+    if (!(bounds.inputTokens <= 5000)) throw Object.assign(new Error("Not enough unreserved AI credits for this bounded model call."), { status: 402 });
+    return { id: "r", finish: async () => {} };
+  };
+  const reply = () => events([start("msg_7"), ...block(0, { type: "text", text: "" }, [{ type: "text_delta", text: "OK" }]), ...end("end_turn")]);
+  const body = { model: "anthropic/claude-sonnet-5-5", instructions: "BASE ".repeat(4000), input: "Hi" };
+  const claude = count => claudeModule({ reserve, count, create: async params => { created.push(params); return reply(); } });
+  const result = await claude(async (params, options) => { counted.push({ params: plain(params), options }); return { input_tokens: 3000 }; }).claudeCall({}, "owner", body);
+  assert.equal(result.status, "completed");
+  assert.deepEqual(reserved.map(bounds => bounds.inputTokens), [undefined, Math.ceil(3000 * 1.05) + 1024]);
+  assert.equal(reserved[1].outputTokens, 16384, "the output allowance stays the same");
+  assert.equal(counted[0].params.model, "claude-sonnet-5-5");
+  assert.ok(counted[0].params.system && counted[0].params.thinking && counted[0].params.messages, "the count covers the whole request");
+  assert.equal("max_tokens" in counted[0].params || "metadata" in counted[0].params, false, "fields the count doesn't take are left out");
+  assert.deepEqual(plain(counted[0].options), { timeout: 10000, maxRetries: 0 });
+  assert.equal(created.length, 1);
+  // When the count fails, or is still too large, the balance is refused as before and nothing is sent.
+  reserved.length = 0;
+  await assert.rejects(claude(async () => { throw new APIError(429, {}, "rate limited"); }).claudeCall({}, "owner", body), error => error.status === 402);
+  await assert.rejects(claude(async () => ({ input_tokens: 9000 })).claudeCall({}, "owner", body), error => error.status === 402);
+  assert.equal(created.length, 1);
+  // A balance that covers the ceiling never waits for a count.
+  counted.length = 0;
+  await claudeModule({ create: async () => reply(), count: async () => { counted.push(1); return { input_tokens: 1 }; } }).claudeCall({}, "owner", body);
+  assert.equal(counted.length, 0);
 });
 
 test("the tools and base instructions get their own cache breakpoint, within Anthropic's four", () => {

@@ -703,6 +703,9 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     reload(conversationId, tabId) { const tab = tabFor(conversationId, tabId); tab.view?.webContents.reload(); return stateOf(tab); },
     stop(conversationId, tabId) { const tab = tabFor(conversationId, tabId); tab.view?.webContents.stop(); return stateOf(tab); },
     setMuted(conversationId, tabId, muted) { const tab = tabFor(conversationId, tabId); tab.muted = !!muted; tab.view?.webContents.setAudioMuted(tab.muted); changed(conversationId); return stateOf(tab); },
+    // Readies the browser for a page about to open (First steps): the
+    // profile's storage and a connection to each site.
+    warm(conversationId, urls) { const session = sessionFor(chatProfile(conversationId)); for (const url of urls) try { session.preconnect({ url: safeUrl(url), numSockets: 2 }); } catch {} },
     // The chat's tabs reopen in the chosen profile, with its own sign-ins.
     setProfile(conversationId, profileId) {
       if (!store.browserProfiles.list().some(profile => profile.id === profileId)) throw fail(404, "This browser profile is unavailable.");

@@ -1,9 +1,15 @@
 "use strict";
 // Presents the engine store through the interface of Timewarp's chat history
 // sync (desktop/local-history.cjs), so the cloud history format is unchanged.
+const { AGENT_MESSAGE } = require("./harness.cjs");
+
 function createHistoryAdapter({ store, createAgent, settings }) {
-  const entryOf = message => ({
-    id: message.id, kind: "message", authorId: message.authorId, createdAt: message.createdAt,
+  // The cloud keeps a chat's messages from its user and its agent only. One
+  // that another agent sent the chat (team-tools.cjs) was the chat's input, so
+  // it goes under the user; its text says which agent sent it.
+  const authorOf = (message, conversation) => message.authorId !== conversation.agentId && AGENT_MESSAGE.test(message.text) ? conversation.ownerId : message.authorId;
+  const entryOf = conversation => message => ({
+    id: message.id, kind: "message", authorId: authorOf(message, conversation), createdAt: message.createdAt,
     parts: [{ type: "text", text: message.text }], suggestedReplies: [], replyToMessageId: null,
     forwardedFromMessageId: null, deliveryStatus: message.status === "failed" ? "failed" : null,
   });
@@ -17,7 +23,7 @@ function createHistoryAdapter({ store, createAgent, settings }) {
       { entityId: conversation.ownerId, archivedAt: conversation.archivedAt, read: conversation.read },
       { entityId: conversation.agentId, archivedAt: null, read: true },
     ],
-    entries: store.messages.list(conversation.id).filter(message => message.status !== "replaced").map(entryOf),
+    entries: store.messages.list(conversation.id).filter(message => message.status !== "replaced").map(entryOf(conversation)),
   };
   const agentOf = agent => agent && { id: agent.id, ownerUserId: agent.ownerId, displayName: agent.name, deletedAt: agent.archivedAt };
   // Restored metadata is written only where it changes the chat, so a chat

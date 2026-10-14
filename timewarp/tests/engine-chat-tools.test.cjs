@@ -82,3 +82,15 @@ test("reading a chat around a moment finds the messages sent then", async t => {
   assert.deepEqual(late.messages.map(message => message.text), ["Send the invoice", "Dinner"]);
   await assert.rejects(run("read_conversation", { conversationId: day.id, at: "yesterday" }), /date and time/);
 });
+
+test("a message another agent sent a chat reads as that agent's, in its own words", async t => {
+  const { store, run, budget } = setup(t);
+  const { agentMessage } = require("../app/main/team-tools.cjs");
+  const text = agentMessage({ from: { id: "agent-1", name: "Orbit" }, conversation: { id: "chat-a", title: "Trip" }, hop: 1, mode: "message", request: { at: "2026-10-14T09:00:00.000Z", source: "user", text: "Plan it" }, body: "The hotel is booked for May" });
+  // After a restore it's kept under the user (history-adapter.cjs); its text still says who sent it.
+  store.messages.append({ conversationId: budget.id, authorId: "user-1", text });
+  const read = await run("read_conversation", { conversationId: budget.id });
+  assert.deepEqual(read.messages.at(-1), { messageId: read.messages.at(-1).messageId, at: read.messages.at(-1).at, from: "Orbit (another agent)", fromConversationId: "chat-a", text: "The hotel is booked for May" });
+  assert.equal((await run("search_messages", { query: "isn't from the user" })).hits.length, 0, "Timewarp's note isn't searched");
+  assert.equal((await run("search_messages", { query: "booked for May" })).hits[0].from, "Orbit (another agent)");
+});

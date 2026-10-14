@@ -26,14 +26,15 @@ function SiteIcon({ url, fallback = "letter" }) {
 
 // Native browser views sit above the page, so they hide while a dialog or
 // menu is open and come back when it closes. With toasts: also while a toast
-// shows, for a page that leaves no room beside it for toasts.
+// shows, for a page that leaves no room beside it for toasts. First steps'
+// card beside the browser leaves it showing (FirstSteps.jsx).
 function useOverlayOpen(toasts = false) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    const check = () => setOpen(!!document.querySelector("dialog[open], .tw-menu, .timewarp-org-gate" + (toasts ? ", .tw-toast" : "")));
+    const check = () => setOpen(!!document.querySelector("dialog[open]:not([data-beside-browser]), .tw-menu, .timewarp-org-gate" + (toasts ? ", .tw-toast" : "")));
     check();
     const observer = new MutationObserver(check);
-    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["open"] });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["open", "data-beside-browser"] });
     return () => observer.disconnect();
   }, [toasts]);
   return open;

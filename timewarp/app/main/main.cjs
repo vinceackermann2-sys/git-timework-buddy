@@ -282,6 +282,7 @@ async function boot() {
       // Its browser tabs, reply notifications and sync stop too, and the
       // window takes the next account's appearance.
       if (changedUser) {
+        sandboxArmed = false;
         accountSync?.stop(); accountSync = null;
         await client.stop().catch(() => {}); harness.reset(); toolsRegistered = false;
         browser.closeAll(); replies.clear();
@@ -398,7 +399,8 @@ async function boot() {
   client.on("notification", ({ method, params }) => { if (method === "windowsSandbox/setupCompleted") broadcast("sandbox.changed", params); });
   // MCP servers sync once Codex runs (account-sync.cjs mcpServers).
   client.on("status", state => { if (state.status === "ready") accountSync?.soon(); });
-  // Codex's command sandbox (sandbox.cjs): set up and checked once signed in.
+  // Codex's command sandbox (sandbox.cjs): set up and checked by itself once
+  // an account is signed in, and checked again whenever Codex starts again.
   // A change applies when Codex restarts, which waits until no chat is
   // replying (urgent: a minute at most, when sandboxed commands stall).
   let codexVersion = null;
@@ -409,7 +411,7 @@ async function boot() {
     await client.stop().catch(() => {});
     harness?.reset();
     toolsRegistered = false;
-    if (userId()) toolsReady = registerTools().catch(error => appLog.warn("tools", "Agent tools are pending. " + error.message));
+    if (userId()) prepareTools();
     else await client.start().catch(() => {});
   }
   fs.mkdirSync(path.join(runtimeDir, "agents"), { recursive: true });
@@ -418,6 +420,14 @@ async function boot() {
     log: (level, message, data) => appLog[level === "warn" ? "warn" : "info"]("sandbox", message, data),
   });
   const sandboxChanged = state => { broadcast("sandbox.changed", state); return state; };
+  // Armed once the signed-in account is ready (accountReady), so a setup's
+  // restart doesn't cut short the work its first Codex start does.
+  let sandboxArmed = false;
+  const ensureSandbox = () => sandbox.ensure().then(sandboxChanged)
+    .catch(error => appLog.warn("sandbox", "The Windows sandbox couldn't be set up: " + error.message));
+  // A Codex that started again (a restart or a crash) is checked again, so
+  // its commands stay sandboxed and apply_patch works again.
+  client.on("status", state => { if (state.status === "ready" && sandboxArmed && userId()) void ensureSandbox(); });
   // Screens that show a chat's run (executionStatus) reload when it changes.
   // The guard reports every step of a turn; a run whose state (all but its
   // running time) is as last sent isn't sent again.
@@ -536,6 +546,8 @@ async function boot() {
   };
 
   let automations = null, storeClosed = false;
+  // Set up with the tool servers below; it follows what working chats are doing.
+  let teamTools = null;
   const replies = require("./notifications.cjs").createReplyNotifications({
     Notification, store, userId: () => userId(),
     enabled: () => store.settings.get("notifications")?.replies !== false,
@@ -547,7 +559,7 @@ async function boot() {
   });
   let background = null; // titles and the memory writer, set up below
   harness = createHarness({
-    store, client, userId: () => userId(), instructionsFor, tools, permissions: PERMISSIONS, toolsReady: () => toolsReady || (toolsReady = registerTools().catch(error => appLog.warn("tools", "Agent tools are pending. " + error.message))),
+    store, client, userId: () => userId(), instructionsFor, tools, permissions: PERMISSIONS, toolsReady: () => toolsReady || prepareTools(),
     // Each chat's workers learn which agent they work for (connected apps need its ID).
     threadConfig: agent => agentThreadConfig(workerInstructions(agent)),
     baseInstructions: BASE_INSTRUCTIONS, turnContext,
@@ -564,7 +576,7 @@ async function boot() {
     spareInputs: agent => [path.join(codexHome(), "config.toml"), path.join(codexHome(), "AGENTS.md"), path.join(agent.workspace, "AGENTS.md"), knowledge.skillsRoot, path.join(agent.workspace, ".agents", "skills")]
       .map(file => { try { const stat = fs.statSync(file); return stat.mtimeMs + ":" + stat.size; } catch { return "-"; } }).join(" "),
     // Late Codex events during quit find the database closed: they're dropped.
-    notify: (name, payload) => { if (storeClosed) return; broadcast(name, payload); automations?.observe(name, payload); replies.observe(name, payload); background?.observe(name, payload); },
+    notify: (name, payload) => { if (storeClosed) return; broadcast(name, payload); automations?.observe(name, payload); replies.observe(name, payload); background?.observe(name, payload); teamTools?.observe(name, payload); },
     log: (...args) => console.error("[timewarp]", ...args),
   });
   // Chat titles and the memory writer run in the background on a small model (memory-writer.cjs).
@@ -588,6 +600,66 @@ async function boot() {
   // included. A call acts for the chat its thread (or its parent) belongs to.
   const automationSpecs = require("./automation-tools.cjs").toolSpecs;
   const chatTools = require("./chat-tools.cjs").createChatTools({ store, userId: () => userId() });
+  // Agents messaging and asking each other's chats while they work (team-tools.cjs).
+  teamTools = require("./team-tools.cjs").createTeamTools({ store, harness, userId: () => userId() });
+  // Timewarp itself for agents (app-tools.cjs): usage, settings and the app's
+  // state to read; a setting changes only through the card the user answers.
+  // When Timewarp isn't in front, a notification points to the card.
+  const cardNotices = new Set();
+  const confirmInChat = (conversationId, card) => {
+    const asked = harness.confirm(conversationId, card);
+    const focused = BrowserWindow.getAllWindows().some(window => !window.isDestroyed() && window.isVisible() && window.isFocused());
+    if (!focused && Notification.isSupported()) {
+      try {
+        const notice = new Notification({ title: String(card.agent || "Timewarp").slice(0, 120), body: `${card.title} Open the chat to answer.` });
+        const drop = () => { cardNotices.delete(notice); try { notice.close(); } catch {} };
+        notice.on("click", () => { drop(); openRoute("#/conversation/" + encodeURIComponent(conversationId)); });
+        notice.on("failed", drop);
+        cardNotices.add(notice);
+        void asked.finally(drop);
+        notice.show();
+      } catch (error) { appLog.warn("notifications", "A card notification couldn't be shown: " + error.message); }
+    }
+    return asked;
+  };
+  const appTools = require("./app-tools.cjs").createAppTools({
+    store, harness, userId: () => userId(),
+    // What the sidebar's usage card shows (methods.cjs funding.get), with the
+    // ChatGPT plan's usage windows when AI runs on it.
+    usage: async () => {
+      const state = await methods["funding.get"]();
+      const chatgpt = state.source === "chatgpt" ? await services.chatgpt.refresh().then(() => services.chatgpt.details(), () => services.chatgpt.details()) : null;
+      const { planUsage = null, ...funding } = state;
+      return { funding, planUsage, chatgpt };
+    },
+    settings: {
+      // With the appearance's defaults, as Settings → General reads it, so a theme change keeps the rest.
+      read: () => { const all = store.settings.all(); return { ...all, appearance: all.appearance || defaultAppearance() }; },
+      // As Settings → General writes them, then the open screens reload them
+      // and account sync carries them.
+      write: async (key, value) => {
+        if (key === "modelSettings") await methods["models.select"](value);
+        else await methods["settings.set"]({ key, value });
+        broadcast("settings.changed", { key });
+        accountSync?.soon();
+      },
+    },
+    models: { choices: () => modelChoices(), choose: (choices, wanted) => require("./model-catalog.cjs").chooseModel(choices, wanted), select: choices => selectModel(choices) },
+    status: async () => {
+      const sandboxState = await sandbox.status().catch(() => null);
+      let update = null;
+      try { update = updates.state(); } catch {}
+      return {
+        version: VERSION, platform: process.platform,
+        updates: update ? { status: update.status, ...(update.available ? { available: update.available } : {}) } : null,
+        agentRuntime: client.status, commandSandbox: sandboxState?.status || null,
+        chatHistorySync: historyStatus.state, accountSync: accountSyncStatus.state,
+        privacyMode: store.settings.get("privacy")?.mode === "private",
+        chatsWorkingNow: harness.conversations.running().length,
+      };
+    },
+    confirm: confirmInChat,
+  });
   toolServer = createToolServer({
     token: toolsToken,
     servers: {
@@ -595,6 +667,8 @@ async function boot() {
       timewarp_vault: { title: "Timewarp vault", instructions: vaultTools.specs()[0].description, specs: vaultTools.specs, call: vaultTools.call, readOnly: new Set(["list"]) },
       timewarp_automations: { title: "Timewarp automations", instructions: automationSpecs()[0].description, specs: automationSpecs, call: automationTools.call, readOnly: new Set(["list"]) },
       timewarp_chats: { title: "Timewarp chats", instructions: chatTools.specs()[0].description, specs: chatTools.specs, call: chatTools.call, readOnly: new Set(["search_conversations", "search_messages", "read_conversation"]) },
+      timewarp_team: { title: "Timewarp team", instructions: teamTools.specs()[0].description, specs: teamTools.specs, call: teamTools.call, readOnly: new Set(["list_agents"]) },
+      timewarp_app: { title: "Timewarp app", instructions: appTools.specs()[0].description, specs: appTools.specs, call: appTools.call, readOnly: new Set(["get_usage", "get_settings", "get_status"]) },
     },
     resolve: (threadId, rootThreadId) => {
       const conversationId = harness.conversationFor(threadId) || harness.conversationFor(rootThreadId);
@@ -655,6 +729,15 @@ async function boot() {
     await client.request("config/mcpServer/reload", undefined);
     toolsRegistered = true;
     harness?.discardSpares();
+  }
+  // Agent tools that couldn't be written to Codex's config are tried again as
+  // the next chat starts, without the user refreshing Tools.
+  function prepareTools() {
+    const attempt = registerTools().catch(error => {
+      if (toolsReady === attempt) toolsReady = null;
+      appLog.warn("tools", "Agent tools are pending; the next chat tries again. " + error.message);
+    });
+    return toolsReady = attempt;
   }
   // Skill folders the previous app kept connected stay available.
   async function connectLegacySkills() {
@@ -733,7 +816,7 @@ async function boot() {
     try { require("./legacy-memory.cjs").importLegacyMemory({ runtimeDir, userId: account, knowledge, settings: store.settings, log: message => appLog.info("memory", message) }); }
     catch (error) { appLog.warn("memory", "The previous app's memory could not be imported: " + error.message); }
     // Tools first: Codex keeps the previous run's bridge address until they're registered.
-    toolsReady = registerTools().catch(error => appLog.warn("tools", "Connected-app tools are pending; refresh Tools to retry. " + error.message));
+    prepareTools();
     void connectLegacySkills().catch(() => console.error("[timewarp] Previously connected skill folders are unavailable."));
     void retireReplacedSkills().catch(error => appLog.warn("skills", "Replaced skills could not be turned off: " + error.message));
     // The account's agents, memory, settings and the like from its other
@@ -746,10 +829,10 @@ async function boot() {
     agents.prepareWorkspaces();
     await selectModel().catch(() => console.error("[timewarp] The default model could not be updated."));
     if (fixture && !process.env.TIMEWARP_FIXTURE_ONBOARDING) await onboarding.skip();
-    // Accounts past setup get the sandbox setup they would have had in it;
-    // others get it in setup's knowledge step, as before.
-    void onboarding.done().then(done => sandbox.ensure({ setup: done })).then(sandboxChanged)
-      .catch(error => appLog.warn("sandbox", "The Windows sandbox couldn't be set up: " + error.message));
+    // The command sandbox is set up for every account, whether or not it
+    // finished setup; setup's knowledge step shows how that went.
+    sandboxArmed = true;
+    void ensureSandbox();
   }
 
   async function diagnostics() {
@@ -775,8 +858,11 @@ async function boot() {
   const defaultAppearance = () => ({ scheme: "system", accent: defaultAccent, radiance: 0.5, texture: { type: "dots", step: 0 } });
   // Browser profile import arrives with the profile importer.
   const browserImport = require("./browser-import.cjs").createBrowserImport({ store });
+  // Memory, projects and scheduled tasks pasted from ChatGPT, Claude and the
+  // like, in setup and on the Memories page.
+  const assistantImport = require("./assistant-import.cjs").createAssistantImport({ knowledge, agents, automations });
   // Setup can import saved passwords the same way Settings → Vault does.
-  onboarding = createOnboarding({ profile, store, services, agents, knowledge, browserImport, importPasswords: () => methods["vault.importPasswords"](), dialog, shell, defaultAppearance });
+  onboarding = createOnboarding({ profile, store, services, agents, knowledge, browserImport, assistantImport, importPasswords: () => methods["vault.importPasswords"](), dialog, shell, defaultAppearance });
 
   // Restarting into a downloaded update asks first, from the notification or
   // the Update button. Agents still working are mentioned, so a restart doesn't
@@ -817,7 +903,7 @@ async function boot() {
   const shares = require("./shares.cjs").createShares({ store, agents, harness, automations, accountRpc: (rpc, input) => services.accountRpc(rpc, input), userId: () => userId() });
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates, shares,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, assistantImport, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates, shares,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();

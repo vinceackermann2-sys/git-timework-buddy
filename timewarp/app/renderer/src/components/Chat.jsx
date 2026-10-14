@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { AlarmClock, ArrowDown, Check, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Copy, EllipsisVertical, LoaderCircle, MessageSquareWarning, PanelRight, Pencil, Reply, Search, Share, ShieldCheck, X } from "lucide-react";
+import { AlarmClock, ArrowDown, Bot, Check, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Copy, EllipsisVertical, LoaderCircle, MessageSquareText, MessageSquareWarning, PanelRight, Pencil, Reply, Search, Share, ShieldCheck, X } from "lucide-react";
 import { call, errorText, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { copyText, stripCitations, userMessageText } from "../cards.mjs";
@@ -151,6 +151,37 @@ function AgentMessage({ row, agent, conversationId, onReply }) {
   );
 }
 
+// The user's agents, for the picture of an agent that messaged this chat.
+let knownAgents = null;
+function useAgent(id) {
+  const [agents, setAgents] = useState(knownAgents);
+  useEffect(() => { if (!knownAgents) call("agents.list").then(list => { knownAgents = list; setAgents(list); }).catch(() => {}); }, []);
+  return agents?.find(item => item.id === id) || null;
+}
+const openChat = id => { if (id) location.hash = "#/conversation/" + encodeURIComponent(id); };
+
+// A message another of the user's agents sent this chat (team tools): that
+// agent's, with the chat it came from, never the user's. Its cards don't act
+// here: only references show, as in the user's own messages.
+function PeerMessage({ row, conversationId }) {
+  const { peer } = row, sender = useAgent(peer.agentId);
+  return (
+    <div className="tw-agent-row tw-peer-row" data-group={row.group} data-row-key={row.key}>
+      <div className="tw-agent-stack">
+        <div className="tw-peer-label">
+          <span>{peer.mode === "ask" ? `${peer.name} asks` : `Message from ${peer.name}`}</span>
+          {peer.conversationId ? <button type="button" className="tw-peer-source" title="Open the chat it came from" onClick={() => openChat(peer.conversationId)}>{peer.title || "Open chat"}</button> : null}
+        </div>
+        <div className="tw-bubble tw-peer-bubble" data-message-id={row.key}>
+          <Markdown text={row.text} cards={{ conversationId, only: USER_CARDS }} />
+          <Time at={row.at} />
+        </div>
+      </div>
+      {sender ? <Avatar agent={sender} /> : <span className="tw-avatar tw-peer-avatar" aria-hidden="true"><Bot size={16} /></span>}
+    </div>
+  );
+}
+
 // One row of the chat: a message (after its separator), an event, an
 // automation's runs, a generated image or a review that stopped an action.
 function Row({ row, agent, conversationId, onRetry, onReply, onJump, onAutomation }) {
@@ -158,12 +189,16 @@ function Row({ row, agent, conversationId, onRetry, onReply, onJump, onAutomatio
     case "message": return (
       <>
         {row.separator ? <div className="tw-date"><time dateTime={new Date(row.at).toISOString()}>{separatorLabel(row.separator, row.at)}</time></div> : null}
-        {row.sender === "user" ? <UserMessage row={row} conversationId={conversationId} onRetry={onRetry} onJump={onJump} /> : <AgentMessage row={row} agent={agent} conversationId={conversationId} onReply={onReply} />}
+        {row.sender === "user" ? <UserMessage row={row} conversationId={conversationId} onRetry={onRetry} onJump={onJump} />
+          : row.sender === "peer" ? <PeerMessage row={row} conversationId={conversationId} />
+            : <AgentMessage row={row} agent={agent} conversationId={conversationId} onReply={onReply} />}
       </>
     );
-    // "Scheduled <name>" opens the automation.
+    // "Scheduled <name>" opens the automation; "Asked <agent>" the chat it went to.
     case "event": return row.automation ? (
       <div className="tw-chat-event"><button type="button" className="tw-chat-event-link" onClick={() => onAutomation(row.automation)}><AlarmClock size={14} aria-hidden="true" /><span>{row.text}</span></button></div>
+    ) : row.chat ? (
+      <div className="tw-chat-event"><button type="button" className="tw-chat-event-link" onClick={() => openChat(row.chat.id)}><MessageSquareText size={14} aria-hidden="true" /><span>{row.text}</span></button></div>
     ) : <div className="tw-chat-event"><AlarmClock size={14} aria-hidden="true" /><span>{row.text}</span></div>;
     case "runs": return <div className="tw-chat-runs">{runsLabel(row.counts)}</div>;
     case "image": return <div className="tw-turn-extra"><GeneratedImage item={row.item} /></div>;
@@ -185,7 +220,7 @@ function Row({ row, agent, conversationId, onRetry, onReply, onJump, onAutomatio
 const sameRow = (a, b) => a.kind === b.kind && a.key === b.key && a.item === b.item && a.text === b.text && a.streaming === b.streaming && a.group === b.group
   && a.separator === b.separator && a.at === b.at && a.quoteTarget === b.quoteTarget && a.undelivered === b.undelivered && a.review === b.review
   && a.turn?.pending === b.turn?.pending && a.turn?.message === b.turn?.message && (a.turn === b.turn || !(a.undelivered || a.turn?.pending))
-  && (a.kind !== "runs" || runsLabel(a.counts) === runsLabel(b.counts)) && (a.kind !== "event" || (a.automation?.id === b.automation?.id && a.automation?.name === b.automation?.name));
+  && (a.kind !== "runs" || runsLabel(a.counts) === runsLabel(b.counts)) && (a.kind !== "event" || (a.automation?.id === b.automation?.id && a.automation?.name === b.automation?.name && a.chat?.id === b.chat?.id));
 const ChatRow = React.memo(Row, (before, after) => sameRow(before.row, after.row) && (before.row.separator !== "day" || before.day === after.day) && before.agent === after.agent
   && before.conversationId === after.conversationId && before.onRetry === after.onRetry && before.onReply === after.onReply && before.onJump === after.onJump && before.onAutomation === after.onAutomation);
 

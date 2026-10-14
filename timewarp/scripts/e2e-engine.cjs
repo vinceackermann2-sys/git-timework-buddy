@@ -47,6 +47,10 @@ const PAGES = {
     <button onclick="setTimeout(()=>{location.href='/arrived'},80)">Later</button>
     <p id="out">Nothing yet</p>`,
   "/arrived": `<!doctype html><title>Timewarp test arrived</title><h1>Arrived</h1>`,
+  // First steps' browser step looks something up here instead of on Wikipedia.
+  "/encyclopedia": `<!doctype html><title>Timewarp test encyclopedia</title><h1>Encyclopedia</h1>
+    <form action="/article"><input type="search" name="search" aria-label="Search the encyclopedia"><button>Go</button></form>`,
+  "/article": `<!doctype html><title>Timewarp test article</title><h1>Article</h1>${"<p>Light travels fast.</p>".repeat(60)}`,
 };
 // Answered after a delay, like a page's request to a slow server.
 const SLOW = { "/slow": [400, "Loaded 42"] };
@@ -61,7 +65,8 @@ rl.on("line", line => { let m; try { m = JSON.parse(line); } catch { return; } i
   reply({}); });`;
 
 // env: more settings for this instance, such as a cloud file shared with another.
-async function launch(env = {}) {
+// ready: what shows once the window is ready (setup's screen, for an instance that runs it).
+async function launch(env = {}, { ready = ".tw-window" } = {}) {
   if (!fs.existsSync(path.join(appDir, "main", "fixture.cjs"))) throw new Error("Build a preview first: node scripts/build-engine.cjs --dev --fixture");
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-e2e-"));
   const port = await freePort();
@@ -92,7 +97,7 @@ async function launch(env = {}) {
     if (reply.result?.exceptionDetails) throw new Error(reply.result.exceptionDetails.exception?.description || reply.result.exceptionDetails.text);
     return reply.result?.result?.value;
   };
-  for (const deadline = Date.now() + 30000; Date.now() < deadline; await pause(300)) if (await evaluate("!!window.tw && !!document.querySelector('.tw-window')").catch(() => false)) break;
+  for (const deadline = Date.now() + 30000; Date.now() < deadline; await pause(300)) if (await evaluate(`!!window.tw && !!document.querySelector(${JSON.stringify(ready)})`).catch(() => false)) break;
   const call = async (method, input = {}) => {
     const value = await evaluate(`window.tw.call(${JSON.stringify(method)}, ${JSON.stringify(input)}).then(value => ({ ok: true, value }), error => ({ ok: false, error: error.message }))`);
     if (!value?.ok) throw new Error(`${method}: ${value?.error}`);
@@ -578,6 +583,64 @@ async function main() {
       if (!state.tabs.some(tab => /\/form/.test(tab.url || ""))) throw new Error("The worker's tab isn't in the chat's browser.");
       return `a worker opened and read a page in the chat's browser and has ${value.browser} browser tools, the vault and connected apps`;
     },
+    // Agents working together (team-tools.cjs): a chat finds another agent,
+    // asks it something in a new chat and gets its answer back; the other
+    // chat keeps the question as the asking agent's, not the user's.
+    async teamAsk() {
+      const helper = await call("agents.create", { name: "Budget helper", instructions: "Keeps the travel budget." });
+      const id = await chat();
+      const result = await turn(id, script(`
+        const listed = JSON.parse(out(await tools.mcp__timewarp_team__list_agents({})));
+        const target = listed.agents.find(item => item.name === "Budget helper");
+        const answer = JSON.parse(out(await tools.mcp__timewarp_team__ask({ agentId: target.agentId, question: "What is the hotel budget?", timeoutSeconds: 120 })));
+        text(JSON.stringify({ agents: listed.agents.map(item => item.name), about: target.about, answer }));
+      `), { timeout: 180000 });
+      const value = json(result.reply);
+      if (!value.agents.includes("Budget helper") || value.about !== "Keeps the travel budget.") throw new Error("list_agents didn't show the helper: " + JSON.stringify(value));
+      if (value.answer.status !== "answered" || !/Preview reply/.test(value.answer.answer || "")) throw new Error("No answer came back: " + JSON.stringify(value.answer));
+      const other = await call("conversations.get", { id: value.answer.conversationId });
+      if (other.agentId !== helper.id) throw new Error("The question went to the wrong agent's chat.");
+      const asked = (await call("conversations.history", { id: other.id })).messages[0];
+      if (asked.authorId !== agent.id || !/^<agent-message\b/.test(asked.text)) throw new Error("The other chat didn't keep the question as the asking agent's.");
+      // The user's message that led to the question (here, the check's own message) goes with it.
+      if (!/<user-request at="[^"]+" source="user">Run this check\./.test(asked.text)) throw new Error("The user's request didn't go with the question.");
+      // A chat can't message itself.
+      const self = await turn(id, script(`text(out(await tools.mcp__timewarp_team__send_message({ conversationId: ${JSON.stringify(id)}, message: "Hi me" })));`));
+      if (!/That's this chat/.test(output(self.reply))) throw new Error("A chat could message itself: " + output(self.reply).slice(0, 200));
+      return "a chat found the helper agent, asked it in a new chat and got its answer; the helper's chat kept the question as the asking agent's, with the user's request";
+    },
+    // Timewarp itself for agents (app-tools.cjs): usage in credits, and a
+    // setting changes only after Allow on the card Timewarp shows.
+    async appSettings() {
+      const id = await chat();
+      const usage = await turn(id, script(`text(out(await tools.mcp__timewarp_app__get_usage({})));`));
+      if (/\$|USD|dollar/i.test(output(usage.reply))) throw new Error("Usage showed money: " + output(usage.reply).slice(0, 300));
+      const value = json(usage.reply);
+      if (value.credits?.unit !== "credits" || !Number.isFinite(value.credits.left)) throw new Error("Usage didn't show the credits: " + JSON.stringify(value).slice(0, 300));
+      const before = (await call("settings.get")).appearance?.scheme || "system", wanted = before === "dark" ? "light" : "dark";
+      const ask = script(`text(out(await tools.mcp__timewarp_app__change_settings({ theme: "${wanted}", reason: "Checking the settings card." })));`);
+      try {
+        // Don't allow: the card goes and nothing changes.
+        const declining = turn(id, ask, { approve: false, timeout: 60000 });
+        let card = null;
+        for (const deadline = Date.now() + 30000; !card && Date.now() < deadline; await pause(300)) card = (await call("conversations.status", { id })).approvals.find(item => item.method === "timewarp/confirm");
+        if (!card) throw new Error("No settings card was shown.");
+        const change = card.params.changes?.[0];
+        if (card.params.changes.length !== 1 || change.label !== "Theme" || change.to !== (wanted === "dark" ? "Dark" : "Light") || card.params.reason !== "Checking the settings card.") throw new Error("The card didn't show the change: " + JSON.stringify(card.params));
+        await call("approvals.respond", { id: card.id, response: { decision: "decline" } });
+        const declined = await declining;
+        if (((await call("settings.get")).appearance?.scheme || "system") !== before) throw new Error("The theme changed without Allow.");
+        if (!/nothing changed/.test(output(declined.reply))) throw new Error("The agent wasn't told nothing changed: " + output(declined.reply).slice(0, 200));
+        // Allow: the theme changes.
+        const allowed = await turn(id, ask);
+        if (!allowed.approvals.some(item => item.method === "timewarp/confirm")) throw new Error("Allow went without a card.");
+        if ((await call("settings.get")).appearance?.scheme !== wanted) throw new Error("The theme didn't change after Allow: " + output(allowed.reply).slice(0, 200));
+      } finally {
+        const appearance = (await call("settings.get")).appearance || {};
+        await call("settings.set", { key: "appearance", value: { ...appearance, scheme: before } });
+      }
+      return `usage read as ${value.credits.left} credits; the theme stayed after Don't allow on the card and changed to ${wanted} after Allow`;
+    },
     async connectorSignIn() {
       const slack = (await call("integrations.list", {})).items.find(item => /slack/i.test(item.displayName));
       if (!slack) throw new Error("The preview Slack app is missing.");
@@ -680,6 +743,54 @@ async function main() {
         await until(`row.innerText.includes("Downloading 42%") && row.querySelector("button").disabled && !button`, "Downloading didn't show");
       } finally { await call("debug.updates", null); await app.evaluate(`location.hash = "#/"`); }
       return "Settings says updates are off in a preview build; a ready update shows in Settings and as the sidebar's Update button, which asks to install it";
+    },
+    // Setup finished in the window: First steps shows once on Home, its
+    // browser step opens the real browser where the agent's tools look
+    // something up, and a task picked at the end goes into the message box.
+    firstSteps: async () => {
+      const fresh = await launch({ TIMEWARP_FIXTURE_ONBOARDING: "1", TIMEWARP_FIRST_STEPS_URL: site + "/encyclopedia" }, { ready: ".tw-journey" });
+      try {
+        const until = async (expression, what, ms = 20000) => {
+          for (const deadline = Date.now() + ms; Date.now() < deadline; await pause(250)) if (await fresh.evaluate(expression).catch(() => false)) return;
+          throw new Error(what);
+        };
+        const setup = (action, input = {}) => fresh.evaluate(`window.timewarp.request("onboardingAction", ${JSON.stringify({ action, ...input })})`);
+        for (const [action, input] of [["agent", { name: "Orbit" }], ["user", { name: "Ada" }], ["knowledge-done"], ["theme", { scheme: "light", color: "#E9D2FF", radiance: 0.5 }], ["plans"], ["select-plan", { plan: "max" }]]) await setup(action, input);
+        if ((await fresh.call("firstSteps.get")).show) throw new Error("First steps was due before setup finished.");
+        await setup("complete");
+        await fresh.evaluate("location.reload()").catch(() => {});
+        await until("!!document.querySelector('dialog.tw-first-steps[open]')", "First steps didn't show after setup");
+        const titles = [];
+        let looked = null;
+        // Next through every step to the tasks to try. The browser step shows
+        // the pane and waits for the agent's run there to finish.
+        while (await fresh.evaluate(`[...document.querySelectorAll(".tw-first-steps button")].some(button => button.textContent === "Next")`)) {
+          titles.push(await fresh.evaluate("document.querySelector('.tw-first-steps h2').textContent"));
+          if (titles.length > 8) throw new Error("First steps never reached its last step.");
+          if (await fresh.evaluate("document.querySelector('.tw-first-steps-card').dataset.step === 'browser'")) {
+            await until("!!document.querySelector('.tw-pane') && document.querySelector('dialog.tw-first-steps').hasAttribute('data-beside-browser')", "The browser step didn't show the browser beside its card");
+            await until("!!document.querySelector('.tw-first-steps-result')", "The agent's run in the browser didn't finish", 45000);
+            const result = await fresh.evaluate("document.querySelector('.tw-first-steps-result').textContent");
+            const state = await fresh.call("browser.state", { conversationId: "first-steps" });
+            looked = state.tabs.find(tab => tab.id === state.active);
+            if (!/^My part took/.test(result) || !/\/article\?search=Albert\+Einstein/.test(looked?.url || "")) throw new Error(`The run ended with "${result}" on ${looked?.url}`);
+          }
+          await fresh.evaluate(`[...document.querySelectorAll(".tw-first-steps button")].find(button => button.textContent === "Next").click()`);
+          await pause(300);
+        }
+        if (!looked || !titles.some(title => /your agent/.test(title))) throw new Error("First steps didn't show the agent and the browser: " + titles.join(", "));
+        if (await fresh.evaluate("!!document.querySelector('.tw-pane')")) throw new Error("The browser stayed open after its step.");
+        const prompt = await fresh.evaluate("document.querySelector('.tw-first-steps-prompt span').textContent");
+        await fresh.evaluate("document.querySelector('.tw-first-steps-prompt').click()");
+        await until(`!document.querySelector("dialog.tw-first-steps") && document.querySelector(".tw-home textarea")?.value === ${JSON.stringify(prompt)}`, "The picked task wasn't put in the message box");
+        if ((await fresh.call("firstSteps.get")).show) throw new Error("First steps was still due after it was done.");
+        if ((await fresh.call("browser.state", { conversationId: "first-steps" })).tabs.length) throw new Error("First steps' browser tabs stayed open after it ended.");
+        await fresh.evaluate("location.reload()").catch(() => {});
+        await until("!!document.querySelector('.tw-home textarea')", "Home didn't come back");
+        await pause(1500);
+        if (await fresh.evaluate("!!document.querySelector('dialog.tw-first-steps')")) throw new Error("First steps showed again.");
+        return `after setup, First steps showed on Home (${titles.join(", ")}, then tasks to try); its browser step opened the real browser, where the agent's tools searched and landed on ${looked.url}; the picked task went into the message box, the tour's tabs closed, and it didn't show again`;
+      } finally { await fresh.close(); }
     },
     // Two computers of one account share a cloud (the preview's cloud file),
     // and one of them then signs in to another account: the account's agents,

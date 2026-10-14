@@ -166,3 +166,24 @@ test("the window and the sandbox asking together reach the cloud once", async ()
   assert.deepEqual(await Promise.all([onboarding.done(), onboarding.done()]), [true, true]);
   assert.equal(statusCalls(cloud), 1);
 });
+
+test("finishing setup shows First steps once, for that account on that computer", async () => {
+  const cloud = cloudDouble(), first = computer(cloud);
+  assert.equal(first.onboarding.firstSteps(), false);
+  await finishSetup(first.onboarding);
+  assert.equal(first.onboarding.firstSteps(), true);
+  // It waits through a sign-out, and isn't another account's.
+  first.signIn("bob"); assert.equal(first.onboarding.firstSteps(), false);
+  first.signIn("alice"); assert.equal(first.onboarding.firstSteps(), true);
+  await first.onboarding.firstStepsDone();
+  assert.equal(first.onboarding.firstSteps(), false);
+  assert.equal(await first.onboarding.done(), true);
+  // Another computer skips setup, and First steps with it.
+  const second = computer(cloud);
+  assert.equal(await second.onboarding.done(), true);
+  assert.equal(second.onboarding.firstSteps(), false);
+  // Run setup again shows it again at the end.
+  await first.onboarding.restart();
+  await finishSetup(first.onboarding);
+  assert.equal(first.onboarding.firstSteps(), true);
+});

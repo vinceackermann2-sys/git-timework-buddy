@@ -191,12 +191,12 @@ export function IncomingShares({ agents, onAccepted }) {
               <strong>{share.title}</strong>
               {kind === "chat" ? <small>{summary.messages ? `${summary.messages} message${summary.messages === 1 ? "" : "s"}` : "Conversation"}{summary.agentName ? ` with ${summary.agentName}` : ""}{summary.omitted ? ` · the latest ${summary.messages} of ${summary.messages + summary.omitted}` : ""}</small> : null}
               {kind === "agent" ? <small>{summary.workflows?.length ? `Workflows: ${summary.workflows.join(", ")}` : "No workflows"}</small> : null}
-              {kind === "automation" ? <small>{describeSchedule(summary.schedule || {})}{summary.agentName ? ` · run by ${summary.agentName}` : ""}</small> : null}
+              {kind === "automation" ? <small>{describeSchedule((content ? content.schedule : summary.schedule) || {})}{summary.agentName ? ` · run by ${summary.agentName}` : ""}</small> : null}
               {kind !== "automation" && (summary.preview || summary.description) ? <span className="tw-share-preview">{summary.preview || summary.description}</span> : null}
             </span>
           </div>
           {kind === "automation" ? (
-            <div className="tw-field"><span>Instructions</span><div className="tw-share-instructions">{content ? content.instructions : error ? "" : "Loading…"}</div></div>
+            <div className="tw-field"><span>Instructions</span><div className="tw-share-instructions">{content ? (typeof content.instructions === "string" ? content.instructions : "") : error ? "" : "Loading…"}</div></div>
           ) : null}
           {needsAgent ? (
             usable.length ? (

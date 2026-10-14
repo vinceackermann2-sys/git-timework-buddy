@@ -52,8 +52,11 @@ export function App() {
   // Settings → General → Run setup again shows the first-run screens.
   useEffect(() => { const again = () => void load(); window.addEventListener("tw:setup", again); return () => window.removeEventListener("tw:setup", again); }, [load]);
   useEvent("account.changed", () => { void load().then(() => { if (location.hash === "#/") window.dispatchEvent(new HashChangeEvent("hashchange")); else location.hash = "#/"; }); });
-  // Settings changed on the account's other computer (account sync).
-  useEvent("account.synced", () => { void call("settings.get").then(value => { setSettings(value); applyAppearance(value.appearance); }).catch(() => {}); });
+  // Settings changed on the account's other computer (account sync), or by an
+  // agent once the user allowed it on its card (app-tools.cjs).
+  const reloadSettings = () => { void call("settings.get").then(value => { setSettings(value); applyAppearance(value.appearance); }).catch(() => {}); };
+  useEvent("account.synced", reloadSettings);
+  useEvent("settings.changed", reloadSettings);
 
   if (state.loading || (state.signedIn && !state.onboarding && !SignedIn)) return <div className="tw-splash"><img src="./timewarp-logo.svg" alt="Timewarp" /></div>;
   if (!state.signedIn) return <main id="timewarp-auth-view" className="relative flex h-full w-full items-center justify-center bg-background px-6 py-12 text-foreground" />;
