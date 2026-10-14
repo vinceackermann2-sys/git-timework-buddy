@@ -9,6 +9,10 @@ const MAX_ATTACHMENT = 100 * 1024 * 1024;
 const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
 const SETTING_KEYS = new Set(["appearance", "privacy", "preferences", "notifications", "memory"]);
 const fail = (status, message) => Object.assign(new Error(message), { status });
+// First steps' browser step (FirstSteps.jsx): its tabs, the page it opens and
+// what it looks up there. Wikipedia's start page searches the Wikipedia in the
+// computer's language, where the article has this name too.
+const FIRST_STEPS_BROWSER = "first-steps", FIRST_STEPS_URL = "https://www.wikipedia.org/", FIRST_STEPS_SEARCH = "Albert Einstein";
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
 // Programs, scripts and shortcuts never open from Timewarp (a chat card or the
 // Files view): an agent may have written them. Show in folder still works.
@@ -67,6 +71,10 @@ function fillSignIn(username, password, origin) {
 
 function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null, updates = null, shares = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
+  // A chat's browser, or the tabs of First steps' browser step, which belong to no chat.
+  const browserOf = conversationId => { if (conversationId !== FIRST_STEPS_BROWSER) harness.conversations.get(conversationId); };
+  // Preview builds can show First steps another page (the end-to-end tests' own).
+  const firstStepsUrl = (app && !app.isPackaged && process.env.TIMEWARP_FIRST_STEPS_URL) || FIRST_STEPS_URL;
   // Each agent's workspace, so the skills kept there (Settings → Skills → Workspace) are listed, as before.
   const skillFolders = () => store.agents.list(services.auth.userId()).filter(agent => !agent.archivedAt && fs.existsSync(agent.workspace)).map(agent => agent.workspace);
   // Agent ownership is checked on every call by agents.get().
@@ -312,21 +320,21 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     },
 
     // Built-in browser. Every call is scoped to a conversation of this account.
-    "browser.show": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.show(conversationId); },
+    "browser.show": ({ conversationId }) => { signedIn(); browserOf(conversationId); return browser.show(conversationId); },
     "browser.bounds": ({ rect }) => { browser.setBounds(rect || null); return null; },
-    "browser.state": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.state(conversationId); },
-    "browser.setMuted": ({ conversationId, tabId, muted }) => { signedIn(); harness.conversations.get(conversationId); return browser.setMuted(conversationId, tabId, !!muted); },
-    "browser.newTab": ({ conversationId, url }) => { signedIn(); harness.conversations.get(conversationId); return browser.openTab(conversationId, { url: url || null }); },
-    "browser.navigate": ({ conversationId, tabId, url }) => { signedIn(); harness.conversations.get(conversationId); return browser.navigate(conversationId, { tabId, url }); },
-    "browser.activate": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.activate(conversationId, tabId); },
-    "browser.close": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.close(conversationId, tabId); },
-    "browser.back": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.back(conversationId, tabId); },
-    "browser.forward": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.forward(conversationId, tabId); },
-    "browser.home": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.home(conversationId, tabId); },
+    "browser.state": ({ conversationId }) => { signedIn(); browserOf(conversationId); return browser.state(conversationId); },
+    "browser.setMuted": ({ conversationId, tabId, muted }) => { signedIn(); browserOf(conversationId); return browser.setMuted(conversationId, tabId, !!muted); },
+    "browser.newTab": ({ conversationId, url }) => { signedIn(); browserOf(conversationId); return browser.openTab(conversationId, { url: url || null }); },
+    "browser.navigate": ({ conversationId, tabId, url }) => { signedIn(); browserOf(conversationId); return browser.navigate(conversationId, { tabId, url }); },
+    "browser.activate": ({ conversationId, tabId }) => { signedIn(); browserOf(conversationId); return browser.activate(conversationId, tabId); },
+    "browser.close": ({ conversationId, tabId }) => { signedIn(); browserOf(conversationId); return browser.close(conversationId, tabId); },
+    "browser.back": ({ conversationId, tabId }) => { signedIn(); browserOf(conversationId); return browser.back(conversationId, tabId); },
+    "browser.forward": ({ conversationId, tabId }) => { signedIn(); browserOf(conversationId); return browser.forward(conversationId, tabId); },
+    "browser.home": ({ conversationId, tabId }) => { signedIn(); browserOf(conversationId); return browser.home(conversationId, tabId); },
     // Pinned tabs come first and keep their pages open (tab menu: Pin tab / Unpin tab).
-    "browser.pin": ({ conversationId, tabId, pinned }) => { signedIn(); harness.conversations.get(conversationId); return browser.pin(conversationId, tabId, !!pinned); },
-    "browser.reload": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.reload(conversationId, tabId); },
-    "browser.stop": ({ conversationId, tabId }) => { signedIn(); harness.conversations.get(conversationId); return browser.stop(conversationId, tabId); },
+    "browser.pin": ({ conversationId, tabId, pinned }) => { signedIn(); browserOf(conversationId); return browser.pin(conversationId, tabId, !!pinned); },
+    "browser.reload": ({ conversationId, tabId }) => { signedIn(); browserOf(conversationId); return browser.reload(conversationId, tabId); },
+    "browser.stop": ({ conversationId, tabId }) => { signedIn(); browserOf(conversationId); return browser.stop(conversationId, tabId); },
     "browser.profiles": () => { signedIn(); store.browserProfiles.ensureDefault(); return store.browserProfiles.list(); },
     // Separate sets of sign-ins for the built-in browser.
     "browser.createProfile": ({ label }) => {
@@ -362,9 +370,9 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       return result.profiles[0];
     },
     "browser.setProfile": ({ conversationId, profileId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setProfile(conversationId, profileId); },
-    "browser.takeControl": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setUserControl(conversationId, true); },
-    "browser.handBack": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setUserControl(conversationId, false); },
-    "browser.recent": ({ conversationId }) => { signedIn(); harness.conversations.get(conversationId); return browser.recent(conversationId); },
+    "browser.takeControl": ({ conversationId }) => { signedIn(); browserOf(conversationId); return browser.setUserControl(conversationId, true); },
+    "browser.handBack": ({ conversationId }) => { signedIn(); browserOf(conversationId); return browser.setUserControl(conversationId, false); },
+    "browser.recent": ({ conversationId }) => { signedIn(); browserOf(conversationId); return browser.recent(conversationId); },
 
     // Files view: read-only access inside the agent's workspace.
     "files.list": ({ agentId, path: dir }) => files.list(agentId, dir),
@@ -528,6 +536,58 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       return { text: String(value.text || "").trim() };
     },
     "onboarding.status": async () => ({ done: await onboarding.done() }),
+    // First steps, the guide the workspace shows once after setup (FirstSteps.jsx).
+    "firstSteps.get": () => ({ show: onboarding.firstSteps() }),
+    "firstSteps.done": () => onboarding.firstStepsDone(),
+    // The browser step: the home screen's agent looks something up in the real
+    // browser with its own browser tools (open, read, click, type), cursor
+    // and all, in tabs of the tour's own. The steps are fixed: "warm" readies
+    // the browser when the tour starts, and "done" closes the tabs.
+    "firstSteps.browser": async ({ step, agentId, again = false }) => {
+      signedIn();
+      if (step === "done") { browserTools?.finished(FIRST_STEPS_BROWSER); browser.closeConversation(FIRST_STEPS_BROWSER); return { closed: true }; }
+      if (step === "warm") {
+        // The start page, and the Wikipedia in the computer's language that its search goes to.
+        const language = /^[a-z]{2,3}$/.exec((app?.getLocale?.() || "").split("-")[0].toLowerCase())?.[0] || "en";
+        browser.warm(FIRST_STEPS_BROWSER, firstStepsUrl === FIRST_STEPS_URL ? [FIRST_STEPS_URL, `https://${language}.wikipedia.org/`] : [firstStepsUrl]);
+        // The start page loads out of sight too, so the run's own visit is quick.
+        if (!browser.state(FIRST_STEPS_BROWSER).tabs.length) browser.openTab(FIRST_STEPS_BROWSER, { url: firstStepsUrl });
+        return { warm: true };
+      }
+      if (!browserTools) throw fail(404, "The browser is unavailable.");
+      const agent = agents.get(agentId);
+      const act = async (tool, args = {}) => {
+        const result = await browserTools.call(FIRST_STEPS_BROWSER, { tool, arguments: args }, agent);
+        const text = (result?.contentItems || []).map(item => item.text || "").join("\n");
+        if (result?.success === false) throw fail(502, text || "The browser couldn't do that.");
+        return text;
+      };
+      // The first run uses the tab the start page loaded in out of sight (still
+      // loading, it's waited for); a run again starts in a new tab, which
+      // replaces the earlier ones.
+      if (step === "open") {
+        const state = browser.state(FIRST_STEPS_BROWSER), shown = state.tabs.find(item => item.id === state.active);
+        const earlier = again ? state.tabs : [];
+        if (!again && shown?.url === firstStepsUrl) await act("wait", { load: true, seconds: 10 });
+        else await act("open", { url: firstStepsUrl, ...(again ? { new_tab: true } : {}) });
+        for (const tab of earlier) try { browser.close(FIRST_STEPS_BROWSER, tab.id); } catch {}
+      }
+      else if (step === "type") {
+        const outline = await act("snapshot");
+        // The page's search box: a field named for searching, else its first field.
+        const ref = (/- (?:searchbox|combobox|textbox)[^\n]*search[^\n]*\[ref=(e\d+)\]/i.exec(outline) || /- (?:searchbox|combobox|textbox)[^\n]*\[ref=(e\d+)\]/.exec(outline))?.[1];
+        if (!ref) throw fail(502, "The page has no search box.");
+        await act("click", { ref });
+        await act("type", { ref, text: FIRST_STEPS_SEARCH });
+      } else if (step === "search") {
+        // The article loads in full here, so reading it next times the agent alone.
+        await act("press", { key: "Enter" });
+        await act("wait", { load: true, seconds: 10 });
+      } else if (step === "read") await act("snapshot");
+      else throw fail(400, "Unknown step.");
+      const state = browser.state(FIRST_STEPS_BROWSER), tab = state.tabs.find(item => item.id === state.active);
+      return { url: tab?.url || null, title: tab?.title || "" };
+    },
     // { installed, configured } for the home screen's "Set up 1Password".
     "setup.onePassword": () => { signedIn(); return require("./one-password.cjs").onePasswordSetup(); },
 
