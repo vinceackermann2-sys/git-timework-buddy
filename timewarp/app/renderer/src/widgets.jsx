@@ -8,9 +8,10 @@ import {
   FileSpreadsheet, FileText, FileVideo, FolderOpen, Globe, KeyRound, Link2, LoaderCircle, Mail, MessageSquare, Mic, Plus, Presentation, Puzzle, RefreshCw,
   Send, Server, Sparkles, Square, UserRound, X,
 } from "lucide-react";
-import { accountText, avatarSrc, call, errorText, initials } from "./api.js";
+import { accountText, avatarSrc, call, errorText, initials, request } from "./api.js";
 import { Dialog, Menu, useToast } from "./components/common.jsx";
 import { AppIcon } from "./components/Composer.jsx";
+import { UsageCard } from "./components/Sidebar.jsx";
 import { useDictation } from "./dictation.js";
 import { baseName, draftMessage, extensionOf, fileKind, resolveLink, selectAnswer, splitAddresses } from "./cards.mjs";
 
@@ -1046,13 +1047,40 @@ export function MarkdownImage({ src, alt = "", title, width, height }) {
   return <span className="tw-image-blocked" data-blocked="true" title={title || (target.type === "url" ? "Only secure (https) images are shown" : undefined)}>{alt || "Image"}</span>;
 }
 
+// ── <usage> ────────────────────────────────────────────────────────────────
+// The user's live plan usage and credits, as the sidebar shows them (always
+// credits, never money), with Billing. The numbers are Timewarp's own, read
+// as the card shows: an agent can't put others in it.
+function UsageInChat() {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState("");
+  const load = useCallback(() => call("funding.get").then(async funding => {
+    const chatgpt = funding.source === "chatgpt" ? await request("chatgptDetails").catch(() => null) : null;
+    setState({ funding, chatgpt });
+    setError("");
+  }).catch(failure => setError(errorText(failure))), []);
+  useEffect(() => { void load(); }, [load]);
+  useEngineEvent("funding.changed", () => void load());
+  const billing = () => { location.hash = "#/customize/billing"; };
+  if (error) return <p className="tw-card-error" role="alert">{error}</p>;
+  if (!state) return <div className="tw-card-wrap tw-usage-card" data-card="usage"><div className="tw-chat-card tw-row-card"><LoaderCircle size={16} className="tw-spin" /><span className="tw-card-text"><small>Loading usage…</small></span></div></div>;
+  return (
+    <div className="tw-card-wrap tw-usage-card" data-card="usage">
+      <UsageCard funding={state.funding} chatgpt={state.chatgpt} onOpen={billing} />
+      <div className="tw-usage-card-actions">
+        <button type="button" className="tw-card-pill secondary" onClick={billing}>{state.funding.plan && state.funding.plan !== "free" ? "Add credits" : "View plans"}</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Registry ───────────────────────────────────────────────────────────────
 function InteractionSummary({ card }) { return card.attrs.summary ? <em className="tw-interaction">{card.attrs.summary}</em> : null; }
 
 const CARDS = {
   file: FileCard, "connect-plugin": ConnectCard, "widget-mcp-connection": McpCard, select: SelectCard, button: ButtonCard,
   conversation: ConversationCard, tabs: TabsCard, "widget-secret": SecretCard, citation: CitationPill, ref: RefChip,
-  "suggested-tasks": SuggestedTasksCard, assistants: AssistantsCard, "widget-interaction": InteractionSummary,
+  "suggested-tasks": SuggestedTasksCard, assistants: AssistantsCard, "widget-interaction": InteractionSummary, usage: UsageInChat,
   message: ({ card }) => <div className="tw-chat-card tw-convo-card bare" data-card="message"><ChatMessage item={{ attrs: card.attrs, body: card.text }} /></div>,
   "message-input": ({ card }) => <div className="tw-convo-card bare" data-card="message-input"><MessageInput card={card} item={{ attrs: card.attrs, body: card.text }} mode="chat" /></div>,
 };

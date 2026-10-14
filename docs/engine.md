@@ -16,7 +16,7 @@ shipping (see [Before shipping](#before-shipping)).
 | Desktop shell | Electron 43 (official) with Timewarp's own main, preload and React renderer in `timewarp/app` |
 | Agent harness | OpenAI Codex app server (official `@openai/codex` 0.160.1, Apache-2.0) over its documented JSON-RPC protocol |
 | Built-in browser and agent browser tools | Electron `WebContentsView` and its in-process debugger (`app/main/browser.cjs`, `browser-tools.cjs`) |
-| Timewarp's agent tools (browser, vault, automations, chats) | MCP servers on the local bridge (`app/main/tool-server.cjs`), so every agent thread, workers included, has them; Codex settings in `app/main/codex-config.cjs` |
+| Timewarp's agent tools (browser, vault, automations, chats, team, app) | MCP servers on the local bridge (`app/main/tool-server.cjs`), so every agent thread, workers included, has them; Codex settings in `app/main/codex-config.cjs` |
 | File previews | pdf.js, ExcelJS, JSZip and highlight.js, loaded on demand; markdown-it |
 | Display font | Quadrant Text (Matter of Sorts), the same file the previous app and the website use, from `store-assets/fonts` |
 | Local data | Built-in SQLite (`node:sqlite`) in the existing profile, and a folder per account (see [Accounts and computers](#accounts-and-computers)) |
@@ -92,6 +92,75 @@ once (a deleted folder), the removals aren't sent. At sign-in the first pass
 runs before chat sync, so restored chats find their agents. A cloud function
 without the route (404/410) is waited out quietly.
 
+## Agents working together
+
+Every agent thread, workers included, has the team tools (`timewarp_team`,
+`app/main/team-tools.cjs`):
+
+- `list_agents`: the user's agents, what each is for (the start of its
+  instructions), and the chats each is working in right now, with the latest
+  progress note and the chat it's waiting on, if any;
+- `send_message`: a message to another chat, or to an agent in a new chat with
+  it, without waiting. It reaches that chat at once: it starts a reply, or
+  joins the running one as a message the user sends while the agent works
+  does;
+- `ask`: the same, then waits for that chat's reply (300 s by default, at most
+  840 s) and returns it. Stop in the asking chat ends the wait; one that runs
+  out says the other agent is still working and where its answer will be.
+
+What arrives in the other chat is the sending agent's message, never the
+user's: the chat keeps it with that agent as its author, shows it with that
+agent's picture and name and a link to the chat it came from, and leaves the
+chat's read state as it was (its reply marks it unread, as any reply does).
+The agent that gets it reads Timewarp's note first: it's from another agent,
+not the user; how to answer (the asking agent is waiting, or isn't); and the
+user's own request that led to it, which Timewarp copies from the sending
+chat's latest message (or carries on from the message before, one hop
+further). An action that request doesn't cover (sending, posting, deleting,
+purchases, changing settings, sharing the user's data with others) needs the
+user's go-ahead in that chat first. Everything before the message's own words
+is written by Timewarp with its values escaped, so the words can't change who
+it's from or what the user asked. Cards in another agent's message don't act
+in the chat that got it; only references show, as in the user's messages.
+
+Limits keep agents from keeping each other busy: a request passes through at
+most three agents; a chat sends at most 10 messages in one reply and all chats
+together 30 a minute; a chat can't ask one that's waiting for its own answer;
+only the signed-in account's chats and agents that aren't archived can be
+messaged, and never the chat itself. The chat that asked shows "Asked Nova" or
+"Messaged Nova", which opens the other chat.
+
+## Timewarp for agents
+
+The app tools (`timewarp_app`, `app/main/app-tools.cjs`) let agents check
+Timewarp itself without a screen:
+
+- `get_usage`: the plan, what pays for AI (Timewarp credits or a connected
+  ChatGPT plan), the credits left and the plan's monthly credits with when they
+  reset, or the ChatGPT plan's usage windows; and the tokens used in this chat
+  and in the account's chats over the last 7 days, from this computer's
+  records. Credits stay credits: nothing is turned into money;
+- `get_settings`: theme, Privacy Mode, memory, reply notifications, how extra
+  access is approved, the default model (with the models the plan offers) and
+  the chat's model;
+- `get_status`: the version and updates, the agent runtime, the command
+  sandbox, chat history and account sync, Privacy Mode and how many chats are
+  working;
+- `change_settings`: theme, Privacy Mode, memory, reply notifications and the
+  default model. Timewarp checks the values and shows the user a card in the
+  chat listing each change from → to, written by Timewarp from those values,
+  with the agent's one-line reason under its name. Only Allow applies them; Don't
+  allow, the card's 10 minutes running out, Stop or a Codex restart leave
+  everything as it was. When Timewarp isn't in front, a notification points to
+  the card. A change made this way shows at once and follows the account like
+  one made in Settings.
+
+How extra access is approved, billing, plans and credit purchases, connected
+apps, the vault and sign-ins aren't for agents to change: they link the
+Settings page instead (`timewarp://customize/billing`). The `<usage />` card
+shows the live usage as the sidebar does, with a Billing button. Nothing in
+these tools reveals vault values, sign-ins or keys.
+
 ```
 timewarp/app/
   main/       Electron main process (CommonJS)
@@ -105,7 +174,7 @@ From `timewarp`:
 
     npm run engine:dev               # build and open (separate "Timewarp Dev" profile)
     npm run engine:preview           # signed-in sample account, scripted model, real Codex
-    npm run engine:e2e               # end-to-end harness check in a preview build (28 scenarios)
+    npm run engine:e2e               # end-to-end harness check in a preview build (31 scenarios)
     npm run test:engine              # engine tests, including a real Codex conversation
     npm run engine:audit             # build and check the engine contains nothing from Energy
     npm run engine:package:draft     # unsigned Windows installer (build/engine-installer-draft)
@@ -183,6 +252,8 @@ the engine. "Same" means the same behaviour, rebuilt; differences are noted.
 | Memory (notes, daily logs, background memory writer, imports from ChatGPT / Codex, Claude, Cursor; Enabled, Read only, Write only or None) | Energy memory, kept in a Git store per user (`runtime/personal-memory`) | Rebuilt on `memories/user.md`, `memories/daily-logs` and `memories/imports`, in each account's own folder and synced to its other computers. The previous app's memory store is read once per user without Git (`legacy-memory.cjs`, never modified): its notes replace placeholder notes, other files go to `imports/timewarp-previous`. Each turn carries the full notes, today's log and the last seven days' summaries. A background writer (`memory-writer.cjs`) updates the notes and the daily log after a chat has been idle four minutes, one job at a time on the funding source's small model (titles have their own queue, so a long memory job never holds up a new chat's title); it is skipped in Privacy Mode and when memory is read only or off, and refuses rewrites that would drop most of the notes. The memory folder (when it may be written) and the skills folder are writable for agents without a review. Imports find the same memory files, skills (including skills linked in by skill installers) and MCP servers (Codex `config.toml`, Claude Code including `~/.claude/.mcp.json`, Claude's desktop app, Cursor) on Windows and macOS; a Cursor project folder can be chosen |
 | Skills (list, enable, import, view) | Codex skills | Same, per account, and skills made or imported in Timewarp follow the account to its other computers; previously connected skill folders stay available. The previous app's built-in browser, vault and memory-writer skills (for its browser command, vault and memory writer) are turned off once, since Timewarp's own tools replace them; they can be turned on again |
 | Chat tools for agents (find chats, search messages, read a chat) | Built-in tools | Same, read-only, over the user's chats that aren't archived; a chat can be read around a message or a time |
+| Agents working together | Not available: an agent could only read other chats; its workers were the only agents it could talk to | New (`app/main/team-tools.cjs`, see [Agents working together](#agents-working-together)): an agent sees what the user's other agents are working on, messages another chat or asks it something and waits for the answer, while both work |
+| Timewarp's own state for agents (usage, settings, app status) | Not available | New (`app/main/app-tools.cjs`, see [Timewarp for agents](#timewarp-for-agents)): agents read the plan, credits (as credits) and token use, the settings and how the app is doing; a setting changes only after the user allows it on a card Timewarp writes. A `<usage />` card shows the live usage with a Billing button |
 | Reactions, thread replies, report-an-issue and open tools for agents | Built-in tools | Not carried over |
 | Running a command with vault secrets (`vault run`), `energy://` links opened from outside the app, the previous app's bundled default skills | Energy | Not carried over: running commands from Timewarp itself would bypass Codex's sandbox and approval reviews, and output redaction can't be made reliable (needs its own design); the links and the default skills were Energy's own |
 | Instructions for every agent | Energy | Same (Codex global `AGENTS.md`), per account and synced to its other computers |
@@ -232,7 +303,7 @@ prompts. Menus can be used with the arrow keys. Invitations to another organizat
   an added MCP server, files, automations, workers, connector sign-in, ChatGPT sign-in, the log
   file and diagnostics, automatic approval review allowing and denying, and
   asking the user, workers using the browser, vault and connected apps, and
-  workspace and network access for commands, a sandboxed command kept out of other folders without a review, apply_patch file edits, Stop pressed before a reply starts, a message sent while the agent works, and page dialogs, key combinations, checkboxes, double clicks, background reads and address waits with the pane hidden and on screen, and two computers of one account sharing a cloud while one of them switches to a second account (`accounts`: agents, chats, memory merged after both computers changed it, instructions, skills, theme, app access and MCP servers follow; the second account sees none of them) (29 scenarios, all passing).
+  workspace and network access for commands, a sandboxed command kept out of other folders without a review, apply_patch file edits, Stop pressed before a reply starts, a message sent while the agent works, and page dialogs, key combinations, checkboxes, double clicks, background reads and address waits with the pane hidden and on screen, and two computers of one account sharing a cloud while one of them switches to a second account (`accounts`: agents, chats, memory merged after both computers changed it, instructions, skills, theme, app access and MCP servers follow; the second account sees none of them), one chat asking another agent and getting its answer (`teamAsk`), and usage read in credits and a setting changed only after Allow on its card (`appSettings`) (31 scenarios, all passing; `browserDialogs` once needed a second run, as its browser script runs close to the script time limit).
 - 497 tests (`npm test`), including the engine tests (`npm run test:engine`)
   and a real Codex conversation against a local model.
 - On 10 October the previous app's code (its bundle and Timewarp's patches)

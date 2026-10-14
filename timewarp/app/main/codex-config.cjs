@@ -59,12 +59,13 @@ function workspaceRoots(workspace, { skills = null, memories = null, memoryWrite
 }
 
 // Timewarp's MCP servers on the local bridge (model-bridge.cjs): connected
-// apps, and the browser, vault, automation and chat tools (tool-server.cjs). Their
-// tools are described to the agent in full rather than left for it to look
-// up (omit_tools_from "deferred"). Timewarp's own tools run without an
-// approval review, as they did as dynamic tools; the vault asks the user
-// itself, so its calls may wait for an answer. They are required: a chat
-// starts once they are connected, so its first message has them.
+// apps, and the browser, vault, automation, chat, team and app tools
+// (tool-server.cjs). Their tools are described to the agent in full rather
+// than left for it to look up (omit_tools_from "deferred"). Timewarp's own
+// tools run without an approval review, as they did as dynamic tools; the
+// vault and the app tools ask the user themselves, and the team's ask waits
+// for another chat's answer, so those calls may wait. They are required: a
+// chat starts once they are connected, so its first message has them.
 function toolServers(port) {
   const base = `http://127.0.0.1:${port}/mcp/`;
   const own = (name, timeout) => ({ url: base + name, enabled: true, required: true, bearer_token_env_var: "TIMEWARP_TOOLS_TOKEN", default_tools_approval_mode: "approve", tool_timeout_sec: timeout, omit_tools_from: ["deferred"] });
@@ -74,6 +75,8 @@ function toolServers(port) {
     timewarp_vault: own("timewarp_vault", 900),
     timewarp_automations: own("timewarp_automations", 120),
     timewarp_chats: own("timewarp_chats", 60),
+    timewarp_team: own("timewarp_team", 900),
+    timewarp_app: own("timewarp_app", 900),
   };
 }
 

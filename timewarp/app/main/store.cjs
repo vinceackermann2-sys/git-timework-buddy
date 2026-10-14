@@ -58,6 +58,11 @@ function trigramQuery(needle) {
   return [...pieces].map(piece => '"' + piece.replace(/"/g, '""') + '"').join(" AND ");
 }
 const plainText = value => String(value || "").replace(/```[\w+-]*/g, " ").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>~|]+/g, "");
+// A message another agent sent (team-tools.cjs) is searched and previewed by
+// its own words, not Timewarp's note before them: in SQL (messages as m) and here.
+// Its words can't hold the closing tags (they're escaped), so those end it.
+const OWN_WORDS = "(case when m.text like '<agent-message%' and instr(m.text, '<message-body>') > 0 then replace(substr(m.text, instr(m.text, '<message-body>') + 15), char(10) || '</message-body>' || char(10) || '</agent-message>', '') else m.text end)";
+const ownWords = value => String(value || "").startsWith("<agent-message") ? String(value).replace(/^[\s\S]*?<message-body>\n?/, "").replace(/\n<\/message-body>\n<\/agent-message>$/, "") : String(value || "");
 // One line around the first match, with "..." where text was cut, and where
 // the match is within it ({ start, end }, or null when it isn't in the text).
 function snippetOf(text, query, room = SNIPPET_ROOM) {
@@ -321,8 +326,9 @@ function createStore(db) {
         args.push(pattern, pattern);
       }
       args.push(limit);
-      // The chat's latest message (from either side; not ones that failed), shown in the sidebar's activity list.
-      const last = "(select substr(m.text, 1, 400) from messages m where m.conversation_id = c.id and coalesce(m.status, '') not in ('failed', 'replaced') and m.text not like '<agent-introduction>%' order by m.seq desc limit 1)";
+      // The chat's latest message (from either side; not ones that failed), shown in the sidebar's activity list;
+      // another agent's by its own words.
+      const last = `(select substr(${OWN_WORDS}, 1, 400) from messages m where m.conversation_id = c.id and coalesce(m.status, '') not in ('failed', 'replaced') and m.text not like '<agent-introduction>%' order by m.seq desc limit 1)`;
       return all(`select c.*, ${last} last_text from conversations c where ${where.join(" and ")} order by c.last_activity_at desc limit ?`, ...args).map(conversationOf);
     },
     create(input) {
@@ -369,12 +375,12 @@ function createStore(db) {
       if (terms) indexPending();
       const found = all(`select c.*, m.id message_id, m.created_at message_at, m.text message_text from
         ${terms ? "message_search cross join messages m on m.rowid = message_search.rowid" : "messages m"} join conversations c on c.id = m.conversation_id
-        where ${terms ? "message_search match :terms and " : ""}c.owner_id = :owner and c.archived_at is null and coalesce(m.status, '') not in ('failed', 'replaced') and ${matches("m.text")}
+        where ${terms ? "message_search match :terms and " : ""}c.owner_id = :owner and c.archived_at is null and coalesce(m.status, '') not in ('failed', 'replaced') and ${matches(OWN_WORDS)}
         order by m.created_at desc, m.seq desc limit :limit`, terms ? { ...args, terms } : args);
       return {
         conversations: titles.map(row => ({ conversation: conversationOf(row), ...snippetOf(row.title, text) })),
         // Snippets read as text: no Markdown marks, links as their words.
-        messages: found.map(row => ({ conversation: conversationOf(row), messageId: row.message_id, createdAt: row.message_at, ...snippetOf(plainText(row.message_text), text) })),
+        messages: found.map(row => ({ conversation: conversationOf(row), messageId: row.message_id, createdAt: row.message_at, ...snippetOf(plainText(ownWords(row.message_text)), text) })),
       };
     },
   };
@@ -565,7 +571,7 @@ function createStore(db) {
         const before = previous.get(row.thread_id);
         const restarted = !before || row.thread_total < before.thread_total;
         const delta = key => restarted ? row[key] : Math.max(0, row[key] - before[key]);
-        result.push({ turnId: row.turn_id, threadId: row.thread_id, input: delta("input"), cached: delta("cached"), output: delta("output"), reasoning: delta("reasoning") });
+        result.push({ turnId: row.turn_id, threadId: row.thread_id, input: delta("input"), cached: delta("cached"), output: delta("output"), reasoning: delta("reasoning"), updatedAt: row.updated_at });
         previous.set(row.thread_id, row);
       }
       return result;
