@@ -58,9 +58,10 @@ function createLegacyRequests({ services, harness, guard, version, selectModel, 
       case "onboardingState": return onboarding ? onboarding.read() : { done: true };
       case "onboardingDetect": if (!onboarding) throw new Error("Setup is unavailable."); return onboarding.detect();
       case "onboardingAction": if (!onboarding) throw new Error("Setup is unavailable."); return onboarding.run(input.action, input);
-      // Setup's "Protect work with Windows security" row (sandbox.cjs).
+      // Setup's "Protect work with Windows security" row (sandbox.cjs): it
+      // follows the setup that starts at sign-in, and its Retry tries again.
       case "sandboxStatus": return sandbox ? sandbox.status() : { supported: false, status: "ready" };
-      case "sandboxSetup": if (!auth.user()) throw new Error("Sign in to Timewarp."); return sandbox ? sandbox.ensure({ setup: true, retry: !!input.retry }) : { supported: false, status: "ready" };
+      case "sandboxSetup": if (!auth.user()) throw new Error("Sign in to Timewarp."); return sandbox ? sandbox.ensure({ retry: !!input.retry }) : { supported: false, status: "ready" };
       case "cloud": if (!BILLING_ROUTES.has(input.route)) throw new Error("Invalid route."); return services.cloudJson(input.route, input.data || {});
       default: throw new Error("Unknown action.");
     }

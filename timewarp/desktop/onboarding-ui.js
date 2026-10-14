@@ -48,8 +48,9 @@
       for(const child of content.children){if(!child.matches('.tw-chat-history,.tw-journey-heading,.tw-journey-subtitle')){child.classList.add('tw-chat-response');child.inert=view.dataset.speaking==='true';}}
       if(state.step!=='agent')requestAnimationFrame(()=>content.querySelector('.tw-journey-heading')?.scrollIntoView({block:'start',behavior:reduced?'instant':'smooth'}));
     }
-    // Windows: Codex's command sandbox, set up here as the previous app did,
-    // without administrator rights. The row updates in place as setup runs.
+    // Windows: Codex's command sandbox, set up without administrator rights as
+    // the previous app did. Timewarp starts it at sign-in; the row joins that
+    // setup and updates in place as it runs.
     function renderSecurity(){
       if(security&&!security.supported)return;
       securityRow=el('section',null,'tw-journey-security');securityRow.hidden=true;content.append(securityRow);paintSecurity();

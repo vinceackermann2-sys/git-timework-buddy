@@ -379,10 +379,10 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     },
     "files.reveal": ({ agentId, path: file }) => { shell.showItemInFolder(files.absolute(agentId, file)); return { shown: true }; },
 
-    // Codex's command sandbox (sandbox.cjs): setup in onboarding, as before,
-    // and again from there after it was turned off on this PC.
+    // Codex's command sandbox (sandbox.cjs), set up by itself once signed in;
+    // this tries it again at once after it was turned off on this PC.
     "sandbox.status": () => sandbox.status(),
-    "sandbox.setup": () => { signedIn(); return sandbox.ensure({ setup: true, retry: true }); },
+    "sandbox.setup": () => { signedIn(); return sandbox.ensure({ retry: true }); },
 
     // Memory, knowledge imported from other assistants, and skills.
     "memory.get": () => { signedIn(); return knowledge.read(); },
