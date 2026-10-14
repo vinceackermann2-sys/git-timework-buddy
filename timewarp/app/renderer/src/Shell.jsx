@@ -227,6 +227,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
   useEffect(() => { void loadConversations(); }, [loadConversations]);
   useEffect(() => { void loadAutomations(); }, [loadAutomations]);
   useEvent("automations.changed", () => void loadAutomations());
+  // Agents made from another assistant's projects (Knowledge.jsx).
+  useEffect(() => { const again = () => void loadAgents(); window.addEventListener("tw:agents-changed", again); return () => window.removeEventListener("tw:agents-changed", again); }, [loadAgents]);
   useEffect(() => { const change = () => setRoute(parseRoute()); window.addEventListener("hashchange", change); return () => window.removeEventListener("hashchange", change); }, []);
   useEffect(() => { if (route.view === "chat") setPaneState(read("tw.pane." + route.id, "closed") === "open" ? "open" : "closed"); }, [route.view, route.id]);
   useEffect(() => { const reload = () => void loadConversations(); window.addEventListener("tw:conversations", reload); return () => window.removeEventListener("tw:conversations", reload); }, [loadConversations]);
