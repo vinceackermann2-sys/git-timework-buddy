@@ -39,8 +39,13 @@ function workspaceFiles(agent, files) {
   if (!agent?.workspace) throw Object.assign(new Error("This agent has no workspace folder."), { status: 400 });
   if (!Array.isArray(files) || !files.length || files.length > MAX_UPLOADS) throw Object.assign(new Error(`Choose 1–${MAX_UPLOADS} files from your workspace folder.`), { status: 400 });
   const base = fs.realpathSync(agent.workspace);
+  const within = target => { const [root, value] = process.platform === "win32" ? [base.toLowerCase(), target.toLowerCase()] : [base, target]; return value === root || value.startsWith(root + path.sep); };
   return files.map(file => {
     const candidate = path.resolve(base, String(file));
+    // Network and device paths (\\server\share, \\?\…) outside the workspace
+    // are refused before any lookup: reaching one would send the user's
+    // Windows sign-in to whatever computer the agent names.
+    if (/^[\\/]{2}/.test(candidate) && !within(candidate)) throw Object.assign(new Error("Only files in your workspace folder can be uploaded."), { status: 403 });
     let real;
     try { real = fs.realpathSync(candidate); } catch { throw Object.assign(new Error(`${file} isn't in your workspace folder.`), { status: 404 }); }
     if (real !== base && !real.startsWith(base + path.sep)) throw Object.assign(new Error("Only files in your workspace folder can be uploaded."), { status: 403 });

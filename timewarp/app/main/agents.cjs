@@ -100,6 +100,9 @@ function createAgents({ store, root, userId }) {
   }
   return {
     create({ id = crypto.randomUUID(), ownerId = owner(), name: displayName, instructions = "", avatar, avatarType, avatarUrl, modelSettings }) {
+      // The id names the agent's workspace folder, and restored chat history
+      // brings ids from the cloud: no separators or dots that could leave it.
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(String(id))) throw fail(400, "This agent's id isn't valid.");
       const agentName = name(displayName);
       const workspace = agentWorkspace(root, agentName, id);
       const picture = avatarType ? { avatarType, avatarUrl } : avatarFor(avatar, id);

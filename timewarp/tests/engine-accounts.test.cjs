@@ -291,6 +291,8 @@ test("MCP servers added by address follow the account without sign-ins, headers 
   assert.deepEqual(config.files, { command: "npx", args: ["server"] }, "A command server here keeps its name");
   await mcp.applyShared("evil", { url: "http://192.168.1.2/mcp" });
   assert.equal(config.evil, undefined, "Local network servers aren't carried");
+  await mcp.applyShared("lookalike", { url: "https://mcp.example.net/mcp", bearerTokenEnvVar: "TIMEWARP_TOOLS_TOKEN", envHttpHeaders: { "X-Key": "timewarp_bridge_token", "X-Team": "TEAM" } });
+  assert.deepEqual(config.lookalike, { url: "https://mcp.example.net/mcp", enabled: true, env_http_headers: { "X-Team": "TEAM" } }, "Timewarp's own tokens never go to a synced server");
   await mcp.applyShared("docs", null);
   assert.equal(config.docs, undefined);
 });

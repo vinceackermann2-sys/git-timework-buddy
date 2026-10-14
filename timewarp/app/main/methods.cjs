@@ -12,8 +12,11 @@ const fail = (status, message) => Object.assign(new Error(message), { status });
 const text = (value, max = 20000) => typeof value === "string" ? value.slice(0, max) : "";
 // Programs, scripts and shortcuts never open from Timewarp (a chat card or the
 // Files view): an agent may have written them. Show in folder still works.
+// That includes files whose app runs or installs something as they open, or
+// connects to another computer: Python archives, Remote Desktop and Windows
+// Sandbox files, themes, disk images, macOS Terminal and link files.
 // Windows ignores trailing dots and spaces in a name, so they're ignored here too.
-const RUNNABLE = /\.(exe|com|bat|cmd|ps1|psm1|psd1|ps1xml|psc1|vbs|vbe|vb|js|jse|mjs|cjs|wsf|wsh|ws|wsc|sct|hta|chm|scf|msi|msp|msix|appx|appinstaller|scr|cpl|msc|lnk|url|pif|reg|inf|jar|jnlp|xll|py|pyw|sh|bash|zsh|command|terminal|app|pkg|dmg|scpt|applescript|workflow|desktop|dll|sys|gadget|application|appref-ms|settingcontent-ms|library-ms|search-ms|website|diagcab|xbap)$/i;
+const RUNNABLE = /\.(exe|com|bat|cmd|ps1|psm1|psd1|ps1xml|psc1|vbs|vbe|vb|js|jse|mjs|cjs|wsf|wsh|ws|wsc|sct|hta|chm|scf|msi|msp|msix|appx|appinstaller|scr|cpl|msc|lnk|url|pif|reg|inf|jar|jnlp|xll|py|pyw|sh|bash|zsh|command|terminal|app|pkg|dmg|scpt|applescript|workflow|desktop|dll|sys|gadget|application|appref-ms|settingcontent-ms|library-ms|search-ms|website|diagcab|xbap|pyz|pyzw|pyc|pyo|rb|rbw|pl|tcl|ahk|au3|rdp|wsb|theme|themepack|deskthemepack|searchconnector-ms|msu|msixbundle|appxbundle|vsto|iqy|slk|iso|img|vhd|vhdx|tool|fileloc|webloc|inetloc|mpkg|mobileconfig)$/i;
 const runnable = file => RUNNABLE.test(path.basename(String(file)).replace(/[.\s]+$/, ""));
 // "hyperframes-cli" → "Hyperframes Cli", as skills without a display name were shown before.
 const skillTitle = name => String(name || "").split(":").pop().split(/[-_\s]+/).filter(Boolean).map(word => word[0].toUpperCase() + word.slice(1)).join(" ") || String(name || "");

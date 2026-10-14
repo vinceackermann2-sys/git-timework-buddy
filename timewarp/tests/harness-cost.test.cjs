@@ -28,6 +28,24 @@ test('reservation includes worst-case cache writes and recovery preserves the di
   fail=false;await reservation.finish('uncertain');
   for(const call of calls.slice(1)){near(call.input.p_cost,.142);assert.equal(call.input.p_outcome,'settled');}
 });
+test('usage past the reservation is charged the whole reservation instead of failing to settle',async()=>{
+  const costs={computeCostUsd:vm.runInContext('computeCostUsd',moduleOf('cloud/aiCost.ts'))},calls=[],logged=[];
+  const {reserveAgentAi}=moduleOf('cloud/agentAiReservation.ts',{...costs,TextEncoder,crypto,setTimeout:done=>done(),console:{error:(...args)=>logged.push(args)},AI_COST_MARKUP:2.5,USD_PER_CREDIT:.125});
+  // The ledger's own check (timewarp_energy_complete_ai) refuses a cost above the reservation.
+  const admin={rpc:async(name,input)=>{calls.push({name,input});if(name==='timewarp_reserve_agent_ai')return{data:true};return input.p_cost*2.5/.125>calls[0].input.p_credits?{error:{message:'Invalid reserved usage'}}:{data:{settled:true}};}};
+  const reservation=await reserveAgentAi(admin,'owner','anthropic/claude-opus-5-5',{},{inputTokens:20000,outputTokens:16});
+  await reservation.finish('settled',400000,16);
+  const settled=calls.at(-1).input;
+  assert.equal(calls.length,2,'settles on the first try');
+  assert.ok(settled.p_cost*2.5/.125<=calls[0].input.p_credits);
+  const held=calls[0].input.p_credits*.125/2.5;assert.ok(settled.p_cost>held*(1-1e-8),"charged the whole reservation");
+  assert.equal(logged.length,1,'the overage is logged for the operator');
+  // Usage within the reservation is charged as before.
+  calls.length=0;logged.length=0;
+  await (await reserveAgentAi(admin,'owner','anthropic/claude-opus-5-5',{},{inputTokens:20000,outputTokens:16})).finish('settled',10000,16);
+  near(calls.at(-1).input.p_cost,costs.computeCostUsd('anthropic/claude-opus-5-5',10000,16));
+  assert.equal(logged.length,0);
+});
 
 const reservations=moduleOf('cloud/agentAiReservation.ts',{computeCostUsd:vm.runInContext('computeCostUsd',moduleOf('cloud/aiCost.ts')),TextEncoder,atob,crypto,setTimeout:done=>done(),console:{error(){}},AI_COST_MARKUP:2.5,USD_PER_CREDIT:.125});
 // The Azure request module with a scripted provider.
@@ -200,8 +218,16 @@ test('images reserve by their pixels, within what either provider can bill for t
   assert.ok(requestInputTokens(responses)<20000);
   const claude={messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/png',data:shot}},{type:'tool_result',tool_use_id:'t',content:[{type:'image',source:{type:'base64',media_type:'image/png',data:shot}}]}]}]};
   assert.equal(requestInputTokens(claude),Buffer.byteLength(JSON.stringify(claude))+4096-2*shot.length+2*imageTokens(1280,800));
-  // An image whose size can't be read keeps counting by its bytes, as do URLs and files.
-  const other={input:[{type:'message',role:'user',content:[{type:'input_image',image_url:'data:image/png;base64,'+Buffer.alloc(3000,7).toString('base64')},{type:'input_image',image_url:'https://example.com/x.png'},{type:'input_file',file_data:'data:application/pdf;base64,'+Buffer.alloc(3000).toString('base64')}]}]};
-  assert.equal(requestInputTokens(other),Buffer.byteLength(JSON.stringify(other))+4096);
+  // An image whose size can't be read here (unparsed, linked, or a file id)
+  // counts as the most one image bills; a file raises the request to the most
+  // input a model takes, since a small PDF can bill hundreds of pages.
+  const {UNSIZED_IMAGE_TOKENS,MODEL_INPUT_TOKENS}=reservations;
+  const junk='data:image/png;base64,'+Buffer.alloc(3000,7).toString('base64'),link='https://example.com/x.png';
+  const unsized={input:[{type:'message',role:'user',content:[{type:'input_image',image_url:junk},{type:'input_image',image_url:link},{type:'input_image',file_id:'file-1'}]}]};
+  assert.equal(requestInputTokens(unsized),Buffer.byteLength(JSON.stringify(unsized))+4096+3*UNSIZED_IMAGE_TOKENS-junk.length-link.length);
+  const linked={messages:[{role:'user',content:[{type:'image',source:{type:'url',url:link}},{type:'tool_result',tool_use_id:'t',content:[{type:'image',source:{type:'url',url:link}}]}]}]};
+  assert.equal(requestInputTokens(linked),Buffer.byteLength(JSON.stringify(linked))+4096+2*UNSIZED_IMAGE_TOKENS);
+  for(const part of [{type:'input_file',file_data:'data:application/pdf;base64,'+Buffer.alloc(3000).toString('base64')},{type:'input_file',file_url:link},{type:'document',source:{type:'base64',media_type:'application/pdf',data:'JVBERi0='}}])
+    assert.equal(requestInputTokens({input:[{type:'message',role:'user',content:[part]}]}),MODEL_INPUT_TOKENS);
   assert.equal(requestInputTokens({input:'Hi'}),Buffer.byteLength('{"input":"Hi"}')+4096);
 });

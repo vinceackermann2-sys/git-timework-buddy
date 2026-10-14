@@ -80,7 +80,8 @@ test("chat file cards refuse files on other computers before looking them up", {
 test("programs, scripts and shortcuts in the workspace don't open from the Files view", async t => {
   const { createMethods } = require("../app/main/methods.cjs");
   const { agent } = workspace(t);
-  const runnable = ["setup.bat", "run.ps1", "app.hta", "Report.lnk", "site.url", "macro.vbs", "tool.js", "help.chm"];
+  const runnable = ["setup.bat", "run.ps1", "app.hta", "Report.lnk", "site.url", "macro.vbs", "tool.js", "help.chm",
+    "report.pyz", "server.rdp", "box.wsb", "dark.theme", "disk.iso", "Q3.tool", "site.webloc", "search.searchConnector-ms", "data.iqy"];
   for (const name of runnable) fs.writeFileSync(path.join(agent, name), "x");
   const opened = [];
   const methods = createMethods({

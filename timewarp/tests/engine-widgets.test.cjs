@@ -184,3 +184,17 @@ test("a copied message leaves out its cards; references keep their names", async
   assert.equal(refMarkup({ type: "file", name: 'a"<b>.md', path: "x/a.md", contentType: "text/markdown" }), '<ref type="file" name="a&quot;&lt;b&gt;.md" path="x/a.md" content-type="text/markdown"></ref>');
   assert.equal(refMarkup({ type: "person", userId: "u2", name: "Ada", email: "ada@example.com", imageUrl: null }), '<ref type="person" user-id="u2" name="Ada" email="ada@example.com"></ref>');
 });
+
+test("an MCP server a card adds is named after its site, counted from the end of the address", async () => {
+  const { mcpServerName } = await cards;
+  assert.equal(mcpServerName("https://mcp.notion.com/mcp"), "notion");
+  assert.equal(mcpServerName("https://mcp.linear.app/sse"), "linear");
+  assert.equal(mcpServerName("https://api.githubcopilot.com/mcp/"), "githubcopilot");
+  assert.equal(mcpServerName("https://www.example.co.uk/mcp"), "example");
+  // A longer address can't borrow another site's name.
+  assert.equal(mcpServerName("https://mcp.notion.so.evil.dev/mcp"), "evil");
+  assert.equal(mcpServerName("https://api.github.com.example.net/mcp"), "example");
+  assert.equal(mcpServerName("https://mcp.notion.com/mcp", new Set(["notion", "notion-2"])), "notion-3");
+  assert.equal(mcpServerName("https://timewarp.example/mcp"), "mcp-timewarp");
+  assert.equal(mcpServerName("not a url"), "server");
+});
