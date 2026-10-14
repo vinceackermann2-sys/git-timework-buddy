@@ -43,7 +43,7 @@ const options = (codex, extra = {}) => {
 test("macOS and Linux need no setup and Codex isn't asked", async () => {
   const codex = fakeCodex();
   const sandbox = createSandbox({ client: codex.client, settings: settingsStore(), cwd: "/tmp", restart: async () => {}, platform: "darwin" });
-  assert.deepEqual(await sandbox.ensure({ setup: true }), { supported: false, status: "ready" });
+  assert.deepEqual(await sandbox.ensure(), { supported: false, status: "ready" });
   assert.deepEqual(await sandbox.status(), { supported: false, status: "ready" });
   assert.equal(sandbox.useAppContainer(), false);
   assert.deepEqual(codex.calls, []);
@@ -67,18 +67,10 @@ test("a sandbox Windows already offers is checked once per Codex run, without se
   assert.equal(codex.methods().filter(method => method === "command/exec").length, 2);
 });
 
-test("without setup a sandbox that isn't there is left for onboarding", async () => {
-  const codex = fakeCodex({ readiness: ["notConfigured"] });
-  const { sandbox, restarts } = options(codex);
-  assert.deepEqual(await sandbox.ensure(), { supported: true, status: "notConfigured" });
-  assert.deepEqual(codex.methods(), ["windowsSandbox/readiness", "windowsSandbox/readiness"]);
-  assert.deepEqual(restarts, []);
-});
-
-test("setup runs Codex's unelevated setup with a folder, restarts Codex and checks the sandbox", async () => {
+test("a sandbox that isn't there is set up without being asked: Codex's unelevated setup with a folder, a restart and a check", async () => {
   const codex = fakeCodex({ readiness: ["notConfigured", "ready"] });
   const { sandbox, restarts } = options(codex);
-  assert.deepEqual(await sandbox.ensure({ setup: true }), { supported: true, status: "ready" });
+  assert.deepEqual(await sandbox.ensure(), { supported: true, status: "ready" });
   const start = codex.calls.find(call => call.method === "windowsSandbox/setupStart");
   assert.deepEqual(start.params, { mode: "unelevated", cwd: "C:\\Profile\\runtime\\agents" });
   assert.deepEqual(restarts, [{ urgent: false }]);
@@ -88,14 +80,14 @@ test("setup runs Codex's unelevated setup with a folder, restarts Codex and chec
 test("updateRequired is set up again, as the previous app did", async () => {
   const codex = fakeCodex({ readiness: ["updateRequired", "ready"] });
   const { sandbox } = options(codex);
-  assert.equal((await sandbox.ensure({ setup: true })).status, "ready");
+  assert.equal((await sandbox.ensure()).status, "ready");
   assert.ok(codex.methods().includes("windowsSandbox/setupStart"));
 });
 
 test("a failed setup reports Codex's error and changes nothing", async () => {
   const codex = fakeCodex({ readiness: ["notConfigured"], setup: { success: false, error: "Access denied" } });
   const { sandbox, restarts } = options(codex);
-  await assert.rejects(sandbox.ensure({ setup: true }), /Access denied/);
+  await assert.rejects(sandbox.ensure(), /Access denied/);
   assert.deepEqual(restarts, []);
   assert.equal(sandbox.useAppContainer(), true);
 });
@@ -104,7 +96,7 @@ test("a sandbox whose commands stall is turned off for this Codex version", asyn
   const codex = fakeCodex({ check: () => new Promise(() => {}) });
   const settings = settingsStore();
   const { sandbox, restarts } = options(codex, { settings });
-  const result = await sandbox.ensure({ setup: true });
+  const result = await sandbox.ensure();
   assert.equal(result.status, "unavailable");
   assert.match(result.error, /isn't available on this PC/);
   assert.deepEqual(restarts, [{ urgent: true }]);
@@ -112,10 +104,11 @@ test("a sandbox whose commands stall is turned off for this Codex version", asyn
   assert.deepEqual(write.params, { keyPath: "windows.sandbox", value: null, mergeStrategy: "replace" });
   assert.equal(settings.values.windowsSandbox.off, true);
   assert.equal(settings.values.windowsSandbox.codex, "0.160.1");
+  assert.equal(settings.values.windowsSandbox.failures, 1);
   // Codex starts without Windows' own sandbox, and later starts leave it off.
   assert.equal(sandbox.useAppContainer(), false);
   const calls = codex.calls.length;
-  assert.equal((await sandbox.ensure({ setup: true })).status, "unavailable");
+  assert.equal((await sandbox.ensure()).status, "unavailable");
   assert.equal(codex.calls.length, calls);
 });
 
@@ -142,11 +135,50 @@ test("Retry clears a sandbox turned off earlier and a newer Codex is checked aga
   const { sandbox, restarts } = options(codex, { settings });
   assert.equal((await sandbox.status()).status, "unavailable");
   assert.equal(sandbox.useAppContainer(), false);
-  assert.equal((await sandbox.ensure({ setup: true, retry: true })).status, "ready");
+  assert.equal((await sandbox.ensure({ retry: true })).status, "ready");
   assert.equal(settings.values.windowsSandbox, null);
   assert.deepEqual(restarts, [{ urgent: false }]);
   const newer = createSandbox({ client: fakeCodex().client, settings: settingsStore({ windowsSandbox: { off: true, codex: "0.150.0" } }), cwd: "C:\\x", restart: async () => {}, codexVersion: "0.160.1", platform: "win32" });
   assert.equal(newer.useAppContainer(), true);
+});
+
+test("a sandbox turned off is tried again by itself a day later, then a week after it fails again", async () => {
+  const hour = 60 * 60 * 1000;
+  let clock = Date.parse("2026-10-14T08:00:00Z");
+  let stalls = true;
+  const codex = fakeCodex({ check: () => stalls ? new Promise(() => {}) : { exitCode: 0, stdout: CHECK_TOKEN } });
+  const settings = settingsStore();
+  const { sandbox, restarts } = options(codex, { settings, now: () => clock });
+  assert.equal((await sandbox.ensure()).status, "unavailable");
+  clock += 23 * hour;
+  assert.equal(sandbox.useAppContainer(), false);
+  assert.equal((await sandbox.ensure()).status, "unavailable");
+  assert.equal(restarts.length, 1);
+  // A day on, Codex starts with Windows' sandbox again and it is checked.
+  clock += 2 * hour;
+  assert.equal(sandbox.useAppContainer(), true);
+  assert.equal((await sandbox.status()).status, "ready");
+  codex.client.emit("status", { status: "starting" });
+  assert.equal((await sandbox.ensure()).status, "unavailable");
+  assert.equal(settings.values.windowsSandbox.failures, 2);
+  // After a second failure it waits a week.
+  clock += 6 * 24 * hour;
+  assert.equal(sandbox.useAppContainer(), false);
+  clock += 25 * hour;
+  assert.equal(sandbox.useAppContainer(), true);
+  // Working again: the record is cleared, so a later failure waits a day again.
+  stalls = false;
+  codex.client.emit("status", { status: "starting" });
+  assert.equal((await sandbox.ensure()).status, "ready");
+  assert.equal(settings.values.windowsSandbox, null);
+});
+
+test("a check cut short by Codex stopping doesn't clear a sandbox turned off earlier", async () => {
+  const settings = settingsStore({ windowsSandbox: { off: true, codex: "0.160.1", at: "2026-10-01T08:00:00.000Z", failures: 1 } });
+  const codex = fakeCodex({ check: async () => { throw new Error("Codex stopped."); } });
+  const { sandbox } = options(codex, { settings, now: () => Date.parse("2026-10-14T08:00:00Z") });
+  assert.equal((await sandbox.ensure()).status, "ready");
+  assert.equal(settings.values.windowsSandbox.failures, 1);
 });
 
 // The bundled Codex with a chat's permission profile: it writes in the
@@ -179,7 +211,7 @@ test("commands run in Codex's sandbox with a chat's permissions", { skip: !avail
     const values = {};
     const sandbox = createSandbox({ client, settings: { get: key => values[key], set: (key, value) => { values[key] = value; } }, cwd: workspace, restart: () => client.stop(), codexVersion: "test" });
     const before = (await sandbox.status()).status;
-    const state = await sandbox.ensure({ setup: true });
+    const state = await sandbox.ensure();
     if (state.status === "unavailable") { t.skip("The Windows sandbox can't run commands here, so it is turned off: " + state.error); return; }
     assert.equal(state.status, "ready");
     t.diagnostic("Windows sandbox: " + (before === "ready" ? "Windows' own, no setup" : "Codex's unelevated one, set up (" + before + " before)"));

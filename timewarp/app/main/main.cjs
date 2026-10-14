@@ -282,6 +282,7 @@ async function boot() {
       // Its browser tabs, reply notifications and sync stop too, and the
       // window takes the next account's appearance.
       if (changedUser) {
+        sandboxArmed = false;
         accountSync?.stop(); accountSync = null;
         await client.stop().catch(() => {}); harness.reset(); toolsRegistered = false;
         browser.closeAll(); replies.clear();
@@ -398,7 +399,8 @@ async function boot() {
   client.on("notification", ({ method, params }) => { if (method === "windowsSandbox/setupCompleted") broadcast("sandbox.changed", params); });
   // MCP servers sync once Codex runs (account-sync.cjs mcpServers).
   client.on("status", state => { if (state.status === "ready") accountSync?.soon(); });
-  // Codex's command sandbox (sandbox.cjs): set up and checked once signed in.
+  // Codex's command sandbox (sandbox.cjs): set up and checked by itself once
+  // an account is signed in, and checked again whenever Codex starts again.
   // A change applies when Codex restarts, which waits until no chat is
   // replying (urgent: a minute at most, when sandboxed commands stall).
   let codexVersion = null;
@@ -409,7 +411,7 @@ async function boot() {
     await client.stop().catch(() => {});
     harness?.reset();
     toolsRegistered = false;
-    if (userId()) toolsReady = registerTools().catch(error => appLog.warn("tools", "Agent tools are pending. " + error.message));
+    if (userId()) prepareTools();
     else await client.start().catch(() => {});
   }
   fs.mkdirSync(path.join(runtimeDir, "agents"), { recursive: true });
@@ -418,6 +420,14 @@ async function boot() {
     log: (level, message, data) => appLog[level === "warn" ? "warn" : "info"]("sandbox", message, data),
   });
   const sandboxChanged = state => { broadcast("sandbox.changed", state); return state; };
+  // Armed once the signed-in account is ready (accountReady), so a setup's
+  // restart doesn't cut short the work its first Codex start does.
+  let sandboxArmed = false;
+  const ensureSandbox = () => sandbox.ensure().then(sandboxChanged)
+    .catch(error => appLog.warn("sandbox", "The Windows sandbox couldn't be set up: " + error.message));
+  // A Codex that started again (a restart or a crash) is checked again, so
+  // its commands stay sandboxed and apply_patch works again.
+  client.on("status", state => { if (state.status === "ready" && sandboxArmed && userId()) void ensureSandbox(); });
   // Screens that show a chat's run (executionStatus) reload when it changes.
   // The guard reports every step of a turn; a run whose state (all but its
   // running time) is as last sent isn't sent again.
@@ -547,7 +557,7 @@ async function boot() {
   });
   let background = null; // titles and the memory writer, set up below
   harness = createHarness({
-    store, client, userId: () => userId(), instructionsFor, tools, permissions: PERMISSIONS, toolsReady: () => toolsReady || (toolsReady = registerTools().catch(error => appLog.warn("tools", "Agent tools are pending. " + error.message))),
+    store, client, userId: () => userId(), instructionsFor, tools, permissions: PERMISSIONS, toolsReady: () => toolsReady || prepareTools(),
     // Each chat's workers learn which agent they work for (connected apps need its ID).
     threadConfig: agent => agentThreadConfig(workerInstructions(agent)),
     baseInstructions: BASE_INSTRUCTIONS, turnContext,
@@ -656,6 +666,15 @@ async function boot() {
     toolsRegistered = true;
     harness?.discardSpares();
   }
+  // Agent tools that couldn't be written to Codex's config are tried again as
+  // the next chat starts, without the user refreshing Tools.
+  function prepareTools() {
+    const attempt = registerTools().catch(error => {
+      if (toolsReady === attempt) toolsReady = null;
+      appLog.warn("tools", "Agent tools are pending; the next chat tries again. " + error.message);
+    });
+    return toolsReady = attempt;
+  }
   // Skill folders the previous app kept connected stay available.
   async function connectLegacySkills() {
     const extraRoots = knowledge.legacySkillRoots();
@@ -733,7 +752,7 @@ async function boot() {
     try { require("./legacy-memory.cjs").importLegacyMemory({ runtimeDir, userId: account, knowledge, settings: store.settings, log: message => appLog.info("memory", message) }); }
     catch (error) { appLog.warn("memory", "The previous app's memory could not be imported: " + error.message); }
     // Tools first: Codex keeps the previous run's bridge address until they're registered.
-    toolsReady = registerTools().catch(error => appLog.warn("tools", "Connected-app tools are pending; refresh Tools to retry. " + error.message));
+    prepareTools();
     void connectLegacySkills().catch(() => console.error("[timewarp] Previously connected skill folders are unavailable."));
     void retireReplacedSkills().catch(error => appLog.warn("skills", "Replaced skills could not be turned off: " + error.message));
     // The account's agents, memory, settings and the like from its other
@@ -746,10 +765,10 @@ async function boot() {
     agents.prepareWorkspaces();
     await selectModel().catch(() => console.error("[timewarp] The default model could not be updated."));
     if (fixture && !process.env.TIMEWARP_FIXTURE_ONBOARDING) await onboarding.skip();
-    // Accounts past setup get the sandbox setup they would have had in it;
-    // others get it in setup's knowledge step, as before.
-    void onboarding.done().then(done => sandbox.ensure({ setup: done })).then(sandboxChanged)
-      .catch(error => appLog.warn("sandbox", "The Windows sandbox couldn't be set up: " + error.message));
+    // The command sandbox is set up for every account, whether or not it
+    // finished setup; setup's knowledge step shows how that went.
+    sandboxArmed = true;
+    void ensureSandbox();
   }
 
   async function diagnostics() {
