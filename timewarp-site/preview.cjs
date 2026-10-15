@@ -6,7 +6,8 @@ const types = { '.html':'text/html; charset=utf-8', '.css':'text/css; charset=ut
 const server = http.createServer((req,res) => {
   let pathname;
   try { pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); } catch { res.writeHead(400); res.end(); return; }
-  const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : pathname));
+  // Legal pages use clean URLs (/legal/privacy-policy) like the hosted site.
+  const file = path.resolve(root, '.' + (pathname === '/' ? '/index.html' : path.extname(pathname) ? pathname : pathname + '.html'));
   if (!file.startsWith(root + path.sep)) { res.writeHead(403); res.end(); return; }
   fs.readFile(file, (error,data) => {
     if (error) { res.writeHead(404); res.end('Not found'); return; }

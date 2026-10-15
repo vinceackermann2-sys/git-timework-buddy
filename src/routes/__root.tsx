@@ -93,6 +93,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { rel: "icon", href: "/desktop-auth-logo.svg", type: "image/svg+xml" },
     ],
+    // Holds Lovable's injected analytics until the visitor accepts it on the website.
+    // These sign-in pages skip the banner so it never covers the desktop sign-in flow.
+    scripts: [{ src: "/consent.js", "data-banner": "off" }],
   }),
   shellComponent: RootShell,
   component: RootComponent,
