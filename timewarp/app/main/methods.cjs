@@ -367,7 +367,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       if (!browserImport) throw fail(404, "Browser profiles can't be imported here.");
       if (store.browserProfiles.list().length >= 20) throw fail(409, "You can have up to 20 browser profiles.");
       const result = await browserImport.importProfiles({ selections: [{ browserId: text(browserId, 40), profilePath: text(profilePath, 120) }] });
-      return result.profiles[0];
+      return { ...result.profiles[0], cookies: result.summary };
     },
     "browser.setProfile": ({ conversationId, profileId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setProfile(conversationId, profileId); },
     "browser.takeControl": ({ conversationId }) => { signedIn(); browserOf(conversationId); return browser.setUserControl(conversationId, true); },
@@ -424,9 +424,12 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     // A folder with Cursor rules, such as a project, when none were found.
     "knowledge.chooseCursorFolder": async () => {
       signedIn();
-      const chosen = await dialog.showOpenDialog({ title: "Choose a Cursor folder", properties: ["openDirectory"] });
+      const chosen = await dialog.showOpenDialog({ title: "Choose your Cursor project folder", properties: ["openDirectory"] });
       if (chosen.canceled || !chosen.filePaths[0]) return { cancelled: true };
-      store.settings.set("cursorRoot", chosen.filePaths[0]);
+      // Store the project root so .cursor/rules, .cursorrules and AGENTS.md resolve.
+      let root = chosen.filePaths[0];
+      if (path.basename(root) === ".cursor") root = path.dirname(root);
+      store.settings.set("cursorRoot", root);
       return knowledge.detect();
     },
     "skills.list": async ({ reload = false } = {}) => {

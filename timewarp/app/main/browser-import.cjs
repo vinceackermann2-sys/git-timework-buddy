@@ -74,6 +74,8 @@ function detectProfiles({ platform = process.platform, env = process.env, home =
         accountName: text(info?.gaia_name) || null,
         picture: email ? picture(path.join(root, directory)) : null,
         browser: browser.name,
+        // absolutePath is used to read the profile's sign-ins; it isn't stored.
+        absolutePath: path.join(root, directory),
         source: { browserId: browser.id, profilePath: directory },
       });
     }
@@ -84,7 +86,15 @@ function detectProfiles({ platform = process.platform, env = process.env, home =
   return { profiles, errors };
 }
 
-function createBrowserImport({ store, detect = detectProfiles } = {}) {
+// The default cookie importer; split out so tests can inject a fake.
+function defaultImportCookies(source, session, options) {
+  return require("./browser-cookies.cjs").importCookies(source, session, options);
+}
+
+// sessionFor(profileId) gives a created profile's Electron session, so a
+// browser's sign-ins can be copied into it. Without it (or in tests) only the
+// profile is created. cookieOptions lets tests set platform/env.
+function createBrowserImport({ store, detect = detectProfiles, sessionFor = null, importCookies = defaultImportCookies, cookieOptions = {}, log = () => {} } = {}) {
   const sameSource = (profile, source) => profile.source?.type === source.browserId && profile.source?.profilePath === source.profilePath;
   return {
     profileManager: { detect: async () => detect() },
@@ -95,16 +105,34 @@ function createBrowserImport({ store, detect = detectProfiles } = {}) {
     },
     async importProfiles({ selections = [] } = {}) {
       const found = detect().profiles, created = [];
+      const summary = { created: 0, imported: 0, failedDecryption: 0, failedWrite: 0, appBound: 0, needsSignin: false };
       for (const selection of selections) {
         const profile = found.find(item => item.source.browserId === selection.browserId && item.source.profilePath === selection.profilePath);
         if (!profile) throw Object.assign(new Error("That browser profile is no longer on this computer."), { status: 404 });
         const existing = store.browserProfiles.list().find(item => sameSource(item, profile.source));
-        created.push(existing || store.browserProfiles.create({
+        const record = existing || store.browserProfiles.create({
           label: profile.label.slice(0, 120),
           source: { type: profile.source.browserId, profilePath: profile.source.profilePath, browser: profile.browser, email: profile.email },
-        }));
+        });
+        if (!existing) summary.created++;
+        created.push(record);
+        // Carry the browser's sign-ins into the new profile's session, so
+        // imported sites stay signed in. App-Bound browsers can't be copied;
+        // the summary then asks for a one-time sign-in.
+        if (sessionFor) {
+          try {
+            const result = await importCookies({ browserId: profile.source.browserId, profilePath: profile.absolutePath }, sessionFor(record.id), cookieOptions);
+            summary.imported += result.imported || 0;
+            summary.failedDecryption += result.failedDecryption || 0;
+            summary.appBound += result.appBound || 0;
+            summary.needsSignin = summary.needsSignin || !!result.needsSignin;
+          } catch (error) {
+            log("Sign-ins couldn't be copied for an imported browser profile: " + error.message);
+            summary.needsSignin = true;
+          }
+        }
       }
-      return { profiles: created, summary: { created: created.length, failedDecryption: 0, failedWrite: 0 }, passwords: { outcome: "skipped" } };
+      return { profiles: created, summary, passwords: { outcome: "skipped" } };
     },
   };
 }

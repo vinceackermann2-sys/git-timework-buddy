@@ -397,7 +397,12 @@ function Browser() {
   const add = profile => {
     setBusy(profile.label);
     call("browser.importProfile", profile.source).then(created => {
-      toast({ title: `${created.label} added`, body: "Choose it from the profile button in a chat's browser. Sign in to your sites there once; saved passwords can come in from Vault → Import." });
+      const cookies = created.cookies || {};
+      const copied = cookies.imported ? `Brought ${cookies.imported} sign-in${cookies.imported === 1 ? "" : "s"} across. ` : "";
+      const body = cookies.needsSignin
+        ? `${copied}Modern Chrome and Edge protect some sign-ins — open this profile from the profile button in a chat's browser and sign in to those once. Saved passwords can come in from Vault → Import.`
+        : `${copied}Choose it from the profile button in a chat's browser. Saved passwords can come in from Vault → Import.`;
+      toast({ title: `${created.label} added`, body });
       load();
     }).catch(error => toast(error, "error")).finally(() => setBusy(null));
   };

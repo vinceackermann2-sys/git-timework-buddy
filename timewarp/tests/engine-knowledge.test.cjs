@@ -42,7 +42,13 @@ test("imports copy the selected files into the profile and skills into Codex", t
   assert.ok(fs.existsSync(path.join(codexHome, "skills/summarize/scripts/run.py")));
   assert.equal(fs.readFileSync(path.join(home, ".claude/CLAUDE.md"), "utf8"), "Keep replies short.\n");
   assert.deepEqual(knowledge.read().files.map(file => file.path), ["claude-code/projects/app/memory/notes.md"]);
+  // A pointer block tells the agent the import exists, and reaches each turn.
+  const notesFile = path.join(runtimeDir, "entities/memories/user.md");
+  assert.match(fs.readFileSync(notesFile, "utf8"), /<!-- setup-import:claude-code:memory -->[\s\S]*imports\/claude-code\//);
+  assert.match(knowledge.context("enabled"), /Imported from Claude/);
   assert.deepEqual(knowledge.removeImport("claude-code/projects/app/memory/notes.md").files, []);
+  // Removing the source's last file drops its pointer block too.
+  assert.doesNotMatch(fs.readFileSync(notesFile, "utf8"), /setup-import:claude-code:memory/);
   assert.throws(() => knowledge.removeImport("../user.md"), /no longer exists/);
 });
 

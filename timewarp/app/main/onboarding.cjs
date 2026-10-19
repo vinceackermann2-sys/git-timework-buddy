@@ -33,11 +33,14 @@ function createOnboarding({ profile, store, services, agents, knowledge, browser
   const native = { settings, caller: () => ({ product, codex: { setupImport } }) };
 
   async function chooseCursorRoot() {
-    const result = await dialog.showOpenDialog({ title: "Choose your Cursor project or .cursor folder", properties: ["openDirectory"] });
+    const result = await dialog.showOpenDialog({ title: "Choose your Cursor project folder", properties: ["openDirectory"] });
     if (result.canceled) return null;
-    const selected = result.filePaths[0], root = path.basename(selected) === ".cursor" ? selected : path.join(selected, ".cursor");
-    const stat = await fs.stat(root).catch(() => null);
-    if (!stat?.isDirectory()) throw new Error("This folder has no .cursor directory. Choose a Cursor project with rules or skills.");
+    // Use the project root so .cursor/rules, .cursorrules and AGENTS.md resolve.
+    let root = result.filePaths[0];
+    if (path.basename(root) === ".cursor") root = path.dirname(root);
+    const hasCursor = await fs.stat(path.join(root, ".cursor")).then(stat => stat.isDirectory()).catch(() => false);
+    const hasRules = await fs.stat(path.join(root, ".cursorrules")).then(stat => stat.isFile()).catch(() => false);
+    if (!hasCursor && !hasRules) throw new Error("This isn't a Cursor project. Choose a folder with a .cursor directory or a .cursorrules file.");
     return fs.realpath(root);
   }
 
