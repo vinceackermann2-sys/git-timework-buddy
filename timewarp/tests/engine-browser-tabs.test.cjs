@@ -55,6 +55,7 @@ Module._load = function load(request, ...rest) {
         partition, handlers: {}, agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Timewarp/1.4.0 Chrome/150.0.0.0 Electron/43.7.7 Safari/537.36",
         setPermissionRequestHandler(handler) { value.request = handler; }, setPermissionCheckHandler(handler) { value.check = handler; }, on(event, handler) { value.handlers[event] = handler; },
         setUserAgent(agent) { value.agent = agent; }, getUserAgent: () => value.agent,
+        preloads: [], registerPreloadScript(script) { value.preloads.push(script); return script.id; }, getPreloadScripts: () => value.preloads.map(script => ({ ...script })),
         webRequest: { onBeforeSendHeaders(filter, handler) { value.beforeSend = { filter, handler }; } },
         clearStorageData: async () => { value.cleared = true; }, clearCache: async () => {},
       };
@@ -184,6 +185,20 @@ test("Google's sign-in gets the browser identity with Timewarp's name; other sit
   session.beforeSend.handler({ url: "https://accounts.google.com/v3/signin", requestHeaders: { "User-Agent": session.agent, Accept: "*/*" } }, value => { sent = value; });
   assert.deepEqual(sent.requestHeaders, { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Timewarp/1.4.0 Chrome/150.0.0.0 Safari/537.36", Accept: "*/*" });
   browser.destroy();
+});
+
+test("every page of a profile, sign-in windows' too, runs the script that keeps the system's passkey window closed", () => {
+  const browser = createBrowser({ window: () => null, store: memoryStore() });
+  const session = browser.sessionFor("passkeys");
+  browser.sessionFor("passkeys");
+  // Electron keeps a session for the whole run, past this browser.
+  const again = createBrowser({ window: () => null, store: memoryStore() });
+  assert.equal(again.sessionFor("passkeys"), session);
+  assert.deepEqual(session.preloads, [{ type: "frame", id: "timewarp-no-passkeys", filePath: path.join(__dirname, "..", "app", "preload", "no-passkeys.cjs") }], "Registered once for the profile's session");
+  assert.ok(fs.existsSync(session.preloads[0].filePath));
+  assert.equal(browser.sessionFor("passkeys-work").preloads.length, 1, "Every profile gets it");
+  browser.destroy();
+  again.destroy();
 });
 
 test("browser home shows the chat's new tab page and leaves the web tab with its page", () => {
