@@ -118,6 +118,9 @@ export function FirstSteps({ agent, userName, funding, onEnd, onTry, onBilling, 
   const primary = useRef(null);
   const step = STEPS[index], last = index === STEPS.length - 1;
 
+  // It counts as seen once it's on screen, so closing the app or the window
+  // during it doesn't bring it back (Settings → General → Tour shows it again).
+  useEffect(() => { void call("firstSteps.done").catch(() => {}); }, []);
   useEffect(() => { onBrowser?.(!!step.browser); }, [step]);
   // The browser gets ready from the start, so its step doesn't wait on a first connection.
   useEffect(() => { void call("firstSteps.browser", { step: "warm" }).catch(() => {}); }, []);
