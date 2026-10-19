@@ -89,6 +89,7 @@ async function build() {
   copy(path.join(path.dirname(require.resolve("pdfjs-dist/package.json")), "build/pdf.worker.min.mjs"), path.join(out, "renderer/pdf.worker.min.mjs"));
   copy(path.join(root, "app/preload/preload.cjs"), path.join(out, "preload/preload.cjs"));
   copy(path.join(root, "app/preload/browser-page.cjs"), path.join(out, "preload/browser-page.cjs"));
+  copy(path.join(root, "app/preload/no-passkeys.cjs"), path.join(out, "preload/no-passkeys.cjs"));
   if (fixture) copy(path.join(root, "app/main/fixture.cjs"), path.join(out, "main/fixture.cjs"));
 
   const renderDir = path.join(out, "renderer");

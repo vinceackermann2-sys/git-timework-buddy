@@ -63,3 +63,38 @@ test("importing makes one Timewarp profile per browser profile", async t => {
   assert.equal(store.browserProfiles.list().length, 2);
   await assert.rejects(imports.importProfiles({ selections: [{ browserId: "chrome", profilePath: "Gone" }] }), /no longer on this computer/);
 });
+
+test("importing copies the browser's sign-ins into the new profile's session", async t => {
+  const options = fakeBrowsers(t);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-store-"));
+  const store = openStore(path.join(root, "timewarp.sqlite"));
+  t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  store.browserProfiles.ensureDefault();
+  const calls = [];
+  const imports = createBrowserImport({
+    store, detect: () => detectProfiles(options),
+    sessionFor: profileId => ({ profileId }),
+    importCookies: async (source, session) => { calls.push({ source, session }); return { imported: 4, failedDecryption: 0, appBound: 2, needsSignin: true }; },
+  });
+  const result = await imports.importProfiles({ selections: [{ browserId: "chrome", profilePath: "Default" }] });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].source.browserId, "chrome");
+  assert.ok(calls[0].source.profilePath.endsWith("Default"), "the absolute profile path is passed");
+  assert.equal(calls[0].session.profileId, result.profiles[0].id, "cookies go into the new profile's session");
+  assert.deepEqual(result.summary, { created: 1, imported: 4, failedDecryption: 0, failedWrite: 0, appBound: 2, needsSignin: true });
+});
+
+test("a failed cookie read still imports the profile and asks for a sign-in", async t => {
+  const options = fakeBrowsers(t);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-store-"));
+  const store = openStore(path.join(root, "timewarp.sqlite"));
+  t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  store.browserProfiles.ensureDefault();
+  const imports = createBrowserImport({
+    store, detect: () => detectProfiles(options), sessionFor: () => ({}),
+    importCookies: async () => { throw new Error("locked"); },
+  });
+  const result = await imports.importProfiles({ selections: [{ browserId: "chrome", profilePath: "Default" }] });
+  assert.equal(result.profiles.length, 1);
+  assert.equal(result.summary.needsSignin, true);
+});

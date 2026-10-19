@@ -17,6 +17,9 @@ const ALLOWED = new Set(["fullscreen", "clipboard-sanitized-write"]);
 const CHECKS = new Set([...ALLOWED, "storage-access", "top-level-storage-access"]);
 // The script that runs before each page and hands its dialogs and first edit to Timewarp.
 const PAGE_SCRIPT = path.join(__dirname, "..", "preload", "browser-page.cjs");
+// The script that runs before every page of a profile, sign-in windows' too,
+// so sites never open the system's passkey window.
+const NO_PASSKEYS = path.join(__dirname, "..", "preload", "no-passkeys.cjs");
 const DIALOG = "timewarp-browser:dialog", EDITED = "timewarp-browser:edited";
 // An agent's confirm or prompt nobody answers is dismissed after a minute.
 const AGENT_DIALOG_MS = 60000;
@@ -150,6 +153,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
       });
       value.setPermissionCheckHandler((contents, permission, origin, details) => permission === "media" ? mediaAllowed(profileId, contents, origin, details?.mediaType) : CHECKS.has(permission));
       value.on("will-download", (_event, item, contents) => download(item, contents));
+      if (!value.getPreloadScripts().some(script => script.id === "timewarp-no-passkeys")) value.registerPreloadScript({ type: "frame", id: "timewarp-no-passkeys", filePath: NO_PASSKEYS });
       // Pages see the same Chrome identity as in Chrome itself, except Google's
       // sign-in page (GOOGLE_SIGN_IN), which gets it with Timewarp's name.
       const own = value.getUserAgent().replace(/\s*Electron\/\S+/, "").trim();

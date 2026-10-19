@@ -200,7 +200,6 @@ function Shell({ account, setAccount, settings, setSettings }) {
   useEffect(() => { const show = () => { go("#/"); setFirstSteps(true); }; window.addEventListener("tw:first-steps", show); return () => window.removeEventListener("tw:first-steps", show); }, []);
   const endFirstSteps = () => {
     setFirstSteps(false); setFirstStepsBrowser(false);
-    void call("firstSteps.done").catch(() => {});
     void call("firstSteps.browser", { step: "done" }).catch(() => {});
   };
   // The box keeps it as its draft from then on; Home shown again starts from that.

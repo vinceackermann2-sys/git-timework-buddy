@@ -760,6 +760,15 @@ async function main() {
         await setup("complete");
         await fresh.evaluate("location.reload()").catch(() => {});
         await until("!!document.querySelector('dialog.tw-first-steps[open]')", "First steps didn't show after setup");
+        // It shows once: the window closing during it (as quitting the app
+        // does) doesn't bring it back. Settings → General → Tour shows it again.
+        await until("window.tw.call('firstSteps.get').then(value => !value.show)", "First steps was still due once it showed");
+        await fresh.evaluate("location.reload()").catch(() => {});
+        await until("!!document.querySelector('.tw-home textarea')", "Home didn't come back");
+        await pause(1500);
+        if (await fresh.evaluate("!!document.querySelector('dialog.tw-first-steps')")) throw new Error("First steps showed again after the window closed during it.");
+        await fresh.evaluate("window.dispatchEvent(new Event('tw:first-steps'))");
+        await until("!!document.querySelector('dialog.tw-first-steps[open]')", "Show me around didn't show First steps");
         const titles = [];
         let looked = null;
         // Next through every step to the tasks to try. The browser step shows

@@ -128,7 +128,7 @@
     function renderKnowledge(){
       renderSecurity();
       if(paste){renderPaste();return;}
-      const list=el('div',null,'tw-journey-import-grid');content.append(list);const note=el('p','Selected browser sessions and saved logins are copied into Timewarp on this device. Memory and skills stay local.','tw-journey-fineprint');content.append(note);
+      const list=el('div',null,'tw-journey-import-grid');content.append(list);const note=el('p','Your sign-ins are copied into Timewarp where the browser allows; modern Chrome and Edge protect some, so you sign in to those once. Memory and skills stay on this device.','tw-journey-fineprint');content.append(note);
       footer('user',button(Object.keys(state.imports||{}).length?'Continue →':'Skip for now →',()=>advance('knowledge-done')));
       if(!detection){list.append(el('p','Looking for profiles and local knowledge…','tw-journey-subtitle'));if(!detecting){detecting=true;const version=epoch;request('onboardingDetect').then(data=>{detection=data;if(!disposed&&version===epoch)render()}).catch(failure=>{if(version===epoch){list.replaceChildren(el('p',failure.message),button('Try again',async()=>{detection=await request('onboardingDetect');render()},'secondary'));}}).finally(()=>detecting=false);}return;}
       for(const group of [{id:'browser',name:'Browser profiles',mark:'↗',description:'Use your Chrome and Edge profiles in Timewarp’s browser.'},{id:'codex',name:'ChatGPT / Codex',mark:'✳',description:'Local instructions, memories and skills.'},{id:'claude',name:'Claude',mark:'✦',description:'Bring your local Claude knowledge.'},{id:'cursor',name:'Cursor',mark:'⌘',description:'Rules and skills from your computer.'}]){

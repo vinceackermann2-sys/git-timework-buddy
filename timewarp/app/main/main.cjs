@@ -856,8 +856,9 @@ async function boot() {
     };
   }
   const defaultAppearance = () => ({ scheme: "system", accent: defaultAccent, radiance: 0.5, texture: { type: "dots", step: 0 } });
-  // Browser profile import arrives with the profile importer.
-  const browserImport = require("./browser-import.cjs").createBrowserImport({ store });
+  // Browser profile import arrives with the profile importer. It writes the
+  // browser's sign-ins into the new profile's session (browser.sessionFor).
+  const browserImport = require("./browser-import.cjs").createBrowserImport({ store, sessionFor: profileId => browser.sessionFor(profileId), log: message => appLog.info("browser-import", message) });
   // Memory, projects and scheduled tasks pasted from ChatGPT, Claude and the
   // like, in setup and on the Memories page.
   const assistantImport = require("./assistant-import.cjs").createAssistantImport({ knowledge, agents, automations });
