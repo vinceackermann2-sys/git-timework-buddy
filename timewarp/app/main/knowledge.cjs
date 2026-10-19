@@ -19,6 +19,9 @@ const CONTEXT_DAILY_LOGS = 7, CONTEXT_TODAY = 6000, SUMMARY = 400;
 const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.md$/;
 // The previous app's memory: its folder name under imports/ (legacy-memory.cjs).
 const PREVIOUS_APP = "timewarp-previous";
+// Human names for import sources, used in the notes pointer blocks that tell the
+// agent where a source's imported memory lives.
+const SOURCE_LABELS = { "codex-chatgpt": "Codex / ChatGPT", "claude-code": "Claude", cursor: "Cursor" };
 
 // The notes file the previous app created before anything was remembered, and
 // the blocks setup writes into it (the user's chosen names, imported sources).
@@ -216,6 +219,25 @@ function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runti
     } finally { fs.rmSync(staging, { recursive: true, force: true }); }
   }
 
+  // Writes or replaces a managed block in the notes (setup-import:<id>), used
+  // both for import pointers and for saved online-assistant memory.
+  function setNotesBlock(id, text) {
+    if (!/^[\w:.-]+$/.test(String(id || "")) || typeof text !== "string" || !text.trim()) throw fail(400, "There's nothing to save to memory.");
+    const open = `<!-- setup-import:${id} -->`, close = `<!-- /setup-import:${id} -->`;
+    const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rest = notes().replace(new RegExp(`\\n*${escape(open)}[\\s\\S]*?${escape(close)}\\n*`, "g"), "\n\n").replace(PLACEHOLDER, "").replace(/\n{3,}/g, "\n\n").trim();
+    const next = [rest || "# User", `${open}\n${text.trim()}\n${close}`].join("\n\n") + "\n";
+    if (next.length > NOTES_LIMIT) throw fail(413, "Memory is full. Remove some notes, then import again.");
+    writeAtomic(notesFile, next);
+  }
+  // Drops a managed block, e.g. when a source's last imported file is removed.
+  function removeNotesBlock(id) {
+    const open = `<!-- setup-import:${id} -->`, close = `<!-- /setup-import:${id} -->`;
+    const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const next = notes().replace(new RegExp(`\\n*${escape(open)}[\\s\\S]*?${escape(close)}\\n*`, "g"), "\n\n").replace(/\n{3,}/g, "\n\n").trim();
+    writeAtomic(notesFile, next ? next + "\n" : "");
+  }
+
   function importItems(selections) {
     if (!Array.isArray(selections) || !selections.length) throw fail(400, "Select at least one memory or skill.");
     const available = detect().items, all = sources();
@@ -225,6 +247,7 @@ function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runti
       return { item, names: [...new Set(selection.names)] };
     });
     const imported = { memoryFiles: 0, skills: 0 };
+    const memorySources = new Set();
     forgetImported();
     for (const { item, names } of chosen) {
       const root = all[item.source].root;
@@ -234,6 +257,7 @@ function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runti
           if (!within(path.join(importsRoot, item.source), destination)) throw fail(400, "An import selection is outside its folder.");
           writeAtomic(destination, fs.readFileSync(sourceFile(root, name)));
           imported.memoryFiles++;
+          memorySources.add(item.source);
         } else {
           const folder = skillFolder(path.join(root, "skills"), name);
           if (!folder) throw fail(409, "An import selection is no longer available. Refresh and try again.");
@@ -242,6 +266,12 @@ function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runti
           imported.skills++;
         }
       }
+    }
+    // A pointer in the notes (which every turn carries) so the agent reliably
+    // knows a source's imported memory exists, even when the file list is long.
+    for (const source of memorySources) {
+      const label = SOURCE_LABELS[source] || source;
+      setNotesBlock(`${source}:memory`, `## Imported from ${label}\n\nYour imported ${label} memory is in \`imports/${source}/\`. Read those files when they would help.`);
     }
     return { imported };
   }
@@ -318,6 +348,13 @@ function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runti
       if (!within(importsRoot, target) || target === importsRoot || !lstat(target)?.isFile()) throw fail(404, "That imported file no longer exists.");
       fs.rmSync(target);
       forgetImported();
+      // When a source has no imported files left, drop its notes pointer block.
+      const source = String(relative).split("/")[0];
+      if (source && source !== PREVIOUS_APP) {
+        const remaining = [];
+        collect(path.join(importsRoot, source), "", remaining);
+        if (!remaining.length) removeNotesBlock(`${source}:memory`);
+      }
       return { files: importedFiles() };
     },
     // A new skill written by the user: a folder with SKILL.md.
@@ -396,13 +433,7 @@ function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runti
     // as an online assistant's memory (assistant-import.cjs). Importing from
     // the same source again replaces it.
     saveNotesBlock(id, text) {
-      if (!/^[\w:.-]+$/.test(String(id || "")) || typeof text !== "string" || !text.trim()) throw fail(400, "There's nothing to save to memory.");
-      const open = `<!-- setup-import:${id} -->`, close = `<!-- /setup-import:${id} -->`;
-      const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const rest = notes().replace(new RegExp(`\\n*${escape(open)}[\\s\\S]*?${escape(close)}\\n*`, "g"), "\n\n").replace(PLACEHOLDER, "").replace(/\n{3,}/g, "\n\n").trim();
-      const next = [rest || "# User", `${open}\n${text.trim()}\n${close}`].join("\n\n") + "\n";
-      if (next.length > NOTES_LIMIT) throw fail(413, "Memory is full. Remove some notes, then import again.");
-      writeAtomic(notesFile, next);
+      setNotesBlock(id, text);
       return { notes: notes() };
     },
     // Whether the notes hold nothing anyone wrote (empty or the previous app's placeholder).
