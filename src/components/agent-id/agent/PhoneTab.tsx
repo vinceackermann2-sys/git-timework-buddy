@@ -1,16 +1,21 @@
-// The agent's phone: texts as conversations, recent calls, and contacts.
-import { useEffect, useMemo, useRef, useState } from "react";
+// The agent's phone, like the phone on your own: Messages as conversations,
+// Recents for calls, and Contacts.
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  ArrowUp,
   Loader2,
-  MessageSquarePlus,
+  MessageCircle,
   Phone,
   PhoneIncoming,
   PhoneMissed,
   PhoneOutgoing,
-  Send,
+  Play,
+  Search,
+  SquarePen,
   Voicemail,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -23,7 +28,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,8 +35,11 @@ import { errorMessage } from "@/lib/agent-id/client";
 import {
   callKind,
   conversations,
+  dayLabel,
   formatDuration,
   formatListTime,
+  formatPhone,
+  formatTime,
   type CallKind,
 } from "@/lib/agent-id/format";
 import { useContacts, useEventPages } from "@/lib/agent-id/queries";
@@ -41,19 +48,15 @@ import type { Agent, AgentEvent } from "@/lib/agent-id/types";
 import {
   Avatar,
   CopyButton,
-  Empty,
   ErrorState,
   Field,
   LoadingRows,
   ModeBadge,
   Notice,
-  Row,
-  Rows,
-  Section,
   Segmented,
   toastError,
 } from "../ui";
-import { Contacts } from "./Contacts";
+import { ContactsBook } from "./Contacts";
 import { BlockedNotice, LoadMore, NoResource, blockedReason } from "./common";
 
 type View = "messages" | "calls" | "contacts";
@@ -61,6 +64,9 @@ type View = "messages" | "calls" | "contacts";
 export function PhoneTab({ agent }: { agent: Agent }) {
   const phone = agent.resources.phone;
   const [view, setView] = useState<View>("messages");
+  const [openNumber, setOpenNumber] = useState<string | null>(null);
+  const [callTo, setCallTo] = useState<string | null>(null);
+  const navigate = useNavigate();
   if (!phone) return <NoResource agent={agent} kind="phone" />;
   const blocked = blockedReason(agent, phone);
 
@@ -73,12 +79,13 @@ export function PhoneTab({ agent }: { agent: Agent }) {
           onChange={setView}
           options={[
             { value: "messages", label: "Messages" },
-            { value: "calls", label: "Calls" },
+            { value: "calls", label: "Recents" },
             { value: "contacts", label: "Contacts" },
           ]}
         />
-        <span className="flex items-center gap-1 text-sm">
-          <span className="aid-mono">{phone.address}</span>
+        <span className="flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">
+          My number
+          <span className="font-medium text-[var(--foreground)]">{formatPhone(phone.address)}</span>
           {phone.address && (
             <CopyButton text={phone.address} iconOnly variant="ghost" label="Copy number" />
           )}
@@ -86,124 +93,196 @@ export function PhoneTab({ agent }: { agent: Agent }) {
         </span>
       </div>
       <BlockedNotice reason={blocked} />
-      {view === "messages" && <Messages agent={agent} disabled={!!blocked} />}
-      {view === "calls" && <Calls agent={agent} disabled={!!blocked} />}
+      {view === "messages" && (
+        <Messages
+          agent={agent}
+          disabled={!!blocked}
+          openNumber={openNumber}
+          onOpenNumber={setOpenNumber}
+        />
+      )}
+      {view === "calls" && (
+        <Recents agent={agent} disabled={!!blocked} onCall={(n) => setCallTo(n)} />
+      )}
       {view === "contacts" && (
-        <Section flush>
-          <Contacts agent={agent} canEdit={!blockedReason(agent)} />
-        </Section>
+        <ContactsBook
+          agent={agent}
+          canEdit={!blockedReason(agent)}
+          onMessage={(number) => {
+            setOpenNumber(number);
+            setView("messages");
+          }}
+          onCall={(number) => setCallTo(number)}
+          onMail={(email) =>
+            void navigate({
+              to: "/agent-id/agents/$agentId",
+              params: { agentId: agent.id },
+              search: { tab: "mail", compose: email },
+            })
+          }
+        />
+      )}
+      {callTo !== null && (
+        <CallDialog agent={agent} initialTo={callTo} onClose={() => setCallTo(null)} />
       )}
     </div>
   );
 }
 
-// --- Messages -----------------------------------------------------------------------------
+// --- Messages -----------------------------------------------------------------------
 
-function Messages({ agent, disabled }: { agent: Agent; disabled: boolean }) {
+function Messages({
+  agent,
+  disabled,
+  openNumber,
+  onOpenNumber,
+}: {
+  agent: Agent;
+  disabled: boolean;
+  openNumber: string | null;
+  onOpenNumber: (number: string | null) => void;
+}) {
   const pages = useEventPages(agent.id, { kind: ["sms"] }, { limit: 100 });
   const contacts = useContacts(agent.id);
-  const [open, setOpen] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [search, setSearch] = useState("");
   const threads = useMemo(
     () => conversations(pages.data?.pages.flatMap((p) => p.events) ?? [], contacts.data ?? []),
     [pages.data, contacts.data],
   );
-  const thread = threads.find((t) => t.number === open) ?? null;
-  const showChat = !!open || composing;
+  const shown = threads.filter((t) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return [t.name, t.number, t.last.text].some((v) => v?.toLowerCase().includes(q));
+  });
+  const thread = threads.find((t) => t.number === openNumber) ?? null;
+  const known = contacts.data?.find((c) => c.phone === openNumber)?.name ?? null;
+  const showChat = !!openNumber || composing;
 
   return (
     <section className="aid-card overflow-hidden">
-      <div className="grid min-h-[32rem] md:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
+      <div className="grid h-[calc(100svh-12rem)] max-h-[50rem] min-h-[32rem] md:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
         <div
           className={cn(
-            "flex min-w-0 flex-col border-[var(--border)] md:border-r",
+            "flex min-h-0 min-w-0 flex-col border-[var(--border)] md:border-r",
             showChat && "hidden md:flex",
           )}
         >
-          <div className="border-b border-[var(--border)] p-3">
+          <div className="flex items-center justify-between px-4 pb-2 pt-4">
+            <h3 className="text-lg font-semibold">Messages</h3>
             <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
+              size="icon"
+              variant="ghost"
+              className="rounded-full text-[var(--aid-ink)]"
+              aria-label="New message"
               disabled={disabled}
               onClick={() => {
-                setOpen(null);
+                onOpenNumber(null);
                 setComposing(true);
               }}
             >
-              <MessageSquarePlus aria-hidden="true" /> New message
+              <SquarePen aria-hidden="true" />
             </Button>
           </div>
-          {pages.isPending ? (
-            <LoadingRows rows={4} />
-          ) : pages.isError ? (
-            <ErrorState error={pages.error} onRetry={() => void pages.refetch()} />
-          ) : threads.length === 0 ? (
-            <Empty>No messages yet.</Empty>
-          ) : (
-            <ul
-              className="flex-1 divide-y divide-[var(--border)] overflow-y-auto"
-              aria-label="Conversations"
-            >
-              {threads.map((t) => (
-                <li key={t.number}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setComposing(false);
-                      setOpen(t.number);
-                    }}
-                    aria-current={open === t.number ? "true" : undefined}
-                    className={cn(
-                      "flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[var(--muted)]",
-                      open === t.number && "bg-[var(--accent)] hover:bg-[var(--accent)]",
-                    )}
-                  >
-                    <Avatar name={t.name ?? t.number.replace(/\D/g, "").slice(-2)} />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-medium">{t.name ?? t.number}</span>
-                        <span className="shrink-0 text-xs text-[var(--muted-foreground)]">
-                          {formatListTime(t.last.at)}
+          <div className="px-3 pb-2">
+            <label className="relative block">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]"
+                aria-hidden="true"
+              />
+              <input
+                aria-label="Search messages"
+                placeholder="Search"
+                className="h-9 w-full rounded-xl bg-[var(--muted)] pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {pages.isPending ? (
+              <LoadingRows rows={4} />
+            ) : pages.isError ? (
+              <ErrorState error={pages.error} onRetry={() => void pages.refetch()} />
+            ) : shown.length === 0 ? (
+              <p className="px-5 py-14 text-center text-sm text-[var(--muted-foreground)]">
+                {search ? "No results" : "No messages"}
+              </p>
+            ) : (
+              <ul aria-label="Conversations" className="px-2">
+                {shown.map((t) => {
+                  const title = t.name ?? formatPhone(t.number);
+                  return (
+                    <li key={t.number}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setComposing(false);
+                          onOpenNumber(t.number);
+                        }}
+                        aria-current={openNumber === t.number ? "true" : undefined}
+                        className={cn(
+                          "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors",
+                          openNumber === t.number
+                            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                            : "hover:bg-[var(--muted)]",
+                        )}
+                      >
+                        <Avatar name={t.name ?? t.number} size="md" colorful />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-baseline justify-between gap-2">
+                            <span className="truncate text-[15px] font-semibold">{title}</span>
+                            <span className="shrink-0 text-xs opacity-70">
+                              {formatListTime(t.last.at)}
+                            </span>
+                          </span>
+                          <span className="line-clamp-2 text-[13px] leading-snug opacity-70">
+                            {t.last.direction === "out" ? "You: " : ""}
+                            {t.last.text}
+                          </span>
                         </span>
-                      </span>
-                      <span className="block truncate text-xs text-[var(--muted-foreground)]">
-                        {t.last.direction === "out" ? "You: " : ""}
-                        {t.last.text}
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <LoadMore
-            hasMore={pages.hasNextPage}
-            loading={pages.isFetchingNextPage}
-            onClick={() => void pages.fetchNextPage()}
-          />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <LoadMore
+              hasMore={pages.hasNextPage}
+              loading={pages.isFetchingNextPage}
+              onClick={() => void pages.fetchNextPage()}
+            />
+          </div>
         </div>
 
-        <div className={cn("min-w-0", !showChat && "hidden md:block")}>
+        <div className={cn("min-h-0 min-w-0", !showChat && "hidden md:block")}>
           {showChat ? (
-            <Chat
-              key={thread?.number ?? "new"}
+            <Conversation
+              key={openNumber ?? "new"}
               agent={agent}
-              number={thread?.number ?? null}
-              name={thread?.name ?? null}
+              number={openNumber}
+              name={thread?.name ?? known}
               messages={thread?.messages ?? []}
               disabled={disabled}
               onBack={() => {
-                setOpen(null);
+                onOpenNumber(null);
                 setComposing(false);
               }}
               onSent={(number) => {
                 setComposing(false);
-                setOpen(number);
+                onOpenNumber(number);
               }}
             />
           ) : (
-            <Empty>Choose a conversation.</Empty>
+            <div className="grid h-full place-items-center p-8 text-center">
+              <div>
+                <MessageCircle
+                  className="mx-auto mb-3 h-8 w-8 text-[var(--muted-foreground)]/50"
+                  aria-hidden="true"
+                />
+                <p className="text-sm text-[var(--muted-foreground)]">No conversation selected</p>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -211,7 +290,27 @@ function Messages({ agent, disabled }: { agent: Agent; disabled: boolean }) {
   );
 }
 
-function Chat({
+// Messages from one side within a couple of minutes sit together.
+function grouped(messages: AgentEvent[]) {
+  return messages.map((m, i) => {
+    const prev = messages[i - 1];
+    const next = messages[i + 1];
+    const near = (a?: AgentEvent, b?: AgentEvent) =>
+      !!a &&
+      !!b &&
+      a.direction === b.direction &&
+      Math.abs(Date.parse(a.at) - Date.parse(b.at)) < 3 * 60_000 &&
+      dayLabel(a.at) === dayLabel(b.at);
+    return {
+      message: m,
+      newDay: !prev || dayLabel(prev.at) !== dayLabel(m.at),
+      first: !near(prev, m),
+      last: !near(m, next),
+    };
+  });
+}
+
+function Conversation({
   agent,
   number,
   name,
@@ -230,130 +329,162 @@ function Chat({
 }) {
   const [to, setTo] = useState("");
   const [text, setText] = useState("");
-  const end = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const target = number ?? to.trim();
+  const items = grouped(messages);
+  const lastMine = [...messages].reverse().find((m) => m.direction === "out");
 
+  // Keep the newest message in view without scrolling the page itself.
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "end" });
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
 
   const send = useMutation({
     mutationFn: () => api.asAgent(agent.id).sendSms({ to: target, text }),
     onSuccess: async (result) => {
-      if (result.message.status === "simulated")
-        toast.warning("Not delivered", { description: "Test numbers reach only test numbers." });
       setText("");
       await queryClient.invalidateQueries({ queryKey: ["agent-id", "events"] });
       onSent(result.message.counterparty ?? target);
     },
   });
+  const submit = () => {
+    if (target && text.trim() && !send.isPending) send.mutate();
+  };
 
   return (
-    <div className="flex h-full min-h-[32rem] flex-col">
-      <div className="flex items-center gap-2 border-b border-[var(--border)] p-3">
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-3 border-b border-[var(--border)] px-4 py-3">
         <Button
           variant="ghost"
           size="icon"
-          className="md:hidden"
+          className="rounded-full md:hidden"
           aria-label="Back"
           onClick={onBack}
         >
           <ArrowLeft aria-hidden="true" />
         </Button>
         {number ? (
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">{name ?? number}</p>
-            {name && <p className="aid-mono text-xs text-[var(--muted-foreground)]">{number}</p>}
-          </div>
+          <>
+            <Avatar name={name ?? number} size="md" colorful />
+            <div className="min-w-0">
+              <p className="truncate text-[15px] font-semibold">{name ?? formatPhone(number)}</p>
+              {name && (
+                <p className="text-xs text-[var(--muted-foreground)]">{formatPhone(number)}</p>
+              )}
+            </div>
+          </>
         ) : (
-          <Input
-            aria-label="To"
-            placeholder="To: +14155550123"
-            inputMode="tel"
-            autoFocus
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="max-w-xs"
-          />
+          <label className="flex flex-1 items-center gap-2">
+            <span className="text-sm text-[var(--muted-foreground)]">To:</span>
+            <input
+              aria-label="To"
+              placeholder="+1 415 555 0100"
+              inputMode="tel"
+              autoFocus
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-9 min-w-0 flex-1 bg-transparent text-[15px] outline-none"
+            />
+          </label>
         )}
       </div>
-      <div className="flex-1 space-y-2 overflow-y-auto bg-[var(--muted)]/40 p-4" aria-live="polite">
-        {messages.map((m) => {
+
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
+        {items.map(({ message: m, newDay, first, last }) => {
           const mine = m.direction === "out";
           return (
-            <div key={m.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
+            <Fragment key={m.id}>
+              {newDay && (
+                <p className="my-3 text-center text-xs font-medium text-[var(--muted-foreground)]">
+                  {dayLabel(m.at)} {formatTime(m.at)}
+                </p>
+              )}
               <div
                 className={cn(
-                  "max-w-[80%] rounded-2xl px-3.5 py-2 text-sm",
-                  mine
-                    ? "rounded-br-md bg-[var(--primary)] text-[var(--primary-foreground)]"
-                    : "rounded-bl-md bg-[var(--card)] ring-1 ring-[var(--border)]",
+                  "flex",
+                  mine ? "justify-end" : "justify-start",
+                  first ? "mt-2" : "mt-0.5",
                 )}
               >
-                <p className="whitespace-pre-wrap break-words">{m.text}</p>
-                <p
+                <div
+                  title={formatTime(m.at)}
                   className={cn(
-                    "mt-0.5 text-right text-[10px]",
-                    mine ? "opacity-60" : "text-[var(--muted-foreground)]",
+                    "max-w-[75%] whitespace-pre-wrap break-words rounded-[18px] px-3.5 py-2 text-[15px] leading-snug",
+                    mine
+                      ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                      : "bg-[var(--aid-bubble-in)] text-[var(--foreground)]",
+                    last && (mine ? "aid-tail-out rounded-br-md" : "aid-tail-in rounded-bl-md"),
                   )}
                 >
-                  {formatListTime(m.at)}
-                  {mine && m.status === "simulated" ? " · not delivered" : ""}
-                  {mine && m.status === "failed" ? " · failed" : ""}
-                </p>
+                  {m.text}
+                </div>
               </div>
-            </div>
+              {mine && m.id === lastMine?.id && (
+                <p className="mr-1 mt-1 text-right text-[11px] font-medium text-[var(--muted-foreground)]">
+                  {m.status === "simulated"
+                    ? "Not delivered"
+                    : m.status === "failed" || m.status === "undelivered"
+                      ? "Not sent"
+                      : m.status === "queued" || m.status === "sending"
+                        ? "Sending…"
+                        : "Delivered"}
+                </p>
+              )}
+            </Fragment>
           );
         })}
-        <div ref={end} />
       </div>
-      <form
-        className="flex items-end gap-2 border-t border-[var(--border)] p-3"
-        onSubmit={(e: FormEvent) => {
-          e.preventDefault();
-          if (target && text.trim() && !send.isPending) send.mutate();
-        }}
-      >
-        <Textarea
-          aria-label="Message"
-          rows={1}
-          placeholder="Message"
-          className="min-h-9 flex-1 resize-none"
-          value={text}
-          disabled={disabled}
-          maxLength={1600}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              if (target && text.trim() && !send.isPending) send.mutate();
-            }
-          }}
-        />
-        <Button
-          type="submit"
-          size="icon"
-          aria-label="Send"
-          disabled={disabled || !target || !text.trim() || send.isPending}
-        >
-          {send.isPending ? (
-            <Loader2 className="animate-spin" aria-hidden="true" />
-          ) : (
-            <Send aria-hidden="true" />
-          )}
-        </Button>
-      </form>
+
       {send.isError && (
-        <Notice tone="danger" className="m-3 mt-0">
+        <Notice tone="danger" className="mx-4 mb-2">
           {errorMessage(send.error)}
         </Notice>
       )}
+      <form
+        className="flex items-end gap-2 px-4 pb-4 pt-2"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="flex min-h-10 flex-1 items-end rounded-[20px] border border-[var(--input)] bg-[var(--card)] px-4 py-2 focus-within:ring-2 focus-within:ring-[var(--ring)]">
+          <textarea
+            aria-label="Message"
+            rows={1}
+            placeholder="Text Message"
+            className="max-h-32 min-h-6 flex-1 resize-none bg-transparent text-[15px] leading-6 outline-none"
+            value={text}
+            disabled={disabled}
+            maxLength={1600}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+          />
+        </div>
+        <button
+          type="submit"
+          aria-label="Send"
+          disabled={disabled || !target || !text.trim() || send.isPending}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--aid-ink)] text-[var(--background)] transition-opacity disabled:opacity-30"
+        >
+          {send.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <ArrowUp className="h-5 w-5" aria-hidden="true" />
+          )}
+        </button>
+      </form>
     </div>
   );
 }
 
-// --- Calls --------------------------------------------------------------------------------
+// --- Recents --------------------------------------------------------------------------
 
 const CALL_ICONS: Record<CallKind, typeof Phone> = {
   missed: PhoneMissed,
@@ -368,81 +499,113 @@ const CALL_LABELS: Record<CallKind, string> = {
   outgoing: "Outgoing",
 };
 
-function Calls({ agent, disabled }: { agent: Agent; disabled: boolean }) {
+function Recents({
+  agent,
+  disabled,
+  onCall,
+}: {
+  agent: Agent;
+  disabled: boolean;
+  onCall: (number: string) => void;
+}) {
   const pages = useEventPages(agent.id, { kind: ["call"] }, { limit: 50 });
   const contacts = useContacts(agent.id);
+  const [filter, setFilter] = useState<"all" | "missed">("all");
   const names = new Map(
     (contacts.data ?? []).filter((c) => c.phone).map((c) => [c.phone!, c.name]),
   );
-  const calls = pages.data?.pages.flatMap((p) => p.events) ?? [];
+  const calls = (pages.data?.pages.flatMap((p) => p.events) ?? []).filter(
+    (c) => filter === "all" || callKind(c) === "missed",
+  );
 
   return (
-    <Section title="Recents" flush actions={<CallDialog agent={agent} disabled={disabled} />}>
+    <section className="aid-card overflow-hidden">
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3">
+        <Segmented
+          label="Calls"
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: "all", label: "All" },
+            { value: "missed", label: "Missed" },
+          ]}
+        />
+        <Button size="sm" className="rounded-full" disabled={disabled} onClick={() => onCall("")}>
+          <Phone aria-hidden="true" /> Call
+        </Button>
+      </div>
       {pages.isPending ? (
         <LoadingRows rows={4} />
       ) : pages.isError ? (
         <ErrorState error={pages.error} onRetry={() => void pages.refetch()} />
       ) : calls.length === 0 ? (
-        <Empty>No calls yet.</Empty>
+        <p className="px-5 py-14 text-center text-sm text-[var(--muted-foreground)]">
+          {filter === "missed" ? "No missed calls" : "No recent calls"}
+        </p>
       ) : (
         <>
-          <Rows label="Calls">
+          <ul aria-label="Recent calls">
             {calls.map((call) => {
               const kind = callKind(call);
               const Icon = CALL_ICONS[kind];
               const seconds = Number(call.data["recordingSeconds"] ?? call.data["duration"] ?? 0);
               const recording =
                 typeof call.data["recordingUrl"] === "string" ? call.data["recordingUrl"] : null;
+              const number = call.counterparty ?? "";
               return (
-                <Row key={call.id}>
-                  <div className="flex min-w-0 items-start gap-3">
-                    <Icon
+                <li
+                  key={call.id}
+                  className="flex items-center gap-3 border-b border-[var(--border)] px-5 py-3 last:border-b-0"
+                >
+                  <Icon
+                    className={cn(
+                      "h-4 w-4 shrink-0",
+                      kind === "missed"
+                        ? "text-[var(--aid-danger)]"
+                        : "text-[var(--muted-foreground)]",
+                    )}
+                    aria-label={CALL_LABELS[kind]}
+                  />
+                  <button
+                    type="button"
+                    disabled={disabled || !number}
+                    onClick={() => onCall(number)}
+                    className="min-w-0 flex-1 text-left"
+                    title="Call back"
+                  >
+                    <span
                       className={cn(
-                        "mt-0.5 h-4 w-4 shrink-0",
-                        kind === "missed"
-                          ? "text-[var(--aid-danger)]"
-                          : "text-[var(--muted-foreground)]",
+                        "block truncate text-[15px] font-medium",
+                        kind === "missed" && "text-[var(--aid-danger)]",
                       )}
-                      aria-hidden="true"
-                    />
-                    <div className="min-w-0">
-                      <p
-                        className={cn(
-                          "text-sm font-medium",
-                          kind === "missed" && "text-[var(--aid-danger)]",
-                        )}
-                      >
-                        {names.get(call.counterparty ?? "") ?? call.counterparty}
-                      </p>
-                      <p className="text-xs text-[var(--muted-foreground)]">
-                        {CALL_LABELS[kind]}
-                        {seconds > 0 ? ` · ${formatDuration(seconds)}` : ""}
-                        {call.status === "simulated" ? " · not placed" : ""}
-                      </p>
-                      {call.text && (
-                        <p className="mt-0.5 truncate text-xs text-[var(--muted-foreground)]">
-                          “{call.text}”
-                        </p>
-                      )}
-                      {recording && (
-                        <a
-                          href={recording}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="aid-link text-xs font-medium"
-                        >
-                          Play voicemail
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                  <span className="shrink-0 text-xs text-[var(--muted-foreground)]">
+                    >
+                      {names.get(number) ?? formatPhone(number)}
+                    </span>
+                    <span className="block truncate text-xs text-[var(--muted-foreground)]">
+                      {CALL_LABELS[kind]}
+                      {seconds > 0 ? ` · ${formatDuration(seconds)}` : ""}
+                      {call.text ? ` · “${call.text}”` : ""}
+                    </span>
+                  </button>
+                  <span className="shrink-0 text-sm text-[var(--muted-foreground)]">
                     {formatListTime(call.at)}
                   </span>
-                </Row>
+                  {recording && (
+                    <a
+                      href={recording}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      aria-label="Play voicemail"
+                      title="Play voicemail"
+                      className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--accent)] text-[var(--aid-ink)] hover:bg-[var(--primary)]"
+                    >
+                      <Play className="h-3.5 w-3.5" aria-hidden="true" />
+                    </a>
+                  )}
+                </li>
               );
             })}
-          </Rows>
+          </ul>
           <LoadMore
             hasMore={pages.hasNextPage}
             loading={pages.isFetchingNextPage}
@@ -450,41 +613,35 @@ function Calls({ agent, disabled }: { agent: Agent; disabled: boolean }) {
           />
         </>
       )}
-      {agent.resources.phone?.mode === "live" && <Greeting agent={agent} />}
-    </Section>
+    </section>
   );
 }
 
-function CallDialog({ agent, disabled }: { agent: Agent; disabled: boolean }) {
-  const [open, setOpen] = useState(false);
-  const [to, setTo] = useState("");
+function CallDialog({
+  agent,
+  initialTo,
+  onClose,
+}: {
+  agent: Agent;
+  initialTo: string;
+  onClose: () => void;
+}) {
+  const [to, setTo] = useState(initialTo);
   const [say, setSay] = useState("");
   const queryClient = useQueryClient();
   const call = useMutation({
     mutationFn: () => api.asAgent(agent.id).placeCall({ to: to.trim(), say }),
     onSuccess: async (result) => {
-      if (result.call.status === "simulated")
-        toast.warning("Not placed", { description: "Test numbers reach only test numbers." });
-      else toast.success("Calling");
-      setOpen(false);
-      setSay("");
+      if (result.call.status === "simulated") toast.warning("The call didn't connect");
+      else toast.success("Calling…");
+      onClose();
       await queryClient.invalidateQueries({ queryKey: ["agent-id", "events"] });
     },
+    onError: (error) => toastError(error, "Couldn't place the call"),
   });
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) call.reset();
-      }}
-    >
-      <DialogTrigger asChild>
-        <Button size="sm" disabled={disabled}>
-          <Phone aria-hidden="true" /> Call
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-md sm:rounded-xl">
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent aria-describedby={undefined} className="sm:max-w-md sm:rounded-2xl">
         <form
           className="grid gap-4"
           onSubmit={(e: FormEvent) => {
@@ -499,75 +656,39 @@ function CallDialog({ agent, disabled }: { agent: Agent; disabled: boolean }) {
             <Input
               id="call-to"
               inputMode="tel"
-              placeholder="+14155550123"
+              placeholder="+1 415 555 0100"
+              autoFocus={!initialTo}
               value={to}
               onChange={(e) => setTo(e.target.value)}
             />
           </Field>
-          <Field id="call-say" label="What the agent says">
+          <Field id="call-say" label={`What ${agent.name} says`}>
             <Textarea
               id="call-say"
               rows={3}
               maxLength={1000}
+              autoFocus={!!initialTo}
               value={say}
               onChange={(e) => setSay(e.target.value)}
             />
           </Field>
           {call.isError && <Notice tone="danger">{errorMessage(call.error)}</Notice>}
           <DialogFooter>
-            <Button type="submit" disabled={!to.trim() || !say.trim() || call.isPending}>
-              {call.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
+            <Button
+              type="submit"
+              className="rounded-full"
+              disabled={!to.trim() || !say.trim() || call.isPending}
+            >
+              {call.isPending ? (
+                <Loader2 className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Phone aria-hidden="true" />
+              )}
               Call
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Greeting({ agent }: { agent: Agent }) {
-  const current =
-    typeof agent.resources.phone?.settings.greeting === "string"
-      ? agent.resources.phone.settings.greeting
-      : "";
-  const [greeting, setGreeting] = useState(current);
-  const queryClient = useQueryClient();
-  const save = useMutation({
-    mutationFn: () =>
-      api.updateResource(agent.id, "phone", {
-        settings: { greeting: greeting.trim() ? greeting.trim() : null },
-      }),
-    onSuccess: async () => {
-      toast.success("Greeting saved");
-      await queryClient.invalidateQueries({ queryKey: ["agent-id", "agent", agent.id] });
-    },
-    onError: (error) => toastError(error, "Couldn't save the greeting"),
-  });
-  return (
-    <form
-      className="flex flex-col gap-2 border-t border-[var(--border)] p-5 sm:flex-row sm:items-end"
-      onSubmit={(e: FormEvent) => {
-        e.preventDefault();
-        save.mutate();
-      }}
-    >
-      <Field id="phone-greeting" label="Voicemail greeting" className="flex-1">
-        <Input
-          id="phone-greeting"
-          maxLength={300}
-          placeholder="Standard greeting"
-          value={greeting}
-          onChange={(e) => setGreeting(e.target.value)}
-        />
-      </Field>
-      <Button
-        type="submit"
-        variant="outline"
-        disabled={save.isPending || greeting.trim() === current}
-      >
-        Save
-      </Button>
-    </form>
   );
 }

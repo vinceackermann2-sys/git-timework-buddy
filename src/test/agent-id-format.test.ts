@@ -23,7 +23,7 @@ import {
   codexConfig,
   envExport,
   githubActionSnippet,
-  verifySdkSnippet,
+  sdkSnippet,
 } from "@/lib/agent-id/connect";
 import type { PublicConfig } from "@/lib/agent-id/types";
 
@@ -200,11 +200,16 @@ bearer_token_env_var = "TIMEWARP_AGENT_KEY"`,
     expect(envExport("twa_k")).toBe('export TIMEWARP_AGENT_KEY="twa_k"');
   });
 
-  it("checks passports for the company's audience", () => {
-    expect(verifySdkSnippet("https://api.acme.test")).toContain(
-      'verifyPassport(passport, { audience: "https://api.acme.test" })',
+  it("shows SDK checks with no keys", () => {
+    for (const framework of ["express", "next", "workers", "fetch"] as const) {
+      const code = sdkSnippet(framework, "https://api.acme.test");
+      expect(code).toContain('audience: "https://api.acme.test", require: "verified"');
+      expect(code).not.toMatch(/secret|twrp_/);
+    }
+    expect(githubActionSnippet("org-1")).toContain(
+      "uses: vinceackermann2-sys/git-timework-buddy/agent-id/action@main",
     );
-    expect(githubActionSnippet()).toContain("uses: timewarp/agent-id/action@v1");
-    expect(githubActionSnippet()).toContain("secret: ${{ secrets.AGENT_ID_SECRET }}");
+    expect(githubActionSnippet("org-1")).toContain("organization: org-1");
+    expect(githubActionSnippet("org-1")).not.toContain("secret");
   });
 });

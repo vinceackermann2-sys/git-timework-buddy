@@ -18,8 +18,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { errorMessage } from "@/lib/agent-id/client";
-import { KIND_LABELS, liveAvailability } from "@/lib/agent-id/format";
-import { useAccount, useAgent, useRefreshAgent } from "@/lib/agent-id/queries";
+import { KIND_LABELS, NOT_LIVE_YET, liveAvailability } from "@/lib/agent-id/format";
+import { useAccount, useAgent, useRefreshAgent, useTestMode } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
 import type { Agent, BillingAddress, Kind, Mode, ProvisionInput } from "@/lib/agent-id/types";
 import { Field, Muted, Notice } from "../ui";
@@ -45,7 +45,9 @@ export function ProvisionDialog({
   inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<Mode>("test");
+  // Production gives the real thing; only development deployments choose.
+  const testMode = useTestMode();
+  const [mode, setMode] = useState<Mode>(testMode ? "test" : "live");
   const [size, setSize] = useState<"small" | "medium">("medium");
   const [country, setCountry] = useState("");
   const [areaCode, setAreaCode] = useState("");
@@ -113,6 +115,17 @@ export function ProvisionDialog({
   const setBill = (key: keyof BillingAddress) => (value: string) =>
     setBilling((current) => ({ ...current, [key]: value }));
 
+  // In production, a kind that isn't live yet is said so plainly.
+  if (!testMode && !live.available) {
+    return inline ? (
+      <span className="text-sm text-[var(--muted-foreground)]" title={NOT_LIVE_YET[kind]}>
+        Coming soon
+      </span>
+    ) : (
+      <p className="text-sm text-[var(--muted-foreground)]">{NOT_LIVE_YET[kind]}</p>
+    );
+  }
+
   return (
     <Dialog
       open={open}
@@ -120,7 +133,7 @@ export function ProvisionDialog({
         setOpen(next);
         if (!next) {
           provision.reset();
-          setMode("test");
+          setMode(testMode ? "test" : "live");
         }
       }}
     >
@@ -152,41 +165,58 @@ export function ProvisionDialog({
             </DialogTitle>
           </DialogHeader>
 
-          <fieldset className="grid gap-2">
-            <legend className="mb-2 text-sm font-medium">Mode</legend>
-            <RadioGroup
-              value={mode}
-              onValueChange={(v) => setMode(v as Mode)}
-              className="grid grid-cols-2 gap-2"
-            >
-              <Choice
-                value="test"
-                checked={mode === "test"}
-                title="Test"
-                text="Free, inside Agent ID"
-              />
-              <Choice
-                value="live"
-                checked={mode === "live"}
-                disabled={!live.ready}
-                title="Live"
-                text="Real provider"
-              />
-            </RadioGroup>
-            {!live.ready && live.reason && (
-              <Muted>
+          {testMode ? (
+            <fieldset className="grid gap-2">
+              <legend className="mb-2 text-sm font-medium">Mode</legend>
+              <RadioGroup
+                value={mode}
+                onValueChange={(v) => setMode(v as Mode)}
+                className="grid grid-cols-2 gap-2"
+              >
+                <Choice
+                  value="test"
+                  checked={mode === "test"}
+                  title="Test"
+                  text="Free, inside Agent ID"
+                />
+                <Choice
+                  value="live"
+                  checked={mode === "live"}
+                  disabled={!live.ready}
+                  title="Live"
+                  text="Real provider"
+                />
+              </RadioGroup>
+              {!live.ready && live.reason && (
+                <Muted>
+                  {live.reason}
+                  {needsVerification && (
+                    <>
+                      {" "}
+                      <Link to="/agent-id/verify" className="aid-link">
+                        Verify
+                      </Link>
+                    </>
+                  )}
+                </Muted>
+              )}
+            </fieldset>
+          ) : (
+            !live.ready &&
+            live.reason && (
+              <Notice>
                 {live.reason}
                 {needsVerification && (
                   <>
                     {" "}
                     <Link to="/agent-id/verify" className="aid-link">
-                      Verify
+                      Verify now
                     </Link>
                   </>
                 )}
-              </Muted>
-            )}
-          </fieldset>
+              </Notice>
+            )
+          )}
 
           {kind === "vm" && (
             <fieldset>
@@ -300,11 +330,15 @@ export function ProvisionDialog({
             <Button
               type="submit"
               disabled={
-                provision.isPending || (mode === "live" && kind === "card" && !billingComplete)
+                provision.isPending ||
+                (mode === "live" && !live.ready) ||
+                (mode === "live" && kind === "card" && !billingComplete)
               }
             >
               {provision.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
-              {mode === "live" ? "Add live" : "Add test"} {KIND_LABELS[kind].toLowerCase()}
+              {testMode
+                ? `${mode === "live" ? "Add live" : "Add test"} ${KIND_LABELS[kind].toLowerCase()}`
+                : GIVE_LABELS[kind]}
             </Button>
           </DialogFooter>
         </form>

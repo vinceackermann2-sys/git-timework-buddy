@@ -5,12 +5,14 @@ import {
   ChevronsUpDown,
   ClipboardList,
   Code2,
+  Loader2,
   LogOut,
   Menu,
   Settings,
   ShieldCheck,
 } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -33,9 +35,11 @@ import { Brand, THEME_OPTIONS } from "@/components/agent-id/Brand";
 import { useAgentIdTheme, type ThemeChoice } from "@/components/agent-id/AgentIdShell";
 import { AgentsIcon } from "@/components/agent-id/icons";
 import { Avatar, Chip, Empty } from "@/components/agent-id/ui";
-import { AgentIdError } from "@/lib/agent-id/client";
+import { AgentIdError, errorMessage } from "@/lib/agent-id/client";
+import { Checkbox } from "@/components/ui/checkbox";
+import { api } from "@/lib/agent-id/session";
 import { planLabel } from "@/lib/agent-id/format";
-import { useAccount, useApprovals } from "@/lib/agent-id/queries";
+import { queryKeys, useAccount, useApprovals } from "@/lib/agent-id/queries";
 import { useSession } from "@/lib/agent-id/session";
 
 // The signed-in part of Agent ID: navigation, the account, and a sign-in check.
@@ -188,9 +192,31 @@ function SignedInLayout() {
             void navigate({ to: "/agent-id" });
           }}
         />
+        <LegalLinks termsUrl={account.data?.config.legal?.termsUrl} />
       </div>
     </div>
   );
+
+  // Everyone accepts the Agent ID Terms once, before anything else.
+  if (account.data?.terms && !account.data.terms.accepted) {
+    return (
+      <TermsGate
+        version={
+          account.data.terms.current ??
+          account.data.config.legal?.termsVersion ??
+          account.data.terms.version ??
+          "1"
+        }
+        updated={!!account.data.terms.acceptedAt}
+        termsUrl={account.data.config.legal?.termsUrl}
+        privacyUrl={account.data.config.legal?.privacyUrl}
+        onSignOut={async () => {
+          await session.signOut();
+          void navigate({ to: "/agent-id" });
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex min-h-svh">
@@ -319,5 +345,129 @@ function AccountMenu({ onSignOut }: { onSignOut: () => void }) {
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+const AGENT_ID_TERMS = "/legal/agent-id-terms";
+
+function LegalLinks({ termsUrl }: { termsUrl?: string | undefined }) {
+  return (
+    <p className="mt-2 px-2 text-[11px] text-[var(--muted-foreground)]">
+      <a
+        href="/legal/terms-of-service"
+        target="_blank"
+        rel="noreferrer"
+        className="hover:underline"
+      >
+        Terms
+      </a>
+      {" · "}
+      <a href="/legal/privacy-policy" target="_blank" rel="noreferrer" className="hover:underline">
+        Privacy
+      </a>
+      {" · "}
+      <a
+        href={termsUrl ?? AGENT_ID_TERMS}
+        target="_blank"
+        rel="noreferrer"
+        className="hover:underline"
+      >
+        Agent ID Terms
+      </a>
+    </p>
+  );
+}
+
+function TermsGate({
+  version,
+  updated,
+  termsUrl,
+  privacyUrl,
+  onSignOut,
+}: {
+  version: string;
+  // They accepted an earlier version.
+  updated: boolean;
+  termsUrl?: string | undefined;
+  privacyUrl?: string | undefined;
+  onSignOut: () => void;
+}) {
+  const [agreed, setAgreed] = useState(false);
+  const queryClient = useQueryClient();
+  const accept = useMutation({
+    mutationFn: () => api.acceptTerms(version),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.account }),
+    // The terms changed while this page was open: load the new version to accept.
+    onError: (error) => {
+      if (error instanceof AgentIdError && error.code === "terms_changed") {
+        setAgreed(false);
+        void queryClient.invalidateQueries({ queryKey: queryKeys.account });
+      }
+    },
+  });
+  return (
+    <div className="flex min-h-svh flex-col items-center justify-center px-4 py-12">
+      <div className="mb-8">
+        <Brand to="/agent-id" />
+      </div>
+      <div className="aid-card w-full max-w-md p-8">
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {updated ? "We've updated the Agent ID Terms" : "Before you start"}
+        </h1>
+        <p className="mt-2 text-sm text-[var(--muted-foreground)]">
+          {updated
+            ? "Please read and accept them to keep using Agent ID."
+            : "Agent ID gives your agents identities that trace back to you."}
+        </p>
+        <label className="mt-6 flex items-start gap-3 rounded-xl bg-[var(--muted)] p-4 text-sm leading-relaxed">
+          <Checkbox
+            checked={agreed}
+            onCheckedChange={(v) => setAgreed(v === true)}
+            className="mt-0.5"
+            aria-label="I agree to the Agent ID Terms and the Privacy Policy"
+          />
+          <span>
+            I agree to the{" "}
+            <a
+              href={termsUrl ?? AGENT_ID_TERMS}
+              target="_blank"
+              rel="noreferrer"
+              className="aid-link"
+            >
+              Agent ID Terms
+            </a>{" "}
+            and the{" "}
+            <a
+              href={privacyUrl ?? "/legal/privacy-policy"}
+              target="_blank"
+              rel="noreferrer"
+              className="aid-link"
+            >
+              Privacy Policy
+            </a>
+          </span>
+        </label>
+        {accept.isError && (
+          <p className="mt-3 text-sm text-[var(--aid-danger)]" role="alert">
+            {errorMessage(accept.error)}
+          </p>
+        )}
+        <Button
+          className="mt-6 h-11 w-full"
+          disabled={!agreed || accept.isPending}
+          onClick={() => accept.mutate()}
+        >
+          {accept.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
+          Continue
+        </Button>
+      </div>
+      <button
+        type="button"
+        onClick={onSignOut}
+        className="mt-6 text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+      >
+        Sign out
+      </button>
+    </div>
   );
 }

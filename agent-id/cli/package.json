@@ -4,6 +4,11 @@
   "description": "Timewarp Agent ID from the command line: give your AI agents their own identity, mail, phone, wallet, card and machine, and use them from Claude Code, Codex, Claude Desktop and Cursor over MCP.",
   "keywords": ["ai-agents", "agent-identity", "mcp", "claude-code", "codex", "cursor", "timewarp"],
   "homepage": "https://timewarpdev.com/agent-id",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinceackermann2-sys/git-timework-buddy.git",
+    "directory": "agent-id/cli"
+  },
   "type": "module",
   "bin": {
     "timewarp-id": "bin/timewarp-id.js"

@@ -544,3 +544,136 @@ export function conversations<
     })
     .sort((a, b) => Date.parse(b.last.at) - Date.parse(a.last.at));
 }
+
+// --- Familiar formats ------------------------------------------------------------------
+
+// Two-digit country codes (ITU); the rest of +2…+9 are three digits, +1 and +7 one.
+const TWO_DIGIT_CODES = new Set([
+  "20",
+  "27",
+  "30",
+  "31",
+  "32",
+  "33",
+  "34",
+  "36",
+  "39",
+  "40",
+  "41",
+  "43",
+  "44",
+  "45",
+  "46",
+  "47",
+  "48",
+  "49",
+  "51",
+  "52",
+  "53",
+  "54",
+  "55",
+  "56",
+  "57",
+  "58",
+  "60",
+  "61",
+  "62",
+  "63",
+  "64",
+  "65",
+  "66",
+  "81",
+  "82",
+  "84",
+  "86",
+  "90",
+  "91",
+  "92",
+  "93",
+  "94",
+  "95",
+  "98",
+]);
+
+// +14155550100 → "+1 (415) 555-0100"; +46701234567 → "+46 701 234 567".
+export function formatPhone(value: string | null | undefined): string {
+  if (!value) return "";
+  const nanp = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(value);
+  if (nanp) return `+1 (${nanp[1]}) ${nanp[2]}-${nanp[3]}`;
+  if (!/^\+\d{8,15}$/.test(value)) return value;
+  const digits = value.slice(1);
+  const codeLength = /^[17]/.test(digits) ? 1 : TWO_DIGIT_CODES.has(digits.slice(0, 2)) ? 2 : 3;
+  const rest = digits.slice(codeLength);
+  // Groups of three, with a group of four (or two) where threes would leave one digit.
+  const groups: string[] = [];
+  let i = 0;
+  while (rest.length - i > 4) {
+    const left = rest.length - i;
+    const size = left === 8 ? 4 : left === 5 ? 2 : 3;
+    groups.push(rest.slice(i, i + size));
+    i += size;
+  }
+  groups.push(rest.slice(i));
+  return `+${digits.slice(0, codeLength)} ${groups.join(" ")}`;
+}
+
+// "Today", "Yesterday", "Oct 18", or "Oct 18, 2025" for other years.
+export function dayLabel(iso: string, now: number = Date.now()): string {
+  const date = new Date(iso);
+  const today = new Date(now);
+  const yesterday = new Date(now - 86_400_000);
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString(
+    "en-US",
+    date.getFullYear() === today.getFullYear()
+      ? { month: "short", day: "numeric" }
+      : { year: "numeric", month: "short", day: "numeric" },
+  );
+}
+
+// Items (newest first) grouped under day labels, keeping their order.
+export function groupByDay<T extends { at: string }>(
+  items: T[],
+  now: number = Date.now(),
+): { day: string; items: T[] }[] {
+  const groups: { day: string; items: T[] }[] = [];
+  for (const item of items) {
+    const day = dayLabel(item.at, now);
+    const last = groups.at(-1);
+    if (last && last.day === day) last.items.push(item);
+    else groups.push({ day, items: [item] });
+  }
+  return groups;
+}
+
+export function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+// A soft colour per name, the same every time, for avatars.
+const AVATAR_COLORS = [
+  ["#e9d2ff", "#3b1a5c"],
+  ["#d6e8ff", "#163a63"],
+  ["#d5f2e3", "#14492f"],
+  ["#ffe1c7", "#5c3010"],
+  ["#ffd6e0", "#5c1a2b"],
+  ["#fff1b8", "#4d3b00"],
+  ["#d9f3f7", "#0f4550"],
+  ["#e6e3ff", "#2c2566"],
+] as const;
+export function avatarColors(name: string): { background: string; color: string } {
+  let hash = 0;
+  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  const [background, color] = AVATAR_COLORS[hash % AVATAR_COLORS.length]!;
+  return { background, color };
+}
+
+// What a resource is called when it isn't live yet, said honestly.
+export const NOT_LIVE_YET: Record<Kind, string> = {
+  mail: "Mail is being set up",
+  phone: "Phone numbers are coming soon",
+  wallet: "Wallets are being set up",
+  card: "Cards are coming soon",
+  vm: "Machines are being set up",
+};

@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { KIND_NOUNS } from "@/lib/agent-id/format";
+import { KIND_NOUNS, NOT_LIVE_YET } from "@/lib/agent-id/format";
+import { useAccount, useTestMode } from "@/lib/agent-id/queries";
 import type { Agent, Kind, Resource } from "@/lib/agent-id/types";
 import { CopyButton, Empty, ModeBadge, Notice, Section, StatusBadge } from "../ui";
 import { ProvisionDialog } from "./ProvisionDialog";
@@ -18,6 +19,15 @@ export function blockedReason(agent: Agent, resource?: Resource): string | null 
 }
 
 export function NoResource({ agent, kind }: { agent: Agent; kind: Kind }) {
+  const testMode = useTestMode();
+  const account = useAccount();
+  if (!testMode && account.data && !account.data.config.resources[kind]?.live) {
+    return (
+      <Section>
+        <Empty>{NOT_LIVE_YET[kind]}.</Empty>
+      </Section>
+    );
+  }
   return (
     <Section>
       <Empty

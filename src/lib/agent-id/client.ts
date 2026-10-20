@@ -217,7 +217,12 @@ export function createAgentIdClient(options: ClientOptions) {
     // Deployment and account
     config: () => request<PublicConfig>("/v1/config"),
     account: () => request<Account>("/v1/account"),
-    verifyPerson: (input: { legalName?: string; country?: string }) =>
+    acceptTerms: (version: string) =>
+      request<{ terms: { accepted: boolean; version: string; acceptedAt: string } }>(
+        "/v1/account/terms",
+        { body: { version } },
+      ),
+    verifyPerson: (input: { legalName?: string; country?: string; consent?: boolean }) =>
       request<{ person: Person; url?: string }>("/v1/account/verification", {
         body: { kind: "person", ...input },
       }),
@@ -227,6 +232,8 @@ export function createAgentIdClient(options: ClientOptions) {
       registrationNumber: string;
       country: string;
       website?: string;
+      representativeRole?: string;
+      attestation?: boolean;
     }) =>
       request<{ business: Business }>("/v1/account/verification", {
         body: { kind: "business", ...input },

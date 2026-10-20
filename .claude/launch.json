@@ -19,6 +19,9 @@
         "54341",
         "--demo"
       ],
+      "env": {
+        "AGENT_ID_SITE_URL": "http://localhost:8093"
+      },
       "port": 54341
     },
     {
@@ -36,6 +39,22 @@
         "VITE_AGENT_ID_DEV_TOKEN": "session:00000000-0000-4000-8000-000000000001"
       },
       "port": 8093
+    },
+    {
+      "name": "agent-id-site-teammate",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/website.cjs",
+        "dev",
+        "--port",
+        "8094",
+        "--strictPort"
+      ],
+      "env": {
+        "VITE_AGENT_ID_API": "http://127.0.0.1:54341/agent-id",
+        "VITE_AGENT_ID_DEV_TOKEN": "session:00000000-0000-4000-8000-000000000002"
+      },
+      "port": 8094
     }
   ]
 }

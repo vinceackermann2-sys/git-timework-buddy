@@ -23,7 +23,7 @@ import {
   toastError,
 } from "@/components/agent-id/ui";
 import { ATTACH_COMMAND, LOGIN_COMMAND, loginWithKey } from "@/lib/agent-id/connect";
-import { planLabel, verificationStatusLabel } from "@/lib/agent-id/format";
+import { formatDate, planLabel, verificationStatusLabel } from "@/lib/agent-id/format";
 import { queryKeys, useAccount, useOwnerKeys } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
 
@@ -64,6 +64,26 @@ function SettingsPage() {
                   </span>
                 ),
               },
+              ...(account.data.terms?.acceptedAt
+                ? [
+                    {
+                      term: "Agent ID Terms",
+                      value: (
+                        <span className="flex items-center gap-2">
+                          Accepted {formatDate(account.data.terms.acceptedAt)}
+                          <a
+                            href={account.data.config.legal?.termsUrl ?? "/legal/agent-id-terms"}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="aid-link text-sm"
+                          >
+                            Read
+                          </a>
+                        </span>
+                      ),
+                    },
+                  ]
+                : []),
             ]}
           />
         )}

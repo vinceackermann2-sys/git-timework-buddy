@@ -121,7 +121,7 @@ export function MachineTab({ agent }: { agent: Agent }) {
 function Terminal({ agent, disabled }: { agent: Agent; disabled: boolean }) {
   const [command, setCommand] = useState("");
   const [session, setSession] = useState<{ command: string; result: CommandResult }[]>([]);
-  const end = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
   const refresh = useRefreshAgent();
   const queryClient = useQueryClient();
   const run = useMutation({
@@ -137,7 +137,8 @@ function Terminal({ agent, disabled }: { agent: Agent; disabled: boolean }) {
   });
 
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "nearest" });
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [session.length, run.isPending]);
 
   return (
@@ -146,7 +147,10 @@ function Terminal({ agent, disabled }: { agent: Agent; disabled: boolean }) {
         <span>Terminal</span>
         <span className="aid-mono">{agent.handle}</span>
       </div>
-      <div className="aid-mono max-h-96 min-h-48 overflow-y-auto p-4 text-[13px] leading-relaxed">
+      <div
+        ref={scroller}
+        className="aid-mono max-h-96 min-h-48 overflow-y-auto p-4 text-[13px] leading-relaxed"
+      >
         {session.length === 0 && !run.isPending && (
           <p className="text-white/40">Run a command on {agent.name}'s machine.</p>
         )}
@@ -170,7 +174,6 @@ function Terminal({ agent, disabled }: { agent: Agent; disabled: boolean }) {
           </p>
         )}
         {run.isError && <p className="text-[#f28da0]">{(run.error as Error).message}</p>}
-        <div ref={end} />
       </div>
       <form
         className="flex items-center gap-2 border-t border-white/10 px-4 py-2"

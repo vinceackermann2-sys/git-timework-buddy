@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0            # the whole history, so no commit goes unchecked
-      - uses: <owner>/<repo>/agent-id/action@<ref>
+      - uses: vinceackermann2-sys/git-timework-buddy/agent-id/action@main   # or pin a commit SHA
         with:
           organization: <your organization id>
           human-signers: ${{ secrets.AGENT_ID_HUMAN_SIGNERS }}   # or: .github/allowed_signers

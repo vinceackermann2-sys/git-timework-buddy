@@ -10,6 +10,7 @@ import {
   Mail,
   Phone,
   Server,
+  User,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -37,6 +38,7 @@ import {
   eventStatusLabel,
   eventStatusTone,
   formatDateTime,
+  avatarColors,
   formatRelativeTime,
   initials,
   KIND_LABELS,
@@ -46,6 +48,7 @@ import {
   type Tone,
 } from "@/lib/agent-id/format";
 import type { Kind, Mode, Resource } from "@/lib/agent-id/types";
+import { useTestMode } from "@/lib/agent-id/queries";
 import { OriginGlyph } from "./icons";
 
 export const KIND_ICONS: Record<Kind, LucideIcon> = {
@@ -92,7 +95,11 @@ export function Chip({
   );
 }
 
+// Test or live, shown only on development deployments: in production every
+// resource is real, so there is nothing to tell apart.
 export function ModeBadge({ mode }: { mode: Mode }) {
+  const testMode = useTestMode();
+  if (!testMode) return null;
   return (
     <Chip tone={mode === "live" ? "success" : "test"}>{mode === "live" ? "Live" : "Test"}</Chip>
   );
@@ -625,16 +632,37 @@ export function toastError(error: unknown, title?: string) {
 
 // --- Identity ------------------------------------------------------------------------
 
-export function Avatar({ name, large = false }: { name: string; large?: boolean }) {
+const AVATAR_SIZES = {
+  sm: "h-8 w-8 text-xs",
+  md: "h-10 w-10 text-sm",
+  lg: "h-14 w-14 text-lg",
+  xl: "h-20 w-20 text-2xl",
+} as const;
+
+// Initials in a circle: lilac for your agents, a colour of their own for
+// the people and agents they talk to.
+export function Avatar({
+  name,
+  large = false,
+  size,
+  colorful = false,
+}: {
+  name: string;
+  large?: boolean;
+  size?: keyof typeof AVATAR_SIZES;
+  colorful?: boolean;
+}) {
   return (
     <span
       aria-hidden="true"
+      style={colorful ? avatarColors(name) : undefined}
       className={cn(
-        "grid shrink-0 place-items-center rounded-full bg-[var(--primary)] font-semibold text-[var(--primary-foreground)]",
-        large ? "h-14 w-14 text-lg" : "h-8 w-8 text-xs",
+        "grid shrink-0 place-items-center rounded-full font-semibold",
+        !colorful && "bg-[var(--primary)] text-[var(--primary-foreground)]",
+        AVATAR_SIZES[size ?? (large ? "lg" : "sm")],
       )}
     >
-      {initials(name)}
+      {/[a-z]/i.test(name) ? initials(name) : <User className="h-1/2 w-1/2" />}
     </span>
   );
 }

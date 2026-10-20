@@ -77,7 +77,7 @@ function Apply({ agent }: { agent: Agent }) {
   });
 
   return (
-    <Section title={`A card for ${agent.name}`}>
+    <Section title={`Get a virtual card for ${agent.name}`}>
       <form
         className="grid max-w-xl gap-5"
         onSubmit={(e: FormEvent) => {
@@ -85,10 +85,7 @@ function Apply({ agent }: { agent: Agent }) {
           if (useCase.trim() && cents && countryOk) apply.mutate();
         }}
       >
-        <p className="text-sm text-[var(--muted-foreground)]">
-          Virtual cards are coming soon. Apply and we'll let you know.
-        </p>
-        <Field id="card-use" label="What will the agent buy?">
+        <Field id="card-use" label="What will it pay for?">
           <Textarea
             id="card-use"
             rows={3}
@@ -101,7 +98,7 @@ function Apply({ agent }: { agent: Agent }) {
         <div className="grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-4">
           <Field
             id="card-spend"
-            label="Monthly spend"
+            label="Expected monthly spend"
             error={spend.trim() && !cents ? "Like 500" : null}
           >
             <div className="relative">

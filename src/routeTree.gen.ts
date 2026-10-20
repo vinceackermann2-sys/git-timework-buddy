@@ -16,6 +16,7 @@ import { Route as AgentIdAppRouteImport } from './routes/agent-id/_app'
 import { Route as AgentIdSignInRouteImport } from './routes/agent-id/sign-in'
 import { Route as AuthBridgeRouteImport } from './routes/auth.bridge'
 import { Route as AuthGoogleRouteImport } from './routes/auth.google'
+import { Route as LegalAgentIdTermsRouteImport } from './routes/legal.agent-id-terms'
 import { Route as LegalCookiePolicyRouteImport } from './routes/legal.cookie-policy'
 import { Route as LegalPrivacyPolicyRouteImport } from './routes/legal.privacy-policy'
 import { Route as LegalTermsOfServiceRouteImport } from './routes/legal.terms-of-service'
@@ -60,6 +61,11 @@ const AuthBridgeRoute = AuthBridgeRouteImport.update({
 const AuthGoogleRoute = AuthGoogleRouteImport.update({
   id: '/auth/google',
   path: '/auth/google',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalAgentIdTermsRoute = LegalAgentIdTermsRouteImport.update({
+  id: '/legal/agent-id-terms',
+  path: '/legal/agent-id-terms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LegalCookiePolicyRoute = LegalCookiePolicyRouteImport.update({
@@ -124,6 +130,7 @@ export interface FileRoutesByFullPath {
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/agent-id-terms': typeof LegalAgentIdTermsRoute
   '/legal/cookie-policy': typeof LegalCookiePolicyRoute
   '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
   '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
@@ -143,6 +150,7 @@ export interface FileRoutesByTo {
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/agent-id-terms': typeof LegalAgentIdTermsRoute
   '/legal/cookie-policy': typeof LegalCookiePolicyRoute
   '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
   '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
@@ -163,6 +171,7 @@ export interface FileRoutesById {
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/agent-id-terms': typeof LegalAgentIdTermsRoute
   '/legal/cookie-policy': typeof LegalCookiePolicyRoute
   '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
   '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
@@ -184,6 +193,7 @@ export interface FileRouteTypes {
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
+    | '/legal/agent-id-terms'
     | '/legal/cookie-policy'
     | '/legal/privacy-policy'
     | '/legal/terms-of-service'
@@ -203,6 +213,7 @@ export interface FileRouteTypes {
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
+    | '/legal/agent-id-terms'
     | '/legal/cookie-policy'
     | '/legal/privacy-policy'
     | '/legal/terms-of-service'
@@ -222,6 +233,7 @@ export interface FileRouteTypes {
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
+    | '/legal/agent-id-terms'
     | '/legal/cookie-policy'
     | '/legal/privacy-policy'
     | '/legal/terms-of-service'
@@ -241,6 +253,7 @@ export interface RootRouteChildren {
   AgentIdRouteRoute: typeof AgentIdRouteRouteWithChildren
   AuthBridgeRoute: typeof AuthBridgeRoute
   AuthGoogleRoute: typeof AuthGoogleRoute
+  LegalAgentIdTermsRoute: typeof LegalAgentIdTermsRoute
   LegalCookiePolicyRoute: typeof LegalCookiePolicyRoute
   LegalPrivacyPolicyRoute: typeof LegalPrivacyPolicyRoute
   LegalTermsOfServiceRoute: typeof LegalTermsOfServiceRoute
@@ -296,6 +309,13 @@ declare module '@tanstack/react-router' {
       path: '/auth/google'
       fullPath: '/auth/google'
       preLoaderRoute: typeof AuthGoogleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal/agent-id-terms': {
+      id: '/legal/agent-id-terms'
+      path: '/legal/agent-id-terms'
+      fullPath: '/legal/agent-id-terms'
+      preLoaderRoute: typeof LegalAgentIdTermsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/legal/cookie-policy': {
@@ -423,6 +443,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentIdRouteRoute: AgentIdRouteRouteWithChildren,
   AuthBridgeRoute: AuthBridgeRoute,
   AuthGoogleRoute: AuthGoogleRoute,
+  LegalAgentIdTermsRoute: LegalAgentIdTermsRoute,
   LegalCookiePolicyRoute: LegalCookiePolicyRoute,
   LegalPrivacyPolicyRoute: LegalPrivacyPolicyRoute,
   LegalTermsOfServiceRoute: LegalTermsOfServiceRoute,

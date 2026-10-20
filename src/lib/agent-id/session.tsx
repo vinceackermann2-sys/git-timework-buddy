@@ -10,7 +10,8 @@ import { createAgentIdClient, resolveApiBase, resolveDevToken, resolveGatewayKey
 
 const env = import.meta.env as unknown as Record<string, string | boolean | undefined>;
 
-export const DEV_TOKEN = resolveDevToken(env);
+// The dev token only ever works in development builds.
+export const DEV_TOKEN = import.meta.env.DEV ? resolveDevToken(env) : undefined;
 export const API_BASE = resolveApiBase(env);
 
 export async function getAccessToken(): Promise<string | null> {

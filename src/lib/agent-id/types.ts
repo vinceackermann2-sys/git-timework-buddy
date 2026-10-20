@@ -148,6 +148,9 @@ export type PublicConfig = {
     requiredToCreateAgents: boolean;
   };
   passports: { available: boolean; lifetimeSeconds: number };
+  // True on development deployments: test resources, test money.
+  testMode?: boolean;
+  legal?: { termsVersion: string; termsUrl: string; privacyUrl: string };
 };
 
 export type Person = {
@@ -157,6 +160,7 @@ export type Person = {
   country?: string | null;
   verifiedAt?: string | null;
   lastError?: string | null;
+  consentAt?: string | null;
 };
 
 export type Business = {
@@ -179,6 +183,13 @@ export type Account = {
   reviewer: boolean;
   agents: { count: number; max: number };
   config: PublicConfig;
+  // version/acceptedAt: what the user last accepted; current: the version in force.
+  terms?: {
+    accepted: boolean;
+    version: string | null;
+    acceptedAt: string | null;
+    current?: string;
+  };
 };
 
 export type Approval = {

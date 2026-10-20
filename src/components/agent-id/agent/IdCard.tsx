@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { BadgeCheck } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { formatUsd, VERIFICATION_LEVEL_LABELS } from "@/lib/agent-id/format";
+import { formatPhone, formatUsd, VERIFICATION_LEVEL_LABELS } from "@/lib/agent-id/format";
 import { useCardApplication, useWalletSummary } from "@/lib/agent-id/queries";
 import type { AgentDetail, Kind } from "@/lib/agent-id/types";
 import { Avatar, Chip, CopyButton, KIND_ICONS, ModeBadge, OriginBadge, StatusBadge } from "../ui";
@@ -20,15 +20,21 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
   const application = useCardApplication(agent.id);
   const balance = summary.data?.balance ?? wallet?.balance ?? null;
 
+  // Two columns on phones (mail across both), one row of five on wide screens.
   const line = (kind: Kind, value: ReactNode) => (
-    <IdLine kind={kind} agentId={agent.id} has={!!agent.resources[kind] || kind === "card"}>
+    <IdLine
+      kind={kind}
+      agentId={agent.id}
+      has={!!agent.resources[kind] || kind === "card"}
+      className={LINE_BORDERS[kind]}
+    >
       {value}
     </IdLine>
   );
 
   return (
     <section className="aid-card overflow-hidden" aria-label={`${agent.name}'s identity`}>
-      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+      <div className="flex items-start gap-4 p-5 sm:items-center">
         <Avatar name={agent.name} large />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-2xl font-semibold tracking-tight">{agent.name}</h1>
@@ -52,7 +58,7 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
         </div>
       </div>
 
-      <dl className="grid border-t border-[var(--border)] sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
+      <dl className="grid grid-cols-2 border-t border-[var(--border)] lg:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
         {line(
           "mail",
           agent.resources.mail ? (
@@ -69,7 +75,9 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
         {line(
           "phone",
           agent.resources.phone ? (
-            <span className="aid-mono text-[13px]">{agent.resources.phone.address}</span>
+            <span className="text-[13px] tabular-nums">
+              {formatPhone(agent.resources.phone.address)}
+            </span>
           ) : (
             <ProvisionDialog agent={agent} kind="phone" inline />
           ),
@@ -119,6 +127,14 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
   );
 }
 
+const LINE_BORDERS: Record<Kind, string> = {
+  mail: "col-span-2 border-b lg:col-span-1 lg:border-b-0 lg:border-r",
+  phone: "border-b border-r lg:border-b-0",
+  wallet: "border-b lg:border-b-0 lg:border-r",
+  card: "border-r",
+  vm: "",
+};
+
 const LINE_LABELS: Record<Kind, string> = {
   mail: "Mail",
   phone: "Phone",
@@ -131,11 +147,13 @@ function IdLine({
   kind,
   agentId,
   has,
+  className,
   children,
 }: {
   kind: Kind;
   agentId: string;
   has: boolean;
+  className: string;
   children: ReactNode;
 }) {
   const Icon = KIND_ICONS[kind];
@@ -146,12 +164,7 @@ function IdLine({
     </>
   );
   return (
-    <div
-      className={cn(
-        "min-w-0 border-[var(--border)] px-5 py-3",
-        "border-b last:border-b-0 sm:[&:nth-child(odd)]:border-r lg:border-b-0 lg:border-r lg:last:border-r-0",
-      )}
-    >
+    <div className={cn("min-w-0 border-[var(--border)] px-4 py-3 sm:px-5", className)}>
       <dt className="aid-label flex items-center gap-1.5">
         {has ? (
           <Link

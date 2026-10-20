@@ -37,6 +37,7 @@
   --aid-test: #5d6474;
   --aid-test-bg: #f1f2f5;
   --aid-code-bg: #f8f7fb;
+  --aid-bubble-in: #ececf0;
 
   /* Tailwind's theme variables resolve where they are declared (:root), so
      they are re-pointed here to pick up the tokens above. */
@@ -105,6 +106,7 @@
     --aid-test: #c0c8d6;
     --aid-test-bg: #262c38;
     --aid-code-bg: #141820;
+    --aid-bubble-in: #2a303b;
     color-scheme: dark;
   }
 }
@@ -136,6 +138,7 @@
   --aid-test: #c0c8d6;
   --aid-test-bg: #262c38;
   --aid-code-bg: #141820;
+  --aid-bubble-in: #2a303b;
   color-scheme: dark;
 }
 
@@ -214,4 +217,32 @@ html.agent-id [role="alertdialog"]:focus {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Message bubbles with a tail on the last one of a group, as in messaging apps. */
+.agent-id .aid-tail-out,
+.agent-id .aid-tail-in {
+  position: relative;
+}
+.agent-id .aid-tail-out::after,
+.agent-id .aid-tail-in::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 14px;
+  background: inherit;
+}
+.agent-id .aid-tail-out::after {
+  right: -4px;
+  clip-path: path("M0 0 C 0 8, 3 13, 10 14 C 5 11, 4 7, 4 0 Z");
+}
+.agent-id .aid-tail-in::after {
+  left: -4px;
+  clip-path: path("M10 0 C 10 8, 7 13, 0 14 C 5 11, 6 7, 6 0 Z");
+}
+
+/* Address suggestions without Chrome's dropdown arrow, like a mail app's To field. */
+.agent-id input[list]::-webkit-calendar-picker-indicator {
+  display: none !important;
 }

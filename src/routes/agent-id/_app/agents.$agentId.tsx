@@ -22,9 +22,10 @@ import { AgentIdError } from "@/lib/agent-id/client";
 import { useAgent } from "@/lib/agent-id/queries";
 
 export const Route = createFileRoute("/agent-id/_app/agents/$agentId")({
-  validateSearch: (search: Record<string, unknown>): { tab?: AgentTab } => {
+  validateSearch: (search: Record<string, unknown>): { tab?: AgentTab; compose?: string } => {
     const tab = parseAgentTab(search["tab"]);
-    return tab ? { tab } : {};
+    const compose = typeof search["compose"] === "string" ? search["compose"] : undefined;
+    return { ...(tab ? { tab } : {}), ...(compose ? { compose } : {}) };
   },
   head: () => ({ meta: [{ title: "Agent · Agent ID" }] }),
   component: AgentPage,
@@ -102,7 +103,13 @@ function AgentPage() {
         </div>
         <div className="mt-6">
           <TabsContent value="mail" className="mt-0">
-            <MailTab agent={agent} />
+            <MailTab
+              agent={agent}
+              composeTo={search.compose}
+              onComposeOpened={() =>
+                void navigate({ search: { tab: "mail" }, replace: true, resetScroll: false })
+              }
+            />
           </TabsContent>
           <TabsContent value="phone" className="mt-0">
             <PhoneTab agent={agent} />

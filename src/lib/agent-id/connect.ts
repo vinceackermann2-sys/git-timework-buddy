@@ -31,26 +31,94 @@ export function envExport(key?: string | null): string {
   return `export ${KEY_ENV}="${key || KEY_PLACEHOLDER}"`;
 }
 
-// --- For companies ------------------------------------------------------------
+// --- For developers: let only verified agents in (the SDK, no keys) ----------
 
-export function verifySdkSnippet(audience: string): string {
+export const SDK_INSTALL = "npm install @timewarp/agent-id-verify";
+export const EXAMPLE_AUDIENCE = "https://api.your-app.com";
+
+export type SdkFramework = "express" | "next" | "workers" | "fetch";
+
+export function sdkSnippet(framework: SdkFramework, audience = EXAMPLE_AUDIENCE): string {
+  const options = `{ audience: "${audience}", require: "verified" }`;
+  switch (framework) {
+    case "express":
+      return [
+        'import express from "express";',
+        'import { agentIdMiddleware } from "@timewarp/agent-id-verify";',
+        "",
+        "const app = express();",
+        `app.use("/api", agentIdMiddleware(${options}));`,
+        "",
+        'app.get("/api/hello", (req, res) => {',
+        "  res.json({ hello: req.agent.agent.name }); // a verified agent",
+        "});",
+      ].join("\n");
+    case "next":
+      return [
+        "// app/api/hello/route.ts",
+        'import { withAgentId } from "@timewarp/agent-id-verify";',
+        "",
+        "export const GET = withAgentId(",
+        "  async (request, agent) => Response.json({ hello: agent.agent.name }),",
+        `  ${options},`,
+        ");",
+      ].join("\n");
+    case "workers":
+      return [
+        "// Cloudflare Workers, Hono, Deno, Bun",
+        'import { withAgentId } from "@timewarp/agent-id-verify";',
+        "",
+        "export default {",
+        "  fetch: withAgentId(",
+        "    async (request, agent) => new Response(`Hello, ${agent.agent.name}`),",
+        `    ${options},`,
+        "  ),",
+        "};",
+      ].join("\n");
+    case "fetch":
+      return [
+        'import { passportFrom, verifyPassport } from "@timewarp/agent-id-verify";',
+        "",
+        "export async function handle(request: Request) {",
+        "  try {",
+        `    const { agent, owner } = await verifyPassport(passportFrom(request) ?? "", ${options});`,
+        "    return Response.json({ hello: agent.name, owner: owner.level });",
+        "  } catch (error) {",
+        '    return new Response("Only verified agents can call this API", { status: 401 });',
+        "  }",
+        "}",
+      ].join("\n");
+  }
+}
+
+export function mcpSnippet(audience = "https://mcp.your-app.com"): string {
   return [
-    'import { AgentIdError, verifyPassport } from "@timewarp/agent-id-verify";',
+    'import { agentIdMiddleware } from "@timewarp/agent-id-verify";',
     "",
-    'const passport = request.headers.get("Agent-Passport") ?? "";',
-    "try {",
-    `  const { agent, owner } = await verifyPassport(passport, { audience: "${audience}" });`,
-    "} catch (error) {",
-    "  if (error instanceof AgentIdError) {",
-    "    return new Response(error.message, { status: error.status });",
-    "  }",
-    "  throw error;",
+    "// Agents send their passport in the Agent-Passport header.",
+    `app.post("/mcp", agentIdMiddleware({ audience: "${audience}", require: "verified" }), handleMcp);`,
+  ].join("\n");
+}
+
+export const MCP_CLIENT_COMMAND = "timewarp-id mcp --remote https://mcp.your-app.com";
+
+export function onlineCheckSnippet(audience = EXAMPLE_AUDIENCE): string {
+  return [
+    'import { checkPassport, passportFrom } from "@timewarp/agent-id-verify";',
+    "",
+    `const result = await checkPassport(passportFrom(request) ?? "", { audience: "${audience}" });`,
+    "if (!result.allowed) {",
+    `  return new Response("This agent was revoked or isn't verified", { status: 403 });`,
     "}",
   ].join("\n");
 }
 
-export function githubActionSnippet(): string {
+// The commit check lives in Timewarp's public repository.
+export const ACTION_REF = "vinceackermann2-sys/git-timework-buddy/agent-id/action@main";
+
+export function githubActionSnippet(organization = "<your organization id>"): string {
   return [
+    "# .github/workflows/agent-commits.yml",
     "name: Verified agent commits",
     "on: [push, pull_request]",
     "jobs:",
@@ -60,16 +128,8 @@ export function githubActionSnippet(): string {
     "      - uses: actions/checkout@v4",
     "        with:",
     "          fetch-depth: 0",
-    "      - uses: timewarp/agent-id/action@v1",
+    `      - uses: ${ACTION_REF}`,
     "        with:",
-    "          secret: ${{ secrets.AGENT_ID_SECRET }}",
-  ].join("\n");
-}
-
-export function allowedSignersSnippet(apiUrl: string): string {
-  return [
-    `curl ${apiUrl}/v1/allowed-signers \\`,
-    '  -H "Authorization: Bearer $AGENT_ID_SECRET" > .git/allowed_signers',
-    "git config gpg.ssh.allowedSignersFile .git/allowed_signers",
+    `          organization: ${organization}`,
   ].join("\n");
 }

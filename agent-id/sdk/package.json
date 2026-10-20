@@ -4,6 +4,11 @@
   "description": "Accept only verified AI agents: check Timewarp Agent ID passports offline or online, with Express and fetch-style middleware.",
   "keywords": ["ai-agents", "agent-identity", "jwt", "passport", "kyc", "mcp", "timewarp"],
   "homepage": "https://timewarpdev.com/agent-id",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinceackermann2-sys/git-timework-buddy.git",
+    "directory": "agent-id/sdk"
+  },
   "type": "module",
   "main": "./index.js",
   "types": "./index.d.ts",

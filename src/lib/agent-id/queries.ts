@@ -180,3 +180,9 @@ export const useMachineFiles = (agentId: string, path: string, enabled: boolean)
     queryKey: [...queryKeys.me(agentId, "vm-files"), path] as const,
     queryFn: () => api.asAgent(agentId).machineFiles(path),
   });
+
+// Development deployments have test resources; production never shows them.
+export function useTestMode(): boolean {
+  const account = useAccount();
+  return account.data?.config.testMode ?? import.meta.env.DEV;
+}

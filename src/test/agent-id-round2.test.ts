@@ -8,6 +8,7 @@ import {
   formatBytes,
   formatDuration,
   formatListTime,
+  formatPhone,
   formatUsd,
   initials,
   originOf,
@@ -88,6 +89,17 @@ describe("phone", () => {
     ]);
     expect(threads[0]!.messages.map((m) => m.text)).toEqual(["hi", "hey"]);
     expect(threads[0]!.last.text).toBe("hey");
+  });
+
+  it("formats numbers the way phones show them", () => {
+    expect(formatPhone("+14155550100")).toBe("+1 (415) 555-0100");
+    expect(formatPhone("+46701234567")).toBe("+46 701 234 567");
+    expect(formatPhone("+447911123456")).toBe("+44 791 112 3456");
+    expect(formatPhone("+35312345678")).toBe("+353 1234 5678");
+    expect(formatPhone("+3531234567")).toBe("+353 123 4567");
+    expect(formatPhone("+4930123456")).toBe("+49 3012 3456");
+    expect(formatPhone("short")).toBe("short");
+    expect(formatPhone(null)).toBe("");
   });
 });
 
