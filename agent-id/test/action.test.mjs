@@ -43,7 +43,8 @@ describe('Agent ID commit check (GitHub Action and pre-receive hook)', () => {
   };
   const check = (extra = {}) => run(process.execPath, [SCRIPT], {
     cwd: repo,
-    env: { ...env, AGENT_ID_ORGANIZATION: org, AGENT_ID_SECRET: '', AGENT_ID_API: api.base, AGENT_ID_HUMAN_SIGNERS: SIGNERS_FILE, GITHUB_ACTIONS: '', GITHUB_EVENT_PATH: '', GITHUB_STEP_SUMMARY: '', GITHUB_OUTPUT: '', ...extra },
+    // Not the CI run's own GitHub variables (GITHUB_SHA would name a commit this repository doesn't have).
+    env: { ...env, AGENT_ID_ORGANIZATION: org, AGENT_ID_SECRET: '', AGENT_ID_API: api.base, AGENT_ID_HUMAN_SIGNERS: SIGNERS_FILE, GITHUB_ACTIONS: '', GITHUB_EVENT_PATH: '', GITHUB_STEP_SUMMARY: '', GITHUB_OUTPUT: '', GITHUB_SHA: '', GITHUB_BASE_REF: '', GITHUB_HEAD_REF: '', GITHUB_REF: '', ...extra },
   });
   const lineFor = (result, name) => result.stdout.split('\n').find(l => /^(PASS|FAIL) /.test(l) && l.includes(shas[name].slice(0, 12))) || '';
   const agentSigned = (handle, name) => {

@@ -383,7 +383,8 @@ describe('timewarp-id CLI', () => {
   it('connect claude --print prints the claude mcp add command', async () => {
     const result = await ok(['connect', 'claude', '--agent', alice.handle, '--print']);
     const runner = process.platform === 'win32' ? 'cmd /c npx' : 'npx';
-    assert.match(result.stdout.trim(), new RegExp(`^claude mcp add timewarp-id -s user -e TIMEWARP_ID_TOOL=claude-code -e TIMEWARP_ID_HOME=.+ -e AGENT_ID_API=\\S+ -- ${runner} -y @timewarp/agent-id mcp --agent ${alice.handle}$`));
+    // A home path with characters a shell treats specially (CI's RUNNER~1) comes quoted.
+    assert.match(result.stdout.trim(), new RegExp(`^claude mcp add timewarp-id -s user -e TIMEWARP_ID_TOOL=claude-code -e "?TIMEWARP_ID_HOME=.+"? -e AGENT_ID_API=\\S+ -- ${runner} -y @timewarp/agent-id mcp --agent ${alice.handle}$`));
     const project = await json(['connect', 'claude', '--agent', alice.handle, '--scope', 'project', '--print']);
     assert.deepEqual(project.args.slice(0, 5), ['mcp', 'add', 'timewarp-id', '-s', 'project']);
     const nobody = await cli(['connect', 'claude', '--agent', 'nobody', '--print']);
