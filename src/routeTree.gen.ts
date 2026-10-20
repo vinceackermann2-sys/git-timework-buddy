@@ -26,6 +26,8 @@ import { Route as AgentIdAppDevelopersRouteImport } from './routes/agent-id/_app
 import { Route as AgentIdAppReviewsRouteImport } from './routes/agent-id/_app/reviews'
 import { Route as AgentIdAppSettingsRouteImport } from './routes/agent-id/_app/settings'
 import { Route as AgentIdAppVerifyRouteImport } from './routes/agent-id/_app/verify'
+import { Route as AgentIdClaimIndexRouteImport } from './routes/agent-id/claim/index'
+import { Route as AgentIdClaimCodeRouteImport } from './routes/agent-id/claim/$code'
 import { Route as AuthV1CallbackRouteImport } from './routes/auth.v1.callback'
 import { Route as AgentIdAppAgentsAgentIdRouteImport } from './routes/agent-id/_app/agents.$agentId'
 
@@ -113,6 +115,16 @@ const AgentIdAppVerifyRoute = AgentIdAppVerifyRouteImport.update({
   path: '/verify',
   getParentRoute: () => AgentIdAppRoute,
 } as any)
+const AgentIdClaimIndexRoute = AgentIdClaimIndexRouteImport.update({
+  id: '/claim/',
+  path: '/claim/',
+  getParentRoute: () => AgentIdRouteRoute,
+} as any)
+const AgentIdClaimCodeRoute = AgentIdClaimCodeRouteImport.update({
+  id: '/claim/$code',
+  path: '/claim/$code',
+  getParentRoute: () => AgentIdRouteRoute,
+} as any)
 const AuthV1CallbackRoute = AuthV1CallbackRouteImport.update({
   id: '/auth/v1/callback',
   path: '/auth/v1/callback',
@@ -141,7 +153,9 @@ export interface FileRoutesByFullPath {
   '/agent-id/reviews': typeof AgentIdAppReviewsRoute
   '/agent-id/settings': typeof AgentIdAppSettingsRoute
   '/agent-id/verify': typeof AgentIdAppVerifyRoute
+  '/agent-id/claim/$code': typeof AgentIdClaimCodeRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
+  '/agent-id/claim/': typeof AgentIdClaimIndexRoute
   '/agent-id/agents/$agentId': typeof AgentIdAppAgentsAgentIdRoute
 }
 export interface FileRoutesByTo {
@@ -160,7 +174,9 @@ export interface FileRoutesByTo {
   '/agent-id/reviews': typeof AgentIdAppReviewsRoute
   '/agent-id/settings': typeof AgentIdAppSettingsRoute
   '/agent-id/verify': typeof AgentIdAppVerifyRoute
+  '/agent-id/claim/$code': typeof AgentIdClaimCodeRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
+  '/agent-id/claim': typeof AgentIdClaimIndexRoute
   '/agent-id/agents/$agentId': typeof AgentIdAppAgentsAgentIdRoute
 }
 export interface FileRoutesById {
@@ -182,7 +198,9 @@ export interface FileRoutesById {
   '/agent-id/_app/reviews': typeof AgentIdAppReviewsRoute
   '/agent-id/_app/settings': typeof AgentIdAppSettingsRoute
   '/agent-id/_app/verify': typeof AgentIdAppVerifyRoute
+  '/agent-id/claim/$code': typeof AgentIdClaimCodeRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
+  '/agent-id/claim/': typeof AgentIdClaimIndexRoute
   '/agent-id/_app/agents/$agentId': typeof AgentIdAppAgentsAgentIdRoute
 }
 export interface FileRouteTypes {
@@ -204,7 +222,9 @@ export interface FileRouteTypes {
     | '/agent-id/reviews'
     | '/agent-id/settings'
     | '/agent-id/verify'
+    | '/agent-id/claim/$code'
     | '/auth/v1/callback'
+    | '/agent-id/claim/'
     | '/agent-id/agents/$agentId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -223,7 +243,9 @@ export interface FileRouteTypes {
     | '/agent-id/reviews'
     | '/agent-id/settings'
     | '/agent-id/verify'
+    | '/agent-id/claim/$code'
     | '/auth/v1/callback'
+    | '/agent-id/claim'
     | '/agent-id/agents/$agentId'
   id:
     | '__root__'
@@ -244,7 +266,9 @@ export interface FileRouteTypes {
     | '/agent-id/_app/reviews'
     | '/agent-id/_app/settings'
     | '/agent-id/_app/verify'
+    | '/agent-id/claim/$code'
     | '/auth/v1/callback'
+    | '/agent-id/claim/'
     | '/agent-id/_app/agents/$agentId'
   fileRoutesById: FileRoutesById
 }
@@ -381,6 +405,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentIdAppVerifyRouteImport
       parentRoute: typeof AgentIdAppRoute
     }
+    '/agent-id/claim/': {
+      id: '/agent-id/claim/'
+      path: '/claim'
+      fullPath: '/agent-id/claim/'
+      preLoaderRoute: typeof AgentIdClaimIndexRouteImport
+      parentRoute: typeof AgentIdRouteRoute
+    }
+    '/agent-id/claim/$code': {
+      id: '/agent-id/claim/$code'
+      path: '/claim/$code'
+      fullPath: '/agent-id/claim/$code'
+      preLoaderRoute: typeof AgentIdClaimCodeRouteImport
+      parentRoute: typeof AgentIdRouteRoute
+    }
     '/auth/v1/callback': {
       id: '/auth/v1/callback'
       path: '/auth/v1/callback'
@@ -426,12 +464,16 @@ interface AgentIdRouteRouteChildren {
   AgentIdAppRoute: typeof AgentIdAppRouteWithChildren
   AgentIdSignInRoute: typeof AgentIdSignInRoute
   AgentIdIndexRoute: typeof AgentIdIndexRoute
+  AgentIdClaimCodeRoute: typeof AgentIdClaimCodeRoute
+  AgentIdClaimIndexRoute: typeof AgentIdClaimIndexRoute
 }
 
 const AgentIdRouteRouteChildren: AgentIdRouteRouteChildren = {
   AgentIdAppRoute: AgentIdAppRouteWithChildren,
   AgentIdSignInRoute: AgentIdSignInRoute,
   AgentIdIndexRoute: AgentIdIndexRoute,
+  AgentIdClaimCodeRoute: AgentIdClaimCodeRoute,
+  AgentIdClaimIndexRoute: AgentIdClaimIndexRoute,
 }
 
 const AgentIdRouteRouteWithChildren = AgentIdRouteRoute._addFileChildren(

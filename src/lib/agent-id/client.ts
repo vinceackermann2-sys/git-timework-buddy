@@ -3,6 +3,8 @@
 // the owner's agents (the Timewarp-Agent header) for the agent ("me") routes.
 import type {
   Account,
+  AddMoneyInfo,
+  CardOnrampSession,
   AdminSetup,
   AdminStatus,
   AgentDetail,
@@ -44,6 +46,7 @@ import type {
   TransferResult,
   VmListing,
   WalletSummary,
+  WithdrawResult,
 } from "./types";
 
 export class AgentIdError extends Error {
@@ -230,6 +233,7 @@ export function createAgentIdClient(options: ClientOptions) {
       organizationId: string;
       legalName: string;
       registrationNumber: string;
+      vatNumber?: string;
       country: string;
       website?: string;
       representativeRole?: string;
@@ -237,6 +241,18 @@ export function createAgentIdClient(options: ClientOptions) {
     }) =>
       request<{ business: Business }>("/v1/account/verification", {
         body: { kind: "business", ...input },
+      }),
+    // The business's registration certificate (PDF or photo, at most 10 MB).
+    uploadBusinessDocument: (organizationId: string, file: File) =>
+      request<{ business: Business }>("/v1/account/verification/document", {
+        query: { organization: organizationId },
+        raw: {
+          body: file,
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+            "X-Filename": encodeURIComponent(file.name),
+          },
+        },
       }),
 
     // Agents
@@ -300,6 +316,18 @@ export function createAgentIdClient(options: ClientOptions) {
       request<{ released: boolean }>(`/v1/agents/${id(agentId)}/resources/${kind}`, {
         method: "DELETE",
       }),
+    addMoneyInfo: (agentId: string) =>
+      request<AddMoneyInfo>(`/v1/agents/${id(agentId)}/wallet/add-money`),
+    // Buying USDC by card (Stripe's crypto onramp), only where offered.
+    buyWithCard: (agentId: string, amount?: string) =>
+      request<CardOnrampSession>(`/v1/agents/${id(agentId)}/wallet/add-money`, {
+        body: amount ? { amount } : {},
+      }),
+    // The owner taking money out of a live wallet, to their own address on Base.
+    withdraw: (
+      agentId: string,
+      input: { to: string; value: string; asset?: "usdc" | "usdt"; remember?: boolean },
+    ) => request<WithdrawResult>(`/v1/agents/${id(agentId)}/wallet/withdraw`, { body: input }),
     addTestFunds: (agentId: string, amount: number) =>
       request<{ balance: Money }>(`/v1/agents/${id(agentId)}/wallet/test-funds`, {
         body: { amount },
@@ -368,6 +396,8 @@ export function createAgentIdClient(options: ClientOptions) {
 
     // Reviews (Agent ID reviewers only)
     reviews: () => request<{ people: PersonReview[]; businesses: BusinessReview[] }>("/v1/reviews"),
+    reviewDocument: (organizationId: string) =>
+      request<Blob>(`/v1/reviews/business/${id(organizationId)}/document`, { blob: true }),
     decideReview: (
       kind: "person" | "business",
       reviewId: string,

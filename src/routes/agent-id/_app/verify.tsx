@@ -1,8 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, Building2, Loader2, ShieldCheck, UserRound } from "lucide-react";
+import {
+  BadgeCheck,
+  Building2,
+  FileText,
+  Loader2,
+  ShieldCheck,
+  Upload,
+  UserRound,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -19,10 +27,16 @@ import {
   Section,
 } from "@/components/agent-id/ui";
 import { errorMessage } from "@/lib/agent-id/client";
-import { formatDate, verificationStatusLabel } from "@/lib/agent-id/format";
+import {
+  DOCUMENT_TYPES,
+  documentProblem,
+  formatDate,
+  vatCheckLabel,
+  verificationStatusLabel,
+} from "@/lib/agent-id/format";
 import { queryKeys, useAccount } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
-import type { Organization, Person, VerificationStatus } from "@/lib/agent-id/types";
+import type { Business, Organization, Person, VerificationStatus } from "@/lib/agent-id/types";
 
 export const Route = createFileRoute("/agent-id/_app/verify")({
   validateSearch: (search: Record<string, unknown>): { done?: string } =>
@@ -68,10 +82,10 @@ function VerifyPage() {
   }, [waiting, queryClient]);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-6">
       <PageHeader
         title="Verification"
-        meta="Verified owners make every agent traceable to a real person or business."
+        meta="Verify yourself, and your business if your agents work for one."
       />
       {account.isPending ? (
         <Section flush>
@@ -153,7 +167,7 @@ function PersonSection({
       title={
         <Heading
           icon={<UserRound className="h-4 w-4 text-[var(--aid-ink)]" aria-hidden="true" />}
-          title="You"
+          title="Your identity"
           status={person.status}
         />
       }
@@ -264,9 +278,10 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
   const admin = org.role === "owner" || org.role === "admin";
   const [legalName, setLegalName] = useState(b.legalName ?? org.name);
   const [registrationNumber, setRegistrationNumber] = useState(b.registrationNumber ?? "");
+  const [vatNumber, setVatNumber] = useState(b.vatNumber ?? "");
   const [country, setCountry] = useState(b.country ?? "");
   const [website, setWebsite] = useState(b.website ?? "");
-  const [role, setRole] = useState("");
+  const [role, setRole] = useState(b.representativeRole ?? "");
   const [attest, setAttest] = useState(false);
   const submit = useMutation({
     mutationFn: () =>
@@ -274,6 +289,7 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
         organizationId: org.id,
         legalName: legalName.trim(),
         registrationNumber: registrationNumber.trim(),
+        ...(vatNumber.trim() ? { vatNumber: vatNumber.trim() } : {}),
         country: country.trim().toUpperCase(),
         ...(website.trim() ? { website: website.trim() } : {}),
         representativeRole: role.trim(),
@@ -281,18 +297,20 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
       }),
     onSuccess: async (result) => {
       toast.success(
-        result.business.status === "verified" ? `${org.name} is verified` : "Submitted for review",
+        result.business.status === "verified" ? `${org.name} is verified` : "Sent for review",
       );
       await queryClient.invalidateQueries({ queryKey: queryKeys.all });
     },
   });
   const countryOk = COUNTRY.test(country.trim());
   const websiteOk = !website.trim() || /^https?:\/\/\S+\.\S+$/i.test(website.trim());
+  const vatOk = !vatNumber.trim() || /^[A-Za-z0-9 .-]{4,30}$/.test(vatNumber.trim());
   const ready =
     legalName.trim() &&
     registrationNumber.trim() &&
     countryOk &&
     websiteOk &&
+    vatOk &&
     role.trim() &&
     attest;
   const id = (s: string) => `biz-${org.id}-${s}`;
@@ -309,12 +327,14 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
       }
     >
       {b.status === "verified" || b.status === "pending" ? (
-        <p className="text-sm">
-          {[b.legalName, b.registrationNumber, b.country].filter(Boolean).join(" · ")}
+        <div className="space-y-3">
           {b.status === "pending" && (
-            <span className="text-[var(--muted-foreground)]"> — we're reviewing it.</span>
+            <p className="text-sm text-[var(--muted-foreground)]">
+              We're reviewing it, usually within a day.
+            </p>
           )}
-        </p>
+          <BusinessFacts business={b} />
+        </div>
       ) : !admin ? (
         <Muted>Only an owner or admin of {org.name} can verify it.</Muted>
       ) : !personVerified ? (
@@ -332,7 +352,7 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
         </div>
       ) : canSubmit ? (
         <form
-          className="grid gap-4"
+          className="grid gap-5"
           onSubmit={(e: FormEvent) => {
             e.preventDefault();
             if (ready) submit.mutate();
@@ -348,14 +368,6 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
                 onChange={(e) => setLegalName(e.target.value)}
               />
             </Field>
-            <Field id={id("reg")} label="Registration number">
-              <Input
-                id={id("reg")}
-                value={registrationNumber}
-                maxLength={100}
-                onChange={(e) => setRegistrationNumber(e.target.value)}
-              />
-            </Field>
             <Field
               id={id("country")}
               label="Country"
@@ -367,6 +379,33 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
                 value={country}
                 maxLength={2}
                 onChange={(e) => setCountry(e.target.value.toUpperCase())}
+              />
+            </Field>
+            <Field id={id("reg")} label="Registration number">
+              <Input
+                id={id("reg")}
+                value={registrationNumber}
+                maxLength={100}
+                onChange={(e) => setRegistrationNumber(e.target.value)}
+              />
+            </Field>
+            <Field
+              id={id("vat")}
+              label={
+                <>
+                  VAT number{" "}
+                  <span className="font-normal text-[var(--muted-foreground)]">Optional</span>
+                </>
+              }
+              hint="EU businesses: we check it in the EU's VAT register."
+              error={!vatOk ? "Like SE556000000001" : null}
+            >
+              <Input
+                id={id("vat")}
+                placeholder="SE556000000001"
+                value={vatNumber}
+                maxLength={30}
+                onChange={(e) => setVatNumber(e.target.value.toUpperCase())}
               />
             </Field>
             <Field
@@ -392,6 +431,7 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
               />
             </Field>
           </div>
+          <DocumentUpload org={org} />
           <label className="flex items-start gap-3 rounded-xl bg-[var(--muted)] p-4 text-sm leading-relaxed">
             <Checkbox
               checked={attest}
@@ -403,7 +443,7 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
           </label>
           {submit.isError && <Notice tone="danger">{errorMessage(submit.error)}</Notice>}
           <div>
-            <Button type="submit" variant="outline" disabled={!ready || submit.isPending}>
+            <Button type="submit" disabled={!ready || submit.isPending}>
               {submit.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
               Verify {org.name}
             </Button>
@@ -411,5 +451,116 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
         </form>
       ) : null}
     </Section>
+  );
+}
+
+// What a business sent: its details, the VAT register's answer and its document.
+function BusinessFacts({ business: b }: { business: Business }) {
+  const vat = vatCheckLabel(b.checks?.vat);
+  const rows: { term: string; value: ReactNode }[] = [
+    ...(b.legalName ? [{ term: "Legal name", value: b.legalName }] : []),
+    ...(b.registrationNumber ? [{ term: "Registration number", value: b.registrationNumber }] : []),
+    ...(b.country ? [{ term: "Country", value: b.country }] : []),
+    ...(b.vatNumber
+      ? [
+          {
+            term: "VAT number",
+            value: (
+              <span className="flex flex-wrap items-center gap-2">
+                {b.vatNumber}
+                {vat && <Chip tone={vat.tone}>{vat.label}</Chip>}
+              </span>
+            ),
+          },
+        ]
+      : []),
+    ...(b.document
+      ? [
+          {
+            term: "Registration document",
+            value: (
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <FileText className="h-4 w-4 shrink-0 text-[var(--aid-ink)]" aria-hidden="true" />
+                <span className="truncate">{b.document.name}</span>
+              </span>
+            ),
+          },
+        ]
+      : []),
+  ];
+  return (
+    <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+      {rows.map((row) => (
+        <div key={row.term} className="min-w-0">
+          <dt className="aid-label">{row.term}</dt>
+          <dd className="mt-0.5 break-words">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+// The registration certificate or registry extract, sent as soon as it's picked.
+function DocumentUpload({ org }: { org: Organization }) {
+  const queryClient = useQueryClient();
+  const input = useRef<HTMLInputElement>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const upload = useMutation({
+    mutationFn: (file: File) => api.uploadBusinessDocument(org.id, file),
+    onSuccess: async () => {
+      toast.success("Document added");
+      await queryClient.invalidateQueries({ queryKey: queryKeys.account });
+    },
+  });
+  const name = org.business.document?.name;
+  const error = problem ?? (upload.isError ? errorMessage(upload.error) : null);
+  return (
+    <div className="space-y-1.5">
+      <p className="text-sm font-medium">Registration certificate</p>
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-[var(--input)] p-3">
+        <FileText className="h-5 w-5 shrink-0 text-[var(--aid-ink)]" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-sm">
+          {name ?? (
+            <span className="text-[var(--muted-foreground)]">
+              A registry extract or certificate. PDF or photo, up to 10 MB.
+            </span>
+          )}
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={upload.isPending}
+          onClick={() => input.current?.click()}
+        >
+          {upload.isPending ? (
+            <Loader2 className="animate-spin" aria-hidden="true" />
+          ) : (
+            <Upload aria-hidden="true" />
+          )}
+          {name ? "Replace" : "Upload"}
+        </Button>
+        <input
+          ref={input}
+          type="file"
+          className="hidden"
+          accept={DOCUMENT_TYPES.join(",")}
+          aria-label="Registration certificate"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            const issue = documentProblem(file);
+            setProblem(issue);
+            if (!issue) upload.mutate(file);
+          }}
+        />
+      </div>
+      {error && (
+        <p className="text-xs text-[var(--aid-danger)]" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

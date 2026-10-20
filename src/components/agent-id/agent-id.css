@@ -197,6 +197,13 @@ html.agent-id body {
   display: none;
 }
 
+/* Unticked boxes need a visible edge: the lilac alone is too faint on white. */
+.agent-id button[role="checkbox"][data-state="unchecked"],
+html.agent-id button[role="checkbox"][data-state="unchecked"] {
+  border-color: var(--muted-foreground);
+  background: var(--card);
+}
+
 /* Dialogs take focus themselves; the focus ring belongs on their controls. */
 html.agent-id [role="dialog"]:focus,
 html.agent-id [role="alertdialog"]:focus {

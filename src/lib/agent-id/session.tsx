@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { supabase } from "@/integrations/supabase/client";
+import { createClaimsClient, type ConfirmedEmail } from "./claims";
 import { createAgentIdClient, resolveApiBase, resolveDevToken, resolveGatewayKey } from "./client";
 
 const env = import.meta.env as unknown as Record<string, string | boolean | undefined>;
@@ -30,6 +31,28 @@ export const api = createAgentIdClient({
   getToken: getAccessToken,
   gatewayKey: resolveGatewayKey(env),
 });
+
+// The open claim routes: getting an Agent ID without an account.
+export const claimsApi = createClaimsClient({
+  baseUrl: API_BASE,
+  gatewayKey: resolveGatewayKey(env),
+});
+
+// After a claim's email code: the API signs the person in, like a magic link
+// would, so Agent ID works afterwards without a separate sign-in. A dev token
+// already decides who is signed in during development.
+export async function signInWithClaim(auth: ConfirmedEmail["auth"]): Promise<boolean> {
+  if (!auth || DEV_TOKEN || typeof window === "undefined") return false;
+  try {
+    const { error } = await supabase.auth.setSession({
+      access_token: auth.access_token,
+      refresh_token: auth.refresh_token,
+    });
+    return !error;
+  } catch {
+    return false;
+  }
+}
 
 export type SessionState =
   | { status: "loading" }

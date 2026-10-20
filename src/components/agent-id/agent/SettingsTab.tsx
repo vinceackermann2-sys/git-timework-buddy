@@ -36,6 +36,7 @@ import {
   CodeBlock,
   CommandLine,
   ConfirmButton,
+  CopyButton,
   Empty,
   Field,
   ModeBadge,
@@ -124,7 +125,7 @@ function Details({ detail }: { detail: AgentDetail }) {
               onChange={(e) => setName(e.target.value)}
             />
           </Field>
-          <Field id="settings-origin" label="Runs in">
+          <Field id="settings-origin" label="Main app" hint={origin.detail ?? undefined}>
             <Select value={app} onValueChange={setApp} disabled={revoked}>
               <SelectTrigger id="settings-origin">
                 <SelectValue />
@@ -159,7 +160,22 @@ function Details({ detail }: { detail: AgentDetail }) {
             </Field>
           )}
         </div>
-        {origin.detail && <Muted>{origin.detail}</Muted>}
+        <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+          <div className="min-w-0">
+            <dt className="aid-label">Agent ID</dt>
+            <dd className="mt-0.5 flex min-w-0 items-center gap-1">
+              <span className="aid-mono truncate text-[13px]">{agent.id}</span>
+              <CopyButton text={agent.id} iconOnly variant="ghost" label="Copy agent ID" />
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="aid-label">Handle, for payments between your agents</dt>
+            <dd className="mt-0.5 flex min-w-0 items-center gap-1">
+              <span className="aid-mono truncate text-[13px]">{agent.handle}</span>
+              <CopyButton text={agent.handle} iconOnly variant="ghost" label="Copy handle" />
+            </dd>
+          </div>
+        </dl>
         {save.isError && <Notice tone="danger">{errorMessage(save.error)}</Notice>}
         <div>
           <Button type="submit" disabled={revoked || !dirty || !name.trim() || save.isPending}>

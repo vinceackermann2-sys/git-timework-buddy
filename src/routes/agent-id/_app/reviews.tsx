@@ -1,12 +1,14 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Chip,
   Empty,
   ErrorState,
   LoadingRows,
@@ -18,8 +20,10 @@ import {
   toastError,
 } from "@/components/agent-id/ui";
 import { Operator } from "@/components/agent-id/Operator";
+import { vatCheckLabel } from "@/lib/agent-id/format";
 import { queryKeys, useAccount, useReviews } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
+import type { BusinessReview } from "@/lib/agent-id/types";
 
 export const Route = createFileRoute("/agent-id/_app/reviews")({
   head: () => ({ meta: [{ title: "Review queue · Agent ID" }] }),
@@ -80,10 +84,11 @@ function ReviewsPage() {
                     kind="business"
                     id={b.organizationId}
                     title={b.legalName ?? "—"}
-                    detail={[b.registrationNumber, b.country, b.website]
+                    detail={[b.registrationNumber, b.country, b.website, b.representativeRole]
                       .filter(Boolean)
                       .join(" · ")}
                     submittedAt={b.submittedAt}
+                    extra={<BusinessChecks business={b} />}
                   />
                 ))}
               </Rows>
@@ -101,12 +106,14 @@ function ReviewRow({
   title,
   detail,
   submittedAt,
+  extra,
 }: {
   kind: "person" | "business";
   id: string;
   title: string;
   detail: string;
   submittedAt: string;
+  extra?: ReactNode;
 }) {
   const [note, setNote] = useState("");
   const queryClient = useQueryClient();
@@ -130,6 +137,7 @@ function ReviewRow({
         <p className="text-sm font-medium">{title}</p>
         <p className="aid-mono break-all text-xs text-[var(--muted-foreground)]">{detail}</p>
         <TimeAgo iso={submittedAt} className="text-xs text-[var(--muted-foreground)]" />
+        {extra}
       </div>
       <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
         <Input
@@ -163,5 +171,61 @@ function ReviewRow({
         </div>
       </div>
     </Row>
+  );
+}
+
+// What the reviewer compares: the VAT register's answer and the document.
+function BusinessChecks({ business: b }: { business: BusinessReview }) {
+  const vat = b.checks?.vat;
+  const label = vatCheckLabel(vat);
+  const [opening, setOpening] = useState(false);
+  async function openDocument() {
+    // Opened first, so the browser doesn't take it for an unasked pop-up.
+    const tab = window.open("", "_blank");
+    setOpening(true);
+    try {
+      const blob = await api.reviewDocument(b.organizationId);
+      const url = URL.createObjectURL(blob);
+      if (tab) tab.location.href = url;
+      else window.location.assign(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      tab?.close();
+      toastError(error, "Couldn't open the document");
+    } finally {
+      setOpening(false);
+    }
+  }
+  if (!b.vatNumber && !b.document) return null;
+  return (
+    <div className="mt-2 space-y-1.5 text-xs">
+      {b.vatNumber && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="aid-mono">{vat?.number ?? b.vatNumber}</span>
+          {label && <Chip tone={label.tone}>{label.label}</Chip>}
+        </div>
+      )}
+      {vat?.status === "valid" && (vat.name || vat.address) && (
+        <p className="text-[var(--muted-foreground)]">
+          Registered to {[vat.name, vat.address].filter(Boolean).join(", ")}
+        </p>
+      )}
+      {b.document && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7"
+          disabled={opening}
+          onClick={() => void openDocument()}
+        >
+          {opening ? (
+            <Loader2 className="animate-spin" aria-hidden="true" />
+          ) : (
+            <FileText aria-hidden="true" />
+          )}
+          View document
+        </Button>
+      )}
+    </div>
   );
 }

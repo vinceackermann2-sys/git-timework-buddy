@@ -4,10 +4,12 @@ import { Link } from "@tanstack/react-router";
 import { BadgeCheck } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { formatPhone, formatUsd, VERIFICATION_LEVEL_LABELS } from "@/lib/agent-id/format";
+import { agentApps } from "@/lib/agent-id/apps";
+import { formatPhone, formatUsd } from "@/lib/agent-id/format";
 import { useCardApplication, useWalletSummary } from "@/lib/agent-id/queries";
 import type { AgentDetail, Kind } from "@/lib/agent-id/types";
-import { Avatar, Chip, CopyButton, KIND_ICONS, ModeBadge, OriginBadge, StatusBadge } from "../ui";
+import { AppChip } from "../AppIcons";
+import { Avatar, Chip, KIND_ICONS, ModeBadge, StatusBadge } from "../ui";
 import { ProvisionDialog } from "./ProvisionDialog";
 import { KIND_TABS } from "./tabs";
 
@@ -19,6 +21,7 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
   const summary = useWalletSummary(agent.id, !!wallet && active && wallet.status === "active");
   const application = useCardApplication(agent.id);
   const balance = summary.data?.balance ?? wallet?.balance ?? null;
+  const apps = agentApps(agent);
 
   // Two columns on phones (mail across both), one row of five on wide screens.
   const line = (kind: Kind, value: ReactNode) => (
@@ -34,27 +37,34 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
 
   return (
     <section className="aid-card overflow-hidden" aria-label={`${agent.name}'s identity`}>
-      <div className="flex items-start gap-4 p-5 sm:items-center">
+      <div className="flex items-start gap-4 p-5">
         <Avatar name={agent.name} large />
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-2xl font-semibold tracking-tight">{agent.name}</h1>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--muted-foreground)]">
-            <span className="aid-mono">{agent.handle}</span>
-            <span className="flex items-center gap-1">
-              <span className="aid-mono text-xs">{agent.id}</span>
-              <CopyButton text={agent.id} iconOnly variant="ghost" label="Copy agent id" />
-            </span>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <OriginBadge agent={agent} />
-            <Chip tone={verification.verified ? "success" : "neutral"}>
-              {verification.verified && <BadgeCheck className="h-3 w-3" aria-hidden="true" />}
-              {verification.verified
-                ? VERIFICATION_LEVEL_LABELS[verification.level]
-                : "Owner not verified"}
-            </Chip>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+            <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{agent.name}</h1>
+            {verification.verified ? (
+              <Chip
+                tone="success"
+                title={verification.level === "kyb" ? "Verified business" : "Verified person"}
+              >
+                <BadgeCheck className="h-3 w-3" aria-hidden="true" />
+                Verified owner
+              </Chip>
+            ) : (
+              <Link to="/agent-id/verify" className="rounded-full">
+                <Chip>Owner not verified</Chip>
+              </Link>
+            )}
             {agent.status !== "active" && <StatusBadge status={agent.status} />}
           </div>
+          {apps.length > 0 && (
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              <span className="mr-0.5 text-xs text-[var(--muted-foreground)]">Used in</span>
+              {apps.map((item) => (
+                <AppChip key={item.app} app={item.app} label={item.label} />
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import type {
   Money,
   PublicConfig,
   Runtime,
+  VatCheck,
   VerificationLevel,
   VerificationStatus,
 } from "./types";
@@ -150,6 +151,35 @@ export const VERIFICATION_STATUS_LABELS: Record<VerificationStatus, string> = {
 };
 export const verificationStatusLabel = (status: string): string =>
   VERIFICATION_STATUS_LABELS[status as VerificationStatus] ?? status;
+
+// What the EU VAT register (VIES) said about a business's VAT number.
+export function vatCheckLabel(check: Pick<VatCheck, "status"> | null | undefined): {
+  label: string;
+  tone: Tone;
+} | null {
+  switch (check?.status) {
+    case "valid":
+      return { label: "VAT number valid", tone: "success" };
+    case "invalid":
+      return { label: "VAT number not found", tone: "danger" };
+    case "unavailable":
+      return { label: "VAT register unavailable, checked by hand", tone: "warning" };
+    case "not_applicable":
+      return { label: "Not an EU VAT number, checked by hand", tone: "neutral" };
+    default:
+      return null;
+  }
+}
+
+// Registration documents the API takes: PDF or a photo, at most 10 MB.
+export const DOCUMENT_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
+export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
+export function documentProblem(file: { type: string; size: number }): string | null {
+  if (!DOCUMENT_TYPES.includes(file.type)) return "Choose a PDF or a photo (PNG, JPEG or WebP).";
+  if (file.size > DOCUMENT_MAX_BYTES) return "The file can be at most 10 MB.";
+  if (file.size === 0) return "That file is empty.";
+  return null;
+}
 
 const DECLINE_REASONS: Record<string, string> = {
   over_transaction_limit: "Over the per-payment limit",
@@ -470,6 +500,15 @@ export function initials(name: string): string {
   const letters = words.length > 1 ? words[0]!.charAt(0) + words[1]!.charAt(0) : name.slice(0, 2);
   return letters.toUpperCase() || "?";
 }
+
+// --- Wallet addresses ------------------------------------------------------------------
+
+// A wallet address on Base (or any EVM network): 0x and 40 hex digits.
+export const isWalletAddress = (value: string) => /^0x[0-9a-fA-F]{40}$/.test(value.trim());
+
+// "0x1234…abcd", for confirmations.
+export const shortAddress = (value: string) =>
+  value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
 
 // --- Money in US dollars (wallets hold USDC and USDT, 1:1) -----------------------------
 

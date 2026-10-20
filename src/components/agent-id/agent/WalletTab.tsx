@@ -4,7 +4,15 @@ import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowDownLeft, ArrowUpRight, ExternalLink, Info, Loader2, Plus } from "lucide-react";
+import {
+  ArrowDownLeft,
+  ArrowDownToLine,
+  ArrowUpRight,
+  ExternalLink,
+  Info,
+  Loader2,
+  Plus,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -20,8 +28,8 @@ import {
   formatUsd,
   groupByDay,
   parseAmount,
+  shortAddress,
 } from "@/lib/agent-id/format";
-import { qrPath } from "@/lib/agent-id/qr";
 import {
   queryKeys,
   useAgents,
@@ -46,6 +54,7 @@ import {
   SidePanel,
 } from "../ui";
 import { BlockedNotice, LoadMore, NoResource, blockedReason } from "./common";
+import { AddMoney, AmountField, Withdraw } from "./WalletMoney";
 import { LimitsEditor } from "./LimitsEditor";
 
 const NETWORK_LABELS: Record<string, string> = {
@@ -61,7 +70,7 @@ export function WalletTab({ agent }: { agent: Agent }) {
   const summary = useWalletSummary(agent.id, !!wallet && !blocked);
   const pages = useEventPages(agent.id, { kind: ["wallet"] }, { enabled: !!wallet });
   const approvals = useApprovals();
-  const [panel, setPanel] = useState<"add" | "send" | "details" | null>(null);
+  const [panel, setPanel] = useState<"add" | "send" | "withdraw" | "details" | null>(null);
   const [openTx, setOpenTx] = useState<AgentEvent | null>(null);
   const testMode = useTestMode();
 
@@ -88,7 +97,7 @@ export function WalletTab({ agent }: { agent: Agent }) {
         {summary.data?.balanceError && (
           <p className="mt-1 text-xs text-[var(--aid-danger)]">{summary.data.balanceError}</p>
         )}
-        <div className="mt-7 flex gap-6">
+        <div className="mt-7 flex gap-5 sm:gap-6">
           <QuickAction
             label="Add money"
             icon={<Plus className="h-5 w-5" />}
@@ -102,6 +111,14 @@ export function WalletTab({ agent }: { agent: Agent }) {
             disabled={!!blocked}
             onClick={() => setPanel("send")}
           />
+          {!test && (
+            <QuickAction
+              label="Withdraw"
+              icon={<ArrowDownToLine className="h-5 w-5" />}
+              disabled={agent.status === "revoked" || wallet.status !== "active"}
+              onClick={() => setPanel("withdraw")}
+            />
+          )}
           <QuickAction
             label="Details"
             icon={<Info className="h-5 w-5" />}
@@ -171,9 +188,19 @@ export function WalletTab({ agent }: { agent: Agent }) {
         {test ? (
           <TestMoney agent={agent} onDone={() => setPanel(null)} />
         ) : (
-          <Deposit address={summary.data?.address ?? wallet.address} network={network} />
+          <AddMoney agent={agent} />
         )}
       </SidePanel>
+      {!test && (
+        <SidePanel
+          open={panel === "withdraw"}
+          onOpenChange={(open) => setPanel(open ? "withdraw" : null)}
+          title="Withdraw"
+          trigger={<span className="hidden" />}
+        >
+          <Withdraw agent={agent} balance={balance} onDone={() => setPanel(null)} />
+        </SidePanel>
+      )}
       <SidePanel
         open={panel === "details"}
         onOpenChange={(open) => setPanel(open ? "details" : null)}
@@ -369,21 +396,7 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
       }}
     >
       <div className="py-4 text-center">
-        <label htmlFor="send-amount" className="sr-only">
-          Amount in dollars
-        </label>
-        <div className="flex items-baseline justify-center text-5xl font-semibold tracking-tight">
-          <span className="text-[var(--muted-foreground)]">$</span>
-          <input
-            id="send-amount"
-            inputMode="decimal"
-            placeholder="0"
-            autoFocus
-            className="w-48 bg-transparent text-center tabular-nums outline-none placeholder:text-[var(--muted-foreground)]/50"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-        </div>
+        <AmountField id="send-amount" value={amount} onChange={setAmount} autoFocus />
         {amount.trim() && !value && (
           <p className="mt-1 text-xs text-[var(--aid-danger)]">Enter an amount like 12.50</p>
         )}
@@ -430,48 +443,6 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
   );
 }
 
-function Deposit({
-  address,
-  network,
-}: {
-  address: string | null | undefined;
-  network: string | undefined;
-}) {
-  if (!address) return <Muted>The wallet has no address yet.</Muted>;
-  const { size, path } = qrPath(address);
-  return (
-    <div className="grid justify-items-center gap-5 text-center">
-      <svg
-        viewBox={`0 0 ${size} ${size}`}
-        role="img"
-        aria-label="QR code of the wallet address"
-        className="h-56 w-56 rounded-2xl border border-[var(--border)]"
-        shapeRendering="crispEdges"
-      >
-        <rect width={size} height={size} fill="#ffffff" />
-        <path d={path} fill="#172033" />
-      </svg>
-      <p className="text-sm">
-        Send USDC or USDT on {NETWORK_LABELS[network ?? ""] ?? "Base"} to this address.
-      </p>
-      <div className="w-full">
-        <p className="aid-mono break-all rounded-xl bg-[var(--muted)] px-4 py-3 text-sm">
-          {address}
-        </p>
-        <div className="mt-3 flex justify-center">
-          <CopyButton
-            text={address}
-            label="Copy address"
-            toastText="Address copied"
-            variant="default"
-            className="rounded-full"
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function Details({
   agent,
   summary,
@@ -506,6 +477,16 @@ function Details({
         ))}
         {summary?.sent.last24Hours && (
           <Row term="Sent today" value={formatUsd(summary.sent.last24Hours.amount)} />
+        )}
+        {wallet.settings.withdrawTo && (
+          <Row
+            term="Withdraws to"
+            value={
+              <span className="aid-mono text-xs" title={wallet.settings.withdrawTo}>
+                {shortAddress(wallet.settings.withdrawTo)}
+              </span>
+            }
+          />
         )}
         {testMode && <Row term="Mode" value={wallet.mode === "test" ? "Test" : "Live"} />}
       </dl>
@@ -550,19 +531,7 @@ function TestMoney({ agent, onDone }: { agent: Agent; onDone: () => void }) {
       }}
     >
       <div className="py-4 text-center">
-        <label htmlFor="test-funds" className="sr-only">
-          Amount in dollars
-        </label>
-        <div className="flex items-baseline justify-center text-5xl font-semibold tracking-tight">
-          <span className="text-[var(--muted-foreground)]">$</span>
-          <input
-            id="test-funds"
-            inputMode="decimal"
-            className="w-48 bg-transparent text-center tabular-nums outline-none"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-          />
-        </div>
+        <AmountField id="test-funds" value={amount} onChange={setAmount} />
         {tooMuch && (
           <p className="mt-1 text-xs text-[var(--aid-danger)]">At most $1,000 at a time</p>
         )}

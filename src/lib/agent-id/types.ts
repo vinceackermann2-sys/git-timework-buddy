@@ -24,6 +24,8 @@ export type ResourceSettings = {
   blockedCategories?: string[];
   allowedCategories?: string[];
   greeting?: string;
+  // Wallet: where the owner withdraws to (their own wallet or exchange, on Base).
+  withdrawTo?: string;
 };
 
 export type ResourceDetails = {
@@ -71,6 +73,16 @@ export type Agent = {
   resources: Partial<Record<Kind, Resource>>;
   // Where the agent runs (Claude Code, Codex, Cursor…); null until known.
   origin?: AgentOrigin | null;
+  // Every app this one Agent ID is used in, most recent first.
+  apps?: AgentApp[];
+};
+
+export type AgentApp = {
+  app: string;
+  label: string;
+  clientName?: string | null;
+  lastSeenAt?: string | null;
+  firstSeenAt?: string | null;
 };
 
 export type AgentOrigin = {
@@ -163,12 +175,25 @@ export type Person = {
   consentAt?: string | null;
 };
 
+export type VatCheck = {
+  status: "valid" | "invalid" | "unavailable" | "not_applicable";
+  number?: string | null;
+  name?: string | null;
+  address?: string | null;
+  at?: string;
+};
+
 export type Business = {
   status: VerificationStatus;
   legalName?: string | null;
   registrationNumber?: string | null;
+  vatNumber?: string | null;
   country?: string | null;
   website?: string | null;
+  representativeRole?: string | null;
+  // The registration certificate or registry extract, for reviewers.
+  document?: { name: string } | null;
+  checks?: { vat?: VatCheck };
   verifiedAt?: string | null;
   note?: string | null;
 };
@@ -281,6 +306,20 @@ export type MachineSummary = {
   size?: string;
   note?: string;
 };
+
+// Adding money to a wallet: its address on Base, and buying by card where offered.
+export type AddMoneyInfo = {
+  address: string | null;
+  mode: Mode;
+  network: { id: string; name: string } | null;
+  assets: string[];
+  card: { available: boolean };
+  test: boolean;
+};
+
+export type CardOnrampSession = { clientSecret: string; publishableKey: string; url?: string };
+
+export type WithdrawResult = { status: "completed" | "pending"; transfer: AgentEvent };
 
 export type TransferResult =
   | { status: "needs_approval"; approval: string; message: string }

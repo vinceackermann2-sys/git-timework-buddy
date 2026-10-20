@@ -19,6 +19,8 @@ describe("Agent ID routing", () => {
     ["/agent-id", "/agent-id/"],
     ["/agent-id/", "/agent-id/"],
     ["/agent-id/sign-in", "/agent-id/sign-in"],
+    ["/agent-id/claim", "/agent-id/claim/"],
+    ["/agent-id/claim/abcdefghijklmnopqrstuvwx", "/agent-id/claim/$code"],
     ["/agent-id/dashboard", "/agent-id/_app/dashboard"],
     ["/agent-id/agents/agt_abcdefghijklmnopqrstuvwx", "/agent-id/_app/agents/$agentId"],
     ["/agent-id/approvals", "/agent-id/_app/approvals"],
@@ -41,6 +43,14 @@ describe("Agent ID routing", () => {
       .map((m) => m.routeId);
     expect(ids).toContain("/agent-id");
     expect(ids).toContain("/agent-id/_app");
+  });
+
+  it("keeps getting an Agent ID outside the signed-in layout", () => {
+    for (const path of ["/agent-id/claim", "/agent-id/claim/abcdefghijklmnopqrstuvwx"]) {
+      const ids = router.matchRoutes(path).map((m) => m.routeId);
+      expect(ids).toContain("/agent-id");
+      expect(ids).not.toContain("/agent-id/_app");
+    }
   });
 
   it("reads the agent tab from the URL and ignores unknown ones", () => {

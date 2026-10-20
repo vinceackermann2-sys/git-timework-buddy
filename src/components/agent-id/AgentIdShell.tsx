@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 import type { ReactNode } from "react";
 
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { AgentIdSessionProvider } from "@/lib/agent-id/session";
 import "./agent-id.css";
 
@@ -73,7 +74,9 @@ export function AgentIdShell({ children }: { children: ReactNode }) {
   return (
     <ThemeContext.Provider value={{ choice, dark, setChoice }}>
       <div className="agent-id min-h-svh" data-theme={choice === "system" ? undefined : choice}>
-        <AgentIdSessionProvider>{children}</AgentIdSessionProvider>
+        <TooltipProvider delayDuration={200}>
+          <AgentIdSessionProvider>{children}</AgentIdSessionProvider>
+        </TooltipProvider>
         <Toaster
           theme={dark ? "dark" : "light"}
           position="bottom-right"

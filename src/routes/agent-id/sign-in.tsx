@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { KeyRound, Loader2, MailCheck } from "lucide-react";
 
 import { supabase } from "@/integrations/supabase/client";
@@ -27,7 +27,7 @@ function friendly(message: string): string {
   if (m.includes("email not confirmed"))
     return "Confirm your email address first: open the link Timewarp sent you, then sign in.";
   if (m.includes("signups not allowed") || m.includes("user not found"))
-    return "There's no Timewarp account with this email yet. Create one in the Timewarp app, then sign in here.";
+    return "There's no Timewarp account with this email yet. Get an Agent ID to make one, or create one in the Timewarp app.";
   if (m.includes("token has expired") || (m.includes("invalid") && m.includes("token")))
     return "That code is wrong or has expired. Request a new one.";
   if (m.includes("rate limit") || m.includes("security purposes"))
@@ -85,6 +85,12 @@ function SignInPage() {
               </Tabs>
             )}
           </div>
+          <p className="mt-6 text-center text-sm text-[var(--muted-foreground)]">
+            No account?{" "}
+            <Link to="/agent-id/claim" className="aid-link font-medium">
+              Get an Agent ID
+            </Link>
+          </p>
         </div>
       </main>
     </div>

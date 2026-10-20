@@ -41,15 +41,11 @@ import {
   avatarColors,
   formatRelativeTime,
   initials,
-  KIND_LABELS,
-  originOf,
-  runtimeLabel,
   statusLabel,
   type Tone,
 } from "@/lib/agent-id/format";
-import type { Kind, Mode, Resource } from "@/lib/agent-id/types";
+import type { Kind, Mode } from "@/lib/agent-id/types";
 import { useTestMode } from "@/lib/agent-id/queries";
-import { OriginGlyph } from "./icons";
 
 export const KIND_ICONS: Record<Kind, LucideIcon> = {
   mail: Mail,
@@ -105,10 +101,6 @@ export function ModeBadge({ mode }: { mode: Mode }) {
   );
 }
 
-export function RuntimeBadge({ runtime }: { runtime: string }) {
-  return <Chip tone="ink">{runtimeLabel(runtime)}</Chip>;
-}
-
 // An agent's or a resource's state: active, paused, revoked, setting up.
 export function StatusBadge({ status, pausedWord }: { status: string; pausedWord?: string }) {
   const tone: Tone =
@@ -133,30 +125,6 @@ export function EventStatus({ status, suffix }: { status: string; suffix?: strin
       {eventStatusLabel(status)}
       {suffix}
     </Chip>
-  );
-}
-
-export function ResourceChip({
-  resource,
-  showMode = true,
-}: {
-  resource: Resource;
-  showMode?: boolean;
-}) {
-  const Icon = KIND_ICONS[resource.kind];
-  return (
-    <span
-      className={cn(
-        "inline-flex h-6 items-center gap-1.5 rounded-full border border-[var(--border)] pl-2 text-xs",
-        showMode ? "pr-0.5" : "pr-2.5",
-        resource.status !== "active" && "opacity-60",
-      )}
-      title={`${KIND_LABELS[resource.kind]} (${resource.mode})${resource.status === "suspended" ? ", paused" : ""}`}
-    >
-      <Icon className="h-3.5 w-3.5 text-[var(--aid-ink)]" aria-hidden="true" />
-      {KIND_LABELS[resource.kind]}
-      {showMode && <ModeBadge mode={resource.mode} />}
-    </span>
   );
 }
 
@@ -664,17 +632,6 @@ export function Avatar({
     >
       {/[a-z]/i.test(name) ? initials(name) : <User className="h-1/2 w-1/2" />}
     </span>
-  );
-}
-
-// Where an agent comes from: a neutral mark and the app's name.
-export function OriginBadge({ agent }: { agent: Parameters<typeof originOf>[0] }) {
-  const origin = originOf(agent);
-  return (
-    <Chip title={origin.detail ?? undefined}>
-      <OriginGlyph app={origin.app} className="h-3 w-3" />
-      {origin.label}
-    </Chip>
   );
 }
 

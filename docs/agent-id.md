@@ -359,13 +359,16 @@ off. The operator button does the same by hand.
 - Secrets are set: signing key, webhook secret, `AGENT_ID_LIVE=mail,vm`,
   `AGENT_ID_ALLOW_TEST=false`, `AGENT_ID_KYC=stripe_identity`, operators,
   and `AGENT_ID_WALLET_CHAIN=base`.
-- To turn on wallets and phone numbers, run
-  `timewarp/reports/agent-id-connect-providers.ps1`. It asks for the Privy and
-  Twilio credentials (and an optional Chainalysis key) hidden.
+- Migration `20261020180000` (claims, apps, business checks, withdrawals) and
+  the updated function go live with `timewarp/reports/agent-id-update.ps1`. The
+  same script can then connect wallets and phone numbers through
+  `agent-id-connect-providers.ps1`, which asks for the Privy and Twilio
+  credentials (and optional Chainalysis and Stripe publishable keys) hidden.
 - Then, once:
   - activate Identity in Stripe;
-  - turn on gas sponsorship for Base in Privy;
-  - in the dashboard, go to Review queue → Operator → **Connect webhooks**.
+  - turn on gas sponsorship for Base in Privy.
+  The function registers its webhooks itself on its first request after the
+  deploy.
 
 ## Going live
 

@@ -26,7 +26,7 @@ export const Route = createFileRoute("/agent-id/_app/approvals")({
 const OUTCOMES: Record<Approval["status"], [string, "success" | "danger" | "neutral"]> = {
   completed: ["Sent", "success"],
   approved: ["Approved", "success"],
-  denied: ["Denied", "neutral"],
+  denied: ["Declined", "neutral"],
   failed: ["Failed", "danger"],
   pending: ["Pending", "neutral"],
 };
@@ -42,22 +42,25 @@ function ApprovalsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Approvals" />
-      <Section title="Waiting" flush>
+      <PageHeader
+        title="Approvals"
+        meta="Payments your agents want to make above the limit you set."
+      />
+      <Section title="Waiting for you" flush>
         {pending.isPending ? (
           <LoadingRows rows={2} />
         ) : pending.isError ? (
           <ErrorState error={pending.error} onRetry={() => void pending.refetch()} />
         ) : pending.data.length === 0 ? (
-          <Empty>Nothing waiting.</Empty>
+          <Empty>Nothing waiting for you.</Empty>
         ) : (
           <PendingApprovals approvals={pending.data} />
         )}
       </Section>
 
       {decided.length > 0 && (
-        <Section title="Decided" flush>
-          <Rows label="Decided">
+        <Section title="History" flush>
+          <Rows label="History">
             {decided.map((a) => {
               const [label, tone] =
                 a.status === "denied" && a.reason === "expired"

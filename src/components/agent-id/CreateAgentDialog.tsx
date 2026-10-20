@@ -103,7 +103,7 @@ export function CreateAgentDialog({ variant = "default" }: { variant?: "default"
             {created.secret ? (
               <SecretOnce secret={created.secret} />
             ) : (
-              <Notice>No key was made. Create one in the agent's Connect tab.</Notice>
+              <Notice>No key was made. Create one in the agent's Settings.</Notice>
             )}
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => setOpen(false)}>
@@ -140,7 +140,7 @@ export function CreateAgentDialog({ variant = "default" }: { variant?: "default"
                 onChange={(e) => setName(e.target.value)}
               />
             </Field>
-            <Field id="agent-origin" label="Runs in">
+            <Field id="agent-origin" label="Where do you use it?">
               <Select value={app} onValueChange={setApp}>
                 <SelectTrigger id="agent-origin">
                   <SelectValue />

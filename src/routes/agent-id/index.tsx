@@ -25,13 +25,18 @@ function AgentIdLanding() {
           Give each of your agents its own inbox, phone number, wallet, card and machine, and see
           everything it does, traceable to you.
         </p>
-        <div className="mt-8">
+        <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
           <Button asChild size="lg" className="h-11 px-6">
-            <Link to={signedIn ? "/agent-id/dashboard" : "/agent-id/sign-in"}>
-              {signedIn ? "Open dashboard" : "Sign in"}
+            <Link to={signedIn ? "/agent-id/dashboard" : "/agent-id/claim"}>
+              {signedIn ? "Open Agent ID" : "Get an Agent ID"}
               <ArrowRight aria-hidden="true" />
             </Link>
           </Button>
+          {!signedIn && (
+            <Link to="/agent-id/sign-in" className="aid-link text-sm font-medium">
+              Sign in
+            </Link>
+          )}
         </div>
       </main>
     </div>
