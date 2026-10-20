@@ -12,17 +12,19 @@
 # OpenSSH's ssh-keygen.
 #
 # Settings (environment variables, or git config in the server repository):
-#   AGENT_ID_SECRET              / agentid.secret            company secret, twrp_… (required)
-#   AGENT_ID_SECRET_FILE         / agentid.secretFile        or a file holding it
+#   AGENT_ID_ORGANIZATION        / agentid.organization      your organization's id (required)
 #   AGENT_ID_API                 / agentid.api               default: production
 #   AGENT_ID_HUMAN_SIGNERS_FILE  / agentid.humanSignersFile  a file on the server, in Git
 #        allowed_signers format, for people who sign their own commits with SSH keys:
 #        alice@acme.com namespaces="git" ssh-ed25519 AAAA…
 #        Keep it where only server admins can write it (not in a pushed repository).
+# Older setups may name a company secret instead of the organization:
+#   AGENT_ID_SECRET / agentid.secret, or AGENT_ID_SECRET_FILE / agentid.secretFile
 set -u
 
 conf() { git config --get "$1" 2>/dev/null || true; }
 
+organization=${AGENT_ID_ORGANIZATION:-$(conf agentid.organization)}
 secret=${AGENT_ID_SECRET:-$(conf agentid.secret)}
 secret_file=${AGENT_ID_SECRET_FILE:-$(conf agentid.secretFile)}
 if [ -z "$secret" ] && [ -n "$secret_file" ] && [ -r "$secret_file" ]; then
@@ -37,10 +39,14 @@ if [ -n "${AGENT_ID_ALLOW_UNSIGNED_AUTHORS:-}$(conf agentid.allowUnsignedAuthors
   echo "Agent ID: warning: allowUnsignedAuthors was removed (an author email proves nothing); list humans' SSH keys in AGENT_ID_HUMAN_SIGNERS_FILE instead." >&2
 fi
 
-if [ -z "$secret" ]; then
-  echo "Agent ID: no company secret is configured (AGENT_ID_SECRET or git config agentid.secret); rejecting the push." >&2
+if [ -z "$organization" ] && [ -z "$secret" ]; then
+  echo "Agent ID: no organization is configured (AGENT_ID_ORGANIZATION or git config agentid.organization); rejecting the push." >&2
   exit 1
 fi
+case "$organization" in *[!A-Za-z0-9_-]*)
+  echo "Agent ID: \"$organization\" is not an organization id; rejecting the push." >&2
+  exit 1 ;;
+esac
 if [ -n "$humans" ] && [ ! -r "$humans" ]; then
   echo "Agent ID: the human signers file $humans can't be read; rejecting the push." >&2
   exit 1
@@ -50,8 +56,14 @@ work=$(mktemp -d 2>/dev/null || mktemp -d -t agentid)
 trap 'rm -rf "$work"' EXIT
 signers="$work/allowed_signers"
 
-# The secret goes to curl on stdin, not on its command line.
-if ! printf 'Authorization: Bearer %s\n' "$secret" | curl -fsS --max-time 30 -H @- -H 'Accept: text/plain' -o "$signers" "$api/v1/allowed-signers"; then
+if [ -n "$organization" ]; then
+  # The organization's list is public.
+  fetched=$(curl -fsS --max-time 30 -H 'Accept: text/plain' -o "$signers" "$api/v1/orgs/$organization/allowed-signers" && echo ok)
+else
+  # A secret goes to curl on stdin, not on its command line.
+  fetched=$(printf 'Authorization: Bearer %s\n' "$secret" | curl -fsS --max-time 30 -H @- -H 'Accept: text/plain' -o "$signers" "$api/v1/allowed-signers" && echo ok)
+fi
+if [ "$fetched" != ok ]; then
   echo "Agent ID: could not get the allowed signers from $api; rejecting the push." >&2
   exit 1
 fi

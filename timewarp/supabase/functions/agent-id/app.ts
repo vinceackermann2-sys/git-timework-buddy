@@ -14,7 +14,7 @@ import { jwks } from './passport.ts';
 import type { AgentRow, Ctx } from './context.ts';
 import { ownerRoutes } from './owner.ts';
 import { agentRoutes, RAW_ROUTES } from './agent.ts';
-import { relyingPartyRoutes } from './relying.ts';
+import { publicAllowedSigners, publicVerify, relyingPartyRoutes } from './relying.ts';
 import { handleMcp } from './mcp.ts';
 import { handleWebhook } from './webhooks.ts';
 
@@ -116,6 +116,11 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
       if (req.method === 'GET' && path === '/.well-known/jwks.json') return json(await jwks(config), 200, { 'cache-control': 'public, max-age=300' });
       if (req.method === 'GET' && path === '/v1/config') return json(publicConfig(config));
       if (path.startsWith('/webhooks/')) return await handleWebhook(ctx, req, path);
+      // Open to every service and repository, no account needed: checking a
+      // passport shown to you, and an organization's Git signers.
+      if (path === '/v1/verify' && req.method === 'POST' && !bearer(req)) return json(await publicVerify(ctx, await readBody(req)));
+      const signers = /^\/v1\/orgs\/([0-9a-f-]{36})\/allowed-signers$/.exec(path);
+      if (signers && req.method === 'GET') { const result = await publicAllowedSigners(ctx, signers[1], Object.fromEntries(url.searchParams)); return result instanceof Response ? result : json(result); }
       if (path === '/mcp') {
         if (req.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST for MCP.' } }, 405, { allow: 'POST' });
         const caller = await authenticate(ctx, req);

@@ -22,9 +22,9 @@ const crypto = require("node:crypto");
   const kid = `agent-id-${new Date().toISOString().slice(0, 10)}-${crypto.randomBytes(3).toString("hex")}`;
   const signing = JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d, kid });
   const webhook = crypto.randomBytes(32).toString("base64url");
-  // --env-file <path>: append both to a file for `supabase secrets set
+  // --write <path>: append both to a file for `supabase secrets set
   // --env-file`, without printing them.
-  const envAt = process.argv.indexOf("--env-file");
+  const envAt = process.argv.indexOf("--write");
   if (envAt > 0) {
     require("node:fs").appendFileSync(process.argv[envAt + 1], `AGENT_ID_SIGNING_KEY='${signing}'\nAGENT_ID_WEBHOOK_SECRET=${webhook}\n`, { mode: 0o600 });
     console.log(`Wrote the passport signing key (${kid}) and the webhook secret.`);

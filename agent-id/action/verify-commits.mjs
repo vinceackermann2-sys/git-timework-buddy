@@ -8,7 +8,8 @@
 // emails are self-asserted, so an unsigned commit always fails. Fails closed:
 // if Agent ID can't be asked, nothing passes.
 //
-// Inputs (environment): AGENT_ID_SECRET (required), AGENT_ID_API,
+// Inputs (environment): AGENT_ID_ORGANIZATION (the organization's id; or
+// AGENT_ID_SECRET, a company secret from older setups), AGENT_ID_API,
 // AGENT_ID_BASE, AGENT_ID_HEAD, AGENT_ID_HUMAN_SIGNERS (allowed_signers lines,
 // or the path of such a file in the repository, read as it is in the base
 // commit); base and head default from the GitHub event (pull_request, push,
@@ -95,9 +96,11 @@ function ensureHistory(base, head) {
 }
 
 // --- Who may sign ----------------------------------------------------------------------
-async function agentSigners(api, secret) {
+// The organization's list is public; a company secret reads its own.
+async function agentSigners(api, { organization, secret }) {
+  const url = organization ? `${api}/v1/orgs/${encodeURIComponent(organization)}/allowed-signers` : `${api}/v1/allowed-signers`;
   let response;
-  try { response = await fetch(`${api}/v1/allowed-signers`, { headers: { authorization: `Bearer ${secret}`, accept: 'text/plain' } }); }
+  try { response = await fetch(url, { headers: { ...(organization ? {} : { authorization: `Bearer ${secret}` }), accept: 'text/plain' } }); }
   catch (error) { fatal(`could not reach Agent ID at ${api}: ${error?.cause?.code || error.message}`); }
   const body = await response.text();
   if (!response.ok) {
@@ -169,9 +172,10 @@ function checkCommit(sha, signersFile, agentKeys) {
 }
 
 async function main() {
-  const secret = input('SECRET');
-  if (!secret) fatal('The `secret` input is required: your company secret (twrp_…) from the Agent ID dashboard, stored as a repository secret.');
-  if (!secret.startsWith('twrp_')) fatal('The `secret` input is not a company secret (they start with twrp_).');
+  const organization = input('ORGANIZATION'), secret = input('SECRET');
+  if (!organization && !secret) fatal('The `organization` input is required: your organization\'s id, from the Agent ID dashboard.');
+  if (!organization && !secret.startsWith('twrp_')) fatal('The `secret` input is not a company secret (they start with twrp_). Use the `organization` input instead.');
+  if (organization && !/^[A-Za-z0-9_-]{1,80}$/.test(organization)) fatal('The `organization` input is not an organization id.');
   const api = (input('API') || DEFAULT_API).replace(/\/+$/, '');
   if (input('ALLOW_UNSIGNED_AUTHORS')) warn('allow-unsigned-authors was removed: an author email proves nothing. Humans sign their commits and are listed in human-signers; unsigned commits fail.');
 
@@ -181,7 +185,7 @@ async function main() {
   const commits = gitOut(['rev-list', '--reverse', `${base}..${head}`]).split('\n').filter(Boolean);
   log(`Agent ID: checking ${commits.length} commit${commits.length === 1 ? '' : 's'} in ${base.slice(0, 12)}..${head.slice(0, 12)}.`);
 
-  const agents = signerLines(await agentSigners(api, secret));
+  const agents = signerLines(await agentSigners(api, { organization, secret }));
   const agentKeys = new Set(agents.map(keyOf).filter(Boolean).map(key => key.fingerprint));
   const humans = humanSigners(input('HUMAN_SIGNERS'), base);
   log(`Agent ID lists ${agents.length} agent signing key${agents.length === 1 ? '' : 's'} for this organization${humans.source ? `; ${humans.lines.length} human signer line${humans.lines.length === 1 ? '' : 's'} from ${humans.source}` : ''}.`);

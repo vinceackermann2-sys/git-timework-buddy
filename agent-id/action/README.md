@@ -14,14 +14,13 @@ Who a commit *says* it is from (author or committer email) counts for
 nothing: anyone can write `git commit --author="cto@acme.com"`. Unsigned
 commits always fail.
 
-It needs only Node and Git on the runner (no `npm install`). It fails closed:
-if Agent ID can't be reached, the check fails.
+It needs only Node and Git on the runner (no `npm install`), and no secret:
+an organization's agents' signing keys are public. It fails closed: if Agent
+ID can't be reached, the check fails.
 
 ## Set up
 
-1. In the Agent ID dashboard, register your company **for your organization**
-   and copy its secret (`twrp_…`). Store it as a repository or organization
-   secret, e.g. `AGENT_ID_SECRET`.
+1. Copy your **organization id** from the Agent ID dashboard.
 2. Have each agent sign its commits: `timewarp-id git setup` in the
    repository (see the CLI). Its agent must belong to the organization.
 3. Have people who commit sign with an SSH key too
@@ -47,7 +46,7 @@ jobs:
           fetch-depth: 0            # the whole history, so no commit goes unchecked
       - uses: <owner>/<repo>/agent-id/action@<ref>
         with:
-          secret: ${{ secrets.AGENT_ID_SECRET }}
+          organization: <your organization id>
           human-signers: ${{ secrets.AGENT_ID_HUMAN_SIGNERS }}   # or: .github/allowed_signers
 ```
 
@@ -59,8 +58,8 @@ commits beyond the shallow boundary.
 
 | Input | |
 |---|---|
-| `secret` (required) | The company secret, `twrp_…`. |
-| `api` | Agent ID API base; empty = production. |
+| `organization` (required) | Your organization's id. |
+| `api` | Agent ID's API; empty = production. |
 | `base` | First commit not to check. Default: the pull request's base, the push's previous head (for a new branch, where it leaves the default branch), or the merge queue's base. |
 | `head` | Last commit to check. Default: the pull request's head, the pushed commit, or the merge queue's head. |
 | `human-signers` | People who sign their own commits, in Git's `allowed_signers` format, one per line: `alice@acme.com namespaces="git" ssh-ed25519 AAAA…`. Either the lines themselves, or the path of a file with them in this repository. Default: none. |
@@ -84,10 +83,10 @@ the right people can change it:
 
 ## How it decides
 
-The action downloads `GET <api>/v1/allowed-signers` (the active signing keys
-of your organization's agents that meet your company's policy), appends your
-human signers, writes both to one temporary `allowed_signers` file, and runs,
-for every commit in `base..head`:
+The action downloads `GET <api>/v1/orgs/<organization>/allowed-signers` (the
+active signing keys of your organization's agents whose owners are
+verified), appends your human signers, writes both to one temporary
+`allowed_signers` file, and runs, for every commit in `base..head`:
 
 ```sh
 git -c gpg.ssh.allowedSignersFile=<file> -c gpg.minTrustLevel=fully verify-commit <sha>
@@ -100,15 +99,11 @@ unlisted key (a revoked agent's, another organization's agent's, a
 stranger's), or one signed with GPG fails.
 
 Run it locally the same way:
-`AGENT_ID_SECRET=twrp_… AGENT_ID_BASE=origin/main AGENT_ID_HUMAN_SIGNERS=.github/allowed_signers node verify-commits.mjs`.
+`AGENT_ID_ORGANIZATION=<id> AGENT_ID_BASE=origin/main AGENT_ID_HUMAN_SIGNERS=.github/allowed_signers node verify-commits.mjs`.
 
-## If your secret leaks
-
-Rotate it: in the dashboard, or `POST /v1/relying-parties/<id>/secret` with
-your owner credentials, which returns a new secret and stops the old one at
-once. Then update the repository secret. A leaked secret can read your
-organization's allowed signers and check passports; it can't add keys or
-agents.
+Setups from before organizations were public pass a company secret
+(`secret: ${{ secrets.AGENT_ID_SECRET }}`) instead of `organization`; that
+still works.
 
 ## Self-hosted Git
 
@@ -116,7 +111,7 @@ agents.
 Gerrit or a plain SSH server. Copy it to `<repo>.git/hooks/pre-receive` (or
 your server's global hooks), make it executable, and set:
 
-- `AGENT_ID_SECRET` (or `git config agentid.secret` / `agentid.secretFile` in the server repository);
+- `AGENT_ID_ORGANIZATION` (or `git config agentid.organization` in the server repository);
 - optionally `AGENT_ID_API` / `agentid.api`;
 - optionally `AGENT_ID_HUMAN_SIGNERS_FILE` / `agentid.humanSignersFile`: an
   `allowed_signers` file on the server for people who sign their own commits.

@@ -54,8 +54,15 @@ export async function startApi({ env = {} } = {}) {
     return result.body;
   }
 
+  // Accepts Agent ID's terms for an account, when the service asks for them.
+  async function acceptTerms(token) {
+    const version = (await call('GET', '/v1/config')).legal?.termsVersion;
+    if (version) await call('POST', '/v1/account/terms', { token, body: { version } });
+    return version || null;
+  }
+
   return {
-    local, base, port, call, requests,
+    local, base, port, call, requests, acceptTerms,
     async ownerKey(user) { return (await call('POST', '/v1/keys', { token: user.session, body: { name: 'test' } })).secret; },
     async close() {
       server.closeAllConnections?.();

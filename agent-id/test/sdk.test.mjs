@@ -30,6 +30,7 @@ describe('@timewarp/agent-id-verify', () => {
     owner = await api.local.user({ email: 'owner@acme.test', plan: 'pro' });
     reviewer = await api.local.user({ email: 'reviewer@timewarp.test' });
     ownerKey = await api.ownerKey(owner);
+    await api.acceptTerms(ownerKey);
     org = await api.local.organization('Acme', [[owner, 'owner']]);
     const create = async body => api.call('POST', '/v1/agents', { token: ownerKey, body });
     solo = await create({ name: 'Solo' });
@@ -97,7 +98,7 @@ describe('@timewarp/agent-id-verify', () => {
     await rejects(verifyPassport(before, options({ require: 'kyc' })), 'owner_not_verified', 403);
 
     api.local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
-    await api.call('POST', '/v1/account/verification', { token: ownerKey, body: { kind: 'person', legalName: 'Ada Lovelace', country: 'GB' } });
+    await api.call('POST', '/v1/account/verification', { token: ownerKey, body: { kind: 'person', legalName: 'Ada Lovelace', country: 'GB', consent: true } });
     const reviews = await api.call('GET', '/v1/reviews', { token: reviewer.session });
     assert.ok(reviews.people.some(p => p.userId === owner.id));
     await api.call('POST', `/v1/reviews/person/${owner.id}`, { token: reviewer.session, body: { decision: 'approve' } });
@@ -123,33 +124,51 @@ describe('@timewarp/agent-id-verify', () => {
     await rejects(verifyPassport(token, options({ agents: [solo.agent.id] })), 'agent_not_allowed', 403);
   });
 
-  it('checks a passport online, which catches a revoked agent at once', async () => {
-    const company = await api.call('POST', '/v1/relying-parties', { token: ownerKey, body: { name: 'Acme API', audience: AUDIENCE, organizationId: org, policy: { require: 'verified' } } });
-    assert.match(company.secret, /^twrp_/);
-    const secret = company.secret;
+  it('checks a passport online without an account, which catches a revoked agent at once', async () => {
     const doomed = await api.call('POST', '/v1/agents', { token: ownerKey, body: { name: 'Doomed', organizationId: org } });
     const token = await passport(doomed);
-    const online = await checkPassport(token, { secret, api: api.base });
+    const online = await checkPassport(token, { audience: AUDIENCE, api: api.base });
     assert.equal(online.valid, true);
     assert.equal(online.allowed, true);
     assert.equal(online.agent.id, doomed.agent.id);
+    assert.equal(online.owner.level, 'kyc');
+    const verify = api.requests.filter(r => r.path === '/v1/verify').pop();
+    assert.equal(verify.headers.authorization, undefined, 'no secret is sent');
+    assert.deepEqual(verify.body, { passport: token, audience: AUDIENCE });
 
     await api.call('DELETE', `/v1/agents/${doomed.agent.id}`, { token: ownerKey });
-    const revoked = await checkPassport(token, { secret, api: api.base });
+    const revoked = await checkPassport(token, { audience: AUDIENCE, api: api.base });
     assert.equal(revoked.valid, false);
     assert.equal(revoked.allowed, false);
     assert.deepEqual(revoked.reasons, ['agent_revoked']);
     // Offline, the passport stays valid until it expires (minutes).
     await verifyPassport(token, options());
 
-    const garbage = await checkPassport('nope', { secret, api: api.base });
+    const garbage = await checkPassport('nope', { audience: AUDIENCE, api: api.base });
     assert.equal(garbage.valid, false);
     assert.equal(garbage.reason, 'malformed');
-    await rejects(checkPassport(token, { secret: 'twrp_wrong', api: api.base }), 'invalid_key', 500);
-    await assert.rejects(checkPassport(token, { api: api.base }), TypeError);
+    const elsewhere = await checkPassport(await passport(member), { audience: 'https://elsewhere.test', api: api.base });
+    assert.equal(elsewhere.valid, false);
+    assert.equal(elsewhere.reason, 'wrong_audience');
+    await assert.rejects(checkPassport(token, { api: api.base }), TypeError, 'the audience is needed');
+  });
 
-    const signers = await fetchAllowedSigners({ secret, api: api.base });
-    assert.match(signers, /^# Agent ID allowed signers for Acme API/);
+  it('lists an organization\'s allowed signers without an account', async () => {
+    const text = await fetchAllowedSigners({ organization: org, api: api.base });
+    assert.match(text, /^# /);
+    const listed = await fetchAllowedSigners({ organization: org, api: api.base, format: 'json' });
+    assert.ok(Array.isArray(listed.signers));
+    const request = api.requests.filter(r => r.path === `/v1/orgs/${org}/allowed-signers`).pop();
+    assert.equal(request.headers.authorization, undefined);
+    await assert.rejects(fetchAllowedSigners({ api: api.base }), TypeError);
+  });
+
+  it('still accepts a company secret from older setups', async () => {
+    const company = await api.call('POST', '/v1/relying-parties', { token: ownerKey, body: { name: 'Acme API', audience: 'https://legacy.acme.test', organizationId: org } });
+    const online = await checkPassport(await passport(member, 'https://legacy.acme.test'), { secret: company.secret, api: api.base });
+    assert.equal(online.valid, true);
+    await rejects(checkPassport('x.y.z', { secret: 'twrp_wrong', api: api.base }), 'invalid_key', 500);
+    assert.match(await fetchAllowedSigners({ secret: company.secret, api: api.base }), /^# Agent ID allowed signers for Acme API/);
   });
 
   it('reads the passport from Agent-Passport or Authorization: AgentPassport', () => {
@@ -162,8 +181,7 @@ describe('@timewarp/agent-id-verify', () => {
   });
 
   it('agentIdMiddleware sets req.agent or answers 401/403 JSON', async () => {
-    const company = await api.call('POST', '/v1/relying-parties', { token: ownerKey, body: { name: 'Acme Express', audience: 'https://express.acme.test', organizationId: org } });
-    const guard = agentIdMiddleware({ audience: 'https://express.acme.test', api: api.base, organizations: [org], online: { secret: company.secret } });
+    const guard = agentIdMiddleware({ audience: 'https://express.acme.test', api: api.base, organizations: [org], online: true });
     const server = http.createServer((req, res) => guard(req, res, () => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ hello: req.agent.agent.name, online: req.agent.online.allowed })); }));
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/`;
@@ -211,5 +229,19 @@ describe('@timewarp/agent-id-verify', () => {
     const notKyb = await strict(new Request('https://api.acme.test/', { headers: { 'Agent-Passport': await passport(solo) } }));
     assert.equal(notKyb.status, 403);
     assert.equal((await notKyb.json()).error.code, 'owner_not_verified');
+
+    // online: true asks Agent ID too: an agent paused a moment ago is turned away.
+    const live = withAgentId((request, agent) => Response.json({ online: agent.online.valid }), { audience: AUDIENCE, api: api.base, online: true });
+    const token = await passport(solo);
+    const before = await live(new Request('https://api.acme.test/', { headers: { 'Agent-Passport': token } }));
+    assert.deepEqual(await before.json(), { online: true });
+    await api.call('PATCH', `/v1/agents/${solo.agent.id}`, { token: ownerKey, body: { status: 'suspended' } });
+    try {
+      const paused = await live(new Request('https://api.acme.test/', { headers: { 'Agent-Passport': token } }));
+      assert.equal(paused.status, 401);
+      assert.equal((await paused.json()).error.code, 'agent_suspended');
+    } finally {
+      await api.call('PATCH', `/v1/agents/${solo.agent.id}`, { token: ownerKey, body: { status: 'active' } });
+    }
   });
 });

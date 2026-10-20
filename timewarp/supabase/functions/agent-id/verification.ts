@@ -14,10 +14,10 @@ const COUNTRY = /^[A-Z]{2}$/;
 const country = (value: unknown, field = 'country') => { const code = str(value, 2, field, { required: true }).toUpperCase(); if (!COUNTRY.test(code)) throw fail(400, 'invalid', `${field} must be a two-letter country code.`); return code; };
 
 export function personView(row: any) {
-  return row ? { status: row.status, provider: row.provider, legalName: row.legal_name, country: row.country, verifiedAt: row.verified_at, lastError: row.last_error } : { status: 'unverified' };
+  return row ? { status: row.status, provider: row.provider, legalName: row.legal_name, country: row.country, verifiedAt: row.verified_at, lastError: row.last_error, consentAt: row.consent_at } : { status: 'unverified' };
 }
 export function businessView(row: any) {
-  return row ? { status: row.status, legalName: row.legal_name, registrationNumber: row.registration_number, country: row.country, website: row.website, verifiedAt: row.verified_at, note: row.review_note } : { status: 'unverified' };
+  return row ? { status: row.status, legalName: row.legal_name, registrationNumber: row.registration_number, country: row.country, website: row.website, representativeRole: row.representative_role, verifiedAt: row.verified_at, note: row.review_note } : { status: 'unverified' };
 }
 
 async function savePerson(ctx: Ctx, userId: string, fields: Record<string, unknown>) {
@@ -29,6 +29,10 @@ export async function startVerification(ctx: Ctx, owner: Owner, input: any) {
   if (input.kind !== 'person') throw fail(400, 'invalid', 'kind is person or business.');
   const current = await personOf(ctx, owner.userId);
   if (current?.status === 'verified') return { person: personView(current) };
+  // The check involves biometric data: explicit consent comes first, and is recorded.
+  if (input.consent !== true) throw fail(400, 'consent_required', 'Agree to the identity check (your ID document and a selfie) first.');
+  await savePerson(ctx, owner.userId, { consent_version: ctx.config.termsVersion, consent_at: new Date(ctx.now()).toISOString() });
+  await audit(ctx, owner.userId, null, 'owner', 'verification.person.consent', { version: ctx.config.termsVersion });
   const provider = ctx.config.kycProvider;
   if (provider === 'stripe_identity') {
     const session = await stripe(ctx, 'POST', '/v1/identity/verification_sessions', {
@@ -56,6 +60,10 @@ async function submitBusiness(ctx: Ctx, owner: Owner, input: any) {
   if (role !== 'owner' && role !== 'admin') throw fail(403, 'forbidden', 'Only an owner or admin of the organization can verify it.');
   const existing = checked(await ctx.admin.from('agent_id_businesses').select('status').eq('workspace_id', workspaceId).maybeSingle()) as any;
   if (existing?.status === 'verified') throw fail(409, 'already_verified', 'This organization is already verified.');
+  // A real, verified person stands behind every business.
+  if ((await personOf(ctx, owner.userId))?.status !== 'verified') throw fail(403, 'person_verification_required', 'Verify your own identity first; a verified person submits the business.');
+  const representativeRole = str(input.representativeRole, 100, 'representativeRole', { required: true });
+  if (input.attestation !== true) throw fail(400, 'attestation_required', 'Confirm that you may act for this business and that the details are correct.');
   const verified = ctx.config.kybProvider === 'test';
   const website = input.website ? str(input.website, 300, 'website') : null;
   if (website && !/^https?:\/\/[^\s]+\.[^\s]+$/i.test(website)) throw fail(400, 'invalid', 'website must be a web address.');
@@ -63,7 +71,7 @@ async function submitBusiness(ctx: Ctx, owner: Owner, input: any) {
     workspace_id: workspaceId, status: verified ? 'verified' : 'pending', provider: ctx.config.kybProvider,
     legal_name: str(input.legalName, 200, 'legalName', { required: true }),
     registration_number: str(input.registrationNumber, 100, 'registrationNumber', { required: true }),
-    country: country(input.country), website, submitted_by: owner.userId, review_note: null,
+    country: country(input.country), website, submitted_by: owner.userId, representative_role: representativeRole, attested_at: new Date(ctx.now()).toISOString(), review_note: null,
     verified_at: verified ? new Date(ctx.now()).toISOString() : null, updated_at: new Date(ctx.now()).toISOString(),
   }, { onConflict: 'workspace_id' }).select('*').single());
   await audit(ctx, owner.userId, null, 'owner', 'verification.business.submit', { organization: workspaceId });

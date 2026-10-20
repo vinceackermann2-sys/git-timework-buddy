@@ -20,6 +20,8 @@ async function demo(local, owner) {
     if (response.status >= 300) throw new Error(`${method} ${url}: ${JSON.stringify(response.body)}`);
     return response.body;
   };
+  const config = (await local.call("GET", "/v1/config", {})).body;
+  await call("POST", "/v1/account/terms", owner.session, { version: config.legal.termsVersion });
   const make = async (name, app, detail, kinds) => {
     const created = await call("POST", "/v1/agents", owner.session, { name, origin: { app, detail } });
     for (const kind of kinds) await call("POST", `/v1/agents/${created.agent.id}/resources`, owner.session, { kind, ...(kind === "wallet" ? { settings: { approvalAbove: 2500, perTransfer: 20000, daily: 50000 } } : {}) });

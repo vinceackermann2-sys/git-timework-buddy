@@ -13,6 +13,12 @@ const { startLocal } = require("../scripts/agent-id-local.cjs");
 async function setup(t, options) {
   const local = await startLocal(options);
   t.after(() => local.close());
+  const makeUser = local.user.bind(local);
+  local.user = async (options = {}) => {
+    const user = await makeUser(options);
+    if (options.terms !== false) { const config = await (await local.handle(new Request("http://127.0.0.1:54329/agent-id/v1/config"))).json(); await local.call("POST", "/v1/account/terms", { token: user.session, body: { version: config.legal.termsVersion } }); }
+    return user;
+  };
   const ok = async (method, url, init) => {
     const response = await local.call(method, url, init);
     assert.ok(response.status < 300, `${method} ${url} → ${response.status} ${JSON.stringify(response.body)}`);
@@ -278,7 +284,7 @@ test("KYC and KYB: manual reviews by reviewers, business checks by org admins", 
   const owner = await local.user(), reviewer = await local.user(), lead = await local.user();
   const org = await local.organization("Acme", [[owner, "owner"], [lead, "lead"]]);
   local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
-  const submitted = await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", legalName: "Ada Lovelace", country: "se" } });
+  const submitted = await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", consent: true, legalName: "Ada Lovelace", country: "se" } });
   assert.equal(submitted.person.status, "pending");
   assert.equal(submitted.person.country, "SE");
   assert.equal((await local.call("GET", "/v1/reviews", { token: owner.session })).status, 403);
@@ -286,8 +292,8 @@ test("KYC and KYB: manual reviews by reviewers, business checks by org admins", 
   assert.equal(queue.people.length, 1);
   await ok("POST", `/v1/reviews/person/${owner.id}`, { token: reviewer.session, body: { decision: "approve" } });
   assert.equal((await ok("GET", "/v1/account", { token: owner.session })).person.status, "verified");
-  assert.equal((await local.call("POST", "/v1/account/verification", { token: lead.session, body: { kind: "business", organizationId: org, legalName: "Acme AB", registrationNumber: "556000-0000", country: "SE" } })).status, 403, "Only owners and admins verify the organization.");
-  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "business", organizationId: org, legalName: "Acme AB", registrationNumber: "556000-0000", country: "SE", website: "https://acme.example" } });
+  assert.equal((await local.call("POST", "/v1/account/verification", { token: lead.session, body: { kind: "business", representativeRole: "CEO", attestation: true, organizationId: org, legalName: "Acme AB", registrationNumber: "556000-0000", country: "SE" } })).status, 403, "Only owners and admins verify the organization.");
+  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "business", representativeRole: "CEO", attestation: true, organizationId: org, legalName: "Acme AB", registrationNumber: "556000-0000", country: "SE", website: "https://acme.example" } });
   await ok("POST", `/v1/reviews/business/${org}`, { token: reviewer.session, body: { decision: "approve" } });
   const account = await ok("GET", "/v1/account", { token: owner.session });
   assert.equal(account.organizations[0].business.status, "verified");
@@ -325,7 +331,9 @@ test("passports: signed, audience-bound, checked online against the agent's curr
   assert.equal(checked.valid, true);
   assert.equal(checked.allowed, false);
   assert.deepEqual(checked.reasons, ["owner_not_verified"]);
-  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "business", organizationId: org, legalName: "Acme AB", registrationNumber: "1", country: "SE" } });
+  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", consent: true, legalName: "Olivia Owner", country: "SE" } });
+  await ok("POST", `/v1/reviews/person/${owner.id}`, { token: reviewer.session, body: { decision: "approve" } });
+  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "business", representativeRole: "CEO", attestation: true, organizationId: org, legalName: "Acme AB", registrationNumber: "1", country: "SE" } });
   await ok("POST", `/v1/reviews/business/${org}`, { token: reviewer.session, body: { decision: "approve" } });
   checked = await ok("POST", "/v1/verify", { token: rp.secret, body: { passport: issued.passport } });
   assert.equal(checked.allowed, true);
@@ -388,7 +396,9 @@ test("Git: an organization's verified agents are its allowed signers, and only w
   const rp = await ok("POST", "/v1/relying-parties", { token: owner.session, body: { name: "Acme repo", audience: "github.com/acme/app", organizationId: org, policy: { require: "verified" } } });
   let file = (await local.call("GET", "/v1/allowed-signers", { token: rp.secret })).body;
   assert.equal(file.split("\n").filter(line => line && !line.startsWith("#")).length, 0, "Unverified owners' agents aren't allowed.");
-  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "business", organizationId: org, legalName: "Acme AB", registrationNumber: "1", country: "SE" } });
+  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", consent: true, legalName: "Olivia Owner", country: "SE" } });
+  await ok("POST", `/v1/reviews/person/${owner.id}`, { token: reviewer.session, body: { decision: "approve" } });
+  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "business", representativeRole: "CEO", attestation: true, organizationId: org, legalName: "Acme AB", registrationNumber: "1", country: "SE" } });
   await ok("POST", `/v1/reviews/business/${org}`, { token: reviewer.session, body: { decision: "approve" } });
   file = (await local.call("GET", "/v1/allowed-signers", { token: rp.secret })).body;
   const lines = file.split("\n").filter(line => line && !line.startsWith("#"));
@@ -411,7 +421,9 @@ test("someone who leaves the organization takes no company standing along", asyn
   const owner = await local.user(), member = await local.user(), reviewer = await local.user();
   const org = await local.organization("Acme", [[owner, "owner"], [member, "lead"]]);
   local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
-  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "business", organizationId: org, legalName: "Acme AB", registrationNumber: "1", country: "SE" } });
+  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", consent: true, legalName: "Olivia Owner", country: "SE" } });
+  await ok("POST", `/v1/reviews/person/${owner.id}`, { token: reviewer.session, body: { decision: "approve" } });
+  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "business", representativeRole: "CEO", attestation: true, organizationId: org, legalName: "Acme AB", registrationNumber: "1", country: "SE" } });
   await ok("POST", `/v1/reviews/business/${org}`, { token: reviewer.session, body: { decision: "approve" } });
   const bot = await agent(member, "Contractor bot", { organizationId: org });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-id-ssh-"));

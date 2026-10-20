@@ -23,6 +23,12 @@ async function setup(t, env = {}) {
   const net = network();
   const local = await startLocal({ fetch: net.fetch, env });
   t.after(() => local.close());
+  const makeUser = local.user.bind(local);
+  local.user = async (options = {}) => {
+    const user = await makeUser(options);
+    if (options.terms !== false) { const config = await (await local.handle(new Request("http://127.0.0.1:54329/agent-id/v1/config"))).json(); await local.call("POST", "/v1/account/terms", { token: user.session, body: { version: config.legal.termsVersion } }); }
+    return user;
+  };
   const ok = async (method, url, init) => { const r = await local.call(method, url, init); assert.ok(r.status < 300, `${method} ${url} → ${r.status} ${JSON.stringify(r.body)}`); return r.body; };
   const agent = async (owner, name, extra = {}) => { const c = await ok("POST", "/v1/agents", { token: owner.session, body: { name, ...extra } }); return { ...c.agent, key: c.secret }; };
   const upload = async (key, name, text, type = "text/plain") => (await (await local.handle(new Request("http://127.0.0.1:54329/agent-id/v1/me/files", { method: "POST", body: text, headers: { authorization: `Bearer ${key}`, "content-type": type, "x-filename": encodeURIComponent(name) } }))).json());
@@ -180,4 +186,92 @@ test("operators register Stripe and Resend webhooks in one step", async t => {
   assert.equal(signed.status, 200);
   status = await ok("GET", "/v1/admin/status", { token: operator.session });
   assert.deepEqual([status.webhooks.stripe.registered, status.webhooks.resend.registered], [true, true]);
+});
+
+test("legal: the Agent ID Terms are accepted before agents, consent comes before the identity check, and a verified person stands behind a business", async t => {
+  const { local, ok } = await setup(t);
+  const config = await ok("GET", "/v1/config", {});
+  assert.equal(config.legal.termsUrl, "https://timewarpdev.com/legal/agent-id-terms");
+  const owner = await local.user({ terms: false }), reviewer = await local.user();
+  local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
+  assert.equal((await ok("GET", "/v1/account", { token: owner.session })).terms.accepted, false);
+  assert.equal((await local.call("POST", "/v1/agents", { token: owner.session, body: { name: "Bot" } })).body.error.code, "terms_required");
+  assert.equal((await local.call("POST", "/v1/account/terms", { token: owner.session, body: { version: "2020-01-01" } })).body.error.code, "terms_changed", "Only the current terms can be accepted.");
+  const accepted = await ok("POST", "/v1/account/terms", { token: owner.session, body: { version: config.legal.termsVersion } });
+  assert.equal(accepted.terms.accepted, true);
+  await ok("POST", "/v1/agents", { token: owner.session, body: { name: "Bot" } });
+  // Consent first, recorded with its time.
+  assert.equal((await local.call("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", legalName: "Ada Lovelace", country: "SE" } })).body.error.code, "consent_required");
+  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", consent: true, legalName: "Ada Lovelace", country: "SE" } });
+  assert.ok((await ok("GET", "/v1/account", { token: owner.session })).person.consentAt);
+  const org = await local.organization("Acme", [[owner, "owner"]]);
+  const business = { kind: "business", organizationId: org, legalName: "Acme AB", registrationNumber: "556000-0000", country: "SE", representativeRole: "CEO", attestation: true };
+  assert.equal((await local.call("POST", "/v1/account/verification", { token: owner.session, body: business })).body.error.code, "person_verification_required", "The person is still being reviewed.");
+  await ok("POST", `/v1/reviews/person/${owner.id}`, { token: reviewer.session, body: { decision: "approve" } });
+  assert.equal((await local.call("POST", "/v1/account/verification", { token: owner.session, body: { ...business, attestation: false } })).body.error.code, "attestation_required");
+  const submitted = await ok("POST", "/v1/account/verification", { token: owner.session, body: business });
+  assert.equal(submitted.business.representativeRole, "CEO");
+  const { rows: [row] } = await local.db.query("select attested_at, submitted_by from agent_id_businesses where workspace_id=$1", [org]);
+  assert.ok(row.attested_at);
+  assert.equal(row.submitted_by, owner.id);
+  const { rows } = await local.db.query("select action from agent_id_audit where owner_user_id=$1 order by id", [owner.id]);
+  assert.deepEqual(rows.map(r => r.action).filter(a => /terms|verification/.test(a)), ["terms.accept", "verification.person.consent", "verification.person.submit", "verification.person.verified", "verification.business.submit"]);
+});
+
+test("developers need no account: anyone can check a passport shown to them, and fetch an organization's signers", async t => {
+  const { local, ok, agent } = await setup(t);
+  const owner = await local.user(), reviewer = await local.user();
+  local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
+  const org = await local.organization("Acme", [[owner, "owner"]]);
+  const bot = await agent(owner, "Caller", { organizationId: org });
+  const { passport } = await ok("POST", "/v1/me/passport", { token: bot.key, body: { audience: "https://api.shop.example" } });
+  let checked = await ok("POST", "/v1/verify", { body: { passport, audience: "https://api.shop.example" } });
+  assert.deepEqual([checked.valid, checked.allowed, checked.reasons], [true, false, ["owner_not_verified"]]);
+  assert.equal((await ok("POST", "/v1/verify", { body: { passport, audience: "https://api.shop.example", require: "any" } })).allowed, true);
+  assert.equal((await ok("POST", "/v1/verify", { body: { passport, audience: "https://other.example" } })).reason, "wrong_audience", "A passport only works where it was meant to go.");
+  assert.equal((await local.call("POST", "/v1/verify", { body: { passport } })).status, 400, "The audience is required.");
+  await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", consent: true, legalName: "Olivia Owner", country: "SE" } });
+  await ok("POST", `/v1/reviews/person/${owner.id}`, { token: reviewer.session, body: { decision: "approve" } });
+  checked = await ok("POST", "/v1/verify", { body: { passport, audience: "https://api.shop.example" } });
+  assert.deepEqual([checked.allowed, checked.owner.level], [true, "kyc"]);
+  assert.equal((await ok("POST", "/v1/verify", { body: { passport, audience: "https://api.shop.example", require: "kyb" } })).allowed, false);
+  // Signers, public: an organization's verified agents' keys and nothing else.
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), { execFileSync } = require("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-id-ssh-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  try { execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-q", "-f", path.join(dir, "k")], { stdio: "ignore" }); } catch { t.skip("ssh-keygen is not available"); return; }
+  await ok("POST", "/v1/me/signing-keys", { token: bot.key, body: { publicKey: fs.readFileSync(path.join(dir, "k.pub"), "utf8") } });
+  const signers = await local.call("GET", `/v1/orgs/${org}/allowed-signers`, {});
+  assert.equal(signers.status, 200);
+  const lines = signers.body.split("\n").filter(line => line && !line.startsWith("#"));
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].startsWith(`${bot.id}@agents.timewarpdev.com namespaces="git" ssh-ed25519 `));
+  assert.ok(!signers.body.includes("Caller"), "Agent names stay private.");
+  assert.equal((await local.call("GET", `/v1/orgs/${org}/allowed-signers?require=kyb`, {})).body.split("\n").filter(l => l && !l.startsWith("#")).length, 0);
+  assert.equal((await local.call("GET", "/v1/orgs/00000000-0000-4000-8000-00000000abcd/allowed-signers", {})).status, 404);
+});
+
+test("production: no test resources, and live transfers to sanctioned addresses are refused", async t => {
+  const { local, net, ok, agent } = await setup(t, { AGENT_ID_ALLOW_TEST: "false", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "app", PRIVY_APP_SECRET: "secret", CHAINALYSIS_API_KEY: "ch_key", AGENT_ID_REQUIRE_VERIFICATION: "card" });
+  const owner = await local.user();
+  const bot = await agent(owner, "Payer");
+  assert.equal((await ok("GET", "/v1/config", {})).testMode, false);
+  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/resources`, { token: owner.session, body: { kind: "mail", mode: "test" } })).body.error.code, "test_mode_off");
+  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/resources`, { token: owner.session, body: { kind: "mail" } })).body.error.code, "live_unavailable", "Without a mode, production gives the real thing (here not switched on).");
+  net.on("POST", /api\.privy\.io\/v1\/wallets$/, () => ({ id: "w1", address: "0x" + "ab".repeat(20) }));
+  await ok("POST", `/v1/agents/${bot.id}/resources`, { token: owner.session, body: { kind: "wallet", settings: { approvalAbove: null } } });
+  const bad = "0x" + "66".repeat(20), good = "0x" + "77".repeat(20);
+  net.on("GET", /public\.chainalysis\.com\/api\/v1\/address\//, url => ({ identifications: url.pathname.endsWith(bad) ? [{ category: "sanctions", name: "SANCTIONS: OFAC SDN" }] : [] }));
+  assert.equal((await local.call("POST", "/v1/me/wallet/transfers", { token: bot.key, body: { to: bad, value: "1" } })).body.error.code, "sanctioned_address");
+  assert.equal(net.find("POST", /\/transfer$/).length, 0, "Nothing is sent to Privy.");
+  assert.equal(net.find("GET", /chainalysis/)[0].headers.get("x-api-key"), "ch_key");
+  net.on("GET", /balance\?/, () => ({ balances: [{ asset: "usdc", raw_value: "5000000", raw_value_decimals: 6 }] }));
+  net.on("POST", /\/transfer$/, () => ({ id: "a1", status: "succeeded" }));
+  net.on("GET", /actions\/a1/, () => ({ status: "succeeded", steps: [{ transaction_hash: "0x" + "1".repeat(64) }] }));
+  assert.equal((await ok("POST", "/v1/me/wallet/transfers", { token: bot.key, body: { to: good, value: "1" } })).status, "completed");
+  // When screening is down, nothing is sent.
+  net.on("GET", /public\.chainalysis\.com/, () => new Response("down", { status: 503 }));
+  assert.equal((await local.call("POST", "/v1/me/wallet/transfers", { token: bot.key, body: { to: good, value: "1" } })).body.error.code, "screening_unavailable");
+  const { rows } = await local.db.query("select action from agent_id_audit where action='wallet.blocked_sanctioned'");
+  assert.equal(rows.length, 1);
 });

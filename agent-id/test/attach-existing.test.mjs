@@ -13,6 +13,7 @@ describe('attach an agent made elsewhere', () => {
     api = await startApi();
     owner = await api.local.user({ email: 'web@example.test' });
     ownerKey = await api.ownerKey(owner);
+    await api.acceptTerms(ownerKey);
     home = tempDir('attach-existing');
     project = path.join(home, 'shop-bot');
     fs.mkdirSync(project, { recursive: true });

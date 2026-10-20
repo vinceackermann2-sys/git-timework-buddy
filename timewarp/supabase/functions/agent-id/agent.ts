@@ -11,7 +11,7 @@ import { agentView, audit, eventView, listEvents, organizationName, principalOf,
 import { pairwiseOwner, signJwt } from './passport.ts';
 import { sendResend } from './providers/mail.ts';
 import { placeCall, sendSms } from './providers/phone.ts';
-import { actionStatus, ASSETS, type Asset, EVM_ADDRESS, explorerUrl, liveBalance, liveTransactions, sendStablecoin } from './providers/wallet.ts';
+import { actionStatus, ASSETS, type Asset, EVM_ADDRESS, explorerUrl, liveBalance, liveTransactions, sanctioned, sendStablecoin } from './providers/wallet.ts';
 import { revealCard } from './providers/card.ts';
 import { machineCost, machineState, runCommand, startMachine, stopMachine, type Size } from './providers/vm.ts';
 import { parseSshKey } from './ssh.ts';
@@ -361,6 +361,10 @@ export async function transfer(ctx: Ctx, who: AgentCaller, input: { to: string; 
   const from = await resourceFor(ctx, who.agent.id, 'wallet');
   const target = await recipient(ctx, who, from, input.to);
   if (target.resource?.id === from.id) throw fail(400, 'invalid', 'A wallet can\'t pay itself.');
+  if (from.mode === 'live' && await sanctioned(ctx, target.address)) {
+    await audit(ctx, who.userId, who.agent.id, actor(who), 'wallet.blocked_sanctioned', { to: target.address });
+    throw fail(403, 'sanctioned_address', 'This address is on a sanctions list, so money can\'t be sent to it.');
+  }
   const result = checked(await ctx.admin.rpc('agent_id_wallet_send', { p_agent: who.agent.id, p_amount: input.amount, p_counterparty: target.label, p_to_resource: target.resource?.id || null, p_memo: input.memo || null, p_approval: approvalId })) as any;
   if (result?.status === 'needs_approval') {
     // What the agent asked for, so the approved transfer finds the same recipient.

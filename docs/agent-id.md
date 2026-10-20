@@ -181,9 +181,10 @@ minutes:
    command generates the key locally, registers the public half
    (`POST /v1/me/signing-keys`) and configures Git to sign every commit with
    `user.email` set to the agent's principal.
-2. The company registers itself for its organization on the dashboard
-   (Developers) and stores the secret in its CI.
-3. `GET /v1/allowed-signers` returns Git's `allowed_signers` file. It lists
+2. The company puts the GitHub Action in its repository with its
+   organization id. No account, registration or secret is needed.
+3. `GET /v1/orgs/:orgId/allowed-signers` (public) returns Git's
+   `allowed_signers` file. It lists
    every active key of the organization's active agents whose owner meets the
    policy. The GitHub Action (or the pre-receive hook) runs `git verify-commit`
    on every new commit against it. Branch protection makes the check required.
@@ -231,11 +232,17 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | `GET/POST /v1/me/signing-keys` · `DELETE …/:id` | Git signing keys |
 | `POST /mcp` | MCP (Streamable HTTP). Lists only the tools for what the agent has |
 
-| Company (`twrp_…`) | |
+| Public (no account) | |
 | --- | --- |
-| `POST /v1/verify {passport}` | `valid`, `allowed`, `reasons`, agent, owner verification |
-| `GET /v1/allowed-signers[?format=json]` | Git `allowed_signers` for the company's organization |
-| `GET /.well-known/jwks.json` · `GET /v1/config` | public keys and what this deployment offers (no credential) |
+| `POST /v1/verify {passport, audience, require?, organizations?}` | `valid`, `allowed`, `reasons`, agent, owner verification: any service can check a passport an agent showed it, including whether the agent was revoked a second ago |
+| `GET /v1/orgs/:orgId/allowed-signers[?format=json&require=kyb]` | Git `allowed_signers` for an organization's verified agents (agent ids and public keys only) |
+| `GET /.well-known/jwks.json` · `GET /v1/config` | public keys and what this deployment offers |
+
+Developers use the SDK (`@timewarp/agent-id-verify`): `verifyPassport` checks
+offline against the public keys, `checkPassport` asks the endpoint above, and
+`withAgentId` / `agentIdMiddleware` protect an API or an MCP server. There is
+nothing to register. The older company-secret endpoints still work, but they
+aren't needed any more.
 
 ## Mail, phone and where agents come from
 
@@ -278,6 +285,42 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | `STRIPE_SECRET_KEY` (exists), `AGENT_ID_STRIPE_WEBHOOK_SECRET` | Live cards and Stripe Identity |
 | `AZURE_*` (exist) | Live machines |
 | `AGENT_ID_SITE_URL`, `AGENT_ID_ISSUER`, `AGENT_ID_PUBLIC_URL`, `AGENT_ID_PASSPORT_SECONDS` | Overrides (defaults: `https://timewarpdev.com`, `<site>/agent-id`, the function URL, 300) |
+
+## Legal and verification
+
+- **Agent ID Terms:** at `/legal/agent-id-terms`. Accounts accept the current
+  version (`POST /v1/account/terms`) before they create agents. The version
+  and the time of acceptance are recorded.
+- **Privacy Policy:** section 7 covers Agent ID. It lists the data, the legal
+  bases, Stripe Identity, Privy, Twilio and Azure as processors, and how long
+  records are kept (content: while it exists, plus 30 days; verification, the
+  agent–owner link and the audit log: 5 years).
+- **KYC:** explicit consent to the biometric check (GDPR Art. 9(2)(a)) is
+  required and recorded (`consent_at`, `consent_version`) before a Stripe
+  Identity session starts.
+- **KYB:** submitted by an organization owner or admin who is personally
+  verified, with their role and a signed confirmation (`attested_at`).
+  Reviewed by operators.
+- **Sanctions:** with `CHAINALYSIS_API_KEY` set, live transfers to sanctioned
+  addresses are refused, and a transfer fails closed when screening can't be
+  reached.
+- **Production:** `AGENT_ID_ALLOW_TEST=false`. No test resources; giving a
+  resource gives the real one.
+
+## Production state (20 October 2026)
+
+- Migration `20261020120000` is applied, and the `agent-id` function is
+  deployed on `mrqoeywofslgnquvzhuf`.
+- Secrets are set: signing key, webhook secret, `AGENT_ID_LIVE=mail,vm`,
+  `AGENT_ID_ALLOW_TEST=false`, `AGENT_ID_KYC=stripe_identity`, operators,
+  and `AGENT_ID_WALLET_CHAIN=base`.
+- To turn on wallets and phone numbers, run
+  `timewarp/reports/agent-id-connect-providers.ps1`. It asks for the Privy and
+  Twilio credentials (and an optional Chainalysis key) hidden.
+- Then, once:
+  - activate Identity in Stripe;
+  - turn on gas sponsorship for Base in Privy;
+  - in the dashboard, go to Review queue → Operator → **Connect webhooks**.
 
 ## Going live
 

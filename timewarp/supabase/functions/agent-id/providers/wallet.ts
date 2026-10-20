@@ -79,6 +79,16 @@ export async function actionStatus(ctx: Ctx, resource: ResourceRow, actionId: st
   return { status: status === 'created' ? 'pending' : status, hash: hash ? String(hash) : null, reason: action?.failure_reason ? String(action.failure_reason).slice(0, 300) : null };
 }
 
+// Whether an address is on a sanctions list (Chainalysis's sanctions API),
+// when screening is set up. If it can't be asked, the transfer waits.
+export async function sanctioned(ctx: Ctx, address: string) {
+  if (!ctx.config.sanctionsKey) return false;
+  const response = await ctx.fetch(`https://public.chainalysis.com/api/v1/address/${encodeURIComponent(address)}`, { headers: { 'X-API-Key': ctx.config.sanctionsKey, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) }).catch(() => null);
+  if (!response?.ok) throw fail(503, 'screening_unavailable', 'The transfer can\'t be screened right now. Try again shortly.');
+  const body = await response.json().catch(() => ({})) as any;
+  return Array.isArray(body?.identifications) && body.identifications.length > 0;
+}
+
 // Recent stablecoin transfers in and out, newest first.
 export async function liveTransactions(ctx: Ctx, resource: ResourceRow) {
   const result = await privy(ctx, 'GET', `/wallets/${encodeURIComponent(resource.provider_ref!)}/transactions?${assetQuery(chainOf(ctx, resource))}&limit=50`);

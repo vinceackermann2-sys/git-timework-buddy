@@ -7,6 +7,7 @@ import { CliError, UsageError } from '../errors.js';
 import { DASHBOARD, findProfile, PROJECT_FILE, selectAgent } from '../config.js';
 import { cents, fields, limits as limitText, money, table, when } from '../output.js';
 import { APPS, sendWithOrigin } from '../origin.js';
+import { withTerms } from '../terms.js';
 
 const KINDS = ['mail', 'phone', 'wallet', 'card', 'vm'];
 const KIND_NAMES = { mail: 'mail inbox', phone: 'phone number', wallet: 'wallet', card: 'virtual card', vm: 'virtual machine' };
@@ -21,12 +22,12 @@ const kindArg = (ctx, verb) => {
 
 export function describeResource(resource) {
   if (!resource) return '-';
-  const mode = resource.mode === 'live' ? 'live' : 'test';
+  const mode = resource.mode === 'live' ? '' : 'test ';
   const detail = resource.kind === 'wallet' ? `${resource.address}${resource.balance ? `, balance ${money(resource.balance)}` : ''}`
     : resource.kind === 'card' ? `${resource.label}${resource.details?.expMonth ? `, expires ${String(resource.details.expMonth).padStart(2, '0')}/${resource.details.expYear}` : ''}`
     : resource.kind === 'vm' ? `${resource.label}${resource.details?.machine ? `, ${resource.details.machine}` : ''}`
     : resource.address || resource.label;
-  return `${mode} ${KIND_NAMES[resource.kind] || resource.kind}: ${detail}${resource.status !== 'active' ? ` (${resource.status})` : ''}`;
+  return `${mode}${KIND_NAMES[resource.kind] || resource.kind}: ${detail}${resource.status !== 'active' ? ` (${resource.status})` : ''}`;
 }
 
 // --- Sign in ----------------------------------------------------------------------
@@ -47,6 +48,7 @@ export async function login(ctx) {
   ctx.print({ account }, () => [
     `Signed in as ${account.user?.email || account.user?.id}${account.plan ? ` (${account.plan} plan)` : ''}.`,
     `Identity: ${account.person?.status || 'unverified'}. Agents: ${account.agents?.count ?? 0} of ${account.agents?.max ?? '?'}.`,
+    ...(account.terms && account.terms.accepted === false ? ['Before your first agent, accept Agent ID\'s terms of service: `timewarp-id terms`.'] : []),
     account.agents?.count ? 'See them with `timewarp-id agents list`.' : 'Create your first agent: `timewarp-id agents create "Research agent" --origin claude-code`.',
   ].join('\n'));
 }
@@ -113,7 +115,7 @@ export async function agents(ctx) {
     const app = typeof ctx.flags.origin === 'string' ? ctx.flags.origin : APPS.includes(runtime) ? runtime : ctx.tool && APPS.includes(ctx.tool) ? ctx.tool : 'custom';
     if (!APPS.includes(app)) throw new UsageError(`--origin is one of ${APPS.join(', ')}.`);
     const origin = { app, detail: typeof ctx.flags['origin-detail'] === 'string' ? ctx.flags['origin-detail'] : null };
-    const created = await sendWithOrigin(body => ctx.owner.post('/v1/agents', body), { name, ...(runtime || app !== 'custom' ? { runtime: runtime || app } : {}), origin,...(ctx.flags.org ? { organizationId: ctx.flags.org } : {}), keyName: ctx.hostname() });
+    const created = await withTerms(ctx, () => sendWithOrigin(body => ctx.owner.post('/v1/agents', body), { name, ...(runtime || app !== 'custom' ? { runtime: runtime || app } : {}), origin,...(ctx.flags.org ? { organizationId: ctx.flags.org } : {}), keyName: ctx.hostname() }));
     if (created.secret) saveProfile(ctx, created.agent, created.secret);
     const { secret: _secret, ...shown } = created;
     return ctx.print({ ...shown, profile: created.agent.handle, default: ctx.config.default === created.agent.handle }, () => [
@@ -171,13 +173,13 @@ export async function agents(ctx) {
 // --- Resources ------------------------------------------------------------------------
 export async function give(ctx) {
   const kind = kindArg(ctx, 'give');
-  if (kind === 'card' && ctx.flags.live) throw new UsageError('Live cards are applied for: `timewarp-id card apply --agent <agent> --use-case "…" --monthly 200 --country US`. Leave out --live for a test card.');
+  if (kind === 'card' && !ctx.flags.test) throw new UsageError('Cards are applied for: `timewarp-id card apply --agent <agent> --use-case "…" --monthly 200 --country US`. (`give card --test` gives a test card while developing.)');
   const id = await ctx.agentIdFor();
   const options = {};
   if (ctx.flags.size !== undefined) { if (!['small', 'medium'].includes(ctx.flags.size)) throw new UsageError('--size is small or medium.'); options.size = ctx.flags.size; }
   if (ctx.flags.country !== undefined) options.country = String(ctx.flags.country).toUpperCase();
   if (ctx.flags['area-code'] !== undefined) options.areaCode = String(ctx.flags['area-code']);
-  const data = await ctx.owner.post(`/v1/agents/${id}/resources`, { kind, mode: ctx.flags.live ? 'live' : 'test', ...(Object.keys(options).length ? { options } : {}) });
+  const data = await ctx.owner.post(`/v1/agents/${id}/resources`, { kind, mode: ctx.flags.test ? 'test' : 'live', ...(Object.keys(options).length ? { options } : {}) });
   ctx.print(data, ({ resource }) => [
     `Gave it a ${describeResource(resource)}`,
     resource.kind === 'wallet' || resource.kind === 'card' ? `Limits: ${limitText(resource.settings)}. Change them with \`timewarp-id limits ${resource.kind}\`.` : '',

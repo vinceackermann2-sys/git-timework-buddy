@@ -12,8 +12,12 @@ Node 20 or later, no dependencies.
 
 ```sh
 npx @timewarp/agent-id login --owner-key two_…   # from the Agent ID dashboard → Keys
+npx @timewarp/agent-id terms                     # read and accept Agent ID's terms, once
 npx @timewarp/agent-id attach
 ```
+
+(If you haven't accepted the terms, `attach` and `agents create` offer them
+in a terminal, or tell you to run `timewarp-id terms`.)
 
 `attach` finds the agents on this computer and asks which ones to give an
 Agent ID; it creates each one (named after the agent) and writes the wiring
@@ -48,7 +52,7 @@ the MCP entry to paste into their settings. A tool's folder that holds only
 
 ```sh
 timewarp-id agents scan                                   # what attach can find here
-timewarp-id attach code-reviewer --give mail,wallet       # a subagent, with test mail and wallet
+timewarp-id attach code-reviewer --give mail,wallet       # a subagent, with its own mail and wallet
 timewarp-id attach claude codex --agent research-ab12     # an existing Agent ID for both
 timewarp-id attach "timewarp:Research Assistant"          # a Timewarp desktop agent
 timewarp-id attach --here --name "Support bot"            # a custom agent in this folder
@@ -74,8 +78,8 @@ timewarp-id detach code-reviewer                          # undo exactly what at
 - Timewarp desktop agents and OpenClaw get no MCP server of their own yet;
   they use the `timewarp-id` command in their workspace, which acts as them there.
 - Options: `--agent <handle>` (use an existing Agent ID; one made on the
-  dashboard gets a key here, once you're logged in), `--give mail,phone,wallet,card,vm`
-  (`--live` for real ones), `--name`, `--origin <app>`, `--yes` (no questions).
+  dashboard gets a key here, once you're logged in), `--give mail,phone,wallet,vm`,
+  `--name`, `--origin <app>`, `--yes` (no questions).
 
 ## Approvals
 
@@ -93,16 +97,19 @@ timewarp-id approve <id>       # or: timewarp-id deny <id>
 ```sh
 npm install -g @timewarp/agent-id    # or: npx -y @timewarp/agent-id <command>
 
-# 1. An owner key from the Agent ID dashboard (https://timewarpdev.com/agent-id → Keys)
+# 1. An owner key from the Agent ID dashboard (https://timewarpdev.com/agent-id → Keys),
+#    and Agent ID's terms of service
 timewarp-id login --owner-key two_…
+timewarp-id terms
 
 # 2. An agent. Its key is saved on this computer; the first one is the default.
 timewarp-id agents create "Research agent" --origin claude-code
 
-# 3. Things it can use (test ones work only inside Agent ID; add --live for real ones)
+# 3. Things it can use
 timewarp-id give mail
-timewarp-id give wallet && timewarp-id fund 100
+timewarp-id give wallet                    # fund it with USDC or USDT on Base (its address: wallet show)
 timewarp-id give phone --country US --area-code 415
+timewarp-id card apply --use-case "Paying for API credits" --monthly 200 --country US
 
 # 4. Plug it into your tools
 timewarp-id connect claude          # Claude Code
@@ -116,17 +123,17 @@ timewarp-id connect cursor          # Cursor
 | Owner (owner key) | |
 |---|---|
 | `login --owner-key two_…` / `logout [--all]` | Save or forget the owner key (`--owner-key -` reads it from stdin) |
+| `terms [--yes]` | Show Agent ID's terms of service and accept them (needed before the first agent, and when they change) |
 | `whoami` | Your account and the agent commands act as |
 | `agents list [--all]` | Your agents; `*` marks the default |
 | `agents create <name> [--origin <app>] [--origin-detail "…"] [--org <id>]` | Creates an agent and saves its key as a profile; `--origin` is the app it lives in (`claude-code`, `codex`, `cursor`, `gemini`, `grok`, `openclaw`, `strawberry`, `custom`, …) |
 | `agents scan` | The agents on this computer `attach` can wire up |
 | `agents show\|key\|pause\|resume\|revoke <agent>` | `key` saves a new key here (for an agent made elsewhere); `revoke` is final (`--yes` to skip the question) |
-| `give <mail\|phone\|wallet\|card\|vm> [--live] [--size small\|medium] [--country US --area-code 415]` | A test card with `give card`; live cards are applied for |
-| `card apply --use-case "…" --monthly 200 --country SE`, `card application` | Apply for a live card for an agent (monthly spend in dollars), and see the application |
+| `give <mail\|phone\|wallet\|vm> [--size small\|medium] [--country US --area-code 415]` | Its own mail inbox, phone number, wallet (USDC/USDT on Base) or Linux machine |
+| `card apply --use-case "…" --monthly 200 --country SE`, `card application` | Apply for a virtual card for an agent (monthly spend in dollars), and see the application |
 | `take <kind>` | Releases it |
 | `limits wallet [--per-transfer 50] [--daily 100] [--approval-above 25]` | Dollars; `none` removes a limit; no options shows them |
 | `limits card [--per-transaction 50] [--daily 100] [--monthly 500] [--blocked-categories a,b] [--allowed-categories a,b]` | |
-| `fund <dollars>` | Test money for a test wallet |
 | `approvals` / `approve <id>` / `deny <id>` | Transfers above the approval amount wait for you |
 
 Owner commands take `--agent <agent>` (handle, `agt_…` id, name, or a handle
@@ -140,7 +147,7 @@ prefix only one agent has); without it they use the current agent.
 | `call list`, `call place <number> --say "…"` | |
 | `contacts list [name]`, `contacts add <name> [--email --phone --wallet --note]`, `contacts update <id> …`, `contacts rm <id>` | |
 | `wallet show`, `wallet history`, `wallet send <to> <dollars> [--asset usdc\|usdt] [--memo …]` | Balances in USD (`$12.34 USD · USDC/USDT on Base`). `<to>`: another agent (handle, id, or a profile name here), a wallet address or a contact. Above the approval amount it prints the approval id and waits for you. |
-| `card show`, `card reveal`, `card transactions`, `card test-charge <amount> [--merchant --category]` | `reveal` is logged; never paste card details into a chat |
+| `card show`, `card reveal`, `card transactions` | `reveal` is logged; never paste card details into a chat |
 | `vm status\|start\|stop\|history`, `vm files [path]`, `vm exec [--cwd] [--timeout 120] -- <command…>` | `exec` prints the output and exits with the command's exit code |
 | `passport --audience <aud>` | Prints only the token: `curl -H "Agent-Passport: $(timewarp-id passport --audience https://api.example.com)" …` |
 
@@ -207,3 +214,12 @@ commits while the agent is active in the company's organization.
 - `~/.timewarp-id/keys/`: Git signing keys.
 - `AGENT_ID_API` or `--api`: the API (default production; `login --api` remembers it).
 - `TIMEWARP_OWNER_KEY`: an owner key without logging in. `TIMEWARP_AGENT_KEY`: act as that agent.
+
+## Developing locally
+
+Point the CLI at a local Agent ID with `AGENT_ID_API` (or `login --api`).
+There, `give <kind> --test` (and `attach --give … --test`) gives test
+resources that work only inside Agent ID: test mail reaches other test
+inboxes, `fund <dollars>` adds test money to a test wallet, `give card --test`
+gives a test card and `card test-charge <amount>` tries a payment against its
+limits.

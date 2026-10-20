@@ -24,7 +24,7 @@ async function sshSigningWorks(dir, env) {
 }
 
 describe('Agent ID commit check (GitHub Action and pre-receive hook)', () => {
-  let api, dir, env, repo, secret, leadKey, strangerKey, humanLine, strangerLine, skip = null;
+  let api, dir, env, repo, org, secret, leadKey, strangerKey, humanLine, strangerLine, skip = null;
   const shas = {};
   const git = async (args, options = {}) => {
     const result = await run('git', args, { env, cwd: repo, ...options });
@@ -43,7 +43,7 @@ describe('Agent ID commit check (GitHub Action and pre-receive hook)', () => {
   };
   const check = (extra = {}) => run(process.execPath, [SCRIPT], {
     cwd: repo,
-    env: { ...env, AGENT_ID_SECRET: secret, AGENT_ID_API: api.base, AGENT_ID_HUMAN_SIGNERS: SIGNERS_FILE, GITHUB_ACTIONS: '', GITHUB_EVENT_PATH: '', GITHUB_STEP_SUMMARY: '', GITHUB_OUTPUT: '', ...extra },
+    env: { ...env, AGENT_ID_ORGANIZATION: org, AGENT_ID_SECRET: '', AGENT_ID_API: api.base, AGENT_ID_HUMAN_SIGNERS: SIGNERS_FILE, GITHUB_ACTIONS: '', GITHUB_EVENT_PATH: '', GITHUB_STEP_SUMMARY: '', GITHUB_OUTPUT: '', ...extra },
   });
   const lineFor = (result, name) => result.stdout.split('\n').find(l => /^(PASS|FAIL) /.test(l) && l.includes(shas[name].slice(0, 12))) || '';
   const agentSigned = (handle, name) => {
@@ -62,14 +62,15 @@ describe('Agent ID commit check (GitHub Action and pre-receive hook)', () => {
     api = await startApi();
     env.AGENT_ID_API = api.base;
 
-    // A company: an organization whose owner is a verified person, with a
-    // company secret registered for it.
+    // A company: an organization whose owner is a verified person (and, for
+    // the older setup, a company secret registered for it).
     const owner = await api.local.user({ email: 'owner@acme.test', plan: 'pro' });
     const reviewer = await api.local.user({ email: 'reviewer@timewarp.test' });
-    const org = await api.local.organization('Acme', [[owner, 'owner']]);
+    org = await api.local.organization('Acme', [[owner, 'owner']]);
     const ownerKey = await api.ownerKey(owner);
+    await api.acceptTerms(ownerKey);
     api.local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
-    await api.call('POST', '/v1/account/verification', { token: ownerKey, body: { kind: 'person', legalName: 'Ada Lovelace', country: 'GB' } });
+    await api.call('POST', '/v1/account/verification', { token: ownerKey, body: { kind: 'person', legalName: 'Ada Lovelace', country: 'GB', consent: true } });
     await api.call('POST', `/v1/reviews/person/${owner.id}`, { token: reviewer.session, body: { decision: 'approve' } });
     secret = (await api.call('POST', '/v1/relying-parties', { token: ownerKey, body: { name: 'Acme CI', audience: 'https://github.com/acme/app', organizationId: org } })).secret;
 
@@ -214,14 +215,32 @@ describe('Agent ID commit check (GitHub Action and pre-receive hook)', () => {
     assert.match(fs.readFileSync(output, 'utf8'), /human-commits=1\n$/);
   });
 
-  it('fails closed without a working company secret', async t => {
+  it('reads the organization\'s public list, with no secret', t => {
     if (skip) return t.skip(skip);
-    const missing = await check({ AGENT_ID_SECRET: '', AGENT_ID_BASE: shas.base });
-    assert.equal(missing.code, 1);
-    assert.match(missing.stderr, /secret.*required/);
-    const wrong = await check({ AGENT_ID_SECRET: 'twrp_wrong', AGENT_ID_BASE: shas['human: signed'] });
+    const fetches = api.requests.filter(r => r.path === `/v1/orgs/${org}/allowed-signers`);
+    assert.ok(fetches.length > 0);
+    assert.ok(fetches.every(r => r.headers.authorization === undefined));
+  });
+
+  it('still works with a company secret from older setups', async t => {
+    if (skip) return t.skip(skip);
+    const result = await check({ AGENT_ID_ORGANIZATION: '', AGENT_ID_SECRET: secret, AGENT_ID_BASE: shas['human: signed'], AGENT_ID_HEAD: shas['coder: merge feature'] });
+    assert.match(result.stdout, /PASS .*coder: merge feature/, result.stdout + result.stderr);
+    const wrong = await check({ AGENT_ID_ORGANIZATION: '', AGENT_ID_SECRET: 'twrp_wrong', AGENT_ID_BASE: shas['human: signed'] });
     assert.equal(wrong.code, 1);
     assert.match(wrong.stderr, /did not list the allowed signers.*invalid_key/);
+  });
+
+  it('fails closed without an organization, or when Agent ID can\'t be asked', async t => {
+    if (skip) return t.skip(skip);
+    const missing = await check({ AGENT_ID_ORGANIZATION: '', AGENT_ID_BASE: shas.base });
+    assert.equal(missing.code, 1);
+    assert.match(missing.stderr, /`organization` input is required/);
+    const odd = await check({ AGENT_ID_ORGANIZATION: '../../v1/me', AGENT_ID_BASE: shas['human: signed'] });
+    assert.equal(odd.code, 1);
+    assert.match(odd.stderr, /not an organization id/);
+    const unknown = await check({ AGENT_ID_ORGANIZATION: '00000000-0000-4000-8000-000000000999', AGENT_ID_BASE: shas['human: signed'], AGENT_ID_HEAD: shas['coder: merge feature'] });
+    assert.equal(unknown.code, 1, 'an organization Agent ID doesn\'t know lets nothing through');
     const down = await check({ AGENT_ID_API: 'http://127.0.0.1:9/agent-id', AGENT_ID_BASE: shas['human: signed'] });
     assert.equal(down.code, 1);
     assert.match(down.stderr, /could not reach Agent ID/);
@@ -235,7 +254,7 @@ describe('Agent ID commit check (GitHub Action and pre-receive hook)', () => {
     fs.chmodSync(path.join(server, 'hooks', 'pre-receive'), 0o755);
     const humans = path.join(dir, 'server_human_signers');
     fs.writeFileSync(humans, `# Admins only\r\n${humanLine}\r\n`);
-    const push = (refspec, extra = {}) => run('git', ['push', server, refspec], { cwd: repo, env: { ...env, AGENT_ID_SECRET: secret, AGENT_ID_API: api.base, AGENT_ID_HUMAN_SIGNERS_FILE: humans, ...extra } });
+    const push = (refspec, extra = {}) => run('git', ['push', server, refspec], { cwd: repo, env: { ...env, AGENT_ID_ORGANIZATION: org, AGENT_ID_SECRET: '', AGENT_ID_API: api.base, AGENT_ID_HUMAN_SIGNERS_FILE: humans, ...extra } });
 
     const good = await push(`${shas['coder: first change']}:refs/heads/main`);
     assert.equal(good.code, 0, good.stderr);
@@ -268,8 +287,10 @@ describe('Agent ID commit check (GitHub Action and pre-receive hook)', () => {
     assert.match(unreadable.stderr, /human signers file .* can't be read/);
     const already = await push(`${shas.base}:refs/heads/human`, { AGENT_ID_HUMAN_SIGNERS_FILE: '' });
     assert.equal(already.code, 0, 'commits already on the server are not checked again');
-    const noSecret = await push(`${shas['coder: first change']}:refs/heads/other`, { AGENT_ID_SECRET: '' });
-    assert.notEqual(noSecret.code, 0);
-    assert.match(noSecret.stderr, /no company secret/);
+    const noOrganization = await push(`${shas['coder: first change']}:refs/heads/other`, { AGENT_ID_ORGANIZATION: '' });
+    assert.notEqual(noOrganization.code, 0);
+    assert.match(noOrganization.stderr, /no organization is configured/);
+    const legacy = await push(`${shas['coder: first change']}:refs/heads/legacy`, { AGENT_ID_ORGANIZATION: '', AGENT_ID_SECRET: secret });
+    assert.equal(legacy.code, 0, `a company secret still works: ${legacy.stderr}`);
   });
 });

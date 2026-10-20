@@ -34,15 +34,17 @@ const HINTS = {
   },
   any: {
     verification_required: 'Verify your identity on the Agent ID dashboard first.',
+    terms_required: 'Run `timewarp-id terms` to read and accept Agent ID\'s terms of service, then try again.',
+    provider_unavailable: 'This Agent ID can\'t give out real ones of these yet; add --test for a test one while developing.',
     plan_required: 'This needs a paid Timewarp plan.',
-    live_unavailable: 'Leave out --live to use a test one for now.',
+    live_unavailable: 'This Agent ID can\'t give out real ones of these yet; add --test for a test one while developing.',
     session_required: 'Create owner keys on the Agent ID dashboard.',
     no_mail: 'Give it one with `timewarp-id give mail --agent <agent>`.',
     no_phone: 'Give it one with `timewarp-id give phone --agent <agent>`.',
     no_wallet: 'Give it one with `timewarp-id give wallet --agent <agent>`.',
-    no_card: 'Give it one with `timewarp-id give card --agent <agent>`.',
+    no_card: 'Apply for one with `timewarp-id card apply --agent <agent> --use-case "…" --monthly 200 --country US`.',
     no_vm: 'Give it one with `timewarp-id give vm --agent <agent>`.',
-    test_machine: 'Give it a live machine: `timewarp-id take vm --agent <agent>` then `timewarp-id give vm --live --agent <agent>`.',
+    test_machine: 'This is a test machine. Give it a real one: `timewarp-id take vm --agent <agent>`, then `timewarp-id give vm --agent <agent>`.',
   },
 };
 

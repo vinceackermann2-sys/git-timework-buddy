@@ -60,11 +60,24 @@ const account: Handler = async (ctx, owner) => {
   return {
     user: { id: owner.userId, email: await ownerEmail(ctx, owner), name: await profileName(ctx, owner.userId) },
     person: personView(person),
+    terms: termsView(ctx, person),
     organizations: memberships.map(m => ({ id: m.workspace_id, name: names.get(m.workspace_id) || 'Organization', role: m.role, business: businessView(verified.get(m.workspace_id)) })),
     plan, reviewer: owner.via === 'session' && ctx.config.reviewers.has(owner.userId),
     agents: { count: (checked(agents) || []).length, max: ctx.config.maxAgents },
     config: publicConfig(ctx.config),
   };
+};
+
+// --- Terms -----------------------------------------------------------------------
+// Accepting the current Agent ID Terms is recorded with its version and time.
+function termsView(ctx: Ctx, person: any) {
+  return { accepted: person?.terms_version === ctx.config.termsVersion && !!person?.terms_accepted_at, version: person?.terms_version || null, acceptedAt: person?.terms_accepted_at || null, current: ctx.config.termsVersion };
+}
+const acceptTerms: Handler = async (ctx, owner, input) => {
+  if (input.version !== ctx.config.termsVersion) throw fail(409, 'terms_changed', 'The Agent ID Terms have changed. Read the current version and accept it.', { current: ctx.config.termsVersion });
+  const row = checked(await ctx.admin.from('agent_id_people').upsert({ user_id: owner.userId, terms_version: ctx.config.termsVersion, terms_accepted_at: iso(ctx), updated_at: iso(ctx) }, { onConflict: 'user_id' }).select('*').single());
+  await audit(ctx, owner.userId, null, 'owner', 'terms.accept', { version: ctx.config.termsVersion });
+  return { terms: termsView(ctx, row) };
 };
 
 // --- Agents --------------------------------------------------------------------
@@ -98,6 +111,7 @@ const createAgent: Handler = async (ctx, owner, input) => {
   const runtime = String(origin.runtime || 'custom');
   const workspaceId = (await organizationFor(ctx, owner, input.organizationId)) ?? null;
   const desktopAgentId = input.desktopAgentId ? str(input.desktopAgentId, 100, 'desktopAgentId') : null;
+  if (ctx.config.termsRequired && !termsView(ctx, await personOf(ctx, owner.userId)).accepted) throw fail(403, 'terms_required', 'Accept the Agent ID Terms first (on the dashboard, or with `timewarp-id terms`).');
   if (ctx.config.verificationRequired('agent')) {
     const verification = await verificationOf(ctx, { owner_user_id: owner.userId, workspace_id: workspaceId });
     if (!verification.verified) throw fail(403, 'verification_required', 'Verify your identity (or your organization) before creating agents.');
@@ -220,7 +234,9 @@ const provision: Handler = async (ctx, owner, input, params) => {
   if (agent.status !== 'active') throw fail(409, 'agent_suspended', 'Resume the agent first.');
   const kind = String(input.kind) as Kind;
   if (!KINDS.includes(kind)) throw fail(400, 'invalid', `kind is one of ${KINDS.join(', ')}.`);
-  const mode = input.mode === 'live' ? 'live' : 'test';
+  // In production everything given is real; test resources are for development.
+  const mode = input.mode === 'live' || input.mode === 'test' ? input.mode : ctx.config.testMode ? 'test' : 'live';
+  if (mode === 'test' && !ctx.config.testMode) throw fail(403, 'test_mode_off', 'Test resources are only for development.');
   if (mode === 'live') await gate(ctx, owner, agent, kind);
   const settings = settingsFor(kind, input.settings || {}, DEFAULTS[kind] || {});
   const size = (input.options?.size in SIZES ? input.options.size : 'medium') as Size;
@@ -443,6 +459,7 @@ export const ownerRoutes: Route<Owner>[] = [
   ...adminRoutes,
   ['GET', '/v1/account', account],
   ['POST', '/v1/account/verification', (ctx, owner, input) => startVerification(ctx, owner, input)],
+  ['POST', '/v1/account/terms', acceptTerms],
   ['GET', '/v1/agents', listAgents], ['POST', '/v1/agents', createAgent],
   ['GET', '/v1/agents/:id', getAgent], ['PATCH', '/v1/agents/:id', updateAgent], ['DELETE', '/v1/agents/:id', revokeAgent],
   ['POST', '/v1/agents/:id/keys', createAgentKey], ['DELETE', '/v1/agents/:id/keys/:keyId', revokeAgentKey],

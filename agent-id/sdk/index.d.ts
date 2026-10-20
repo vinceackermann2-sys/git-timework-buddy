@@ -94,22 +94,34 @@ export interface OnlineCheck {
   passport?: { id: string; issuedAt: string; expiresAt: string };
 }
 
-export interface CompanyOptions extends CommonOptions {
-  /** Your company secret, `twrp_…`, from the Agent ID dashboard. */
-  secret: string;
+export interface CheckOptions extends CommonOptions {
+  /** The audience your service accepts passports for (the one the passport was issued for). */
+  audience: string;
+  /** The policy `allowed` is judged by. Default `verified`. */
+  require?: Requirement;
+  /** Only agents of these organizations are `allowed`. */
+  organizations?: string[];
+}
+
+export interface AllowedSignersOptions extends CommonOptions {
+  /** Your organization's id. */
+  organization: string;
+  /** 'text' (default): the allowed_signers file; 'json': its lines and the agents left out. */
+  format?: 'text' | 'json';
 }
 
 export interface MiddlewareOptions extends VerifyOptions {
-  /** Also ask Agent ID online on every request (catches revoked agents at once). */
-  online?: { secret: string; api?: string };
+  /** Also ask Agent ID on every request, which catches an agent revoked or paused a moment ago. No account needed. */
+  online?: boolean;
 }
 
 /** Checks a passport's signature, issuer, audience, time and your policy, offline. Throws AgentIdError. */
 export declare function verifyPassport(token: string, options: VerifyOptions): Promise<VerifiedAgent>;
-/** Asks Agent ID about a passport (POST /v1/verify). Returns the answer; does not throw for an invalid passport. */
-export declare function checkPassport(token: string, options: CompanyOptions): Promise<OnlineCheck>;
-/** Git's allowed_signers file for your organization's agents. */
-export declare function fetchAllowedSigners(options: CompanyOptions): Promise<string>;
+/** Asks Agent ID about a passport now (POST /v1/verify). Returns the answer; does not throw for an invalid passport. */
+export declare function checkPassport(token: string, options: CheckOptions): Promise<OnlineCheck>;
+/** Git's allowed_signers file for an organization's agents. */
+export declare function fetchAllowedSigners(options: AllowedSignersOptions & { format?: 'text' }): Promise<string>;
+export declare function fetchAllowedSigners(options: AllowedSignersOptions & { format: 'json' }): Promise<{ signers: string[]; skipped: { agent: string; reasons: string[] }[]; generatedAt: string }>;
 /** The passport from an `Agent-Passport` header, or `Authorization: AgentPassport <jwt>`. */
 export declare function passportFrom(request: Request | { headers: Headers | Record<string, string | string[] | undefined> } | Headers | Record<string, string | string[] | undefined>): string | null;
 

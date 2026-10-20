@@ -28,6 +28,12 @@ async function setup(t, env = {}) {
   const net = network();
   const local = await startLocal({ fetch: net.fetch, env });
   t.after(() => local.close());
+  const makeUser = local.user.bind(local);
+  local.user = async (options = {}) => {
+    const user = await makeUser(options);
+    if (options.terms !== false) { const config = await (await local.handle(new Request("http://127.0.0.1:54329/agent-id/v1/config"))).json(); await local.call("POST", "/v1/account/terms", { token: user.session, body: { version: config.legal.termsVersion } }); }
+    return user;
+  };
   const ok = async (method, url, init) => {
     const response = await local.call(method, url, init);
     assert.ok(response.status < 300, `${method} ${url} → ${response.status} ${JSON.stringify(response.body)}`);
@@ -38,7 +44,7 @@ async function setup(t, env = {}) {
   const verify = async owner => {
     const reviewer = await local.user();
     local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
-    await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", legalName: "Ada Lovelace", country: "SE" } });
+    await ok("POST", "/v1/account/verification", { token: owner.session, body: { kind: "person", consent: true, legalName: "Ada Lovelace", country: "SE" } });
     await ok("POST", `/v1/reviews/person/${owner.id}`, { token: reviewer.session, body: { decision: "approve" } });
   };
   return { local, net, ok, agent, verify };
@@ -168,7 +174,7 @@ test("KYC with Stripe Identity: the verified name and country come from Stripe's
   const { local, net, ok } = await setup(t, { AGENT_ID_KYC: "stripe_identity", STRIPE_SECRET_KEY: "sk_test_identity", AGENT_ID_STRIPE_WEBHOOK_SECRET: "whsec_stripe" });
   const alice = await local.user({ email: "ada@example.com" });
   net.on("POST", /\/v1\/identity\/verification_sessions$/, () => ({ id: "vs_1", url: "https://verify.stripe.com/start/vs_1" }));
-  const started = await ok("POST", "/v1/account/verification", { token: alice.session, body: { kind: "person" } });
+  const started = await ok("POST", "/v1/account/verification", { token: alice.session, body: { kind: "person", consent: true } });
   assert.equal(started.url, "https://verify.stripe.com/start/vs_1");
   assert.equal(started.person.status, "pending");
   const sent = formOf(net.find("POST", /verification_sessions$/)[0].body);

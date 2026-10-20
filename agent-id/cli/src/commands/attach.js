@@ -24,6 +24,7 @@ import { saveProfile } from './account.js';
 import { extractTable, removeTable, upsertTable } from '../toml.js';
 import { parseJsonc, removeMember, setMember } from '../jsonc.js';
 import { APPS, sendWithOrigin } from '../origin.js';
+import { withTerms } from '../terms.js';
 import { table } from '../output.js';
 
 export const START = '<!-- timewarp-agent-id:start -->';
@@ -666,9 +667,9 @@ async function agentFor(ctx, target, current, options) {
   }
   const origin = originOf(ctx, target);
   const runtime = typeof ctx.flags.runtime === 'string' ? ctx.flags.runtime : origin.app;
-  const created = await sendWithOrigin(body => ctx.owner.post('/v1/agents', body), {
+  const created = await withTerms(ctx, () => sendWithOrigin(body => ctx.owner.post('/v1/agents', body), {
     name, runtime, origin, keyName: ctx.hostname(), ...(target.desktopId ? { desktopAgentId: target.desktopId.slice(0, 100) } : {}),
-  });
+  }));
   saveProfile(ctx, created.agent, created.secret);
   return { profile: findProfile(ctx.config, created.agent.handle), created: true };
 }
@@ -687,8 +688,8 @@ async function attachOne(ctx, target, state, options) {
   const handle = profile.handle, key = profile.key;
   const given = [];
   for (const kind of options.give) {
-    if (kind === 'card' && options.live) throw new UsageError('Live cards are applied for: `timewarp-id card apply --agent <agent> --use-case "…" --monthly 200 --country US`.');
-    try { await ctx.owner.post(`/v1/agents/${profile.agentId}/resources`, { kind, mode: options.live ? 'live' : 'test' }); given.push(kind); }
+    if (kind === 'card' && !options.test) throw new UsageError('Cards are applied for: `timewarp-id card apply --agent <agent> --use-case "…" --monthly 200 --country US`.');
+    try { await ctx.owner.post(`/v1/agents/${profile.agentId}/resources`, { kind, mode: options.test ? 'test' : 'live' }); given.push(kind); }
     catch (error) { if (!(error instanceof ApiError && error.code === 'already_has')) throw error; }
   }
   const me = await ctx.api.get('/v1/me', { token: key });
@@ -813,7 +814,7 @@ async function choose(ctx, targets, state, verb) {
 }
 
 export async function attach(ctx) {
-  const options = { agentRef: typeof ctx.flags.agent === 'string' ? ctx.flags.agent : null, give: parseGive(ctx.flags.give), live: !!ctx.flags.live };
+  const options = { agentRef: typeof ctx.flags.agent === 'string' ? ctx.flags.agent : null, give: parseGive(ctx.flags.give), test: !!ctx.flags.test };
   if (typeof ctx.flags.runtime === 'string' && ![...APPS, 'other', 'any'].includes(ctx.flags.runtime)) throw new UsageError(`--runtime is one of ${APPS.join(', ')}.`);
   if (typeof ctx.flags.origin === 'string' && !APPS.includes(ctx.flags.origin)) throw new UsageError(`--origin is one of ${APPS.join(', ')}.`);
   const state = loadState(ctx.env);
@@ -830,7 +831,7 @@ export async function attach(ctx) {
   ctx.print({ attached: results.map(r => ({ ref: r.target.ref, tool: r.target.tool, label: r.target.label, origin: { app: r.target.app, detail: r.target.detail ?? null }, agent: r.agent, given: r.given, wrote: r.wrote.map(([file, what]) => ({ file, what })), notes: r.notes })) }, () => results.map(r => [
     `${r.target.tool} ${r.target.label} → Agent ID ${r.agent.name} (${r.agent.handle}, ${r.agent.id})${r.agent.created ? ', new' : ''}`,
     ...r.wrote.map(([file, what]) => `  ${file ? `${short(file)}: ` : ''}${what}`),
-    ...(r.given.length ? [`  gave it: ${r.given.join(', ')}${options.live ? ' (live)' : ' (test)'}`] : []),
+    ...(r.given.length ? [`  gave it: ${r.given.join(', ')}${options.test ? ' (test)' : ''}`] : []),
     ...r.notes.map(note => `  ${note.replace(/\n/g, '\n  ')}`),
   ].join('\n')).join('\n\n'));
 }

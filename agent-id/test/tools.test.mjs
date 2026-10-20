@@ -70,7 +70,9 @@ describe('attach for Gemini, Antigravity, Windsurf, opencode, Grok, Kiro, Qwen, 
     write(at('.openclaw', 'openclaw.json'), '{}\n');
     write(at('.grokbot', 'settings.json'), '{ "version": 1, "mcpBoxServers": [] }\n');
     write(at('.hermes', 'skills', 'video', 'SKILL.md'), '# A skill\n');
-    assert.equal((await runCli(['login', '--owner-key', await api.ownerKey(owner)], { env, cwd: work })).code, 0);
+    const ownerKey = await api.ownerKey(owner);
+    await api.acceptTerms(ownerKey);
+    assert.equal((await runCli(['login', '--owner-key', ownerKey], { env, cwd: work })).code, 0);
   });
   after(async () => {
     await api?.close();
@@ -94,7 +96,7 @@ describe('attach for Gemini, Antigravity, Windsurf, opencode, Grok, Kiro, Qwen, 
   });
 
   it('creates the agent with its origin (falling back for an older server) and wires up Gemini CLI', async () => {
-    const [result] = JSON.parse((await ok(['attach', 'gemini', '--give', 'mail', '--json'])).stdout).attached;
+    const [result] = JSON.parse((await ok(['attach', 'gemini', '--give', 'mail', '--test', '--json'])).stdout).attached;
     h = result.agent.handle;
     assert.deepEqual(result.origin, { app: 'gemini', detail: 'every project' });
     const posts = api.requests.filter(r => r.method === 'POST' && r.path === '/v1/agents');

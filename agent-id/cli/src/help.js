@@ -14,13 +14,14 @@ Continue, Cline, Timewarp and OpenClaw agents, any folder):
 
 Your account (owner key from the Agent ID dashboard):
   login --owner-key two_…          Save your owner key on this computer
+  terms                            Read and accept Agent ID's terms (needed once)
   logout [--all]                   Forget it (--all: and every agent key)
   whoami                           Your account and the agent you act as
   agents list|create|show|key|pause|resume|revoke
-  give <mail|phone|wallet|card|vm> Give an agent something (test unless --live)
+  give <mail|phone|wallet|vm>      Give an agent a mail inbox, number, wallet or machine
+  card apply                       Apply for a virtual card for an agent
   take <kind>                      Take it away again
   limits <wallet|card>             Spending limits, in dollars
-  fund <dollars>                   Test money for a test wallet
   approvals | approve <id> | deny <id>
 
 Which agent you act as:
@@ -43,10 +44,14 @@ Options for every command:
 
 The agent is chosen by TIMEWARP_AGENT_KEY, else --agent, else the nearest
 .timewarp-id.json ({ "agent": "<handle>" }) above the current folder, else the
-default set with \`timewarp-id use\`.`;
+default set with \`timewarp-id use\`.
+
+Developing locally: \`give --test\` and \`attach --give … --test\` give test
+resources that work only inside Agent ID; \`fund <dollars>\` adds test money and
+\`card test-charge\` tries a test card; AGENT_ID_API points at a local Agent ID.`;
 
 export const COMMANDS = {
-  attach: `Usage: timewarp-id attach [what…] [--agent <handle>] [--give mail,phone,wallet,card,vm] [--live]
+  attach: `Usage: timewarp-id attach [what…] [--agent <handle>] [--give mail,phone,wallet,vm]
                           [--name "…"] [--origin <app>] [--here] [--yes]
 
 Gives agents you already have an Agent ID and wires it into them. Without
@@ -85,6 +90,11 @@ itself stays; \`timewarp-id agents revoke\` ends it.`,
 Saves your owner key (create one on the Agent ID dashboard, under Keys) in
 ~/.timewarp-id/config.json, readable only by you. With --api, also remembers
 which Agent ID to use. TIMEWARP_OWNER_KEY overrides the saved key.`,
+  terms: `Usage: timewarp-id terms [--yes]
+
+Shows Agent ID's terms of service and asks whether you accept them; --yes
+accepts without asking. Creating agents needs them accepted once (again when
+they change).`,
   logout: `Usage: timewarp-id logout [--all]
 
 Forgets the owner key. --all also forgets every agent key on this computer.`,
@@ -100,13 +110,13 @@ Forgets the owner key. --all also forgets every agent key on this computer.`,
   timewarp-id agents key <agent>                  A new key for an agent (e.g. on another computer)
   timewarp-id agents pause|resume <agent>         Stop or allow everything it does
   timewarp-id agents revoke <agent> [--yes]       Final: keys, signing keys and resources go`,
-  give: `Usage: timewarp-id give <mail|phone|wallet|card|vm> [--agent <agent>] [--live]
+  give: `Usage: timewarp-id give <mail|phone|wallet|vm> [--agent <agent>]
          [--size small|medium] [--country US] [--area-code 415]
 
-Gives the agent a mail inbox, phone number, wallet, virtual card or virtual
-machine. Without --live it is a test one that works only inside Agent ID.
-Live cards are applied for instead: \`timewarp-id card apply\`.`,
-  take: 'Usage: timewarp-id take <mail|phone|wallet|card|vm> [--agent <agent>]\n\nReleases it (a live phone number or machine goes back to the provider).',
+Gives the agent its own mail inbox, phone number (texts and calls), wallet
+(USDC/USDT on Base) or Linux machine. Cards are applied for instead:
+\`timewarp-id card apply\`. While developing locally, --test gives a test one.`,
+  take: 'Usage: timewarp-id take <mail|phone|wallet|card|vm> [--agent <agent>]\n\nReleases it (a phone number or machine goes back to the provider).',
   limits: `Usage:
   timewarp-id limits wallet [--agent <agent>] [--per-transfer 50] [--daily 100] [--approval-above 25]
   timewarp-id limits card [--agent <agent>] [--per-transaction 50] [--daily 100] [--monthly 500]
@@ -114,7 +124,7 @@ Live cards are applied for instead: \`timewarp-id card apply\`.`,
 
 Amounts are dollars; "none" removes a limit. Without options, shows the limits.
 Transfers above --approval-above wait for you: see \`timewarp-id approvals\`.`,
-  fund: 'Usage: timewarp-id fund [--agent <agent>] <dollars>\n\nAdds test money to the agent\'s test wallet (at most $1,000 at a time, $10,000 held).',
+  fund: 'Usage: timewarp-id fund [--agent <agent>] <dollars>\n\nDeveloping locally: adds test money to a test wallet (at most $1,000 at a time, $10,000 held).\nA real wallet is funded by sending USDC or USDT on Base to its address (`timewarp-id wallet show`).',
   approvals: 'Usage: timewarp-id approvals [--all]\n\nTransfers waiting for your OK (agent, amount, to, memo, expiry). In a terminal it asks about\neach one; otherwise answer with `timewarp-id approve <id>` or `timewarp-id deny <id>`.',
   approve: 'Usage: timewarp-id approve <approval id>\n\nApproves a waiting transfer; it is sent at once.',
   deny: 'Usage: timewarp-id deny <approval id>',
@@ -146,10 +156,11 @@ in this project (a new Claude Code or Codex chat, say) acts as that agent.`,
   timewarp-id card show
   timewarp-id card reveal            Full number and code (logged; never paste them in chat)
   timewarp-id card transactions
-  timewarp-id card test-charge <amount> [--merchant "…"] [--category …]   (test cards)
-The owner applies for a live card for an agent:
+The owner applies for a virtual card for an agent:
   timewarp-id card apply [--agent <agent>] --use-case "…" --monthly 200 --country US
-  timewarp-id card application [--agent <agent>]`,
+  timewarp-id card application [--agent <agent>]
+Developing locally, a test card tries payments against its limits:
+  timewarp-id card test-charge <amount> [--merchant "…"] [--category …]`,
   vm: `Usage:
   timewarp-id vm status|start|stop|history
   timewarp-id vm files [path]          What is in a folder on the machine (default: home)

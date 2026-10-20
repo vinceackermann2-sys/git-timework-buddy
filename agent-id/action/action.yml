@@ -6,9 +6,14 @@ branding:
   color: purple
 
 inputs:
+  organization:
+    description: Your organization's id, from the Agent ID dashboard. Its agents' signing keys are public, so no secret is needed.
+    required: false
+    default: ''
   secret:
-    description: Your company secret (twrp_…) from the Agent ID dashboard, registered for your organization. Store it as a repository or organization secret.
-    required: true
+    description: Instead of organization, a company secret (twrp_…) from older setups.
+    required: false
+    default: ''
   api:
     description: Agent ID API base. Leave empty for production.
     required: false
@@ -54,6 +59,7 @@ runs:
       shell: bash
       run: node "$GITHUB_ACTION_PATH/verify-commits.mjs"
       env:
+        AGENT_ID_ORGANIZATION: ${{ inputs.organization }}
         AGENT_ID_SECRET: ${{ inputs.secret }}
         AGENT_ID_API: ${{ inputs.api }}
         AGENT_ID_BASE: ${{ inputs.base }}

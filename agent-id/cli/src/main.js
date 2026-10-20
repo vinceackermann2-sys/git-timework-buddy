@@ -14,9 +14,10 @@ import { mcp } from './commands/mcp.js';
 import { connect } from './commands/connect.js';
 import { git } from './commands/git.js';
 import * as attaching from './commands/attach.js';
+import { terms } from './terms.js';
 
 const ROUTES = {
-  attach: attaching.attach, detach: attaching.detach,
+  attach: attaching.attach, detach: attaching.detach, terms,
   login: account.login, logout: account.logout, whoami: account.whoami, agents: account.agents,
   give: account.give, take: account.take, limits: account.limits, fund: account.fund,
   approvals: account.approvals, approve: account.approve, deny: account.deny, use: account.use,

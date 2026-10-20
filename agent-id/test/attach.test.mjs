@@ -30,6 +30,7 @@ describe('timewarp-id attach and detach', () => {
     api = await startApi();
     const owner = await api.local.user({ email: 'owner@example.test', plan: 'pro' });
     ownerKey = await api.ownerKey(owner);
+    await api.acceptTerms(ownerKey);
     home = tempDir('attach');
     project = path.join(home, 'proj');
     env = cliEnv(api.base, { idHome: path.join(home, 'id'), codexHome: path.join(home, 'codex'), home }, { TIMEWARP_PROFILE_DIR: path.join(home, 'tw') });
@@ -90,7 +91,7 @@ describe('timewarp-id attach and detach', () => {
   });
 
   it('attaches a Claude Code subagent: identity block, its own MCP server and its tools', async () => {
-    const [result] = await attach(['claude-agent:code-reviewer', '--give', 'mail,wallet']);
+    const [result] = await attach(['claude-agent:code-reviewer', '--give', 'mail,wallet', '--test']);
     assert.equal(result.agent.created, true);
     assert.equal(result.agent.name, 'code-reviewer');
     assert.deepEqual(result.given, ['mail', 'wallet']);
@@ -129,7 +130,7 @@ describe('timewarp-id attach and detach', () => {
     assert.equal((await agentList()).length, before.agents);
 
     // More resources: the block and the tools follow.
-    await attach(['claude-agent:code-reviewer', '--give', 'card']);
+    await attach(['claude-agent:code-reviewer', '--give', 'card', '--test']);
     const updated = read(files.reviewer);
     assert.equal(count(updated, START), 1);
     assert.equal(count(updated, `mcp__${server}__mail_send`), 1);
@@ -194,7 +195,7 @@ describe('timewarp-id attach and detach', () => {
   });
 
   it('attaches a Timewarp desktop agent and links it to its desktop id', async () => {
-    const result = await ok(['attach', 'timewarp:Research Assistant', '--give', 'mail,wallet']);
+    const result = await ok(['attach', 'timewarp:Research Assistant', '--give', 'mail,wallet', '--test']);
     assert.match(result.stdout, /timewarp-id` command in their workspace/);
     const config = json(path.join(home, 'id', 'config.json'));
     const handle = json(path.join(files.workspace, '.timewarp-id.json')).agent;

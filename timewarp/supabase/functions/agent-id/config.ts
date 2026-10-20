@@ -55,6 +55,14 @@ export function loadConfig(env: Env) {
     maxAgents: Math.max(1, Math.min(1000, Number(get('AGENT_ID_MAX_AGENTS')) || 25)),
     // Privy's chain for live wallets: Base, or Base Sepolia (testnet) for trials.
     walletChain: get('AGENT_ID_WALLET_CHAIN') === 'base_sepolia' ? 'base_sepolia' : 'base',
+    // Test resources (that only work inside Agent ID) are for development:
+    // production sets AGENT_ID_ALLOW_TEST=false, so everything given is real.
+    testMode: get('AGENT_ID_ALLOW_TEST') !== 'false',
+    // Accounts accept the Agent ID Terms before creating agents.
+    termsRequired: get('AGENT_ID_REQUIRE_TERMS') !== 'false',
+    termsVersion: get('AGENT_ID_TERMS_VERSION') || '2026-10-20',
+    // Live wallet transfers are screened against sanctions lists when set.
+    sanctionsKey: get('CHAINALYSIS_API_KEY'),
     // Cards are an early-access application until a card provider is chosen;
     // AGENT_ID_CARDS=issuing turns Stripe Issuing cards back on.
     cardsWaitlist: get('AGENT_ID_CARDS') !== 'issuing',
@@ -81,6 +89,8 @@ export function publicConfig(config: Config) {
       paidPlanRequired: config.paidPlanRequired(kind as Kind),
     }])),
     verification: { person: config.kycProvider, business: config.kybProvider, requiredToCreateAgents: config.verificationRequired('agent') },
+    testMode: config.testMode,
+    legal: { termsVersion: config.termsVersion, termsUrl: `${config.siteUrl}/legal/agent-id-terms`, privacyUrl: `${config.siteUrl}/legal/privacy-policy` },
     passports: { available: !!config.signingKey, lifetimeSeconds: config.passportSeconds },
   };
 }

@@ -199,14 +199,19 @@ export async function verifyPassport(token, options = {}) {
 }
 
 // --- Online check ----------------------------------------------------------------
-async function companyRequest(options, method, path, body) {
-  if (!options?.secret) throw new TypeError('Pass your company secret (twrp_…) as options.secret.');
+// Public endpoints need no account; a company secret (older setups) is still
+// accepted and sent as a Bearer token.
+async function apiRequest(options, method, path, body) {
   const api = apiOf(options);
   let response;
   try {
     response = await fetchOf(options)(`${api}${path}`, {
       method,
-      headers: { authorization: `Bearer ${options.secret}`, ...(body ? { 'content-type': 'application/json' } : {}), accept: 'application/json, text/plain' },
+      headers: {
+        ...(options?.secret ? { authorization: `Bearer ${options.secret}` } : {}),
+        ...(body ? { 'content-type': 'application/json' } : {}),
+        accept: 'application/json, text/plain',
+      },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
   } catch (error) {
@@ -220,14 +225,27 @@ async function companyRequest(options, method, path, body) {
   return response;
 }
 
+// Asks Agent ID about a passport right now: still valid (not revoked or
+// paused), and the owner's verification today. Returns the answer; doesn't
+// throw for an invalid passport.
 export async function checkPassport(token, options = {}) {
-  const response = await companyRequest(options, 'POST', '/v1/verify', { passport: String(token || '') });
+  const audience = list(options.audience)?.[0];
+  if (!audience && !options.secret) throw new TypeError('checkPassport needs options.audience: the audience your service accepts passports for.');
+  const response = await apiRequest(options, 'POST', '/v1/verify', {
+    passport: String(token || ''), ...(audience ? { audience } : {}),
+    // Agent ID judges `allowed` by this policy (default: a verified owner).
+    ...(options.require ? { require: options.require } : {}), ...(list(options.organizations)?.length ? { organizations: list(options.organizations) } : {}),
+  });
   return response.json();
 }
 
+// Git's allowed_signers file for an organization's agents (or, with
+// `format: 'json'`, the lines and why some agents were left out).
 export async function fetchAllowedSigners(options = {}) {
-  const response = await companyRequest(options, 'GET', '/v1/allowed-signers');
-  return response.text();
+  if (!options.organization && !options.secret) throw new TypeError('fetchAllowedSigners needs options.organization: your organization\'s id.');
+  const path = options.organization ? `/v1/orgs/${encodeURIComponent(options.organization)}/allowed-signers` : '/v1/allowed-signers';
+  const response = await apiRequest(options, 'GET', `${path}${options.format === 'json' ? '?format=json' : ''}`);
+  return options.format === 'json' ? response.json() : response.text();
 }
 
 // --- Reading the passport from a request -------------------------------------------
@@ -252,14 +270,33 @@ export function passportFrom(request) {
 }
 
 // --- Middleware ----------------------------------------------------------------------
+// The online answer, judged by this service's own policy (`require`,
+// `organizations`, `agents`) with what Agent ID knows now; a company secret's
+// policy (older setups) is Agent ID's to judge.
+function judgeOnline(online, options) {
+  if (!online.valid) throw fail(online.reason || (online.agent?.status ? `agent_${online.agent.status}` : 'invalid'), online.message || 'Agent ID no longer vouches for this agent.', 401);
+  if (options.online?.secret) {
+    if (online.allowed === false) throw fail(online.reasons?.[0] || 'not_allowed', 'This agent does not meet this service\'s policy right now.', 403, { reasons: online.reasons || [] });
+    return;
+  }
+  const require = options.require ?? 'verified';
+  const level = online.owner?.level || 'none';
+  if (!meets(require, level)) throw fail('owner_not_verified', 'This agent\'s owner is not verified (any more).', 403, { require, level });
+  const organizations = list(options.organizations);
+  if (organizations?.length && !organizations.includes(online.agent?.organizationId)) throw fail('organization_not_allowed', 'This service only accepts agents of certain organizations.', 403);
+}
+
 async function authenticate(token, options) {
   if (!token) throw fail('passport_required', 'This service only accepts verified AI agents: send an Agent ID passport in the Agent-Passport header.');
   const agent = await verifyPassport(token, options);
   if (options.online) {
-    const online = await checkPassport(token, { api: options.api, fetch: options.fetch, ...options.online });
+    // Ask about the audience this passport was issued for (one of ours).
+    const issuedFor = list(agent.claims.aud) || [];
+    const audience = list(options.audience).find(aud => issuedFor.includes(aud));
+    const extra = typeof options.online === 'object' ? options.online : {};
+    const online = await checkPassport(token, { api: options.api, fetch: options.fetch, audience, require: options.require, organizations: options.organizations, ...extra });
     agent.online = online;
-    if (!online.valid) throw fail(online.reason || (online.agent?.status ? `agent_${online.agent.status}` : 'invalid'), online.message || 'Agent ID no longer vouches for this agent.', 401);
-    if (online.allowed === false) throw fail(online.reasons?.[0] || 'not_allowed', 'This agent does not meet this service\'s policy right now.', 403, { reasons: online.reasons || [] });
+    judgeOnline(online, options);
   }
   return agent;
 }

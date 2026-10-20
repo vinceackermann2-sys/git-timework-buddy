@@ -99,6 +99,22 @@ describe('timewarp-id CLI', () => {
     assert.equal(who.agent, null);
   });
 
+  it('asks for Agent ID\'s terms before the first agent', async () => {
+    const early = await cli(['agents', 'create', 'Early']);
+    if (early.code === 0) await cli(['agents', 'revoke', 'Early', '--yes']); // Keep the later tests' first agent first.
+    assert.equal(early.code, 1, 'creating an agent needs the terms accepted');
+    assert.match(early.stderr, /terms_required/);
+    assert.match(early.stderr, /Run `timewarp-id terms`/);
+    const declined = await cli(['terms']);
+    assert.equal(declined.code, 1, 'without a terminal or --yes nothing is accepted');
+    assert.match(declined.stderr, /terms of service \(version [^)]+\): https?:\/\/\S+/);
+    assert.match(declined.stderr, /timewarp-id terms --yes/);
+    const accepted = await ok(['terms', '--yes']);
+    assert.match(accepted.stdout, /Accepted Agent ID's terms of service \(version [^)]+\)/);
+    const { legal } = await api.call('GET', '/v1/config');
+    assert.deepEqual(api.requests.filter(r => r.path === '/v1/account/terms').pop().body, { version: legal.termsVersion });
+  });
+
   it('creates two agents and stores their keys as profiles', async () => {
     const a = await json(['agents', 'create', 'Alice', '--runtime', 'codex']);
     const b = await json(['agents', 'create', 'Bob', 'Builder']);
@@ -120,19 +136,19 @@ describe('timewarp-id CLI', () => {
   });
 
   it('gives test mail, wallet, card, phone and a machine', async () => {
-    aliceMail = (await json(['give', 'mail', '--agent', alice.handle])).resource.address;
-    bobMail = (await json(['give', 'mail', '--agent', 'Bob Builder'])).resource.address;
+    aliceMail = (await json(['give', 'mail', '--test', '--agent', alice.handle])).resource.address;
+    bobMail = (await json(['give', 'mail', '--test', '--agent', 'Bob Builder'])).resource.address;
     assert.match(aliceMail, /@agents\.timewarp\.test$/);
-    const wallet = await json(['give', 'wallet', '--agent', alice.handle]);
+    const wallet = await json(['give', 'wallet', '--test', '--agent', alice.handle]);
     assert.equal(wallet.resource.mode, 'test');
-    await ok(['give', 'wallet', '--agent', bob.handle]);
-    const card = await ok(['give', 'card', '--agent', alice.handle]);
+    await ok(['give', 'wallet', '--test', '--agent', bob.handle]);
+    const card = await ok(['give', 'card', '--test', '--agent', alice.handle]);
     assert.match(card.stdout, /test virtual card: Test Visa/);
-    const phone = await json(['give', 'phone', '--agent', alice.handle, '--country', 'US', '--area-code', '415']);
+    const phone = await json(['give', 'phone', '--test', '--agent', alice.handle, '--country', 'US', '--area-code', '415']);
     assert.match(phone.resource.address, /^\+1\d{10}$/);
-    const vm = await json(['give', 'vm', '--agent', alice.handle, '--size', 'small']);
+    const vm = await json(['give', 'vm', '--test', '--agent', alice.handle, '--size', 'small']);
     assert.equal(vm.resource.details.size, 'small');
-    const again = await cli(['give', 'mail', '--agent', alice.handle]);
+    const again = await cli(['give', 'mail', '--test', '--agent', alice.handle]);
     assert.equal(again.code, 1);
     assert.match(again.stderr, /already has/);
     const me = await json(['me']);

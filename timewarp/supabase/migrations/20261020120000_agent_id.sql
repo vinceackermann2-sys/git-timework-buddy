@@ -19,6 +19,13 @@ create table if not exists public.agent_id_people (
   last_error text check (char_length(last_error) <= 300),
   -- The owner as the cardholder of their agents' live cards (Stripe Issuing).
   cardholder_ref text check (char_length(cardholder_ref) <= 100),
+  -- The Agent ID Terms version the account accepted, and when.
+  terms_version text check (char_length(terms_version) <= 40),
+  terms_accepted_at timestamptz,
+  -- Explicit consent to the biometric identity check (GDPR Art. 9(2)(a)),
+  -- given before it starts.
+  consent_version text check (char_length(consent_version) <= 40),
+  consent_at timestamptz,
   updated_at timestamptz not null default now()
 );
 
@@ -32,6 +39,10 @@ create table if not exists public.agent_id_businesses (
   country text check (country ~ '^[A-Z]{2}$'),
   website text check (char_length(website) <= 300),
   submitted_by uuid references auth.users(id) on delete set null,
+  -- The verified person who submitted it, their role in the business, and
+  -- when they confirmed they may act for it.
+  representative_role text check (char_length(representative_role) <= 100),
+  attested_at timestamptz,
   provider text check (provider in ('manual','test')),
   provider_ref text check (char_length(provider_ref) <= 300),
   review_note text check (char_length(review_note) <= 1000),
