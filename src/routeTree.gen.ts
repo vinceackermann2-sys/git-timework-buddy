@@ -16,6 +16,9 @@ import { Route as AgentIdAppRouteImport } from './routes/agent-id/_app'
 import { Route as AgentIdSignInRouteImport } from './routes/agent-id/sign-in'
 import { Route as AuthBridgeRouteImport } from './routes/auth.bridge'
 import { Route as AuthGoogleRouteImport } from './routes/auth.google'
+import { Route as LegalCookiePolicyRouteImport } from './routes/legal.cookie-policy'
+import { Route as LegalPrivacyPolicyRouteImport } from './routes/legal.privacy-policy'
+import { Route as LegalTermsOfServiceRouteImport } from './routes/legal.terms-of-service'
 import { Route as AgentIdAppApprovalsRouteImport } from './routes/agent-id/_app/approvals'
 import { Route as AgentIdAppDashboardRouteImport } from './routes/agent-id/_app/dashboard'
 import { Route as AgentIdAppDevelopersRouteImport } from './routes/agent-id/_app/developers'
@@ -57,6 +60,21 @@ const AuthBridgeRoute = AuthBridgeRouteImport.update({
 const AuthGoogleRoute = AuthGoogleRouteImport.update({
   id: '/auth/google',
   path: '/auth/google',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalCookiePolicyRoute = LegalCookiePolicyRouteImport.update({
+  id: '/legal/cookie-policy',
+  path: '/legal/cookie-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalPrivacyPolicyRoute = LegalPrivacyPolicyRouteImport.update({
+  id: '/legal/privacy-policy',
+  path: '/legal/privacy-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalTermsOfServiceRoute = LegalTermsOfServiceRouteImport.update({
+  id: '/legal/terms-of-service',
+  path: '/legal/terms-of-service',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentIdAppApprovalsRoute = AgentIdAppApprovalsRouteImport.update({
@@ -106,6 +124,9 @@ export interface FileRoutesByFullPath {
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/cookie-policy': typeof LegalCookiePolicyRoute
+  '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
+  '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
   '/agent-id/': typeof AgentIdIndexRoute
   '/agent-id/approvals': typeof AgentIdAppApprovalsRoute
   '/agent-id/dashboard': typeof AgentIdAppDashboardRoute
@@ -122,6 +143,9 @@ export interface FileRoutesByTo {
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/cookie-policy': typeof LegalCookiePolicyRoute
+  '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
+  '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
   '/agent-id/approvals': typeof AgentIdAppApprovalsRoute
   '/agent-id/dashboard': typeof AgentIdAppDashboardRoute
   '/agent-id/developers': typeof AgentIdAppDevelopersRoute
@@ -139,6 +163,9 @@ export interface FileRoutesById {
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/cookie-policy': typeof LegalCookiePolicyRoute
+  '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
+  '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
   '/agent-id/': typeof AgentIdIndexRoute
   '/agent-id/_app/approvals': typeof AgentIdAppApprovalsRoute
   '/agent-id/_app/dashboard': typeof AgentIdAppDashboardRoute
@@ -157,6 +184,9 @@ export interface FileRouteTypes {
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
+    | '/legal/cookie-policy'
+    | '/legal/privacy-policy'
+    | '/legal/terms-of-service'
     | '/agent-id/'
     | '/agent-id/approvals'
     | '/agent-id/dashboard'
@@ -173,6 +203,9 @@ export interface FileRouteTypes {
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
+    | '/legal/cookie-policy'
+    | '/legal/privacy-policy'
+    | '/legal/terms-of-service'
     | '/agent-id/approvals'
     | '/agent-id/dashboard'
     | '/agent-id/developers'
@@ -189,6 +222,9 @@ export interface FileRouteTypes {
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
+    | '/legal/cookie-policy'
+    | '/legal/privacy-policy'
+    | '/legal/terms-of-service'
     | '/agent-id/'
     | '/agent-id/_app/approvals'
     | '/agent-id/_app/dashboard'
@@ -205,6 +241,9 @@ export interface RootRouteChildren {
   AgentIdRouteRoute: typeof AgentIdRouteRouteWithChildren
   AuthBridgeRoute: typeof AuthBridgeRoute
   AuthGoogleRoute: typeof AuthGoogleRoute
+  LegalCookiePolicyRoute: typeof LegalCookiePolicyRoute
+  LegalPrivacyPolicyRoute: typeof LegalPrivacyPolicyRoute
+  LegalTermsOfServiceRoute: typeof LegalTermsOfServiceRoute
   AuthV1CallbackRoute: typeof AuthV1CallbackRoute
 }
 
@@ -257,6 +296,27 @@ declare module '@tanstack/react-router' {
       path: '/auth/google'
       fullPath: '/auth/google'
       preLoaderRoute: typeof AuthGoogleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal/cookie-policy': {
+      id: '/legal/cookie-policy'
+      path: '/legal/cookie-policy'
+      fullPath: '/legal/cookie-policy'
+      preLoaderRoute: typeof LegalCookiePolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal/privacy-policy': {
+      id: '/legal/privacy-policy'
+      path: '/legal/privacy-policy'
+      fullPath: '/legal/privacy-policy'
+      preLoaderRoute: typeof LegalPrivacyPolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal/terms-of-service': {
+      id: '/legal/terms-of-service'
+      path: '/legal/terms-of-service'
+      fullPath: '/legal/terms-of-service'
+      preLoaderRoute: typeof LegalTermsOfServiceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agent-id/_app/approvals': {
@@ -363,6 +423,9 @@ const rootRouteChildren: RootRouteChildren = {
   AgentIdRouteRoute: AgentIdRouteRouteWithChildren,
   AuthBridgeRoute: AuthBridgeRoute,
   AuthGoogleRoute: AuthGoogleRoute,
+  LegalCookiePolicyRoute: LegalCookiePolicyRoute,
+  LegalPrivacyPolicyRoute: LegalPrivacyPolicyRoute,
+  LegalTermsOfServiceRoute: LegalTermsOfServiceRoute,
   AuthV1CallbackRoute: AuthV1CallbackRoute,
 }
 export const routeTree = rootRouteImport

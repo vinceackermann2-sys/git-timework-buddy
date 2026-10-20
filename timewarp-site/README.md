@@ -28,6 +28,12 @@ Those are syntax examples, not real Timewarp downloads. Until URLs are supplied,
 
 The page's content and download links can be edited independently of the desktop application. Website work does not change the app source or its authentication routes.
 
+## Legal pages and cookie consent
+
+`dist/legal/` holds the Privacy Policy, Terms of Service and Cookie Policy. Routes in `src/routes/legal.*.tsx` serve them at `/legal/privacy-policy`, `/legal/terms-of-service` and `/legal/cookie-policy`. The desktop app's sign-up form and the account emails already link to the first two. Every page's footer links to all three plus Cookie settings. Update the "Last updated" date when the text changes.
+
+The site itself sets no tracking cookies, but Lovable's hosting adds its own analytics to every published page: `~flock.js` sets a 30-minute `session-id` cookie, and the `__l5e` events SDK sends page views. `dist/consent.js` loads first, without `defer`. It holds that cookie and those requests in memory until the visitor clicks Accept, and drops them on Reject. Reject and Accept get equal weight, the choice is kept for 12 months, Global Privacy Control counts as a rejection, and any element with `data-cookie-settings` reopens the banner. The TanStack sign-in pages load the same guard with `data-banner="off"`. If Lovable changes its analytics paths or cookie, update `PATHS` and `COOKIE` in `consent.js` and the Cookie Policy. `src/test/consent.test.ts` covers the guard.
+
 ## Messaging decisions
 
 See `audience-research.md` for the chosen persona, evidence, assumptions, and how the requested marketing criteria map to the page.
