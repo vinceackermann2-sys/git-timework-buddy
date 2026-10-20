@@ -52,7 +52,7 @@ resources that work only inside Agent ID; \`fund <dollars>\` adds test money and
 
 export const COMMANDS = {
   attach: `Usage: timewarp-id attach [what…] [--agent <handle>] [--give mail,phone,wallet,vm]
-                          [--name "…"] [--origin <app>] [--here] [--yes]
+                          [--name "…"] [--origin <app>] [--here] [--yes] [--claim twc_…]
 
 Gives agents you already have an Agent ID and wires it into them. Without
 [what], lists what it finds here and asks (in a terminal). [what] is a number
@@ -78,6 +78,11 @@ subagent gets its own, timewarp-id-<handle>, and its tools: list). Agent ID
 is told where the agent comes from (--origin overrides the app); Timewarp
 agents are linked to their desktop agent. Tools it sees but can't wire up are
 listed by \`agents scan\` as manual setup, with the MCP entry to paste.
+
+Not signed in here? attach prints a link (and opens it): you confirm your
+email and verify who you are, which makes your account, and the Agent ID
+comes back here. Everything you attach in one go shares that one Agent ID.
+--claim twc_… finishes one started on the Agent ID website.
 Running it again updates in place. Config files are edited in place and
 backed up once, as <file>.timewarp-id.bak.`,
   detach: `Usage: timewarp-id detach [what…|<agent handle>] [--all]

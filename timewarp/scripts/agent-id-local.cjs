@@ -11,7 +11,8 @@ const esbuild = require("esbuild");
 const { PGlite } = require("@electric-sql/pglite");
 
 const root = path.resolve(__dirname, "..");
-const MIGRATION = path.join(root, "supabase/migrations/20261020120000_agent_id.sql");
+// Agent ID's migrations, in order.
+const MIGRATIONS = fs.readdirSync(path.join(root, "supabase/migrations")).filter(name => /^\d{14}_agent_id.*\.sql$/.test(name)).sort().map(name => path.join(root, "supabase/migrations", name));
 
 // A module of the function as CommonJS, its npm imports left out (index.ts
 // holds the only one, and the harness passes its own client instead).
@@ -34,7 +35,7 @@ create role anon; create role authenticated; create role service_role;
 create schema auth;
 create schema storage;
 create table storage.buckets(id text primary key, name text, public boolean);
-create table auth.users(id uuid primary key, email text);
+create table auth.users(id uuid primary key, email text, created_at timestamptz default now());
 create table public.timewarp_workspaces(id uuid primary key default gen_random_uuid(), name text not null, created_by uuid);
 create table public.timewarp_workspace_members(id uuid primary key default gen_random_uuid(), workspace_id uuid references public.timewarp_workspaces on delete cascade, user_id uuid references auth.users, role text, status text default 'active', unique(workspace_id,user_id));
 create table public.test_plans(user_id uuid primary key, plan text not null);
@@ -177,7 +178,17 @@ function adminClient(db, users, files) {
         const user = String(token || "").startsWith("session:") ? users.get(token.slice(8)) : null;
         return user ? { data: { user }, error: null } : { data: { user: null }, error: { message: "invalid" } };
       },
-      admin: { async getUserById(id) { const user = users.get(id); return { data: { user: user || null }, error: user ? null : { message: "not found" } }; } },
+      admin: {
+        async getUserById(id) { const user = users.get(id); return { data: { user: user || null }, error: user ? null : { message: "not found" } }; },
+        // A new confirmed account, as Supabase Auth makes one.
+        async createUser({ email }) {
+          if ([...users.values()].some(u => u.email === email)) return { data: { user: null }, error: { message: "A user with this email address has already been registered" } };
+          const id = uuid(++counter);
+          users.set(id, { id, email });
+          await db.query("insert into auth.users(id,email) values($1,$2)", [id, email]);
+          return { data: { user: { id, email } }, error: null };
+        },
+      },
     },
   };
 }
@@ -198,14 +209,14 @@ const uuid = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 async function startLocal(options = {}) {
   const db = new PGlite();
   await db.exec(FIXTURE);
-  await db.exec(fs.readFileSync(MIGRATION, "utf8"));
+  for (const file of MIGRATIONS) await db.exec(fs.readFileSync(file, "utf8"));
   const users = new Map();
   const files = new Map();
   const admin = adminClient(db, users, files);
-  const env = { SUPABASE_URL: "http://127.0.0.1:54329", AGENT_ID_PUBLIC_URL: options.publicUrl || "http://127.0.0.1:54329/agent-id", AGENT_ID_SIGNING_KEY: await passportKey(), AGENT_ID_WEBHOOK_SECRET: "local-webhook-secret", ...options.env };
+  const env = { SUPABASE_URL: "http://127.0.0.1:54329", AGENT_ID_PUBLIC_URL: options.publicUrl || "http://127.0.0.1:54329/agent-id", AGENT_ID_SIGNING_KEY: await passportKey(), AGENT_ID_WEBHOOK_SECRET: "local-webhook-secret", AGENT_ID_AUTO_SETUP: "false", ...options.env };
   let clock = options.now || null;
   const { createHandler } = loadApp();
-  const make = () => createHandler({ admin, env: name => env[name] || "", fetch: options.fetch || (async () => { throw new Error("No network in the local harness."); }), now: () => clock ? clock() : Date.now(), sleep: options.sleep || (async () => {}) });
+  const make = () => createHandler({ admin, env: name => env[name] || "", fetch: options.fetch || (async () => { throw new Error("No network in the local harness."); }), now: () => clock ? clock() : Date.now(), sleep: options.sleep || (async () => {}), signIn: async email => { const user = [...users.values()].find(u => u.email === email); return user ? { access_token: `session:${user.id}`, refresh_token: "local-refresh", expires_in: 3600 } : null; } });
   let handler = make();
   const local = {
     db, admin, env, users, files,

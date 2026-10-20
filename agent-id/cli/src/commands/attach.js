@@ -635,6 +635,43 @@ function attachedTo(ctx, target, state) {
 
 // --- Attach -------------------------------------------------------------------------------
 const originOf = (ctx, target) => ({ app: typeof ctx.flags.origin === 'string' ? ctx.flags.origin : target.app, detail: target.detail ?? null });
+const APP_SLUG = /^[a-z0-9-]{1,40}$/;
+
+// Without an account on this computer, the agent asks for its Agent ID: a
+// link the person opens (no sign-in needed), where confirming their email and
+// verifying who they are makes their Timewarp account. The key then comes
+// back here. `--claim twc_…` collects one the Agent ID website started.
+async function claimAgent(ctx, target, options) {
+  if (options.claimed) return { profile: options.claimed, created: false };
+  let secret = typeof ctx.flags.claim === 'string' ? ctx.flags.claim.trim() : null;
+  if (secret && !secret.startsWith('twc_')) throw new UsageError('--claim takes the twc_… code from the Agent ID website.');
+  if (!secret) {
+    const name = String((typeof ctx.flags.name === 'string' && ctx.flags.name) || target.name || 'My agent').slice(0, 60);
+    const app = originOf(ctx, target).app;
+    const started = await ctx.api.post('/v1/claims', { name, ...(APP_SLUG.test(String(app || '')) ? { app } : {}), device: ctx.hostname(), clientName: 'timewarp-id' });
+    secret = started.secret;
+    ctx.err([
+      '',
+      `To give ${name} its Agent ID, open this link and follow the steps (no account needed):`,
+      `  ${started.url}`,
+      `The page should show ${started.claim.matchCode}. Waiting for you… (Ctrl+C to stop)`,
+      '',
+    ].join('\n'));
+    ctx.openUrl(started.url);
+  }
+  const waitMinutes = Number(ctx.flags.wait) > 0 ? Number(ctx.flags.wait) : 30;
+  const deadline = Date.now() + waitMinutes * 60_000;
+  for (;;) {
+    const result = await ctx.api.post('/v1/claims/collect', { secret });
+    if (result.status === 'claimed') {
+      saveProfile(ctx, result.agent, result.key);
+      options.claimed = findProfile(ctx.config, result.agent.handle);
+      return { profile: options.claimed, created: true };
+    }
+    if (Date.now() >= deadline) throw new CliError('The link wasn\'t finished in time.', { hint: 'Run attach again for a new link.' });
+    await ctx.sleep(3000);
+  }
+}
 
 // An agent made elsewhere (the dashboard, another computer) gets a key for
 // this computer, which needs the owner signed in here.
@@ -655,11 +692,14 @@ async function agentFor(ctx, target, current, options) {
     return profile ? { profile, created: false } : keyFor(ctx, ref, `"${ref}" is not on this computer yet`);
   };
   if (options.agentRef) return named(options.agentRef);
+  if (typeof ctx.flags.claim === 'string') return claimAgent(ctx, target, options);
   if (current) {
     const profile = (current.agentId && profileById(ctx.config, current.agentId)) || (current.handle && findProfile(ctx.config, current.handle));
     if (profile) return { profile, created: false };
     return keyFor(ctx, current.agentId || current.handle, `${target.tool} ${target.label} is attached to ${current.handle || current.agentId}`);
   }
+  // Not signed in here: one link sets up one Agent ID for everything chosen.
+  if (!ctx.hasOwnerKey()) return claimAgent(ctx, target, options);
   const name = String((typeof ctx.flags.name === 'string' && ctx.flags.name) || target.name).slice(0, 60);
   if (ctx.interactive && !ctx.flags.yes) {
     const answer = (await ctx.ask(`Agent ID for ${target.tool} ${target.label}: Enter for a new one named "${name}", or an existing agent's handle: `)).trim();
@@ -687,6 +727,7 @@ async function attachOne(ctx, target, state, options) {
   const { profile, created } = await agentFor(ctx, target, current, options);
   const handle = profile.handle, key = profile.key;
   const given = [];
+  if (options.give.length && !ctx.hasOwnerKey()) throw new CliError(`${profile.name || handle} is set up, but giving it mail, a number or a wallet needs you signed in here.`, { hint: 'Add them on the Agent ID website, or run `timewarp-id login --owner-key two_…` first.' });
   for (const kind of options.give) {
     if (kind === 'card' && !options.test) throw new UsageError('Cards are applied for: `timewarp-id card apply --agent <agent> --use-case "…" --monthly 200 --country US`.');
     try { await ctx.owner.post(`/v1/agents/${profile.agentId}/resources`, { kind, mode: options.test ? 'test' : 'live' }); given.push(kind); }
@@ -739,6 +780,9 @@ async function attachOne(ctx, target, state, options) {
     changes.push({ type: 'project', file, previous: prior ? prior.previous : (previousAgent && previousAgent !== handle ? before : null) });
     wrote.push([file, `timewarp-id here acts as ${handle}${previousAgent && previousAgent !== handle ? ` (was ${previousAgent})` : ''}`]);
   }
+
+  // One Agent ID, many apps: this one is listed on the dashboard from now on.
+  if (APP_SLUG.test(String(target.app || ''))) await ctx.api.post('/v1/me/apps', { app: target.app }, { token: key }).catch(() => {});
 
   // Where the agent comes from, for the dashboard (and the desktop link).
   if (ctx.hasOwnerKey()) {
@@ -814,14 +858,16 @@ async function choose(ctx, targets, state, verb) {
 }
 
 export async function attach(ctx) {
-  const options = { agentRef: typeof ctx.flags.agent === 'string' ? ctx.flags.agent : null, give: parseGive(ctx.flags.give), test: !!ctx.flags.test };
+  const options = { agentRef: typeof ctx.flags.agent === 'string' ? ctx.flags.agent : null, give: parseGive(ctx.flags.give), test: !!ctx.flags.test, claimed: null };
+  if (options.agentRef && typeof ctx.flags.claim === 'string') throw new UsageError('Use --agent or --claim, not both.');
   if (typeof ctx.flags.runtime === 'string' && ![...APPS, 'other', 'any'].includes(ctx.flags.runtime)) throw new UsageError(`--runtime is one of ${APPS.join(', ')}.`);
   if (typeof ctx.flags.origin === 'string' && !APPS.includes(ctx.flags.origin)) throw new UsageError(`--origin is one of ${APPS.join(', ')}.`);
   const state = loadState(ctx.env);
   const targets = discover(ctx);
   const chosen = await choose(ctx, targets, state, 'attach');
   if (!chosen.length) return 0;
-  if (typeof ctx.flags.name === 'string' && chosen.length > 1) throw new UsageError('--name names one agent; attach one at a time.');
+  // Signed in, each gets its own new Agent ID; through a link they share one.
+  if (typeof ctx.flags.name === 'string' && chosen.length > 1 && ctx.hasOwnerKey() && typeof ctx.flags.claim !== 'string') throw new UsageError('--name names one agent; attach one at a time.');
   const results = [];
   try {
     for (const target of chosen) results.push(await attachOne(ctx, target, state, options));

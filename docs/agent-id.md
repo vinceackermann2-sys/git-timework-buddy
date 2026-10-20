@@ -14,7 +14,7 @@ verified agents**, using the GitHub Action or a pre-receive hook.
 | Piece | Where |
 | --- | --- |
 | Cloud service (API, MCP, webhooks) | `timewarp/supabase/functions/agent-id/` |
-| Database | `timewarp/supabase/migrations/20261020120000_agent_id.sql` |
+| Database | `timewarp/supabase/migrations/20261020120000_agent_id.sql`, `20261020180000_agent_id_claims.sql` |
 | Website dashboard | `src/routes/agent-id*`, served at `timewarpdev.com/agent-id` |
 | CLI, stdio MCP server, `attach` for existing agents | `agent-id/cli` (`@timewarp/agent-id`, command `timewarp-id`) |
 | Verification SDK for companies | `agent-id/sdk` (`@timewarp/agent-id-verify`) |
@@ -50,9 +50,34 @@ provider or a company takes is written to `agent_id_audit`.
 ## Giving your existing agents an Agent ID
 
 ```
-npx @timewarp/agent-id login --owner-key two_…    # once per computer (owner key: Developers page)
 npx @timewarp/agent-id attach                     # pick from the agents it finds
 ```
+
+No account or sign-in is needed first. On a computer that isn't signed in,
+`attach` starts a **claim**: it prints a link (and opens it) with a match code.
+On that page the person confirms their email with a 6-digit code, accepts the
+terms and verifies their identity (Stripe Identity). That creates their
+Timewarp account, or uses the one they have, and signs them in to the website.
+Once they're verified the agent is created for them, and `attach` collects its
+key and wires it in. Everything chosen in one `attach` shares that one Agent
+ID. A claim started on the website (`/agent-id/claim`) ends with
+`npx @timewarp/agent-id attach --claim twc_…`. Signed in
+(`timewarp-id login --owner-key two_…`), `attach` creates agents directly as
+before.
+
+Claims (`agent_id_claims`, `claims.ts`) are open routes: `POST /v1/claims`,
+`GET /v1/claims/:code`, `POST /v1/claims/:code/email`,
+`…/email/confirm`, `…/identity` and `POST /v1/claims/collect`. The link
+code is random, and an unfinished link expires after an hour (a week once the
+identity check is running). The email code allows 5 tries and 5 sends, 30
+seconds apart, and a network can start 20 claims an hour. The agent's key goes
+once, to the holder of the claim's secret.
+
+**One Agent ID, many apps.** An Agent ID keeps its name, mail, number, wallet
+and machine in every app that uses it. Each app it connects from (the MCP
+client's name) or is set up in (`attach`, `POST /v1/me/apps`) is recorded in
+`agent_id_agent_clients`, and agents carry `apps` (most recent first) for the
+dashboard.
 
 `attach` finds the agents already on the computer: Claude Code (the main
 agent, user or project scope, and its subagents), Codex, Cursor, Claude
@@ -104,6 +129,14 @@ on its own.
 | wallet | Privy server wallets on Base holding USDC and USDT, shown together as US dollars (`AGENT_ID_WALLET_CHAIN=base`, or `base_sepolia` to try it on testnet). Privy keeps the keys; with gas sponsorship on, sends need no ETH | An 0x address; a USD balance; deposits and sends in its history; transfers to addresses, other agents and contacts | verified owner |
 | card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner, paid plan |
 | vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A machine that resumes for each command, stops after it and keeps its files | credits (time is charged) |
+
+**Adding and taking out money.** `GET /v1/agents/:id/wallet/add-money` gives
+the address and network to send USDC or USDT on Base from an exchange or
+another wallet. With `STRIPE_PUBLISHABLE_KEY` and
+`STRIPE_CRYPTO_ONRAMP_ENABLED` set, `POST` on it starts Stripe's crypto onramp
+to buy USDC by card into that wallet only. `POST /v1/agents/:id/wallet/withdraw`
+(signed-in session only) sends to the owner's own address. Withdrawals are
+screened like any transfer but aren't counted against the agent's limits.
 
 An agent has at most one resource of each kind. Mail and wallet addresses are
 never given to anyone else, even after the agent is revoked. Phone numbers,
@@ -306,6 +339,18 @@ Secrets on the Supabase project, read by the `agent-id` function:
   reached.
 - **Production:** `AGENT_ID_ALLOW_TEST=false`. No test resources; giving a
   resource gives the real one.
+
+**Business checks.** A business uploads its registration document
+(`POST /v1/account/verification/document?organization=…`, PDF or photo,
+private bucket). An EU VAT number is checked against VIES, and the registered
+name and address are stored in `checks.vat`. Reviewers see both in the review
+queue (`GET /v1/reviews/business/:id/document`) before approving.
+
+**Webhooks set themselves up.** On the first request after a deploy, the
+function registers its Stripe (identity, cards) and Resend (incoming mail)
+webhooks if they're needed and missing, and remembers that in
+`agent_id_settings` (`setup.auto`). `AGENT_ID_AUTO_SETUP=false` turns this
+off. The operator button does the same by hand.
 
 ## Production state (20 October 2026)
 

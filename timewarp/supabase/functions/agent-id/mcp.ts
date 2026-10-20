@@ -7,7 +7,7 @@ import type { AgentCaller } from './app.ts';
 import type { Ctx } from './context.ts';
 import { ops } from './agent.ts';
 import { resourcesOf, verificationOf } from './shared.ts';
-import { appOfClient } from './origin.ts';
+import { appForClient, appOfClient, recordApp } from './origin.ts';
 
 const PROTOCOLS = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
 type Schema = Record<string, unknown>;
@@ -67,6 +67,8 @@ async function recordClient(ctx: Ctx, who: AgentCaller, info: any) {
   const app = appOfClient(name);
   if (app && ['custom', 'any', 'other'].includes(who.agent.runtime)) patch.runtime = app;
   await ctx.admin.from('agent_id_agents').update(patch).eq('id', who.agent.id);
+  // One Agent ID can be used from several apps: each is remembered.
+  await recordApp(ctx, who.agent.id, appForClient(name), { name, version: String(info?.version || '') || null });
 }
 
 export async function handleMcp(ctx: Ctx, who: AgentCaller, req: Request) {

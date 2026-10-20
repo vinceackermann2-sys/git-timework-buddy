@@ -9,7 +9,7 @@ export const fail = (status: number, code: string, message: string, extra: Recor
 
 export const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization,apikey,content-type,timewarp-agent,x-filename,mcp-protocol-version,mcp-session-id',
+  'Access-Control-Allow-Headers': 'authorization,apikey,content-type,timewarp-agent,timewarp-claim-session,x-filename,mcp-protocol-version,mcp-session-id',
   'Access-Control-Expose-Headers': 'content-disposition',
   'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
 };

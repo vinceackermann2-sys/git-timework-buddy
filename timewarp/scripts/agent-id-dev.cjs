@@ -31,6 +31,8 @@ async function demo(local, owner) {
   const sales = await make("Sales Agent", "codex", "every project", ["mail", "phone", "wallet"]);
   await make("Site Builder", "cursor", "project ~/shop", ["mail", "vm"]);
   await make("Grok Scout", "grok", null, ["mail"]);
+  // One Agent ID used from several apps.
+  for (const [agent, app] of [[research, "codex"], [research, "cursor"], [sales, "chatgpt"]]) await call("POST", "/v1/me/apps", agent.key, { app });
   const address = async agent => (await call("GET", `/v1/agents/${agent.id}`, owner.session)).agent.resources;
   const r = await address(research), s = await address(sales);
   const upload = async (agent, name, text) => (await (await local.handle(new Request("http://127.0.0.1/agent-id/v1/me/files", { method: "POST", body: text, headers: { authorization: `Bearer ${agent.key}`, "content-type": "text/csv", "x-filename": name } }))).json()).file;
@@ -49,11 +51,13 @@ async function demo(local, owner) {
   await call("POST", "/v1/me/wallet/transfers", research.key, { to: sales.handle, value: "18.00", memo: "Data set from Sales" });
   await call("POST", "/v1/me/wallet/transfers", research.key, { to: sales.handle, value: "75.00", memo: "Deposit for supplier samples" });
   await call("POST", `/v1/agents/${sales.id}/card-application`, owner.session, { useCase: "Buy sample orders and software subscriptions", monthlySpend: 30000, country: "SE" });
-  console.log("  Demo data: 4 agents (Claude Code, Codex, Cursor, Grok) with mail, texts, calls, contacts, money and an approval waiting.");
+  const claim = await call("POST", "/v1/claims", null, { name: "Travel Planner", app: "claude-code", device: "MacBook Pro" });
+  console.log("  Demo data: 4 agents (Research Assistant used in Claude Code, Codex and Cursor) with mail, texts, calls, contacts, money and an approval waiting.");
+  console.log(`  A claim waiting for someone: ${claim.url}  (secret ${claim.secret})`);
 }
 
 (async () => {
-  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080" } });
+  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080", AGENT_ID_KYC: process.env.AGENT_ID_KYC || "test" } });
   const dev = await local.user({ email: "dev@timewarp.test", plan: "pro", credits: 100 });
   const teammate = await local.user({ email: "teammate@timewarp.test" });
   const org = await local.organization("Acme Robotics", [[dev, "owner"], [teammate, "lead"]]);

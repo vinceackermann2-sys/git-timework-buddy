@@ -2,6 +2,7 @@
 // `attach` names it; the MCP client the agent connects with names itself too,
 // which fills it in for agents nobody labelled.
 import { fail, str } from './util.ts';
+import type { Ctx } from './context.ts';
 
 export const APPS: Record<string, string> = {
   'claude-code': 'Claude Code', 'claude-desktop': 'Claude Desktop', claude: 'Claude', codex: 'Codex', chatgpt: 'ChatGPT',
@@ -47,4 +48,36 @@ export function originView(agent: { runtime: string; origin_detail?: string | nu
     detail: agent.origin_detail || null,
     client: agent.client_name ? { name: agent.client_name, version: agent.client_version || null, seenAt: agent.client_seen_at || null } : null,
   };
+}
+
+// The apps one Agent ID is used in (agent_id_agent_clients): each one that
+// connected or was set up, most recent first. The app the agent was made for
+// counts too.
+const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+export const appForClient = (name: string) => appOfClient(name) || slug(name) || 'custom';
+
+export async function recordApp(ctx: Ctx, agentId: string, app: string, client: { name?: string | null; version?: string | null } = {}) {
+  if (!/^[a-z0-9-]{1,40}$/.test(app)) return;
+  await ctx.admin.from('agent_id_agent_clients').upsert({
+    agent_id: agentId, app, last_seen_at: new Date(ctx.now()).toISOString(),
+    ...(client.name ? { client_name: client.name.slice(0, 100) } : {}), ...(client.version ? { client_version: client.version.slice(0, 40) } : {}),
+  }, { onConflict: 'agent_id,app' });
+}
+
+export async function appsOf(ctx: Ctx, agentIds: string[]) {
+  const map = new Map<string, any[]>();
+  if (!agentIds.length) return map;
+  const { data, error } = await ctx.admin.from('agent_id_agent_clients').select('*').in('agent_id', agentIds).order('last_seen_at', { ascending: false });
+  if (error) return map;
+  for (const row of data || []) map.set(row.agent_id, [...(map.get(row.agent_id) || []), row]);
+  return map;
+}
+
+export function appsView(agent: { runtime: string; created_at?: string }, rows: any[] = []) {
+  const label = (app: string) => APPS[app] || app.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  const list = rows.map(row => ({ app: row.app, label: label(row.app), clientName: row.client_name || null, lastSeenAt: row.last_seen_at, firstSeenAt: row.first_seen_at }));
+  if (agent.runtime && !['custom', 'any', 'other'].includes(agent.runtime) && !list.some(item => item.app === agent.runtime)) {
+    list.push({ app: agent.runtime, label: label(agent.runtime), clientName: null, lastSeenAt: null, firstSeenAt: agent.created_at || null });
+  }
+  return list;
 }

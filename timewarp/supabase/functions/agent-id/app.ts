@@ -17,6 +17,8 @@ import { agentRoutes, RAW_ROUTES } from './agent.ts';
 import { publicAllowedSigners, publicVerify, relyingPartyRoutes } from './relying.ts';
 import { handleMcp } from './mcp.ts';
 import { handleWebhook } from './webhooks.ts';
+import { collectClaim, confirmClaimEmail, getClaim, sendClaimCode, startClaim, verifyClaimIdentity } from './claims.ts';
+import { autoSetup } from './admin.ts';
 
 export type Owner = { kind: 'owner'; userId: string; email: string | null; via: 'session' | 'key'; keyId?: string };
 export type AgentCaller = { kind: 'agent'; userId: string; agent: AgentRow; via: 'key' | 'owner'; keyId?: string };
@@ -104,11 +106,31 @@ export async function authenticate(ctx: Ctx, req: Request): Promise<Caller> {
   return owner;
 }
 
-export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch; now?: () => number; sleep?: (ms: number) => Promise<void> }) {
+// Claims: getting an Agent ID without an account (claims.ts). Open routes;
+// the link, the email code, the claim session or the claim secret stand in
+// for a sign-in.
+async function claimRoute(ctx: Ctx, req: Request, path: string) {
+  if (path === '/v1/claims' && req.method === 'POST') return startClaim(ctx, req, await readBody(req));
+  if (path === '/v1/claims/collect' && req.method === 'POST') return collectClaim(ctx, await readBody(req));
+  const m = /^\/v1\/claims\/([a-z0-9]{1,60})(\/email|\/email\/confirm|\/identity)?$/.exec(path);
+  if (!m) return null;
+  const [, code, step] = m;
+  if (!step && req.method === 'GET') return getClaim(ctx, req, code);
+  if (step === '/email' && req.method === 'POST') return sendClaimCode(ctx, code, await readBody(req));
+  if (step === '/email/confirm' && req.method === 'POST') return confirmClaimEmail(ctx, code, await readBody(req));
+  if (step === '/identity' && req.method === 'POST') return verifyClaimIdentity(ctx, req, code, await readBody(req));
+  throw fail(405, 'method_not_allowed', 'Not available for this method.');
+}
+
+export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch; now?: () => number; sleep?: (ms: number) => Promise<void>; signIn?: Ctx['signIn'] }) {
   const config = loadConfig(deps.env);
-  const ctx: Ctx = { admin: deps.admin, config, fetch: deps.fetch || fetch, now: deps.now || Date.now, sleep: deps.sleep || (ms => new Promise(r => setTimeout(r, ms))) };
+  const ctx: Ctx = { admin: deps.admin, config, fetch: deps.fetch || fetch, now: deps.now || Date.now, sleep: deps.sleep || (ms => new Promise(r => setTimeout(r, ms))), signIn: deps.signIn };
+  let setupStarted = false;
   return async (req: Request): Promise<Response> => {
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
+    // Registers the deployment's own webhooks once, so mail and identity
+    // results arrive without anyone setting them up by hand.
+    if (!setupStarted && config.autoSetup) { setupStarted = true; autoSetup(ctx).catch(error => console.error('[agent-id] auto setup', error?.message)); }
     const url = new URL(req.url);
     const path = (url.pathname.split('/agent-id')[1] ?? url.pathname).replace(/\/+$/, '') || '/';
     try {
@@ -119,6 +141,7 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
       // Open to every service and repository, no account needed: checking a
       // passport shown to you, and an organization's Git signers.
       if (path === '/v1/verify' && req.method === 'POST' && !bearer(req)) return json(await publicVerify(ctx, await readBody(req)));
+      if (path.startsWith('/v1/claims')) { const result = await claimRoute(ctx, req, path); if (result) return json(result); }
       const signers = /^\/v1\/orgs\/([0-9a-f-]{36})\/allowed-signers$/.exec(path);
       if (signers && req.method === 'GET') { const result = await publicAllowedSigners(ctx, signers[1], Object.fromEntries(url.searchParams)); return result instanceof Response ? result : json(result); }
       if (path === '/mcp') {
@@ -133,7 +156,7 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
         if (method !== req.method) continue;
         const params = match(pattern, path);
         if (!params) continue;
-        const input = req.method === 'GET' ? Object.fromEntries(url.searchParams) : RAW_ROUTES.has(`${method} ${pattern}`) ? {} : await readBody(req);
+        const input = req.method === 'GET' ? Object.fromEntries(url.searchParams) : RAW_ROUTES.has(`${method} ${pattern}`) ? Object.fromEntries(url.searchParams) : await readBody(req);
         const result = await handler(ctx, caller, input, params, req);
         return result instanceof Response ? result : json(result);
       }

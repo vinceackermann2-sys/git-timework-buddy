@@ -3,7 +3,7 @@
 import { checked, fail, money } from './util.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
 import type { Kind } from './config.ts';
-import { originView } from './origin.ts';
+import { appsView, originView } from './origin.ts';
 
 // The service's own stored values (agent_id_settings), such as the signing
 // secrets of webhooks it registered itself.
@@ -94,9 +94,10 @@ export async function resourcesOf(ctx: Ctx, agentIds: string[]) {
   return (checked(await ctx.admin.from('agent_id_resources').select('*').in('agent_id', agentIds).neq('status', 'released')) || []) as ResourceRow[];
 }
 
-export function agentView(ctx: Ctx, agent: AgentRow, resources: ResourceRow[] = []) {
+// apps: from appsOf(), the apps this Agent ID is used in.
+export function agentView(ctx: Ctx, agent: AgentRow, resources: ResourceRow[] = [], apps?: Map<string, any[]>) {
   return {
-    id: agent.id, name: agent.name, handle: agent.handle, runtime: agent.runtime, origin: originView(agent), status: agent.status,
+    id: agent.id, name: agent.name, handle: agent.handle, runtime: agent.runtime, origin: originView(agent), apps: appsView(agent, apps?.get(agent.id)), status: agent.status,
     organizationId: agent.workspace_id, desktopAgentId: agent.desktop_agent_id,
     gitPrincipal: principalOf(ctx, agent),
     createdAt: agent.created_at, lastSeenAt: agent.last_seen_at,

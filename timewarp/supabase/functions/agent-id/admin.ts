@@ -61,6 +61,20 @@ async function registerResend(ctx: Ctx) {
   return 'registered';
 }
 
+// The same setup, on the first request after a deploy: registers whatever
+// isn't registered yet and remembers it was done for this configuration.
+export async function autoSetup(ctx: Ctx) {
+  const wanted = JSON.stringify({ stripe: wantsStripe(ctx) && !ctx.config.env('AGENT_ID_STRIPE_WEBHOOK_SECRET'), card: ctx.config.isLive('card'), resend: ctx.config.isLive('mail') && !ctx.config.env('AGENT_ID_RESEND_WEBHOOK_SECRET'), url: ctx.config.publicUrl });
+  const done = await setting(ctx, 'setup.auto');
+  if (done?.wanted === wanted && done?.ok) return;
+  const result: Record<string, string> = {};
+  let ok = true;
+  for (const [name, register] of [['stripe', registerStripe], ['resend', registerResend]] as const) {
+    try { result[name] = await register(ctx); } catch (error) { ok = false; result[name] = 'failed'; console.error(`[agent-id] auto setup ${name}`, (error as Error)?.message); }
+  }
+  await putSetting(ctx, 'setup.auto', { wanted, ok, result, at: new Date(ctx.now()).toISOString() });
+}
+
 export const adminRoutes: Route<Owner>[] = [
   ['GET', '/v1/admin/status', async (ctx, owner) => { operator(ctx, owner); return status(ctx); }],
   ['POST', '/v1/admin/setup', async (ctx, owner) => {

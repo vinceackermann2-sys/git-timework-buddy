@@ -2,7 +2,23 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.106.2';
 import { createHandler } from './app.ts';
 
-const admin = createClient(Deno.env.get('SUPABASE_URL') || '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '', {
+const url = Deno.env.get('SUPABASE_URL') || '';
+const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '', {
   auth: { persistSession: false, autoRefreshToken: false },
 });
-Deno.serve(createHandler({ admin, env: name => Deno.env.get(name) || '' }));
+
+// A session for someone who just proved their email with a claim code: the
+// same as following a magic link. A throwaway client verifies it, so the
+// shared admin client never takes on the person's session.
+async function signIn(email: string) {
+  const { data, error } = await admin.auth.admin.generateLink({ type: 'magiclink', email });
+  const tokenHash = data?.properties?.hashed_token;
+  if (error || !tokenHash) throw new Error(error?.message || 'No sign-in link.');
+  const client = createClient(url, Deno.env.get('SUPABASE_ANON_KEY') || '', { auth: { persistSession: false, autoRefreshToken: false } });
+  const verified = await client.auth.verifyOtp({ type: 'magiclink', token_hash: tokenHash });
+  const session = verified.data?.session;
+  if (verified.error || !session) throw new Error(verified.error?.message || 'No session.');
+  return { access_token: session.access_token, refresh_token: session.refresh_token, expires_in: session.expires_in };
+}
+
+Deno.serve(createHandler({ admin, env: name => Deno.env.get(name) || '', signIn }));

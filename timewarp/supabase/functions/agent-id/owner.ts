@@ -2,19 +2,20 @@
 // them mail, a number, a wallet, a card and a machine (test or live), set
 // their limits, answer approvals, see everything they did, verify who is
 // responsible, and register companies that accept only verified agents.
-import { agentId, checked, fail, handleFor, int, newSecret, relyingPartyId, sha256Hex, str } from './util.ts';
+import { agentId, cents, checked, fail, handleFor, int, newSecret, relyingPartyId, sha256Hex, str } from './util.ts';
 import { KINDS, type Kind, publicConfig } from './config.ts';
 import type { AgentCaller, Owner, Route } from './app.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
 import { agentView, audit, listEvents, membership, personOf, planOf, resourcesOf, resourceView, verificationOf } from './shared.ts';
-import { businessView, decideReview, listReviews, personView, startVerification } from './verification.ts';
-import { transfer } from './agent.ts';
+import { businessView, decideReview, listReviews, personView, reviewDocument, startVerification, uploadBusinessDocument } from './verification.ts';
+import { transfer, withdraw } from './agent.ts';
 import { provisionMail } from './providers/mail.ts';
 import { provisionPhone, releasePhone } from './providers/phone.ts';
 import { liveBalance, provisionWallet } from './providers/wallet.ts';
 import { provisionCard, updateCard } from './providers/card.ts';
 import { provisionVm, releaseMachine, SIZES, type Size } from './providers/vm.ts';
-import { originInput } from './origin.ts';
+import { appsOf, originInput } from './origin.ts';
+import { stripe } from './providers/stripe.ts';
 import { adminRoutes } from './admin.ts';
 
 type Handler = Route<Owner>[2];
@@ -101,8 +102,8 @@ const listAgents: Handler = async (ctx, owner, input) => {
   let query = ctx.admin.from('agent_id_agents').select('*').eq('owner_user_id', owner.userId);
   if (input.status !== 'all') query = query.neq('status', 'revoked');
   const agents = (checked(await query.order('created_at', { ascending: true })) || []) as AgentRow[];
-  const resources = await resourcesOf(ctx, agents.map(a => a.id));
-  return { agents: agents.map(agent => agentView(ctx, agent, resources)) };
+  const [resources, apps] = await Promise.all([resourcesOf(ctx, agents.map(a => a.id)), appsOf(ctx, agents.map(a => a.id))]);
+  return { agents: agents.map(agent => agentView(ctx, agent, resources, apps)) };
 };
 
 const createAgent: Handler = async (ctx, owner, input) => {
@@ -132,14 +133,15 @@ const createAgent: Handler = async (ctx, owner, input) => {
 
 const getAgent: Handler = async (ctx, owner, _input, params) => {
   const agent = await ownedAgent(ctx, owner, params.id);
-  const [resources, keys, signing, verification] = await Promise.all([
+  const [resources, keys, signing, verification, apps] = await Promise.all([
     resourcesOf(ctx, [agent.id]),
     ctx.admin.from('agent_id_keys').select('*').eq('agent_id', agent.id).is('revoked_at', null).order('created_at'),
     ctx.admin.from('agent_id_signing_keys').select('*').eq('agent_id', agent.id).is('revoked_at', null).order('created_at'),
     verificationOf(ctx, agent),
+    appsOf(ctx, [agent.id]),
   ]);
   return {
-    agent: agentView(ctx, agent, resources),
+    agent: agentView(ctx, agent, resources, apps),
     keys: ((checked(keys) || []) as any[]).map(keyView),
     signingKeys: ((checked(signing) || []) as any[]).map(row => ({ id: row.id, name: row.name, fingerprint: row.fingerprint, publicKey: row.public_key, createdAt: row.created_at })),
     verification: { verified: verification.verified, level: verification.level },
@@ -156,7 +158,7 @@ const updateAgent: Handler = async (ctx, owner, input, params) => {
   if (input.organizationId !== undefined) patch.workspace_id = await organizationFor(ctx, owner, input.organizationId);
   const row = checked(await ctx.admin.from('agent_id_agents').update(patch).eq('id', agent.id).select('*').single()) as AgentRow;
   await audit(ctx, owner.userId, agent.id, 'owner', 'agent.update', Object.fromEntries(Object.keys(patch).filter(k => k !== 'updated_at').map(k => [k, patch[k]])));
-  return { agent: agentView(ctx, row, await resourcesOf(ctx, [agent.id])) };
+  return { agent: agentView(ctx, row, await resourcesOf(ctx, [agent.id]), await appsOf(ctx, [agent.id])) };
 };
 
 // Revoking is final: keys and signing keys stop working, resources go back
@@ -207,7 +209,14 @@ function settingsFor(kind: Kind, input: any, current: Record<string, unknown> = 
   const next: Record<string, unknown> = { ...current };
   const set = (key: string, value: unknown) => { if (value === undefined) return; if (value === null) delete next[key]; else next[key] = value; };
   const amounts = (keys: string[]) => { for (const key of keys) if (key in (input || {})) set(key, input[key] === null ? null : money(input[key], key)); };
-  if (kind === 'wallet') amounts(['perTransfer', 'daily', 'approvalAbove']);
+  if (kind === 'wallet') {
+    amounts(['perTransfer', 'daily', 'approvalAbove']);
+    if ('withdrawTo' in (input || {})) {
+      const to = input.withdrawTo === null || input.withdrawTo === '' ? null : str(input.withdrawTo, 100, 'withdrawTo');
+      if (to && !/^0x[0-9a-fA-F]{40}$/.test(to)) throw fail(400, 'invalid', 'withdrawTo is an address that starts with 0x.');
+      set('withdrawTo', to);
+    }
+  }
   if (kind === 'card') {
     amounts(['perTransaction', 'daily', 'monthly']);
     if ('blockedCategories' in (input || {})) set('blockedCategories', input.blockedCategories === null ? null : categories(input.blockedCategories, 'blockedCategories'));
@@ -312,6 +321,54 @@ const testFunds: Handler = async (ctx, owner, input, params) => {
   if (result?.status !== 'ok') throw fail(400, 'invalid', 'Could not add test money.');
   await audit(ctx, owner.userId, agent.id, 'owner', 'wallet.test_funds', { amount });
   return { balance: { amount: Number(result.balance), currency: resource.currency || 'USD' } };
+};
+
+// --- Wallet: adding and taking out money ---------------------------------------
+// Adding money: the wallet's address for a transfer from an exchange or another
+// wallet (USDC or USDT on Base), and, where Stripe's crypto onramp is switched
+// on, buying USDC by card straight into it.
+const cardOnramp = (ctx: Ctx) => !!ctx.config.env('STRIPE_PUBLISHABLE_KEY') && !['', 'false', '0', 'off'].includes(ctx.config.env('STRIPE_CRYPTO_ONRAMP_ENABLED').toLowerCase());
+const addMoneyInfo: Handler = async (ctx, owner, _input, params) => {
+  const { resource } = await ownedResource(ctx, owner, params.id, 'wallet');
+  const live = resource.mode === 'live';
+  const chain = String(resource.state?.chain || ctx.config.walletChain);
+  return {
+    address: resource.address, mode: resource.mode,
+    network: live ? { id: chain, name: chain === 'base_sepolia' ? 'Base Sepolia (testnet)' : 'Base' } : null,
+    assets: live ? ['USDC', 'USDT'] : [],
+    card: { available: live && chain === 'base' && cardOnramp(ctx) },
+    test: !live,
+  };
+};
+const addMoneyByCard: Handler = async (ctx, owner, input, params, req) => {
+  if (owner.via !== 'session') throw fail(403, 'session_required', 'Add money on the Agent ID website.');
+  const { agent, resource } = await ownedResource(ctx, owner, params.id, 'wallet');
+  if (resource.mode !== 'live' || !cardOnramp(ctx) || String(resource.state?.chain || ctx.config.walletChain) !== 'base') throw fail(409, 'card_unavailable', 'Buying with a card isn\'t available for this wallet. Send USDC on Base to its address instead.');
+  const amount = input.amount === undefined || input.amount === null || input.amount === '' ? null : cents({ value: input.amount }, 'amount');
+  const ip = (req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || '').split(',')[0].trim();
+  const session = await stripe(ctx, 'POST', '/v1/crypto/onramp_sessions', {
+    wallet_addresses: { base_network: resource.address }, lock_wallet_address: true,
+    destination_networks: ['base'], destination_network: 'base', destination_currencies: ['usdc'], destination_currency: 'usdc',
+    ...(amount ? { source_currency: 'usd', source_amount: (amount / 100).toFixed(2) } : {}),
+    ...(ip ? { customer_ip_address: ip } : {}),
+    metadata: { agent_id: agent.id },
+  });
+  await audit(ctx, owner.userId, agent.id, 'owner', 'wallet.add_money_card', { amount });
+  return { clientSecret: String(session.client_secret), publishableKey: ctx.config.env('STRIPE_PUBLISHABLE_KEY'), ...(session.redirect_url ? { url: String(session.redirect_url) } : {}) };
+};
+const withdrawMoney: Handler = async (ctx, owner, input, params) => {
+  // Money leaves only from a signed-in session: a leaked CLI key can't empty a wallet.
+  if (owner.via !== 'session') throw fail(403, 'session_required', 'Withdraw on the Agent ID website.');
+  const agent = activeAgent(await ownedAgent(ctx, owner, params.id));
+  const to = str(input.to, 100, 'to', { required: true });
+  const asset = input.asset ? str(input.asset, 10, 'asset').toLowerCase() : undefined;
+  if (asset && asset !== 'usdc' && asset !== 'usdt') throw fail(400, 'invalid', 'asset is usdc or usdt.');
+  const result = await withdraw(ctx, agent, { to, amount: cents(input), asset, memo: str(input.memo, 300, 'memo') || undefined });
+  if (input.remember === true) {
+    const { resource } = await ownedResource(ctx, owner, params.id, 'wallet');
+    await ctx.admin.from('agent_id_resources').update({ settings: { ...resource.settings, withdrawTo: to } }).eq('id', resource.id);
+  }
+  return result;
 };
 
 const EVENT_KINDS = ['mail', 'sms', 'call', 'wallet', 'card', 'vm'];
@@ -465,6 +522,9 @@ export const ownerRoutes: Route<Owner>[] = [
   ['POST', '/v1/agents/:id/keys', createAgentKey], ['DELETE', '/v1/agents/:id/keys/:keyId', revokeAgentKey],
   ['POST', '/v1/agents/:id/resources', provision], ['PATCH', '/v1/agents/:id/resources/:kind', updateResource], ['DELETE', '/v1/agents/:id/resources/:kind', removeResource],
   ['POST', '/v1/agents/:id/wallet/test-funds', testFunds],
+  ['GET', '/v1/agents/:id/wallet/add-money', addMoneyInfo], ['POST', '/v1/agents/:id/wallet/add-money', addMoneyByCard],
+  ['POST', '/v1/agents/:id/wallet/withdraw', withdrawMoney],
+  ['POST', '/v1/account/verification/document', (ctx, owner, input, _params, req) => uploadBusinessDocument(ctx, owner, req, String(input.organization || new URL(req.url).searchParams.get('organization') || ''))],
   ['GET', '/v1/agents/:id/events', agentEvents], ['GET', '/v1/agents/:id/contacts', agentContacts],
   ['GET', '/v1/agents/:id/card-application', cardApplication], ['POST', '/v1/agents/:id/card-application', applyForCard],
   ['GET', '/v1/approvals', listApprovals], ['POST', '/v1/approvals/:id', decideApproval],
@@ -474,5 +534,6 @@ export const ownerRoutes: Route<Owner>[] = [
   ['PATCH', '/v1/relying-parties/:rpId', updateRelyingParty], ['DELETE', '/v1/relying-parties/:rpId', revokeRelyingParty],
   ['POST', '/v1/relying-parties/:rpId/secret', rotateRelyingPartySecret],
   ['GET', '/v1/reviews', (ctx, owner) => listReviews(ctx, owner)],
+  ['GET', '/v1/reviews/business/:id/document', (ctx, owner, _input, params) => reviewDocument(ctx, owner, params.id)],
   ['POST', '/v1/reviews/:kind/:id', (ctx, owner, input, params) => decideReview(ctx, owner, params.kind, params.id, input)],
 ];

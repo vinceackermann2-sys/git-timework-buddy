@@ -8,6 +8,8 @@ export type Ctx = {
   fetch: typeof fetch;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
+  // Signs a person in (as a magic link would) once they've proved their email.
+  signIn?: (email: string) => Promise<{ access_token: string; refresh_token: string; expires_in: number } | null>;
 };
 
 export type AgentRow = {

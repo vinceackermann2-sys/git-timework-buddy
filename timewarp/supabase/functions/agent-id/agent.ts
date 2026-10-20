@@ -15,6 +15,7 @@ import { actionStatus, ASSETS, type Asset, EVM_ADDRESS, explorerUrl, liveBalance
 import { revealCard } from './providers/card.ts';
 import { machineCost, machineState, runCommand, startMachine, stopMachine, type Size } from './providers/vm.ts';
 import { parseSshKey } from './ssh.ts';
+import { appOf, recordApp } from './origin.ts';
 
 type Op = (ctx: Ctx, who: AgentCaller, input: any) => Promise<unknown>;
 const actor = (who: AgentCaller) => who.via === 'owner' ? 'owner' as const : 'agent' as const;
@@ -255,7 +256,8 @@ const contactDelete: Op = async (ctx, who, input) => {
 // --- Wallet ------------------------------------------------------------------
 async function spent(ctx: Ctx, resource: ResourceRow, kind: 'wallet' | 'card', statuses: string[]) {
   const since = (days: number) => new Date(ctx.now() - days * 86_400_000).toISOString();
-  const rows = (checked(await ctx.admin.from('agent_id_events').select('amount_minor,occurred_at').eq('resource_id', resource.id).eq('kind', kind).eq('direction', 'out').in('status', statuses).gte('occurred_at', since(30))) || []) as any[];
+  // The owner's withdrawals aren't the agent spending.
+  const rows = ((checked(await ctx.admin.from('agent_id_events').select('amount_minor,occurred_at,data').eq('resource_id', resource.id).eq('kind', kind).eq('direction', 'out').in('status', statuses).gte('occurred_at', since(30))) || []) as any[]).filter(row => !row.data?.withdrawal);
   const sum = (days: number) => rows.filter(row => row.occurred_at >= since(days)).reduce((total, row) => total + Number(row.amount_minor || 0), 0);
   return { last24Hours: sum(1), last30Days: sum(30) };
 }
@@ -405,6 +407,44 @@ export async function transfer(ctx: Ctx, who: AgentCaller, input: { to: string; 
   }
   await audit(ctx, who.userId, who.agent.id, actor(who), 'wallet.send', { amount: input.amount, currency: 'USD', to: target.label, mode: from.mode, approval: approvalId });
   return { status: outcome, transfer: await eventById(ctx, result.event), ...(result.balance !== null && result.balance !== undefined ? { balance: usd(Number(result.balance)) } : {}), ...(outcome === 'pending' ? { message: 'Sent to the network; it confirms within a minute. Check wallet history.' } : {}) };
+}
+
+// The owner taking money out of their agent's live wallet: to their own wallet
+// or an exchange (USDC or USDT on Base). Screened like any transfer, but not
+// held to the limits the owner set for the agent.
+export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; amount: number; asset?: string; memo?: string }) {
+  const from = await resourceFor(ctx, agent.id, 'wallet');
+  if (from.mode !== 'live') throw fail(409, 'test_wallet', 'Test money stays inside Agent ID.');
+  if (!EVM_ADDRESS.test(input.to)) throw fail(400, 'invalid', 'Withdraw to an address that starts with 0x, on Base.');
+  if (input.to.toLowerCase() === String(from.address).toLowerCase()) throw fail(400, 'invalid', 'That is this wallet\'s own address.');
+  if (await sanctioned(ctx, input.to)) {
+    await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.blocked_sanctioned', { to: input.to });
+    throw fail(403, 'sanctioned_address', 'This address is on a sanctions list, so money can\'t be sent to it.');
+  }
+  const asset = await payingAsset(ctx, from, input.amount, input.asset);
+  const result = checked(await ctx.admin.rpc('agent_id_wallet_withdraw', { p_agent: agent.id, p_amount: input.amount, p_to: input.to, p_memo: input.memo || 'Withdrawal' })) as any;
+  if (result?.status !== 'ok') throw fail(result?.status === 'no_wallet' ? 404 : 409, result?.status || 'withdraw_failed', 'The withdrawal could not be started.');
+  let actionId: string | null = null, outcome = 'pending';
+  try {
+    const sent = await sendStablecoin(ctx, from, input.to, input.amount, asset, `agent-id-withdraw-${result.event}`);
+    actionId = sent.actionId;
+    await ctx.admin.from('agent_id_events').update({ data: { withdrawal: true, action: actionId, asset: asset.toUpperCase() } }).eq('id', result.event);
+    let action = { status: sent.status === 'created' ? 'pending' : sent.status, hash: null as string | null, reason: null as string | null };
+    for (let i = 0; i < 6 && action.status === 'pending'; i++) {
+      await ctx.sleep(1500);
+      action = await actionStatus(ctx, from, actionId).catch(() => action);
+    }
+    if (action.status !== 'pending') {
+      await finishLive(ctx, from, result.event, action);
+      if (action.status !== 'succeeded') throw fail(502, 'wallet_failed', action.reason || 'The withdrawal did not go through.');
+      outcome = 'completed';
+    }
+  } catch (error) {
+    if (!actionId) await ctx.admin.rpc('agent_id_finish_transfer', { p_event: result.event, p_ok: false, p_provider_ref: null, p_data: { error: (error as Error).message } });
+    throw error;
+  }
+  await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.withdraw', { amount: input.amount, to: input.to, asset });
+  return { status: outcome, transfer: await eventById(ctx, result.event) };
 }
 
 const walletSend: Op = async (ctx, who, input) => {
@@ -615,6 +655,8 @@ export const agentRoutes: Route<AgentCaller>[] = [
   ['GET', '/v1/me/files/:id', async (ctx, who, _input, params) => fileDownload(ctx, who, params.id)],
   ...([
   ['GET', '/v1/me', me],
+  // The CLI saying which app it set this Agent ID up in.
+  ['POST', '/v1/me/apps', async (ctx, who, input) => { const app = appOf(input.app, 'app'); await recordApp(ctx, who.agent.id, app, { name: str(input.clientName, 100, 'clientName') || null }); return { app }; }],
   ['GET', '/v1/me/mail', mailList], ['POST', '/v1/me/mail', mailSend], ['GET', '/v1/me/mail/counts', mailCounts], ['GET', '/v1/me/mail/:id', mailRead],
   ['POST', '/v1/me/mail/:id/move', mailMove], ['POST', '/v1/me/mail/:id/read', mailMarkRead], ['DELETE', '/v1/me/mail/:id', mailDelete],
   ['GET', '/v1/me/sms', smsList], ['POST', '/v1/me/sms', smsSend],
@@ -628,4 +670,4 @@ export const agentRoutes: Route<AgentCaller>[] = [
   ['GET', '/v1/me/signing-keys', signingKeysList], ['POST', '/v1/me/signing-keys', signingKeyAdd], ['DELETE', '/v1/me/signing-keys/:id', signingKeyRemove],
   ] as [string, string, Op][]).map(([method, pattern, op]) => [method, pattern, wrap(op)] as Route<AgentCaller>),
 ];
-export const RAW_ROUTES = new Set(['POST /v1/me/files']);
+export const RAW_ROUTES = new Set(['POST /v1/me/files', 'POST /v1/account/verification/document']);

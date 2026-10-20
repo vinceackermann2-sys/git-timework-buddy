@@ -1,5 +1,6 @@
 // timewarp-id: the command line for Timewarp Agent ID.
 import os from 'node:os';
+import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { parseArgs } from './args.js';
 import { Api } from './api.js';
@@ -30,13 +31,22 @@ const ALIASES = { agent: 'agents', calls: 'call', contact: 'contacts', machine: 
 const NO_NOTICE = new Set(['approvals', 'logout', 'mcp', 'passport']);
 const AGENT_ID = /^agt_[a-z0-9]{24}$/;
 
+// Opens a link in the default browser; the link is printed too, so a
+// computer without one still works.
+function openInBrowser(url) {
+  try {
+    const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+    spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true }).on('error', () => {}).unref();
+  } catch { /* printed anyway */ }
+}
+
 const readAll = async stream => {
   const chunks = [];
   for await (const chunk of stream) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
   return Buffer.concat(chunks).toString('utf8');
 };
 
-export function createContext({ env = process.env, cwd = process.cwd(), flags = {}, args = [], rest = [], stdout = process.stdout, stderr = process.stderr, stdin = process.stdin, fetch = globalThis.fetch, command = '' } = {}) {
+export function createContext({ env = process.env, cwd = process.cwd(), flags = {}, args = [], rest = [], stdout = process.stdout, stderr = process.stderr, stdin = process.stdin, fetch = globalThis.fetch, command = '', sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), openUrl = openInBrowser } = {}) {
   let config = null, api = null, selected = null;
   const out = text => { stdout.write(String(text).endsWith('\n') ? String(text) : `${text}\n`); };
   const err = text => { stderr.write(String(text).endsWith('\n') ? String(text) : `${text}\n`); };
@@ -58,6 +68,9 @@ export function createContext({ env = process.env, cwd = process.cwd(), flags = 
       rl.on('close', () => resolve(''));
     }),
     ownerUsed: false,
+    sleep,
+    // Only from a terminal: scripts and tests just get the printed link.
+    openUrl: url => { if (stderr?.isTTY && !env.CI) openUrl(url); },
     hostname: () => { try { return os.hostname().slice(0, 40) || 'this computer'; } catch { return 'this computer'; } },
 
     ownerKey() {
