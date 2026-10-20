@@ -1,7 +1,7 @@
 // The top of an agent's page: its identity at a glance, like an ID card.
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import { BadgeCheck } from "lucide-react";
+import { BadgeCheck, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { agentApps } from "@/lib/agent-id/apps";
@@ -71,7 +71,9 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
       <dl className="grid grid-cols-2 border-t border-[var(--border)] lg:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
         {line(
           "mail",
-          agent.resources.mail ? (
+          agent.resources.mail?.status === "provisioning" ? (
+            <SettingUp />
+          ) : agent.resources.mail ? (
             <span
               className="aid-mono block truncate text-[13px]"
               title={agent.resources.mail.address ?? ""}
@@ -84,7 +86,9 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
         )}
         {line(
           "phone",
-          agent.resources.phone ? (
+          agent.resources.phone?.status === "provisioning" ? (
+            <SettingUp />
+          ) : agent.resources.phone ? (
             <span className="text-[13px] tabular-nums">
               {formatPhone(agent.resources.phone.address)}
             </span>
@@ -94,7 +98,9 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
         )}
         {line(
           "wallet",
-          wallet ? (
+          wallet?.status === "provisioning" ? (
+            <SettingUp />
+          ) : wallet ? (
             <span className="flex items-center gap-1.5">
               <span className="font-semibold">{balance ? formatUsd(balance.amount) : "—"}</span>
               {wallet.mode === "test" && <ModeBadge mode="test" />}
@@ -191,5 +197,14 @@ function IdLine({
       </dt>
       <dd className="mt-1 min-w-0 text-sm">{children}</dd>
     </div>
+  );
+}
+
+function SettingUp() {
+  return (
+    <span className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)]">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+      Setting up
+    </span>
   );
 }

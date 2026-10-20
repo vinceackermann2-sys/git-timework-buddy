@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CommandLine, Field, Muted, Notice } from "../ui";
+import { ReadyList } from "../ReadyList";
 import { ClaimAgent, ClaimHeading, ClaimLayout } from "./ClaimLayout";
 import {
   claimCommand,
@@ -76,6 +77,12 @@ export function ClaimFlow({ code, checked }: { code: string; checked: boolean })
       if (!claim) return false;
       const screen = claimScreen(claim);
       if (screen === "checking") return 4000;
+      // Its mail, wallet and so on are still being set up.
+      if (
+        screen === "done" &&
+        Object.values(claim.agent?.resources ?? {}).some((r) => r?.status === "provisioning")
+      )
+        return 2500;
       if (checked && screen === "identity" && Date.now() - waitingSince < 120_000) return 3000;
       // Showing the command: notice when the agent has collected its key.
       if (
@@ -632,6 +639,11 @@ function Done({ claim, secret }: { claim: Claim; secret: string | null }) {
                 : `Open Agent ID to connect ${claim.name} to your apps.`}
         </p>
       </div>
+      {claim.agent?.resources && Object.keys(claim.agent.resources).length > 0 && (
+        <div className="mt-6">
+          <ReadyList resources={claim.agent.resources} />
+        </div>
+      )}
       {showCommand && secret && (
         <div className="mt-6 space-y-2">
           <CommandLine command={claimCommand(secret)} />

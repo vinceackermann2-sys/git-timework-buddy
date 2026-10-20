@@ -23,8 +23,10 @@ async function demo(local, owner) {
   const config = (await local.call("GET", "/v1/config", {})).body;
   await call("POST", "/v1/account/terms", owner.session, { version: config.legal.termsVersion });
   const make = async (name, app, detail, kinds) => {
-    const created = await call("POST", "/v1/agents", owner.session, { name, origin: { app, detail } });
-    for (const kind of kinds) await call("POST", `/v1/agents/${created.agent.id}/resources`, owner.session, { kind, ...(kind === "wallet" ? { settings: { approvalAbove: 2500, perTransfer: 20000, daily: 50000 } } : {}) });
+    // Each comes with its own set of resources, as new Agent IDs do.
+    const created = await call("POST", "/v1/agents", owner.session, { name, origin: { app, detail }, resources: kinds });
+    await local.settle();
+    if (kinds.includes("wallet")) await call("PATCH", `/v1/agents/${created.agent.id}/resources/wallet`, owner.session, { settings: { approvalAbove: 2500, perTransfer: 20000, daily: 50000 } });
     return { ...created.agent, key: created.secret };
   };
   const research = await make("Research Assistant", "claude-code", "project ~/market-study", ["mail", "phone", "wallet", "vm"]);
@@ -57,7 +59,7 @@ async function demo(local, owner) {
 }
 
 (async () => {
-  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080", AGENT_ID_KYC: process.env.AGENT_ID_KYC || "test" } });
+  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080", AGENT_ID_KYC: process.env.AGENT_ID_KYC || "test", AGENT_ID_AUTO_GIVE: process.env.AGENT_ID_AUTO_GIVE || "mail,wallet", AGENT_ID_AUTO_GIVE_PAID: process.env.AGENT_ID_AUTO_GIVE_PAID || "phone,vm" } });
   const dev = await local.user({ email: "dev@timewarp.test", plan: "pro", credits: 100 });
   const teammate = await local.user({ email: "teammate@timewarp.test" });
   const org = await local.organization("Acme Robotics", [[dev, "owner"], [teammate, "lead"]]);

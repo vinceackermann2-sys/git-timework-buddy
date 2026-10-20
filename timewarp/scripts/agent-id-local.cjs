@@ -213,16 +213,20 @@ async function startLocal(options = {}) {
   const users = new Map();
   const files = new Map();
   const admin = adminClient(db, users, files);
-  const env = { SUPABASE_URL: "http://127.0.0.1:54329", AGENT_ID_PUBLIC_URL: options.publicUrl || "http://127.0.0.1:54329/agent-id", AGENT_ID_SIGNING_KEY: await passportKey(), AGENT_ID_WEBHOOK_SECRET: "local-webhook-secret", AGENT_ID_AUTO_SETUP: "false", ...options.env };
+  const env = { SUPABASE_URL: "http://127.0.0.1:54329", AGENT_ID_PUBLIC_URL: options.publicUrl || "http://127.0.0.1:54329/agent-id", AGENT_ID_SIGNING_KEY: await passportKey(), AGENT_ID_WEBHOOK_SECRET: "local-webhook-secret", AGENT_ID_AUTO_SETUP: "false", AGENT_ID_AUTO_GIVE: "none", AGENT_ID_AUTO_GIVE_PAID: "none", ...options.env };
+  // Work a request leaves running (a new agent's resources); settle() waits for it.
+  const pending = new Set();
+  const background = work => { const tracked = Promise.resolve(work).catch(() => {}).finally(() => pending.delete(tracked)); pending.add(tracked); };
   let clock = options.now || null;
   const { createHandler } = loadApp();
-  const make = () => createHandler({ admin, env: name => env[name] || "", fetch: options.fetch || (async () => { throw new Error("No network in the local harness."); }), now: () => clock ? clock() : Date.now(), sleep: options.sleep || (async () => {}), signIn: async email => { const user = [...users.values()].find(u => u.email === email); return user ? { access_token: `session:${user.id}`, refresh_token: "local-refresh", expires_in: 3600 } : null; } });
+  const make = () => createHandler({ admin, env: name => env[name] || "", fetch: options.fetch || (async () => { throw new Error("No network in the local harness."); }), now: () => clock ? clock() : Date.now(), sleep: options.sleep || (async () => {}), background, signIn: async email => { const user = [...users.values()].find(u => u.email === email); return user ? { access_token: `session:${user.id}`, refresh_token: "local-refresh", expires_in: 3600 } : null; } });
   let handler = make();
   const local = {
     db, admin, env, users, files,
     handle: request => handler(request),
     setEnv(changes) { Object.assign(env, changes); handler = make(); },
     setClock(fn) { clock = fn; },
+    async settle() { while (pending.size) await Promise.all([...pending]); },
     async user({ email, plan, credits, name } = {}) {
       const id = uuid(++counter);
       const user = { id, email: email || `user${counter}@example.invalid` };

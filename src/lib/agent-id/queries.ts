@@ -35,15 +35,29 @@ const base = { retry: shouldRetry, staleTime: 15_000 } as const;
 export const useAccount = () =>
   useQuery({ ...base, queryKey: queryKeys.account, queryFn: () => api.account() });
 
+// A new agent's resources are set up in the background: poll until they're ready.
+const SETUP_POLL = 2500;
+export const settingUp = (
+  agents: { resources: Record<string, { status: string } | undefined> }[] = [],
+) =>
+  agents.some((agent) => Object.values(agent.resources).some((r) => r?.status === "provisioning"));
+
 export const useAgents = () =>
   useQuery({
     ...base,
     queryKey: queryKeys.agents,
     queryFn: async () => (await api.listAgents()).agents,
+    refetchInterval: (query) => (settingUp(query.state.data) ? SETUP_POLL : false),
   });
 
 export const useAgent = (id: string) =>
-  useQuery({ ...base, queryKey: queryKeys.agent(id), queryFn: () => api.getAgent(id) });
+  useQuery({
+    ...base,
+    queryKey: queryKeys.agent(id),
+    queryFn: () => api.getAgent(id),
+    refetchInterval: (query) =>
+      query.state.data && settingUp([query.state.data.agent]) ? SETUP_POLL : false,
+  });
 
 export function useEventPages(
   agentId: string,

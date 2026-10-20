@@ -10,8 +10,9 @@ import { base64url, checked, EMAIL, fail, handleFor, agentId as newAgentId, newS
 import type { AgentRow, Ctx } from './context.ts';
 import type { Owner } from './app.ts';
 import { APPS, appOf } from './origin.ts';
-import { audit, personOf } from './shared.ts';
+import { audit, personOf, resourcesOf } from './shared.ts';
 import { personView, startVerification } from './verification.ts';
+import { autoGive } from './provisioning.ts';
 
 const CLAIM_MINUTES = 60;          // An unanswered claim link works for an hour,
 const VERIFYING_DAYS = 7;          // and for a week once an identity check is running.
@@ -41,6 +42,7 @@ function stepOf(row: any, person: any) {
 async function claimView(ctx: Ctx, row: any, full: boolean) {
   const person = full && row.user_id ? await personOf(ctx, row.user_id) : null;
   const agent = full && row.agent_id ? checked(await ctx.admin.from('agent_id_agents').select('id,name,handle').eq('id', row.agent_id).maybeSingle()) as any : null;
+  const resources = agent ? await resourcesOf(ctx, [agent.id]) : [];
   return {
     code: row.code, name: row.name, app: appView(row.app), device: row.device || null, startedBy: row.started_by, matchCode: row.match_code,
     status: row.status !== 'claimed' && expired(ctx, row) ? 'expired' : row.status,
@@ -50,7 +52,7 @@ async function claimView(ctx: Ctx, row: any, full: boolean) {
       step: stepOf(row, person),
       person: personView(person),
       terms: { accepted: person?.terms_version === ctx.config.termsVersion && !!person?.terms_accepted_at, current: ctx.config.termsVersion },
-      agent: agent ? { id: agent.id, name: agent.name, handle: agent.handle } : null,
+      agent: agent ? { id: agent.id, name: agent.name, handle: agent.handle, resources: Object.fromEntries(resources.map(r => [r.kind, { status: r.status, address: r.address, mode: r.mode }])) } : null,
       keyCollected: !!row.key_delivered_at,
     } : {}),
   };
@@ -239,6 +241,7 @@ async function createClaimedAgent(ctx: Ctx, userId: string, claim: any) {
   if (!agent) throw fail(503, 'unavailable', 'The agent couldn\'t be created. Try again.');
   if (claim.app) await ctx.admin.from('agent_id_agent_clients').upsert({ agent_id: agent.id, app: claim.app, client_name: claim.client_name, last_seen_at: iso(ctx) }, { onConflict: 'agent_id,app' });
   await audit(ctx, userId, agent.id, 'owner', 'agent.create', { name: agent.name, runtime: agent.runtime, via: 'claim', claim: claim.id });
+  await autoGive(ctx, agent).catch(error => console.error('[agent-id] claim setup', (error as Error)?.message));
   return agent;
 }
 
@@ -260,9 +263,10 @@ export async function collectClaim(ctx: Ctx, input: any) {
   const { secret: key, prefix } = newSecret('agent');
   checked(await ctx.admin.from('agent_id_keys').insert({ owner_user_id: agent.owner_user_id, agent_id: agent.id, name: 'Set up by link', prefix, hash: await sha256Hex(key) }).select('id'));
   await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'agent_key.create', { prefix, via: 'claim' });
+  const resources = await resourcesOf(ctx, [agent.id]);
   return {
     status: 'claimed',
-    agent: { id: agent.id, name: agent.name, handle: agent.handle },
+    agent: { id: agent.id, name: agent.name, handle: agent.handle, resources: Object.fromEntries(resources.map(r => [r.kind, { status: r.status, address: r.address }])) },
     key, api: ctx.config.publicUrl, mcp: `${ctx.config.publicUrl}/mcp`,
   };
 }

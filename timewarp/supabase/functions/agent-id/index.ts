@@ -21,4 +21,11 @@ async function signIn(email: string) {
   return { access_token: session.access_token, refresh_token: session.refresh_token, expires_in: session.expires_in };
 }
 
-Deno.serve(createHandler({ admin, env: name => Deno.env.get(name) || '', signIn }));
+// Keeps the function alive until work started for a request finishes (a new
+// agent's mail, wallet, number and machine), after the answer has gone.
+function background(work: Promise<unknown>) {
+  const tracked = work.catch(error => console.error('[agent-id] background', error?.message));
+  try { (globalThis as any).EdgeRuntime?.waitUntil?.(tracked); } catch { /* runs anyway */ }
+}
+
+Deno.serve(createHandler({ admin, env: name => Deno.env.get(name) || '', signIn, background }));

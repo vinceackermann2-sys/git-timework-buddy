@@ -130,6 +130,21 @@ on its own.
 | card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner, paid plan |
 | vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A machine that resumes for each command, stops after it and keeps its files | credits (time is charged) |
 
+**Ready on creation.** A new Agent ID, whether made on the dashboard, by
+`attach`, through the API or by a claim link, comes with its resources
+(`provisioning.ts`):
+- mail and a wallet for everyone (`AGENT_ID_AUTO_GIVE`, default `mail,wallet`);
+- a phone number and a machine on paid plans (`AGENT_ID_AUTO_GIVE_PAID`,
+  default `phone,vm`); `none` turns either list off.
+
+The usual checks still apply: the provider is live, wallets need a verified
+owner, and phone numbers need a paid plan. A kind that can't be given now is
+listed in the response's `setup.skipped` with its reason, and never stops the
+agent being made. Providers answer in the background (`EdgeRuntime.waitUntil`).
+The slots show as `provisioning` until they're ready, and one that fails is
+freed, so the owner can add it later. `resources: []` on
+`POST /v1/agents` makes an agent with nothing.
+
 **Adding and taking out money.** `GET /v1/agents/:id/wallet/add-money` gives
 the address and network to send USDC or USDT on Base from an exchange or
 another wallet. With `STRIPE_PUBLISHABLE_KEY` and

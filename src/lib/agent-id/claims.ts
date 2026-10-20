@@ -37,7 +37,13 @@ export type Claim = {
   step?: ClaimStep;
   person?: ClaimPerson;
   terms?: { accepted: boolean; current: string };
-  agent?: { id: string; name: string; handle: string } | null;
+  agent?: {
+    id: string;
+    name: string;
+    handle: string;
+    // What it came with: mail, wallet and, on paid plans, phone and machine.
+    resources?: Partial<Record<string, { status: string; address: string | null; mode?: string }>>;
+  } | null;
   keyCollected?: boolean;
 };
 

@@ -3,17 +3,17 @@
 // their limits, answer approvals, see everything they did, verify who is
 // responsible, and register companies that accept only verified agents.
 import { agentId, cents, checked, fail, handleFor, int, newSecret, relyingPartyId, sha256Hex, str } from './util.ts';
+import { autoGive, giveResource, kindsFor, settingsFor } from './provisioning.ts';
 import { KINDS, type Kind, publicConfig } from './config.ts';
 import type { AgentCaller, Owner, Route } from './app.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
 import { agentView, audit, listEvents, membership, personOf, planOf, resourcesOf, resourceView, verificationOf } from './shared.ts';
 import { businessView, decideReview, listReviews, personView, reviewDocument, startVerification, uploadBusinessDocument } from './verification.ts';
 import { transfer, withdraw } from './agent.ts';
-import { provisionMail } from './providers/mail.ts';
-import { provisionPhone, releasePhone } from './providers/phone.ts';
-import { liveBalance, provisionWallet } from './providers/wallet.ts';
-import { provisionCard, updateCard } from './providers/card.ts';
-import { provisionVm, releaseMachine, SIZES, type Size } from './providers/vm.ts';
+import { releasePhone } from './providers/phone.ts';
+import { liveBalance } from './providers/wallet.ts';
+import { updateCard } from './providers/card.ts';
+import { releaseMachine } from './providers/vm.ts';
 import { appsOf, originInput } from './origin.ts';
 import { stripe } from './providers/stripe.ts';
 import { adminRoutes } from './admin.ts';
@@ -112,6 +112,7 @@ const createAgent: Handler = async (ctx, owner, input) => {
   const runtime = String(origin.runtime || 'custom');
   const workspaceId = (await organizationFor(ctx, owner, input.organizationId)) ?? null;
   const desktopAgentId = input.desktopAgentId ? str(input.desktopAgentId, 100, 'desktopAgentId') : null;
+  await kindsFor(ctx, owner.userId, input.resources);
   if (ctx.config.termsRequired && !termsView(ctx, await personOf(ctx, owner.userId)).accepted) throw fail(403, 'terms_required', 'Accept the Agent ID Terms first (on the dashboard, or with `timewarp-id terms`).');
   if (ctx.config.verificationRequired('agent')) {
     const verification = await verificationOf(ctx, { owner_user_id: owner.userId, workspace_id: workspaceId });
@@ -128,7 +129,9 @@ const createAgent: Handler = async (ctx, owner, input) => {
   if (!agent) throw fail(503, 'unavailable', 'Could not create the agent. Try again.');
   await audit(ctx, owner.userId, agent.id, 'owner', 'agent.create', { name, runtime, organization: workspaceId });
   const key = input.key === false ? null : await createKey(ctx, owner, agent, str(input.keyName, 60, 'keyName') || 'Default key');
-  return { agent: agentView(ctx, agent), ...(key ? { key: key.key, secret: key.secret } : {}) };
+  // Ready to use at once: its mail, wallet and (on paid plans) number and machine.
+  const setup = await autoGive(ctx, agent, input.resources);
+  return { agent: agentView(ctx, agent, await resourcesOf(ctx, [agent.id])), setup: { given: setup.given, skipped: setup.skipped }, ...(key ? { key: key.key, secret: key.secret } : {}) };
 };
 
 const getAgent: Handler = async (ctx, owner, _input, params) => {
@@ -198,81 +201,13 @@ const revokeAgentKey: Handler = async (ctx, owner, _input, params) => {
 };
 
 // --- Resources -----------------------------------------------------------------
-const money = (value: unknown, field: string) => value === null || value === '' ? undefined : int(value, field, { min: 0, max: 100_000_000_00 });
-const categories = (value: unknown, field: string) => {
-  if (value === undefined || value === null) return undefined;
-  if (!Array.isArray(value) || value.length > 50) throw fail(400, 'invalid', `${field} must be a list of up to 50 merchant categories.`);
-  return value.map(item => str(item, 80, field, { required: true }).toLowerCase());
-};
-// The settings an owner controls on each kind; amounts are in cents.
-function settingsFor(kind: Kind, input: any, current: Record<string, unknown> = {}) {
-  const next: Record<string, unknown> = { ...current };
-  const set = (key: string, value: unknown) => { if (value === undefined) return; if (value === null) delete next[key]; else next[key] = value; };
-  const amounts = (keys: string[]) => { for (const key of keys) if (key in (input || {})) set(key, input[key] === null ? null : money(input[key], key)); };
-  if (kind === 'wallet') {
-    amounts(['perTransfer', 'daily', 'approvalAbove']);
-    if ('withdrawTo' in (input || {})) {
-      const to = input.withdrawTo === null || input.withdrawTo === '' ? null : str(input.withdrawTo, 100, 'withdrawTo');
-      if (to && !/^0x[0-9a-fA-F]{40}$/.test(to)) throw fail(400, 'invalid', 'withdrawTo is an address that starts with 0x.');
-      set('withdrawTo', to);
-    }
-  }
-  if (kind === 'card') {
-    amounts(['perTransaction', 'daily', 'monthly']);
-    if ('blockedCategories' in (input || {})) set('blockedCategories', input.blockedCategories === null ? null : categories(input.blockedCategories, 'blockedCategories'));
-    if ('allowedCategories' in (input || {})) set('allowedCategories', input.allowedCategories === null ? null : categories(input.allowedCategories, 'allowedCategories'));
-  }
-  if (kind === 'phone' && 'greeting' in (input || {})) set('greeting', input.greeting === null ? null : str(input.greeting, 300, 'greeting'));
-  return next;
-}
-// New wallets and cards start with modest limits the owner can raise.
-const DEFAULTS: Partial<Record<Kind, Record<string, unknown>>> = {
-  wallet: { perTransfer: 5000, daily: 10000, approvalAbove: 2500 },
-  card: { perTransaction: 5000, daily: 10000, monthly: 50000 },
-};
-
-async function gate(ctx: Ctx, owner: Owner, agent: AgentRow, kind: Kind) {
-  if (!ctx.config.liveListed(kind)) throw fail(403, 'live_unavailable', `Live ${kind === 'vm' ? 'machines' : kind} isn't available yet. Use test mode for now.`);
-  if (!ctx.config.isLive(kind)) throw fail(503, 'provider_unavailable', `Live ${kind === 'vm' ? 'machines are' : kind + ' is'} not set up on this deployment.`);
-  if (ctx.config.verificationRequired(kind) && !(await verificationOf(ctx, agent)).verified) throw fail(403, 'verification_required', 'Verify your identity (or your organization) to give agents this for real.');
-  if (ctx.config.paidPlanRequired(kind) && (await planOf(ctx, owner.userId)) === 'free') throw fail(402, 'plan_required', `A live ${kind === 'phone' ? 'phone number' : kind} needs a paid Timewarp plan.`);
-}
-
+// One at a time ("Add mail", the CLI's --give); a new agent gets its set in createAgent.
 const provision: Handler = async (ctx, owner, input, params) => {
   const agent = activeAgent(await ownedAgent(ctx, owner, params.id));
   if (agent.status !== 'active') throw fail(409, 'agent_suspended', 'Resume the agent first.');
   const kind = String(input.kind) as Kind;
   if (!KINDS.includes(kind)) throw fail(400, 'invalid', `kind is one of ${KINDS.join(', ')}.`);
-  // In production everything given is real; test resources are for development.
-  const mode = input.mode === 'live' || input.mode === 'test' ? input.mode : ctx.config.testMode ? 'test' : 'live';
-  if (mode === 'test' && !ctx.config.testMode) throw fail(403, 'test_mode_off', 'Test resources are only for development.');
-  if (mode === 'live') await gate(ctx, owner, agent, kind);
-  const settings = settingsFor(kind, input.settings || {}, DEFAULTS[kind] || {});
-  const size = (input.options?.size in SIZES ? input.options.size : 'medium') as Size;
-  // The row comes first: it holds the agent's one slot for this kind, and a
-  // phone number's webhooks need its id.
-  const { data: placeholder, error } = await ctx.admin.from('agent_id_resources').insert({ agent_id: agent.id, owner_user_id: owner.userId, kind, provider: 'pending', mode, status: 'provisioning', settings }).select('*').single();
-  if (error?.code === '23505') throw fail(409, 'already_has', `This agent already has a ${kind === 'vm' ? 'machine' : kind}. Remove it first to get a new one.`);
-  checked({ data: placeholder, error });
-  try {
-    let fields: Record<string, unknown>;
-    if (kind === 'mail') { const r = await provisionMail(ctx, agent, mode); fields = { provider: r.provider, address: r.address, label: r.label, provider_ref: r.providerRef, state: r.state, status: 'active' }; }
-    else if (kind === 'phone') { const r = await provisionPhone(ctx, agent, placeholder.id, mode, input.options || {}); fields = { provider: r.provider, address: r.address, label: r.label, provider_ref: r.providerRef, state: r.state, status: 'active' }; }
-    else if (kind === 'wallet') { const r = await provisionWallet(ctx, agent, mode, placeholder.id); fields = { provider: r.provider, address: r.address, label: r.label, provider_ref: r.providerRef, state: r.state, currency: r.currency, status: 'active' }; }
-    else if (kind === 'card') {
-      const person = await personOf(ctx, owner.userId);
-      const r = await provisionCard(ctx, agent, mode, { person, email: await ownerEmail(ctx, owner) || '', billing: input.options?.billing, currency: input.options?.currency, settings });
-      if (r.cardholder && r.cardholder !== person?.cardholder_ref) await ctx.admin.from('agent_id_people').update({ cardholder_ref: r.cardholder }).eq('user_id', owner.userId);
-      fields = { provider: r.provider, label: r.label, provider_ref: r.providerRef, state: r.state, currency: r.currency, status: 'active' };
-    }
-    else { const r = await provisionVm(ctx, agent, mode, size); fields = { provider: r.provider, label: r.label, provider_ref: r.providerRef, state: r.state, status: r.status }; }
-    const row = checked(await ctx.admin.from('agent_id_resources').update({ ...fields, updated_at: iso(ctx) }).eq('id', placeholder.id).select('*').single()) as ResourceRow;
-    await audit(ctx, owner.userId, agent.id, 'owner', 'resource.provision', { kind, mode, provider: row.provider });
-    return { resource: resourceView(row) };
-  } catch (caught) {
-    await ctx.admin.from('agent_id_resources').delete().eq('id', placeholder.id);
-    throw caught;
-  }
+  return { resource: resourceView(await giveResource(ctx, agent, kind, input)) };
 };
 
 async function release(ctx: Ctx, resource: ResourceRow) {

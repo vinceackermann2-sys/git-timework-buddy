@@ -67,6 +67,9 @@ export function loadConfig(env: Env) {
     // AGENT_ID_CARDS=issuing turns Stripe Issuing cards back on.
     cardsWaitlist: get('AGENT_ID_CARDS') !== 'issuing',
     passportSeconds: Math.max(60, Math.min(3600, Number(get('AGENT_ID_PASSPORT_SECONDS')) || 300)),
+    // What a new Agent ID comes with (provisioning.ts): 'none' for nothing.
+    autoGive: get('AGENT_ID_AUTO_GIVE') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE') || 'mail,wallet'),
+    autoGivePaid: get('AGENT_ID_AUTO_GIVE_PAID') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE_PAID') || 'phone,vm'),
     // Registering its own webhooks on first use (admin.ts); tests turn it off.
     autoSetup: get('AGENT_ID_AUTO_SETUP') !== 'false',
   };

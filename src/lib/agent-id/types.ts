@@ -116,7 +116,13 @@ export type AgentDetail = {
   verification: { verified: boolean; level: VerificationLevel };
 };
 
-export type CreatedAgent = { agent: Agent; key?: ApiKey; secret?: string };
+// What a new agent was given at once, and what was left out and why
+// (owner not verified, free plan, not offered here).
+export type AgentSetup = {
+  given: Kind[];
+  skipped: { kind: Kind; code: string; message: string }[];
+};
+export type CreatedAgent = { agent: Agent; setup?: AgentSetup; key?: ApiKey; secret?: string };
 export type CreatedKey = { key: ApiKey; secret: string };
 
 export type EventKind = "mail" | "sms" | "call" | "wallet" | "card" | "vm";

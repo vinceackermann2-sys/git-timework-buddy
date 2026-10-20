@@ -122,9 +122,9 @@ async function claimRoute(ctx: Ctx, req: Request, path: string) {
   throw fail(405, 'method_not_allowed', 'Not available for this method.');
 }
 
-export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch; now?: () => number; sleep?: (ms: number) => Promise<void>; signIn?: Ctx['signIn'] }) {
+export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch; now?: () => number; sleep?: (ms: number) => Promise<void>; signIn?: Ctx['signIn']; background?: Ctx['background'] }) {
   const config = loadConfig(deps.env);
-  const ctx: Ctx = { admin: deps.admin, config, fetch: deps.fetch || fetch, now: deps.now || Date.now, sleep: deps.sleep || (ms => new Promise(r => setTimeout(r, ms))), signIn: deps.signIn };
+  const ctx: Ctx = { admin: deps.admin, config, fetch: deps.fetch || fetch, now: deps.now || Date.now, sleep: deps.sleep || (ms => new Promise(r => setTimeout(r, ms))), signIn: deps.signIn, background: deps.background || (work => { work.catch(error => console.error('[agent-id] background', error?.message)); }) };
   let setupStarted = false;
   return async (req: Request): Promise<Response> => {
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });

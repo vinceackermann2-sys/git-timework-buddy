@@ -155,3 +155,16 @@ describe("wallet and document routes", () => {
     expect(calls[0]!.init.body).toBe(file);
   });
 });
+
+describe("setting up a new agent", () => {
+  it("polls while any resource is still being set up", async () => {
+    const { settingUp } = await import("@/lib/agent-id/queries");
+    expect(settingUp([{ resources: { mail: { status: "active" } } }])).toBe(false);
+    expect(
+      settingUp([
+        { resources: { mail: { status: "active" }, wallet: { status: "provisioning" } } },
+      ]),
+    ).toBe(true);
+    expect(settingUp([])).toBe(false);
+  });
+});

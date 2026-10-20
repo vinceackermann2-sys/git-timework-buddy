@@ -806,7 +806,9 @@ async function attachOne(ctx, target, state, options) {
     target: { key: target.key, ref: target.ref, kind: target.kind, tool: target.tool, app: target.app, label: target.label, where: target.where, instructions: target.instructions, rule: target.rule, projectDir: target.projectDir, mcps: target.mcps, subagent: !!target.subagent, desktopId: target.desktopId, commandOnly: !!target.commandOnly },
     handle, agentId: profile.agentId, at: new Date().toISOString(), changes,
   };
-  return { target, agent: { id: me.agent.id, handle, name: me.agent.name, created }, given, wrote, notes };
+  // What it can use right away: a new Agent ID comes with its mail and wallet.
+  const has = Object.fromEntries(Object.entries(me.agent.resources || {}).map(([kind, r]) => [kind, r.address || r.status]));
+  return { target, agent: { id: me.agent.id, handle, name: me.agent.name, created }, has, given, wrote, notes };
 }
 
 const parseGive = value => {
@@ -874,9 +876,10 @@ export async function attach(ctx) {
   } finally {
     saveState(ctx.env, state);
   }
-  ctx.print({ attached: results.map(r => ({ ref: r.target.ref, tool: r.target.tool, label: r.target.label, origin: { app: r.target.app, detail: r.target.detail ?? null }, agent: r.agent, given: r.given, wrote: r.wrote.map(([file, what]) => ({ file, what })), notes: r.notes })) }, () => results.map(r => [
+  ctx.print({ attached: results.map(r => ({ ref: r.target.ref, tool: r.target.tool, label: r.target.label, origin: { app: r.target.app, detail: r.target.detail ?? null }, agent: r.agent, has: r.has, given: r.given, wrote: r.wrote.map(([file, what]) => ({ file, what })), notes: r.notes })) }, () => results.map(r => [
     `${r.target.tool} ${r.target.label} → Agent ID ${r.agent.name} (${r.agent.handle}, ${r.agent.id})${r.agent.created ? ', new' : ''}`,
     ...r.wrote.map(([file, what]) => `  ${file ? `${short(file)}: ` : ''}${what}`),
+    ...(Object.keys(r.has).length ? [`  has: ${Object.entries(r.has).map(([kind, value]) => `${kind === 'vm' ? 'machine' : kind} ${value}`).join(', ')}`] : []),
     ...(r.given.length ? [`  gave it: ${r.given.join(', ')}${options.test ? ' (test)' : ''}`] : []),
     ...r.notes.map(note => `  ${note.replace(/\n/g, '\n  ')}`),
   ].join('\n')).join('\n\n'));

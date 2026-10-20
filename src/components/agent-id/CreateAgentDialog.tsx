@@ -24,10 +24,11 @@ import {
 } from "@/components/ui/select";
 import { errorMessage } from "@/lib/agent-id/client";
 import { ORIGIN_CHOICES, ORIGIN_LABELS, runtimeForOrigin } from "@/lib/agent-id/format";
-import { queryKeys, useAccount } from "@/lib/agent-id/queries";
+import { queryKeys, useAccount, useAgent } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
 import type { CreatedAgent } from "@/lib/agent-id/types";
 import { Field, Notice, SecretOnce } from "./ui";
+import { ReadyList } from "./ReadyList";
 
 const PERSONAL = "__personal__";
 
@@ -98,8 +99,9 @@ export function CreateAgentDialog({ variant = "default" }: { variant?: "default"
         {created ? (
           <div className="grid gap-4">
             <DialogHeader>
-              <DialogTitle>{created.agent.name}'s key</DialogTitle>
+              <DialogTitle>{created.agent.name} is ready</DialogTitle>
             </DialogHeader>
+            <Created created={created} />
             {created.secret ? (
               <SecretOnce secret={created.secret} />
             ) : (
@@ -183,4 +185,11 @@ export function CreateAgentDialog({ variant = "default" }: { variant?: "default"
       </DialogContent>
     </Dialog>
   );
+}
+
+// Its mail, wallet and (on paid plans) number and machine, as they come up.
+function Created({ created }: { created: CreatedAgent }) {
+  const detail = useAgent(created.agent.id);
+  const resources = detail.data?.agent.resources ?? created.agent.resources;
+  return <ReadyList resources={resources} skipped={created.setup?.skipped} />;
 }
