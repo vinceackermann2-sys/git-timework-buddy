@@ -1,0 +1,172 @@
+// The top of an agent's page: its identity at a glance, like an ID card.
+import type { ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
+import { BadgeCheck } from "lucide-react";
+
+import { cn } from "@/lib/utils";
+import { formatUsd, VERIFICATION_LEVEL_LABELS } from "@/lib/agent-id/format";
+import { useCardApplication, useWalletSummary } from "@/lib/agent-id/queries";
+import type { AgentDetail, Kind } from "@/lib/agent-id/types";
+import { Avatar, Chip, CopyButton, KIND_ICONS, ModeBadge, OriginBadge, StatusBadge } from "../ui";
+import { ProvisionDialog } from "./ProvisionDialog";
+import { KIND_TABS } from "./tabs";
+
+export function IdCard({ detail }: { detail: AgentDetail }) {
+  const { agent, verification } = detail;
+  const wallet = agent.resources.wallet;
+  const vm = agent.resources.vm;
+  const active = agent.status === "active";
+  const summary = useWalletSummary(agent.id, !!wallet && active && wallet.status === "active");
+  const application = useCardApplication(agent.id);
+  const balance = summary.data?.balance ?? wallet?.balance ?? null;
+
+  const line = (kind: Kind, value: ReactNode) => (
+    <IdLine kind={kind} agentId={agent.id} has={!!agent.resources[kind] || kind === "card"}>
+      {value}
+    </IdLine>
+  );
+
+  return (
+    <section className="aid-card overflow-hidden" aria-label={`${agent.name}'s identity`}>
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
+        <Avatar name={agent.name} large />
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-2xl font-semibold tracking-tight">{agent.name}</h1>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[var(--muted-foreground)]">
+            <span className="aid-mono">{agent.handle}</span>
+            <span className="flex items-center gap-1">
+              <span className="aid-mono text-xs">{agent.id}</span>
+              <CopyButton text={agent.id} iconOnly variant="ghost" label="Copy agent id" />
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <OriginBadge agent={agent} />
+            <Chip tone={verification.verified ? "success" : "neutral"}>
+              {verification.verified && <BadgeCheck className="h-3 w-3" aria-hidden="true" />}
+              {verification.verified
+                ? VERIFICATION_LEVEL_LABELS[verification.level]
+                : "Owner not verified"}
+            </Chip>
+            {agent.status !== "active" && <StatusBadge status={agent.status} />}
+          </div>
+        </div>
+      </div>
+
+      <dl className="grid border-t border-[var(--border)] sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
+        {line(
+          "mail",
+          agent.resources.mail ? (
+            <span
+              className="aid-mono block truncate text-[13px]"
+              title={agent.resources.mail.address ?? ""}
+            >
+              {agent.resources.mail.address}
+            </span>
+          ) : (
+            <ProvisionDialog agent={agent} kind="mail" inline />
+          ),
+        )}
+        {line(
+          "phone",
+          agent.resources.phone ? (
+            <span className="aid-mono text-[13px]">{agent.resources.phone.address}</span>
+          ) : (
+            <ProvisionDialog agent={agent} kind="phone" inline />
+          ),
+        )}
+        {line(
+          "wallet",
+          wallet ? (
+            <span className="flex items-center gap-1.5">
+              <span className="font-semibold">{balance ? formatUsd(balance.amount) : "—"}</span>
+              {wallet.mode === "test" && <ModeBadge mode="test" />}
+            </span>
+          ) : (
+            <ProvisionDialog agent={agent} kind="wallet" inline />
+          ),
+        )}
+        {line(
+          "card",
+          application.data ? (
+            <Chip tone="ink">Applied</Chip>
+          ) : (
+            <Link
+              to="/agent-id/agents/$agentId"
+              params={{ agentId: agent.id }}
+              search={{ tab: "card" }}
+              className="aid-link text-sm font-medium"
+            >
+              Apply
+            </Link>
+          ),
+        )}
+        {line(
+          "vm",
+          vm ? (
+            <Chip tone={vm.details.machine === "running" ? "success" : "neutral"}>
+              {vm.status === "provisioning"
+                ? "Setting up"
+                : vm.details.machine
+                  ? vm.details.machine.charAt(0).toUpperCase() + vm.details.machine.slice(1)
+                  : "Ready"}
+            </Chip>
+          ) : (
+            <ProvisionDialog agent={agent} kind="vm" inline />
+          ),
+        )}
+      </dl>
+    </section>
+  );
+}
+
+const LINE_LABELS: Record<Kind, string> = {
+  mail: "Mail",
+  phone: "Phone",
+  wallet: "Wallet",
+  card: "Card",
+  vm: "Machine",
+};
+
+function IdLine({
+  kind,
+  agentId,
+  has,
+  children,
+}: {
+  kind: Kind;
+  agentId: string;
+  has: boolean;
+  children: ReactNode;
+}) {
+  const Icon = KIND_ICONS[kind];
+  const label = (
+    <>
+      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+      {LINE_LABELS[kind]}
+    </>
+  );
+  return (
+    <div
+      className={cn(
+        "min-w-0 border-[var(--border)] px-5 py-3",
+        "border-b last:border-b-0 sm:[&:nth-child(odd)]:border-r lg:border-b-0 lg:border-r lg:last:border-r-0",
+      )}
+    >
+      <dt className="aid-label flex items-center gap-1.5">
+        {has ? (
+          <Link
+            to="/agent-id/agents/$agentId"
+            params={{ agentId }}
+            search={{ tab: KIND_TABS[kind] }}
+            className="flex items-center gap-1.5 hover:text-[var(--foreground)]"
+          >
+            {label}
+          </Link>
+        ) : (
+          label
+        )}
+      </dt>
+      <dd className="mt-1 min-w-0 text-sm">{children}</dd>
+    </div>
+  );
+}

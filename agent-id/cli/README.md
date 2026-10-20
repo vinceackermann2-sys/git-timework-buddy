@@ -1,0 +1,209 @@
+# @timewarp/agent-id: the `timewarp-id` command
+
+Give each of your AI agents its own identity, mail inbox, phone number,
+wallet, virtual card and virtual machine with Timewarp Agent ID, and use
+them headless from Claude Code, Codex, Cursor, Claude Desktop, Gemini,
+Windsurf, Grok, opencode and the other agent tools you have, or a script.
+Every agent traces back to you, a verified person or business.
+
+Node 20 or later, no dependencies.
+
+## Give the agents you already have an Agent ID
+
+```sh
+npx @timewarp/agent-id login --owner-key two_…   # from the Agent ID dashboard → Keys
+npx @timewarp/agent-id attach
+```
+
+`attach` finds the agents on this computer and asks which ones to give an
+Agent ID; it creates each one (named after the agent) and writes the wiring
+into it, so the agent can use its own mail, phone, wallet, card and machine
+right away. It finds:
+
+| | Where | What `attach` writes |
+|---|---|---|
+| Claude Code, every project (`claude`) | `~/.claude.json`, `~/.claude/CLAUDE.md` | MCP server `timewarp-id`, identity block |
+| Claude Code in this project (`claude:project`) | `.mcp.json`, `CLAUDE.md` | MCP server `timewarp-id`, identity block, `.timewarp-id.json` |
+| Claude Code subagents (`claude-agent:<name>`) | `~/.claude/agents/*.md`, `.claude/agents/*.md` | its own MCP server `timewarp-id-<handle>`, its tools added to a `tools:` list, identity block |
+| Codex, every project (`codex`) | `~/.codex/config.toml` (`$CODEX_HOME`), `~/.codex/AGENTS.md` | `[mcp_servers.timewarp_id]`, identity block |
+| Codex in this project (`codex:project`) | `AGENTS.md` | identity block, `.timewarp-id.json` |
+| Cursor (`cursor`, `cursor:project`) | `~/.cursor/mcp.json`, `.cursor/` | MCP server; in a project also `.cursor/rules/timewarp-agent-id.mdc` |
+| Claude Desktop (`claude-desktop`) | `claude_desktop_config.json` (including the Microsoft Store app's copy) | MCP server |
+| Gemini CLI (`gemini`) | `~/.gemini/settings.json`, `~/.gemini/GEMINI.md` | MCP server, identity block |
+| Antigravity (`antigravity`) | `~/.gemini/config/mcp_config.json` and `~/.gemini/antigravity/mcp_config.json` (`mcpServers` and `servers`), `GEMINI.md` | MCP server, identity block |
+| Windsurf (`windsurf`) | `~/.codeium/windsurf/mcp_config.json`, `memories/global_rules.md` | MCP server, identity block |
+| opencode (`opencode`) | `~/.config/opencode/opencode.json(c)` (`mcp`, comments kept), `AGENTS.md` | MCP server, identity block |
+| Grok (`grok`) | `~/.grok/config.toml` (`[mcp_servers.timewarp-id]`), `~/.grok/AGENTS.md` | MCP server, identity block |
+| Kiro, Qwen Code, Factory Droid, Copilot CLI, Amazon Q (`kiro`, `qwen`, `factory`, `copilot`, `amazonq`) | `~/.kiro/settings/mcp.json`, `~/.qwen/settings.json`, `~/.factory/mcp.json`, `~/.copilot/mcp-config.json`, `~/.aws/amazonq/mcp.json` | MCP server; Kiro and Qwen also an identity block (Kiro steering file, `QWEN.md`) |
+| Continue (`continue`) | `~/.continue/mcpServers/timewarp-id.yaml`, `~/.continue/rules/` | MCP server block, identity rule |
+| Cline, Roo Code, Kilo Code (`cline`, `roo`, `kilo`) | the extension's MCP settings in VS Code, Cursor, Windsurf or VSCodium | MCP server; Roo and Kilo also a global rule |
+| Timewarp desktop agents (`timewarp:<id>`) | `…/Timewarp Energy/runtime/agents/<slug>-<id>/AGENTS.md` | identity block, `.timewarp-id.json`, and the Agent ID is linked to the desktop agent |
+| OpenClaw (`openclaw`) | `~/.openclaw/workspace*/AGENTS.md` | identity block, `.timewarp-id.json` (its agents use the `timewarp-id` command) |
+| Any folder (`<path>`, `--here`) | `AGENTS.md` (or `CLAUDE.md`) | identity block, `.timewarp-id.json` |
+
+Agent apps it can see but not wire up yet (Grok Bot, Zed, Augment, Junie,
+Hermes, Moltbot) show in `timewarp-id agents scan` as **manual setup**, with
+the MCP entry to paste into their settings. A tool's folder that holds only
+`skills/` doesn't count as installed.
+
+```sh
+timewarp-id agents scan                                   # what attach can find here
+timewarp-id attach code-reviewer --give mail,wallet       # a subagent, with test mail and wallet
+timewarp-id attach claude codex --agent research-ab12     # an existing Agent ID for both
+timewarp-id attach "timewarp:Research Assistant"          # a Timewarp desktop agent
+timewarp-id attach --here --name "Support bot"            # a custom agent in this folder
+timewarp-id detach code-reviewer                          # undo exactly what attach wrote
+```
+
+- The identity block (between `<!-- timewarp-agent-id:start -->` and
+  `<!-- timewarp-agent-id:end -->`) is short, because it is read with every
+  request: who the agent is, its addresses, where its tools are, and that
+  spending over its limits waits for you.
+- Running `attach` again updates everything in place and keeps the agent it
+  was attached to. Config files are edited in place (other entries, comments
+  and formatting stay) and backed up once (`<file>.timewarp-id.bak`); what
+  was written is recorded in `~/.timewarp-id/attachments.json`, and `detach`
+  removes exactly that (the Agent ID itself stays).
+- Tool-wide entries (every tool's "every project" entry) run
+  `timewarp-id mcp --default-agent <handle>`: they act as that agent, except
+  in folders whose `.timewarp-id.json` names another.
+- Agent ID is told where each agent comes from (`origin: { app, detail }`, e.g.
+  `claude-code`, "subagent code-reviewer"), which the dashboard shows. The MCP
+  server also passes the tool's own `clientInfo` through, and every request
+  names the tool in its user-agent (`timewarp-id/1.0.0 (cursor)`).
+- Timewarp desktop agents and OpenClaw get no MCP server of their own yet;
+  they use the `timewarp-id` command in their workspace, which acts as them there.
+- Options: `--agent <handle>` (use an existing Agent ID; one made on the
+  dashboard gets a key here, once you're logged in), `--give mail,phone,wallet,card,vm`
+  (`--live` for real ones), `--name`, `--origin <app>`, `--yes` (no questions).
+
+## Approvals
+
+When an agent wants to send more than you approve automatically, the transfer
+waits for you. Owner commands then end with a reminder on stderr, such as
+`1 approval waiting — run timewarp-id approvals`.
+
+```sh
+timewarp-id approvals          # agent, amount, to, memo, expiry; in a terminal it asks about each
+timewarp-id approve <id>       # or: timewarp-id deny <id>
+```
+
+## Start from scratch
+
+```sh
+npm install -g @timewarp/agent-id    # or: npx -y @timewarp/agent-id <command>
+
+# 1. An owner key from the Agent ID dashboard (https://timewarpdev.com/agent-id → Keys)
+timewarp-id login --owner-key two_…
+
+# 2. An agent. Its key is saved on this computer; the first one is the default.
+timewarp-id agents create "Research agent" --origin claude-code
+
+# 3. Things it can use (test ones work only inside Agent ID; add --live for real ones)
+timewarp-id give mail
+timewarp-id give wallet && timewarp-id fund 100
+timewarp-id give phone --country US --area-code 415
+
+# 4. Plug it into your tools
+timewarp-id connect claude          # Claude Code
+timewarp-id connect codex           # Codex
+timewarp-id connect claude-desktop  # Claude Desktop
+timewarp-id connect cursor          # Cursor
+```
+
+## Commands
+
+| Owner (owner key) | |
+|---|---|
+| `login --owner-key two_…` / `logout [--all]` | Save or forget the owner key (`--owner-key -` reads it from stdin) |
+| `whoami` | Your account and the agent commands act as |
+| `agents list [--all]` | Your agents; `*` marks the default |
+| `agents create <name> [--origin <app>] [--origin-detail "…"] [--org <id>]` | Creates an agent and saves its key as a profile; `--origin` is the app it lives in (`claude-code`, `codex`, `cursor`, `gemini`, `grok`, `openclaw`, `strawberry`, `custom`, …) |
+| `agents scan` | The agents on this computer `attach` can wire up |
+| `agents show\|key\|pause\|resume\|revoke <agent>` | `key` saves a new key here (for an agent made elsewhere); `revoke` is final (`--yes` to skip the question) |
+| `give <mail\|phone\|wallet\|card\|vm> [--live] [--size small\|medium] [--country US --area-code 415]` | A test card with `give card`; live cards are applied for |
+| `card apply --use-case "…" --monthly 200 --country SE`, `card application` | Apply for a live card for an agent (monthly spend in dollars), and see the application |
+| `take <kind>` | Releases it |
+| `limits wallet [--per-transfer 50] [--daily 100] [--approval-above 25]` | Dollars; `none` removes a limit; no options shows them |
+| `limits card [--per-transaction 50] [--daily 100] [--monthly 500] [--blocked-categories a,b] [--allowed-categories a,b]` | |
+| `fund <dollars>` | Test money for a test wallet |
+| `approvals` / `approve <id>` / `deny <id>` | Transfers above the approval amount wait for you |
+
+Owner commands take `--agent <agent>` (handle, `agt_…` id, name, or a handle
+prefix only one agent has); without it they use the current agent.
+
+| Act as the agent (agent key) | |
+|---|---|
+| `me` | Identity, Git principal, owner verification, resources |
+| `mail list [--folder inbox\|sent\|trash\|all] [--unread]`, `mail read <id>`, `mail send --to … --subject … --text …` (`--text -` = stdin) `[--attach file]…`, `mail reply <id> --text …`, `mail trash\|restore <id>` | `--attach` uploads each file (`POST /v1/me/files`) and sends it with the mail |
+| `sms list`, `sms send <+14155550123> <text…>` | |
+| `call list`, `call place <number> --say "…"` | |
+| `contacts list [name]`, `contacts add <name> [--email --phone --wallet --note]`, `contacts update <id> …`, `contacts rm <id>` | |
+| `wallet show`, `wallet history`, `wallet send <to> <dollars> [--asset usdc\|usdt] [--memo …]` | Balances in USD (`$12.34 USD · USDC/USDT on Base`). `<to>`: another agent (handle, id, or a profile name here), a wallet address or a contact. Above the approval amount it prints the approval id and waits for you. |
+| `card show`, `card reveal`, `card transactions`, `card test-charge <amount> [--merchant --category]` | `reveal` is logged; never paste card details into a chat |
+| `vm status\|start\|stop\|history`, `vm files [path]`, `vm exec [--cwd] [--timeout 120] -- <command…>` | `exec` prints the output and exits with the command's exit code |
+| `passport --audience <aud>` | Prints only the token: `curl -H "Agent-Passport: $(timewarp-id passport --audience https://api.example.com)" …` |
+
+Every command takes `--json` (Agent ID's answer as JSON; errors as
+`{ "error": { code, message } }`), `--api <url>` and `--help`. Exit codes: 0
+done, 1 failed (the message says why and usually what to do), 2 mistyped.
+
+## Which agent a command acts as
+
+1. `TIMEWARP_AGENT_KEY` (an agent key, `twa_…`) overrides everything, for CI and containers.
+2. `--agent <agent>`.
+3. The nearest `.timewarp-id.json` above the current folder: `{ "agent": "<handle>" }`.
+   `timewarp-id use <agent> --project` writes it. It holds no key, so it can be committed.
+4. The default: `timewarp-id use <agent>`.
+
+So with `timewarp-id connect claude` (no `--agent`), every new Claude Code
+session acts as the agent of the project it starts in.
+
+## MCP
+
+`timewarp-id mcp [--agent <agent>]` is a stdio MCP server (newline-delimited
+JSON-RPC on stdin/stdout, logs on stderr) that forwards each message to Agent
+ID's MCP endpoint (`<api>/mcp`) with the agent's key: mail, texts, calls,
+contacts, wallet, card, machine, passports and signing keys as tools. Tools
+appear only for what the agent has.
+
+`connect` wires it into a tool so the key stays in this CLI's config:
+
+| Tool | What `connect` does |
+|---|---|
+| `claude` | Runs `claude mcp add timewarp-id -s user\|project -- npx -y @timewarp/agent-id mcp [--agent a]` (prints it when `claude` isn't on PATH) |
+| `codex` | Adds or replaces `[mcp_servers.timewarp_id]` in `~/.codex/config.toml` (`$CODEX_HOME`), keeping every other table and comment; the file is backed up once as `config.toml.timewarp-id.bak` |
+| `claude-desktop` | Merges `mcpServers["timewarp-id"]` into `claude_desktop_config.json` (`%APPDATA%\Claude`, the Microsoft Store app's own copy if it has one, `~/Library/Application Support/Claude`, `~/.config/Claude`) |
+| `cursor` | Merges into `~/.cursor/mcp.json`, or `.cursor/mcp.json` here with `--scope project` |
+
+Options: `--agent` pins an agent (otherwise the project's/default agent is
+used each time the server starts), `--print` only prints, `--local` runs this
+copy of the CLI instead of `npx`, `--config <file>` picks the JSON file. On
+Windows, Claude Code and Codex get `cmd /c npx …`.
+
+**Another company's MCP server.** `timewarp-id mcp --remote https://mcp.acme.com/mcp
+[--audience https://mcp.acme.com]` proxies to an MCP server that accepts only
+verified agents, attaching a fresh passport (`Agent-Passport` header) instead
+of the key. Add it like any stdio server, e.g.
+`claude mcp add acme -- npx -y @timewarp/agent-id mcp --remote https://mcp.acme.com/mcp`.
+
+## Signed commits
+
+```sh
+cd my-repo
+timewarp-id git setup [--agent <agent>] [--global]
+```
+
+Creates `~/.timewarp-id/keys/<handle>_ed25519` (once, with `ssh-keygen`),
+registers its public key with Agent ID, and sets `gpg.format ssh`,
+`user.signingkey`, `commit.gpgsign true`, `user.name` and `user.email` (the
+agent's Git principal) for this repository, or globally. Repositories
+protected by the Agent ID GitHub Action or pre-receive hook accept these
+commits while the agent is active in the company's organization.
+
+## Files and environment
+
+- `~/.timewarp-id/config.json` (`$TIMEWARP_ID_HOME`): `{ api, ownerKey, profiles: { <handle>: { agentId, key, name } }, default }`, written with mode 0600 where the OS supports it.
+- `~/.timewarp-id/keys/`: Git signing keys.
+- `AGENT_ID_API` or `--api`: the API (default production; `login --api` remembers it).
+- `TIMEWARP_OWNER_KEY`: an owner key without logging in. `TIMEWARP_AGENT_KEY`: act as that agent.

@@ -1,0 +1,217 @@
+/*
+ * Agent ID's look, matching the Timewarp desktop app: the pale lilac accent
+ * (#E9D2FF) with dark text on it, purple ink for links and labels, white
+ * cards with hairline borders. Scoped to .agent-id (the Agent ID layout, and
+ * <html> while it is on screen so dialogs and toasts in portals match), so the
+ * rest of the site keeps its own design system. shadcn components read these.
+ */
+.agent-id {
+  --radius: 0.625rem;
+  --background: #ffffff;
+  --foreground: #172033;
+  --card: #ffffff;
+  --card-foreground: #172033;
+  --popover: #ffffff;
+  --popover-foreground: #172033;
+  --primary: #e9d2ff;
+  --primary-foreground: #172033;
+  --secondary: #f6f1fc;
+  --secondary-foreground: #172033;
+  --muted: #f6f6f8;
+  --muted-foreground: #626b7c;
+  --accent: color-mix(in srgb, #e9d2ff 28%, #ffffff);
+  --accent-foreground: #172033;
+  --destructive: #c42f4c;
+  --destructive-foreground: #ffffff;
+  --border: #e6e6ea;
+  --input: #dcdce2;
+  --ring: oklch(0.55 0.12 305);
+
+  --aid-ink: oklch(0.43 0.095 305);
+  --aid-success: #1c6e45;
+  --aid-success-bg: #e7f5ec;
+  --aid-warning: #7a5000;
+  --aid-warning-bg: #fff4d9;
+  --aid-danger: #b02a45;
+  --aid-danger-bg: #fdecef;
+  --aid-test: #5d6474;
+  --aid-test-bg: #f1f2f5;
+  --aid-code-bg: #f8f7fb;
+
+  /* Tailwind's theme variables resolve where they are declared (:root), so
+     they are re-pointed here to pick up the tokens above. */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+
+  color-scheme: light;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family:
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Dark follows the system unless the visitor picked light or dark. */
+@media (prefers-color-scheme: dark) {
+  .agent-id:not([data-theme="light"]) {
+    --background: #171b23;
+    --foreground: #f3f5fa;
+    --card: #1c212a;
+    --card-foreground: #f3f5fa;
+    --popover: #1f2530;
+    --popover-foreground: #f3f5fa;
+    --secondary: #262c38;
+    --secondary-foreground: #f3f5fa;
+    --muted: #222833;
+    --muted-foreground: #aeb8c8;
+    --accent: color-mix(in srgb, #e9d2ff 18%, #171b23);
+    --accent-foreground: #f3f5fa;
+    --destructive: #e8657c;
+    --destructive-foreground: #1a0a0e;
+    --border: #2d3441;
+    --input: #394354;
+    --ring: #e9d2ff;
+    --aid-ink: #e9d2ff;
+    --aid-success: #7dd8a8;
+    --aid-success-bg: #15301f;
+    --aid-warning: #f2c36b;
+    --aid-warning-bg: #33280f;
+    --aid-danger: #f28da0;
+    --aid-danger-bg: #3a1a22;
+    --aid-test: #c0c8d6;
+    --aid-test-bg: #262c38;
+    --aid-code-bg: #141820;
+    color-scheme: dark;
+  }
+}
+.agent-id[data-theme="dark"] {
+  --background: #171b23;
+  --foreground: #f3f5fa;
+  --card: #1c212a;
+  --card-foreground: #f3f5fa;
+  --popover: #1f2530;
+  --popover-foreground: #f3f5fa;
+  --secondary: #262c38;
+  --secondary-foreground: #f3f5fa;
+  --muted: #222833;
+  --muted-foreground: #aeb8c8;
+  --accent: color-mix(in srgb, #e9d2ff 18%, #171b23);
+  --accent-foreground: #f3f5fa;
+  --destructive: #e8657c;
+  --destructive-foreground: #1a0a0e;
+  --border: #2d3441;
+  --input: #394354;
+  --ring: #e9d2ff;
+  --aid-ink: #e9d2ff;
+  --aid-success: #7dd8a8;
+  --aid-success-bg: #15301f;
+  --aid-warning: #f2c36b;
+  --aid-warning-bg: #33280f;
+  --aid-danger: #f28da0;
+  --aid-danger-bg: #3a1a22;
+  --aid-test: #c0c8d6;
+  --aid-test-bg: #262c38;
+  --aid-code-bg: #141820;
+  color-scheme: dark;
+}
+
+html.agent-id body {
+  background-color: var(--background);
+}
+
+/* One card style: flat, hairline border. Shadows only on overlays. */
+.agent-id .aid-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+}
+
+.agent-id .aid-link {
+  color: var(--aid-ink);
+  text-underline-offset: 3px;
+}
+.agent-id .aid-link:hover {
+  text-decoration: underline;
+}
+
+.agent-id .aid-label {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.agent-id .aid-code {
+  background: var(--aid-code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family:
+    "Cascadia Code", "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.agent-id .aid-mono {
+  font-family:
+    "Cascadia Code", "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Tab rows scroll sideways on phones without a visible scrollbar. */
+.agent-id .aid-scroll-x {
+  scrollbar-width: none;
+}
+.agent-id .aid-scroll-x::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-id details > summary {
+  list-style: none;
+}
+.agent-id details > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Dialogs take focus themselves; the focus ring belongs on their controls. */
+html.agent-id [role="dialog"]:focus,
+html.agent-id [role="alertdialog"]:focus {
+  outline: none;
+}
+
+.agent-id a:focus-visible,
+.agent-id button:focus-visible,
+.agent-id summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-id *,
+  .agent-id *::before,
+  .agent-id *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

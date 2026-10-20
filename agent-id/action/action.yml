@@ -1,0 +1,61 @@
+name: Timewarp Agent ID commit check
+description: Accept only commits signed by your organization's verified AI agents (Timewarp Agent ID), plus humans who sign with keys you list.
+author: Timewarp
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  secret:
+    description: Your company secret (twrp_…) from the Agent ID dashboard, registered for your organization. Store it as a repository or organization secret.
+    required: true
+  api:
+    description: Agent ID API base. Leave empty for production.
+    required: false
+    default: ''
+  base:
+    description: First commit NOT to check (a SHA, branch or tag). Default - the pull request's base, the push's previous head, or the merge queue's base.
+    required: false
+    default: ''
+  head:
+    description: Last commit to check. Default - the pull request's head, the pushed commit, or the merge queue's head.
+    required: false
+    default: ''
+  human-signers:
+    description: >-
+      Humans who sign their own commits with SSH keys, in Git allowed_signers format
+      (one per line, e.g. `alice@acme.com namespaces="git" ssh-ed25519 AAAA…`), either inline
+      (best from a secret) or as the path of such a file in the repository, which is read as it
+      is in the base commit. Default none. Unsigned commits always fail.
+    required: false
+    default: ''
+
+outputs:
+  checked:
+    description: How many commits were checked.
+    value: ${{ steps.check.outputs.checked }}
+  failed:
+    description: How many commits were not signed by an allowed agent or human.
+    value: ${{ steps.check.outputs.failed }}
+  failed-commits:
+    description: Comma-separated SHAs of those commits.
+    value: ${{ steps.check.outputs.failed-commits }}
+  agent-commits:
+    description: How many commits were signed by an Agent ID agent.
+    value: ${{ steps.check.outputs.agent-commits }}
+  human-commits:
+    description: How many commits were signed by a listed human signer.
+    value: ${{ steps.check.outputs.human-commits }}
+
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/verify-commits.mjs"
+      env:
+        AGENT_ID_SECRET: ${{ inputs.secret }}
+        AGENT_ID_API: ${{ inputs.api }}
+        AGENT_ID_BASE: ${{ inputs.base }}
+        AGENT_ID_HEAD: ${{ inputs.head }}
+        AGENT_ID_HUMAN_SIGNERS: ${{ inputs.human-signers }}

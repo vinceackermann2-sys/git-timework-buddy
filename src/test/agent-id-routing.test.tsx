@@ -1,0 +1,84 @@
+import { QueryClient } from "@tanstack/react-query";
+import { createRouter, rootRouteId } from "@tanstack/react-router";
+import { describe, expect, it } from "vitest";
+
+import { routeTree } from "@/routeTree.gen";
+import {
+  AGENT_TABS,
+  defaultTab,
+  parseAgentTab,
+  visibleTabs,
+} from "@/components/agent-id/agent/tabs";
+
+// Like app-routing.test.tsx: match without loading or rendering.
+describe("Agent ID routing", () => {
+  const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+  const leaf = (path: string) => router.matchRoutes(path).at(-1)?.routeId;
+
+  it.each([
+    ["/agent-id", "/agent-id/"],
+    ["/agent-id/", "/agent-id/"],
+    ["/agent-id/sign-in", "/agent-id/sign-in"],
+    ["/agent-id/dashboard", "/agent-id/_app/dashboard"],
+    ["/agent-id/agents/agt_abcdefghijklmnopqrstuvwx", "/agent-id/_app/agents/$agentId"],
+    ["/agent-id/approvals", "/agent-id/_app/approvals"],
+    ["/agent-id/verify", "/agent-id/_app/verify"],
+    ["/agent-id/developers", "/agent-id/_app/developers"],
+    ["/agent-id/reviews", "/agent-id/_app/reviews"],
+    ["/agent-id/settings", "/agent-id/_app/settings"],
+  ])("matches %s", (path, routeId) => {
+    expect(leaf(path)).toBe(routeId);
+  });
+
+  it("keeps the site's own pages", () => {
+    expect(leaf("/")).not.toBe(rootRouteId);
+    expect(leaf("/auth/google")).toBe("/auth/google");
+  });
+
+  it("puts every dashboard page behind the signed-in layout", () => {
+    const ids = router
+      .matchRoutes("/agent-id/agents/agt_abcdefghijklmnopqrstuvwx")
+      .map((m) => m.routeId);
+    expect(ids).toContain("/agent-id");
+    expect(ids).toContain("/agent-id/_app");
+  });
+
+  it("reads the agent tab from the URL and ignores unknown ones", () => {
+    expect(parseAgentTab("wallet")).toBe("wallet");
+    expect(parseAgentTab("machine")).toBe("machine");
+    expect(parseAgentTab("nope")).toBeUndefined();
+    expect(parseAgentTab("connect")).toBeUndefined();
+    expect(parseAgentTab(3)).toBeUndefined();
+    expect(AGENT_TABS.map(([id]) => id)).toEqual([
+      "mail",
+      "phone",
+      "wallet",
+      "card",
+      "machine",
+      "activity",
+      "settings",
+    ]);
+  });
+
+  it("shows resource tabs once the agent has them, and the card application always", () => {
+    const ids = (resources: object, current?: Parameters<typeof visibleTabs>[1]) =>
+      visibleTabs({ resources } as Parameters<typeof visibleTabs>[0], current).map(([id]) => id);
+    expect(ids({})).toEqual(["card", "activity", "settings"]);
+    expect(ids({ wallet: {}, vm: {} })).toEqual([
+      "wallet",
+      "card",
+      "machine",
+      "activity",
+      "settings",
+    ]);
+    expect(ids({}, "mail")).toEqual(["mail", "card", "activity", "settings"]);
+  });
+
+  it("opens an agent on its first resource, else its activity", () => {
+    const tab = (resources: object) =>
+      defaultTab({ resources } as Parameters<typeof defaultTab>[0]);
+    expect(tab({ phone: {}, wallet: {} })).toBe("phone");
+    expect(tab({ vm: {} })).toBe("machine");
+    expect(tab({})).toBe("activity");
+  });
+});
