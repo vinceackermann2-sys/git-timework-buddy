@@ -28,7 +28,9 @@ export function ReadyList({
   skipped?: AgentSetup["skipped"] | undefined;
 }) {
   const rows = ORDER.filter((kind) => resources[kind]);
-  const left = skipped.filter((item) => item.kind !== "card" && !resources[item.kind]);
+  const left = skipped.filter(
+    (item) => item.kind !== "card" && item.code !== "waitlist" && !resources[item.kind],
+  );
   if (!rows.length && !left.length) return null;
   return (
     <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">

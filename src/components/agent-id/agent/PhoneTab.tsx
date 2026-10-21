@@ -42,7 +42,7 @@ import {
   formatTime,
   type CallKind,
 } from "@/lib/agent-id/format";
-import { useContacts, useEventPages } from "@/lib/agent-id/queries";
+import { useContacts, useEventPages, usePhonesWaitlist } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
 import type { Agent, AgentEvent } from "@/lib/agent-id/types";
 import {
@@ -57,6 +57,7 @@ import {
   toastError,
 } from "../ui";
 import { ContactsBook } from "./Contacts";
+import { PhoneApply } from "./PhoneApply";
 import { BlockedNotice, LoadMore, NoResource, blockedReason } from "./common";
 
 type View = "messages" | "calls" | "contacts";
@@ -67,7 +68,9 @@ export function PhoneTab({ agent }: { agent: Agent }) {
   const [openNumber, setOpenNumber] = useState<string | null>(null);
   const [callTo, setCallTo] = useState<string | null>(null);
   const navigate = useNavigate();
-  if (!phone) return <NoResource agent={agent} kind="phone" />;
+  const waitlist = usePhonesWaitlist();
+  if (!phone)
+    return waitlist ? <PhoneApply agent={agent} /> : <NoResource agent={agent} kind="phone" />;
   const blocked = blockedReason(agent, phone);
 
   return (

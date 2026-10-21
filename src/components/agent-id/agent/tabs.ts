@@ -1,6 +1,6 @@
 // The tabs on an agent's page; the id is the `tab` search param. Mail, Phone,
 // Wallet and Machine show once the agent has them; Card is always there (it is
-// the early-access application).
+// the early-access application), and so is Phone while numbers are applied for.
 import type { Agent, Kind } from "@/lib/agent-id/types";
 
 export const AGENT_TABS = [
@@ -39,10 +39,19 @@ const NEEDS: Partial<Record<AgentTab, Kind>> = {
 
 // The tabs this agent shows, keeping the one being looked at so a link to a
 // removed resource still lands.
-export function visibleTabs(agent: Pick<Agent, "resources">, current?: AgentTab) {
+export function visibleTabs(
+  agent: Pick<Agent, "resources">,
+  current?: AgentTab,
+  options: { phonesWaitlist?: boolean } = {},
+) {
   return AGENT_TABS.filter(([id]) => {
     const kind = NEEDS[id];
-    return !kind || !!agent.resources[kind] || id === current;
+    return (
+      !kind ||
+      !!agent.resources[kind] ||
+      id === current ||
+      (id === "phone" && !!options.phonesWaitlist)
+    );
   });
 }
 

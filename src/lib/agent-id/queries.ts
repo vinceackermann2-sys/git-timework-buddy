@@ -155,6 +155,17 @@ export const useCardApplication = (agentId: string) =>
     queryFn: async () => (await api.cardApplication(agentId)).application ?? null,
   });
 
+export const usePhoneApplication = (agentId: string, enabled = true) =>
+  useQuery({
+    ...base,
+    enabled,
+    queryKey: ["agent-id", "phone-application", agentId] as const,
+    queryFn: async () => (await api.phoneApplication(agentId)).application ?? null,
+  });
+
+// Phone numbers are an application while the deployment hasn't opened them.
+export const usePhonesWaitlist = () => useAccount().data?.config.resources.phone?.waitlist === true;
+
 export const useMailCounts = (agentId: string, enabled: boolean) =>
   useQuery({
     ...base,

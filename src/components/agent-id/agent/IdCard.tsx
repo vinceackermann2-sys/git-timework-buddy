@@ -6,7 +6,12 @@ import { BadgeCheck, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { agentApps } from "@/lib/agent-id/apps";
 import { formatPhone, formatUsd } from "@/lib/agent-id/format";
-import { useCardApplication, useWalletSummary } from "@/lib/agent-id/queries";
+import {
+  useCardApplication,
+  usePhoneApplication,
+  usePhonesWaitlist,
+  useWalletSummary,
+} from "@/lib/agent-id/queries";
 import type { AgentDetail, Kind } from "@/lib/agent-id/types";
 import { AppChip } from "../AppIcons";
 import { Avatar, Chip, KIND_ICONS, ModeBadge, StatusBadge } from "../ui";
@@ -20,6 +25,8 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
   const active = agent.status === "active";
   const summary = useWalletSummary(agent.id, !!wallet && active && wallet.status === "active");
   const application = useCardApplication(agent.id);
+  const phonesWaitlist = usePhonesWaitlist();
+  const phoneApplication = usePhoneApplication(agent.id, phonesWaitlist && !agent.resources.phone);
   const balance = summary.data?.balance ?? wallet?.balance ?? null;
   const apps = agentApps(agent);
 
@@ -28,7 +35,7 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
     <IdLine
       kind={kind}
       agentId={agent.id}
-      has={!!agent.resources[kind] || kind === "card"}
+      has={!!agent.resources[kind] || kind === "card" || (kind === "phone" && phonesWaitlist)}
       className={LINE_BORDERS[kind]}
     >
       {value}
@@ -92,6 +99,19 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
             <span className="text-[13px] tabular-nums">
               {formatPhone(agent.resources.phone.address)}
             </span>
+          ) : phonesWaitlist ? (
+            phoneApplication.data ? (
+              <Chip tone="ink">Applied</Chip>
+            ) : (
+              <Link
+                to="/agent-id/agents/$agentId"
+                params={{ agentId: agent.id }}
+                search={{ tab: "phone" }}
+                className="aid-link text-sm font-medium"
+              >
+                Apply
+              </Link>
+            )
           ) : (
             <ProvisionDialog agent={agent} kind="phone" inline />
           ),

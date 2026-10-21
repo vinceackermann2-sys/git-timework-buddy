@@ -19,7 +19,7 @@ import {
   type AgentTab,
 } from "@/components/agent-id/agent/tabs";
 import { AgentIdError } from "@/lib/agent-id/client";
-import { useAgent } from "@/lib/agent-id/queries";
+import { useAgent, usePhonesWaitlist } from "@/lib/agent-id/queries";
 
 export const Route = createFileRoute("/agent-id/_app/agents/$agentId")({
   validateSearch: (search: Record<string, unknown>): { tab?: AgentTab; compose?: string } => {
@@ -36,6 +36,7 @@ function AgentPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const query = useAgent(agentId);
+  const phonesWaitlist = usePhonesWaitlist();
 
   const back = (
     <Link to="/agent-id/dashboard" className="aid-link inline-flex items-center gap-1 text-sm">
@@ -71,7 +72,7 @@ function AgentPage() {
 
   const { agent } = query.data;
   const tab = search.tab ?? defaultTab(agent);
-  const tabs = visibleTabs(agent, tab);
+  const tabs = visibleTabs(agent, tab, { phonesWaitlist });
 
   return (
     <div className="space-y-6">

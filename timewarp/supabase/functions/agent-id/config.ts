@@ -71,6 +71,10 @@ export function loadConfig(env: Env) {
     // Cards are an early-access application until a card provider is chosen;
     // AGENT_ID_CARDS=issuing turns Stripe Issuing cards back on.
     cardsWaitlist: get('AGENT_ID_CARDS') !== 'issuing',
+    // Live phone numbers are an application until they're switched on and set
+    // up; AGENT_ID_PHONES=waitlist keeps the application anywhere. Numbers an
+    // agent already has stay.
+    phonesWaitlist: get('AGENT_ID_PHONES') === 'waitlist' || (get('AGENT_ID_ALLOW_TEST') === 'false' && !(live.has('phone') && providers.phone.configured)),
     passportSeconds: Math.max(60, Math.min(3600, Number(get('AGENT_ID_PASSPORT_SECONDS')) || 300)),
     // What a new Agent ID comes with (provisioning.ts): 'none' for nothing.
     autoGive: get('AGENT_ID_AUTO_GIVE') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE') || 'mail,wallet'),
@@ -94,7 +98,7 @@ export function publicConfig(config: Config) {
       provider: config.isLive(kind as Kind) ? value.provider : 'test',
       // Why it isn't live: not switched on yet, or switched on without its provider's secrets.
       ...(config.isLive(kind as Kind) ? {} : { unavailable: config.liveListed(kind as Kind) ? 'not_configured' : 'not_enabled' }),
-      ...(kind === 'card' && config.cardsWaitlist ? { waitlist: true } : {}),
+      ...((kind === 'card' && config.cardsWaitlist) || (kind === 'phone' && config.phonesWaitlist) ? { waitlist: true } : {}),
       verificationRequired: config.verificationRequired(kind as Kind),
       paidPlanRequired: config.paidPlanRequired(kind as Kind),
     }])),

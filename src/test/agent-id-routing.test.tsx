@@ -92,3 +92,14 @@ describe("Agent ID routing", () => {
     expect(tab({})).toBe("activity");
   });
 });
+
+describe("the phone tab while numbers are applied for", () => {
+  it("shows Phone without a number when phones are an application", () => {
+    const ids = (waitlist: boolean) =>
+      visibleTabs({ resources: { mail: {} } } as Parameters<typeof visibleTabs>[0], undefined, {
+        phonesWaitlist: waitlist,
+      }).map(([id]) => id);
+    expect(ids(true)).toContain("phone");
+    expect(ids(false)).not.toContain("phone");
+  });
+});

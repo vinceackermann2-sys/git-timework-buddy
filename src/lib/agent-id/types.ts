@@ -387,6 +387,17 @@ export type CardApplication = {
   createdAt: string;
 };
 
+// --- Phone number early access -------------------------------------------------------
+
+export type PhoneUse = "sms" | "calls";
+export type PhoneApplication = {
+  status: string;
+  useCase: string;
+  country: string | null;
+  uses: PhoneUse[];
+  createdAt: string;
+};
+
 // --- Machine files ------------------------------------------------------------------
 
 export type VmEntry = {

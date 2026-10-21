@@ -72,7 +72,7 @@ test("in production, what can't be given yet is skipped with a reason; a provide
   const pro = await local.user({ plan: "pro" });
   const made = await ok("POST", "/v1/agents", { token: pro.session, body: { name: "Scout" } });
   assert.deepEqual(made.setup.given, ["mail"]);
-  assert.deepEqual(made.setup.skipped.map(s => [s.kind, s.code]), [["wallet", "verification_required"], ["phone", "live_unavailable"], ["vm", "live_unavailable"]]);
+  assert.deepEqual(made.setup.skipped.map(s => [s.kind, s.code]), [["wallet", "verification_required"], ["phone", "waitlist"], ["vm", "live_unavailable"]], "Phone numbers are an application until live numbers open.");
   assert.equal(Object.keys(await resources(pro, made.agent.id)).join(), "mail");
 
   // Verified: the wallet comes too, unless Privy fails, which leaves the agent and a free slot.
@@ -106,4 +106,35 @@ test("an Agent ID claimed by link comes ready too, and the page and the CLI see 
   const collected = await ok("POST", "/v1/claims/collect", { body: { secret: started.secret } });
   assert.equal(collected.agent.resources.mail.address, claim.agent.resources.mail.address);
   assert.equal((await ok("GET", "/v1/me/wallet", { token: collected.key })).wallet.balance.amount, 0);
+});
+
+test("phone numbers are an application until live numbers open; then they're given as usual", async t => {
+  const { local, net, ok } = await setup(t, { AGENT_ID_ALLOW_TEST: "false", AGENT_ID_LIVE: "mail", RESEND_API_KEY: "re_live" });
+  assert.equal((await ok("GET", "/v1/config")).resources.phone.waitlist, true);
+  const pro = await local.user({ plan: "pro" });
+  const made = await ok("POST", "/v1/agents", { token: pro.session, body: { name: "Caller", resources: ["mail"] } });
+  const id = made.agent.id;
+  assert.equal((await local.call("POST", `/v1/agents/${id}/resources`, { token: pro.session, body: { kind: "phone" } })).body.error.code, "waitlist");
+  assert.equal((await ok("GET", `/v1/agents/${id}/phone-application`, { token: pro.session })).application, null);
+  assert.equal((await local.call("POST", `/v1/agents/${id}/phone-application`, { token: pro.session, body: { useCase: "Book tables", uses: ["fax"] } })).status, 400);
+  assert.equal((await local.call("POST", `/v1/agents/${id}/phone-application`, { token: pro.session, body: { uses: ["sms"] } })).status, 400, "It says what the number is for.");
+  const applied = (await ok("POST", `/v1/agents/${id}/phone-application`, { token: pro.session, body: { useCase: "Book restaurant tables by phone", uses: ["calls"], country: "se" } })).application;
+  assert.deepEqual([applied.status, applied.useCase, applied.uses, applied.country], ["submitted", "Book restaurant tables by phone", ["calls"], "SE"]);
+  assert.deepEqual((await ok("GET", `/v1/agents/${id}/phone-application`, { token: pro.session })).application.uses, ["calls"]);
+  const stranger = await local.user();
+  assert.equal((await local.call("GET", `/v1/agents/${id}/phone-application`, { token: stranger.session })).status, 404, "Only its owner sees it.");
+  assert.ok((await ok("GET", `/v1/audit?agent=${id}`, { token: pro.session })).entries.some(e => e.action === "phone.apply"));
+
+  // Once live numbers are switched on and set up, the agent gets one.
+  local.setEnv({ AGENT_ID_LIVE: "mail,phone", TELNYX_API_KEY: "KEY", TELNYX_PUBLIC_KEY: Buffer.alloc(32).toString("base64") });
+  assert.equal((await ok("GET", "/v1/config")).resources.phone.waitlist, undefined);
+  net.on("POST", /messaging_profiles$/, () => ({ data: { id: "mp" } }));
+  net.on("POST", /outbound_voice_profiles$/, () => ({ data: { id: "ovp" } }));
+  net.on("POST", /texml_applications$/, () => ({ data: { id: "app" } }));
+  net.on("GET", /available_phone_numbers/, () => ({ data: [{ phone_number: "+14155550199" }] }));
+  net.on("POST", /number_orders$/, () => ({ data: { id: "ord", phone_numbers: [{ phone_number: "+14155550199" }] } }));
+  assert.equal((await ok("POST", `/v1/agents/${id}/resources`, { token: pro.session, body: { kind: "phone" } })).resource.address, "+14155550199");
+  // AGENT_ID_PHONES=waitlist keeps the application even then.
+  local.setEnv({ AGENT_ID_PHONES: "waitlist" });
+  assert.equal((await ok("GET", "/v1/config")).resources.phone.waitlist, true);
 });

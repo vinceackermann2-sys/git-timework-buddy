@@ -96,8 +96,13 @@ async function fill(ctx: Ctx, agent: AgentRow, placeholder: ResourceRow, options
 }
 
 // One resource, now: the dashboard's "Add mail" and the CLI's --give.
+const waitlisted = (ctx: Ctx, kind: Kind, mode: 'live' | 'test') =>
+  mode === 'live' && ((kind === 'card' && ctx.config.cardsWaitlist) || (kind === 'phone' && ctx.config.phonesWaitlist));
+const WAITLIST: Partial<Record<Kind, string>> = { card: 'Cards are an early-access application for now.', phone: 'Phone numbers are an early-access application for now. Apply for one on the agent\'s Phone tab.' };
+
 export async function giveResource(ctx: Ctx, agent: AgentRow, kind: Kind, input: { mode?: unknown; settings?: unknown; options?: any } = {}) {
   const mode = modeFor(ctx, input.mode);
+  if (kind === 'phone' && waitlisted(ctx, kind, mode)) throw fail(409, 'waitlist', WAITLIST.phone!);
   if (mode === 'live') await gate(ctx, agent.owner_user_id, agent, kind);
   const placeholder = await reserve(ctx, agent, kind, mode, settingsFor(kind, input.settings || {}, DEFAULTS[kind] || {}));
   const row = await fill(ctx, agent, placeholder, input.options || {});
@@ -129,8 +134,8 @@ export async function autoGive(ctx: Ctx, agent: AgentRow, requested?: unknown) {
   const given: Kind[] = [], skipped: { kind: Kind; code: string; message: string }[] = [], jobs: Promise<unknown>[] = [];
   for (const kind of kinds) {
     try {
-      if (kind === 'card' && ctx.config.cardsWaitlist) throw fail(409, 'waitlist', 'Cards are an early-access application for now.');
       const mode = modeFor(ctx);
+      if ((kind === 'card' && ctx.config.cardsWaitlist) || waitlisted(ctx, kind, mode)) throw fail(409, 'waitlist', WAITLIST[kind] || 'Not available yet.');
       if (mode === 'live') await gate(ctx, agent.owner_user_id, agent, kind);
       const placeholder = await reserve(ctx, agent, kind, mode, settingsFor(kind, {}, DEFAULTS[kind] || {}));
       given.push(kind);

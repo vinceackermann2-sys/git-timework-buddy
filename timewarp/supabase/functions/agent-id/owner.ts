@@ -340,6 +340,30 @@ const applyForCard: Handler = async (ctx, owner, input, params) => {
   return { application: applicationView(row) };
 };
 
+// --- Phone number early access ----------------------------------------------------
+// Until live numbers open, an owner applies for one per agent: what it's for,
+// texts and/or calls, and the country.
+const USES = ['sms', 'calls'];
+const phoneApplicationView = (row: any) => row ? { status: row.status, useCase: row.use_case, country: row.country, uses: row.uses || USES, createdAt: row.created_at } : null;
+const phoneApplication: Handler = async (ctx, owner, _input, params) => {
+  const agent = await ownedAgent(ctx, owner, params.id);
+  return { application: phoneApplicationView(checked(await ctx.admin.from('agent_id_phone_applications').select('*').eq('agent_id', agent.id).maybeSingle())) };
+};
+const applyForPhone: Handler = async (ctx, owner, input, params) => {
+  const agent = activeAgent(await ownedAgent(ctx, owner, params.id));
+  const country = input.country ? str(input.country, 2, 'country').toUpperCase() : null;
+  if (country && !/^[A-Z]{2}$/.test(country)) throw fail(400, 'invalid', 'country is a two-letter country code.');
+  const uses: string[] | null = input.uses === undefined ? USES : Array.isArray(input.uses) ? [...new Set((input.uses as unknown[]).map(String))] : null;
+  if (!uses || !uses.length || uses.some(use => !USES.includes(use))) throw fail(400, 'invalid', 'uses lists sms, calls or both.');
+  const row = checked(await ctx.admin.from('agent_id_phone_applications').upsert({
+    agent_id: agent.id, owner_user_id: owner.userId, status: 'submitted',
+    use_case: str(input.useCase, 1000, 'useCase', { required: true, multiline: true }),
+    country, uses, updated_at: iso(ctx),
+  }, { onConflict: 'agent_id' }).select('*').single());
+  await audit(ctx, owner.userId, agent.id, 'owner', 'phone.apply', { country, uses });
+  return { application: phoneApplicationView(row) };
+};
+
 // --- Approvals -------------------------------------------------------------------
 const approvalView = (row: any, names: Map<string, string>) => ({ id: row.id, agentId: row.agent_id, agentName: names.get(row.agent_id) || null, kind: row.kind, request: row.request, status: row.status, reason: row.reason, result: row.result, createdAt: row.created_at, expiresAt: row.expires_at, decidedAt: row.decided_at });
 const listApprovals: Handler = async (ctx, owner, input) => {
@@ -462,6 +486,7 @@ export const ownerRoutes: Route<Owner>[] = [
   ['POST', '/v1/account/verification/document', (ctx, owner, input, _params, req) => uploadBusinessDocument(ctx, owner, req, String(input.organization || new URL(req.url).searchParams.get('organization') || ''))],
   ['GET', '/v1/agents/:id/events', agentEvents], ['GET', '/v1/agents/:id/contacts', agentContacts],
   ['GET', '/v1/agents/:id/card-application', cardApplication], ['POST', '/v1/agents/:id/card-application', applyForCard],
+  ['GET', '/v1/agents/:id/phone-application', phoneApplication], ['POST', '/v1/agents/:id/phone-application', applyForPhone],
   ['GET', '/v1/approvals', listApprovals], ['POST', '/v1/approvals/:id', decideApproval],
   ['GET', '/v1/audit', auditLog],
   ['GET', '/v1/keys', listOwnerKeys], ['POST', '/v1/keys', createOwnerKey], ['DELETE', '/v1/keys/:keyId', revokeOwnerKey],

@@ -15,6 +15,8 @@ import type {
   AuditEntry,
   BusinessReview,
   CardApplication,
+  PhoneApplication,
+  PhoneUse,
   CardSummary,
   CommandResult,
   Contact,
@@ -286,6 +288,17 @@ export function createAgentIdClient(options: ClientOptions) {
       input: { useCase: string; monthlySpend: number; country: string },
     ) =>
       request<{ application: CardApplication }>(`/v1/agents/${id(agentId)}/card-application`, {
+        body: input,
+      }),
+    phoneApplication: (agentId: string) =>
+      request<{ application: PhoneApplication | null }>(
+        `/v1/agents/${id(agentId)}/phone-application`,
+      ),
+    applyForPhone: (
+      agentId: string,
+      input: { useCase: string; uses: PhoneUse[]; country: string },
+    ) =>
+      request<{ application: PhoneApplication }>(`/v1/agents/${id(agentId)}/phone-application`, {
         body: input,
       }),
     revokeAgent: (agentId: string) =>
