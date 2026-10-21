@@ -5,6 +5,7 @@
 // Test numbers use the 555-01xx range set aside for fiction.
 import { base64url, fail, hmac, randomBytes, sameText } from '../util.ts';
 import type { AgentRow, Ctx, ResourceRow } from '../context.ts';
+import { placeTelnyxCall, provisionTelnyx, releaseTelnyx, sendTelnyxSms, telnyxWebhookUrl } from './telnyx.ts';
 
 const API = 'https://api.twilio.com/2010-04-01';
 export const escapeXml = (value: string) => value.replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]!));
@@ -46,7 +47,8 @@ export function testNumber() {
 }
 
 export async function provisionPhone(ctx: Ctx, agent: AgentRow, resourceId: string, mode: 'live' | 'test', options: { country?: string; areaCode?: string }) {
-  if (mode === 'test') return { provider: 'test', address: testNumber(), providerRef: null as string | null, label: 'Test number', state: { capabilities: ['sms', 'voice'] } };
+  if (mode === 'test') return { provider: 'test', address: testNumber(), providerRef: null as string | null, label: 'Test number', state: { capabilities: ['sms', 'voice'] } as Record<string, unknown> };
+  if (ctx.config.providers.phone.provider === 'telnyx') return provisionTelnyx(ctx, agent, options);
   const country = /^[A-Z]{2}$/.test(String(options.country || '').toUpperCase()) ? String(options.country).toUpperCase() : 'US';
   const search: Record<string, string> = { SmsEnabled: 'true', VoiceEnabled: 'true', PageSize: '5' };
   if (/^\d{3}$/.test(String(options.areaCode || ''))) search.AreaCode = String(options.areaCode);
@@ -65,16 +67,19 @@ export async function provisionPhone(ctx: Ctx, agent: AgentRow, resourceId: stri
 }
 
 export async function releasePhone(ctx: Ctx, resource: ResourceRow) {
+  if (resource.mode === 'live' && resource.provider === 'telnyx') return releaseTelnyx(ctx, resource);
   if (resource.mode === 'live' && resource.provider_ref) await twilio(ctx, 'DELETE', `/IncomingPhoneNumbers/${encodeURIComponent(resource.provider_ref)}.json`);
 }
 
 export async function sendSms(ctx: Ctx, resource: ResourceRow, to: string, body: string) {
+  if (resource.provider === 'telnyx') return sendTelnyxSms(ctx, resource, to, body);
   const sent = await twilio(ctx, 'POST', '/Messages.json', { From: resource.address!, To: to, Body: body, StatusCallback: await webhookUrl(ctx, resource.id, 'status') });
   return { providerRef: String(sent.sid), status: String(sent.status || 'queued') };
 }
 
 // A call that speaks the agent's message, then hangs up.
 export async function placeCall(ctx: Ctx, resource: ResourceRow, to: string, say: string) {
+  if (resource.provider === 'telnyx') return placeTelnyxCall(ctx, resource, to, say);
   const twiml = `<Response><Say>${escapeXml(say)}</Say></Response>`;
   const call = await twilio(ctx, 'POST', '/Calls.json', { From: resource.address!, To: to, Twiml: twiml, StatusCallback: await webhookUrl(ctx, resource.id, 'status'), StatusCallbackMethod: 'POST' });
   return { providerRef: String(call.sid), status: String(call.status || 'queued') };
@@ -83,5 +88,6 @@ export async function placeCall(ctx: Ctx, resource: ResourceRow, to: string, say
 // What an incoming call hears: the agent's greeting, then a voicemail.
 export async function voicemailTwiml(ctx: Ctx, resource: ResourceRow, agentName: string) {
   const greeting = String(resource.settings?.greeting || '').slice(0, 300) || `You've reached ${agentName}, an AI agent. Leave a message after the tone.`;
-  return `<?xml version="1.0" encoding="UTF-8"?><Response><Say>${escapeXml(greeting)}</Say><Record maxLength="120" playBeep="true" recordingStatusCallback="${escapeXml(await webhookUrl(ctx, resource.id, 'recording'))}" recordingStatusCallbackMethod="POST"/></Response>`;
+  const recording = resource.provider === 'telnyx' ? telnyxWebhookUrl(ctx, 'recording') : await webhookUrl(ctx, resource.id, 'recording');
+  return `<?xml version="1.0" encoding="UTF-8"?><Response><Say>${escapeXml(greeting)}</Say><Record maxLength="120" playBeep="true" recordingStatusCallback="${escapeXml(recording)}" recordingStatusCallbackMethod="POST"/></Response>`;
 }

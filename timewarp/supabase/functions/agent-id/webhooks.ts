@@ -7,6 +7,7 @@ import { audit, setting } from './shared.ts';
 import { addressOnly, fetchResendReceived, resendAttachment } from './providers/mail.ts';
 import { MAX_ATTACHMENTS, MAX_FILE, saveFile, shareFiles } from './files.ts';
 import { checkWebhookToken, voicemailTwiml } from './providers/phone.ts';
+import { telnyxSigned } from './providers/telnyx.ts';
 import { verifyStripeSignature } from './providers/stripe.ts';
 import { identityEvent } from './verification.ts';
 
@@ -104,7 +105,12 @@ async function twilio(ctx: Ctx, req: Request, resourceId: string, token: string,
   if (!/^[0-9a-f-]{36}$/.test(resourceId) || !(await checkWebhookToken(ctx, resourceId, token))) return json({ error: 'Unknown number.' }, 404);
   const resource = checked(await ctx.admin.from('agent_id_resources').select('*').eq('id', resourceId).eq('kind', 'phone').maybeSingle()) as ResourceRow | null;
   if (!resource || resource.status === 'released') return xml('<Response><Reject/></Response>');
-  const params = Object.fromEntries(new URLSearchParams(body));
+  return phoneEvent(ctx, resource, kind, Object.fromEntries(new URLSearchParams(body)));
+}
+
+// What a number's provider reports, in Twilio's terms (Telnyx's TeXML uses
+// the same): a text, an incoming call, a voicemail, a status change.
+async function phoneEvent(ctx: Ctx, resource: ResourceRow, kind: string, params: Record<string, string>) {
   if (kind === 'sms') {
     await recordEvent(ctx, resource, { kind: 'sms', direction: 'in', status: 'received', providerRef: params.MessageSid, counterparty: params.From, body: String(params.Body || '').slice(0, 5000), data: { media: Number(params.NumMedia) || 0 } });
     return xml('<Response/>');
@@ -130,6 +136,45 @@ async function twilio(ctx: Ctx, req: Request, resourceId: string, token: string,
       const next = row?.kind === 'call' && row.direction === 'in' ? (ended ? 'missed' : null) : status;
       if (row && next && row.status !== 'voicemail' && !(row.direction === 'in' && row.kind === 'sms')) await ctx.admin.from('agent_id_events').update({ status: String(next).slice(0, 40), ...(params.CallDuration ? { data: { duration: Number(params.CallDuration) } } : {}) }).eq('id', row.id);
     }
+    return xml('<Response/>');
+  }
+  return json({ error: 'Unknown event.' }, 404);
+}
+
+// --- Telnyx (Ed25519-signed; the number is found by its address) ---------------
+async function telnyxNumber(ctx: Ctx, address: unknown) {
+  const number = String(address || '');
+  if (!/^\+[1-9]\d{6,14}$/.test(number)) return null;
+  return checked(await ctx.admin.from('agent_id_resources').select('*').eq('kind', 'phone').eq('provider', 'telnyx').eq('address', number).neq('status', 'released').maybeSingle()) as ResourceRow | null;
+}
+
+const SMS_STATUS: Record<string, string> = { queued: 'queued', sending: 'sending', sent: 'sent', delivered: 'delivered', sending_failed: 'failed', delivery_failed: 'failed', delivery_unconfirmed: 'sent' };
+
+async function telnyx(ctx: Ctx, req: Request, kind: string) {
+  const body = await rawBody(req);
+  if (!(await telnyxSigned(ctx, req, body))) return json({ error: 'Invalid signature.' }, 401);
+  if (kind === 'messaging') {
+    const event = JSON.parse(body)?.data || {}, payload = event.payload || {};
+    if (event.event_type === 'message.received') {
+      const resource = await telnyxNumber(ctx, payload.to?.[0]?.phone_number);
+      if (resource) await recordEvent(ctx, resource, { kind: 'sms', direction: 'in', status: 'received', providerRef: String(payload.id || ''), counterparty: payload.from?.phone_number || null, body: String(payload.text || '').slice(0, 5000), data: { media: Array.isArray(payload.media) ? payload.media.length : 0 } });
+    } else if (event.event_type === 'message.sent' || event.event_type === 'message.finalized') {
+      const status = SMS_STATUS[String(payload.to?.[0]?.status || '')];
+      if (status && payload.id) await ctx.admin.from('agent_id_events').update({ status }).eq('kind', 'sms').eq('direction', 'out').eq('provider_ref', String(payload.id));
+    }
+    return json({ ok: true });
+  }
+  const params = Object.fromEntries(new URLSearchParams(body));
+  if (kind === 'voice') {
+    const resource = await telnyxNumber(ctx, params.To);
+    if (!resource) return xml('<Response><Reject/></Response>');
+    return phoneEvent(ctx, resource, 'voice', params);
+  }
+  if (kind === 'status' || kind === 'recording') {
+    const sid = String(params.CallSid || '');
+    const row = sid ? checked(await ctx.admin.from('agent_id_events').select('resource_id').eq('provider_ref', sid).eq('kind', 'call').maybeSingle()) as any : null;
+    const resource = row ? checked(await ctx.admin.from('agent_id_resources').select('*').eq('id', row.resource_id).maybeSingle()) as ResourceRow | null : null;
+    if (resource) await phoneEvent(ctx, resource, kind, params);
     return xml('<Response/>');
   }
   return json({ error: 'Unknown event.' }, 404);
@@ -190,5 +235,6 @@ export async function handleWebhook(ctx: Ctx, req: Request, path: string) {
   if (parts[1] === 'resend' && parts.length === 2) return resend(ctx, req);
   if (parts[1] === 'stripe' && parts.length === 2) return stripeEvent(ctx, req);
   if (parts[1] === 'twilio' && parts.length === 5) return twilio(ctx, req, parts[2], parts[3], parts[4]);
+  if (parts[1] === 'telnyx' && parts.length === 3) return telnyx(ctx, req, parts[2]);
   return json({ error: 'Unknown webhook.' }, 404);
 }

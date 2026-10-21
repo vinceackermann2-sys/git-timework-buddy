@@ -27,9 +27,9 @@ verified agents**, using the GitHub Action or a pre-receive hook.
  owner ──► website / CLI (owner key) ─┐
                                       ├─► agent-id edge function ──► Postgres (agent_id_*)
  agent ──► API / MCP / CLI (agent key)┘          │  ▲
-                                                 │  └── webhooks: Resend, Twilio, Stripe
+                                                 │  └── webhooks: Resend, Telnyx/Twilio, Stripe
  company ──► SDK (offline, JWKS) / API (secret) ─┘
-                                                 └──► Resend · Twilio · Privy · Stripe Identity · Azure sandboxes
+                                                 └──► Resend · Telnyx/Twilio · Privy · Stripe Identity · Azure sandboxes
 ```
 
 The function decides what a caller may do from its credential:
@@ -125,7 +125,7 @@ on its own.
 | Kind | Live provider | What the agent gets | Gates (defaults) |
 | --- | --- | --- | --- |
 | mail | Resend on `TIMEWARP_AGENT_MAIL_DOMAIN` (`agents.timewarpdev.com`), the domain the previous app's agent mail used | `<handle>@agents.timewarpdev.com`; send, receive, reply in thread; delivery status | — |
-| phone | Twilio, on Timewarp's account | A local number that can text and call; texts; calls that read a message aloud; incoming calls get a greeting and voicemail | paid plan |
+| phone | Telnyx (or Twilio, `AGENT_ID_PHONE_PROVIDER`), on Timewarp's account. Telnyx: one messaging profile and one TeXML app made on first use, Ed25519-signed webhooks | A local number that can text and call; texts; calls that read a message aloud; incoming calls get a greeting and voicemail | paid plan |
 | wallet | Privy server wallets on Base holding USDC and USDT, shown together as US dollars (`AGENT_ID_WALLET_CHAIN=base`, or `base_sepolia` to try it on testnet). Privy keeps the keys; with gas sponsorship on, sends need no ETH | An 0x address; a USD balance; deposits and sends in its history; transfers to addresses, other agents and contacts | verified owner |
 | card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner, paid plan |
 | vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A machine that resumes for each command, stops after it and keeps its files | credits (time is charged) |
@@ -328,7 +328,8 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | `AGENT_ID_REVIEWERS` | User ids of Timewarp staff who review verifications |
 | `AGENT_ID_MAX_AGENTS` | Agents per account (default 25) |
 | `RESEND_API_KEY` (exists), `AGENT_ID_RESEND_WEBHOOK_SECRET` | Live mail. Optional `AGENT_ID_MAIL_DOMAIN` overrides the domain. |
-| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Live phone numbers (Timewarp's own Twilio account) |
+| `TELNYX_API_KEY`, `TELNYX_PUBLIC_KEY` | Live phone numbers through Timewarp's own Telnyx account (used when its key is set) |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Live phone numbers through Twilio instead (`AGENT_ID_PHONE_PROVIDER=twilio`) |
 | `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `AGENT_ID_WALLET_CHAIN` | Live wallets |
 | `STRIPE_SECRET_KEY` (exists), `AGENT_ID_STRIPE_WEBHOOK_SECRET` | Live cards and Stripe Identity |
 | `AZURE_*` (exist) | Live machines |
@@ -340,7 +341,7 @@ Secrets on the Supabase project, read by the `agent-id` function:
   version (`POST /v1/account/terms`) before they create agents. The version
   and the time of acceptance are recorded.
 - **Privacy Policy:** section 7 covers Agent ID. It lists the data, the legal
-  bases, Stripe Identity, Privy, Twilio and Azure as processors, and how long
+  bases, Stripe Identity, Privy, Telnyx, Twilio and Azure as processors, and how long
   records are kept (content: while it exists, plus 30 days; verification, the
   agent–owner link and the audit log: 5 years).
 - **KYC:** explicit consent to the biometric check (GDPR Art. 9(2)(a)) is
@@ -377,7 +378,7 @@ off. The operator button does the same by hand.
 - Migration `20261020180000` (claims, apps, business checks, withdrawals) and
   the updated function go live with `timewarp/reports/agent-id-update.ps1`. The
   same script can then connect wallets and phone numbers through
-  `agent-id-connect-providers.ps1`, which asks for the Privy and Twilio
+  `agent-id-connect-providers.ps1`, which asks for the Privy and Telnyx (or Twilio)
   credentials (and optional Chainalysis and Stripe publishable keys) hidden.
 - Then, once:
   - activate Identity in Stripe;

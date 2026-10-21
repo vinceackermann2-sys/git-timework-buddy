@@ -19,9 +19,14 @@ export function loadConfig(env: Env) {
   const paid = new Set(list(get('AGENT_ID_PAID_PLAN_KINDS') || 'phone,card'));
 
   // Each kind's live provider, and whether its secrets are present.
+  // Phone numbers from Telnyx or Twilio: AGENT_ID_PHONE_PROVIDER, else
+  // Telnyx whenever its key is set.
+  const phoneProvider = (get('AGENT_ID_PHONE_PROVIDER').toLowerCase() || (get('TELNYX_API_KEY') ? 'telnyx' : 'twilio')) === 'telnyx' ? 'telnyx' : 'twilio';
   const providers = {
     mail: { provider: 'resend', configured: !!get('RESEND_API_KEY') && !!mailDomain },
-    phone: { provider: 'twilio', configured: !!get('TWILIO_ACCOUNT_SID') && !!get('TWILIO_AUTH_TOKEN') },
+    phone: phoneProvider === 'telnyx'
+      ? { provider: 'telnyx', configured: !!get('TELNYX_API_KEY') && !!get('TELNYX_PUBLIC_KEY') }
+      : { provider: 'twilio', configured: !!get('TWILIO_ACCOUNT_SID') && !!get('TWILIO_AUTH_TOKEN') },
     wallet: { provider: 'privy', configured: !!get('PRIVY_APP_ID') && !!get('PRIVY_APP_SECRET') },
     card: { provider: 'stripe_issuing', configured: !!get('STRIPE_SECRET_KEY') },
     vm: { provider: 'azure_sandbox', configured: ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_SUBSCRIPTION_ID', 'AZURE_SANDBOX_RESOURCE_GROUP', 'AZURE_SANDBOX_GROUP'].every(name => !!get(name)) },
