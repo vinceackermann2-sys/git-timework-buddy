@@ -20,7 +20,8 @@
         "--demo"
       ],
       "env": {
-        "AGENT_ID_SITE_URL": "http://localhost:8093"
+        "AGENT_ID_SITE_URL": "http://localhost:8093",
+        "PRIVY_CLIENT_APP_ID": "cmupxq2g1018o0clbguru8jr5"
       },
       "port": 54341
     },

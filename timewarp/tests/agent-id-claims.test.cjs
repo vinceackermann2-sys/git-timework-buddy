@@ -172,7 +172,8 @@ test("one Agent ID, many apps: each app it connects from or is set up in is list
 });
 
 test("wallets: owners add money (address or card) and withdraw, without using up their agent's limits", async t => {
-  const { local, net, ok, agent, verify } = await setup(t, { AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "privy-app", PRIVY_APP_SECRET: "privy-secret" });
+  // Cards through Stripe's onramp here (Privy's funding is covered in agent-id-bank).
+  const { local, net, ok, agent, verify } = await setup(t, { AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "privy-app", PRIVY_APP_SECRET: "privy-secret", AGENT_ID_CARD_PROVIDER: "stripe" });
   const alice = await local.user();
   const bot = await agent(alice, "Treasurer");
   await verify(alice);

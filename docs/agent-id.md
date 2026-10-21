@@ -183,9 +183,23 @@ Base (Privy). Money comes in and goes out in three ways:
   - US dollars need Bridge's `base` endorsement, euros its `sepa` one. Bridge
     opens SEPA per developer account; until it does, set
     `AGENT_ID_BANK_CURRENCIES=usd`.
-- **Card (MoonPay, else Stripe).** With `MOONPAY_API_KEY` and
-  `MOONPAY_SECRET_KEY` set (same mode), `POST /v1/agents/:id/wallet/add-money`
-  returns MoonPay's page for buying USDC on Base by card, Apple Pay or Google
+- **Card (Privy's funding by default).** Wherever Privy runs the wallets,
+  cards go through the onramps switched on in Privy's dashboard (Funding:
+  Stripe for USD and EUR in the US and EU, MoonPay, and Meld for more
+  currencies once its KYB is done). Privy opens them in the browser with its
+  SDK (`@privy-io/react-auth`, loaded only when someone opens Card), and only
+  for someone signed in to Privy, so the first time the owner confirms their
+  email with a Privy code (filled in). `POST /v1/agents/:id/wallet/add-money`
+  records the purchase (audit `wallet.add_money_card`) and returns the
+  destination: the wallet's address, USDC on Base, euros for people in Europe.
+  The website's domain must be in the Privy app's allowed origins.
+  Development deployments buy in Privy's sandbox. `PRIVY_CLIENT_APP_ID` sets a
+  separate public app ID for the browser (default `PRIVY_APP_ID`).
+  Privy's Custom authentication (Scale plan) would sign owners in to Privy
+  with their Agent ID login and drop the code.
+- **Card (MoonPay, or Stripe, by choice).** `AGENT_ID_CARD_PROVIDER=moonpay`
+  with `MOONPAY_API_KEY` and `MOONPAY_SECRET_KEY` set (same mode) makes
+  `POST /v1/agents/:id/wallet/add-money` return MoonPay's page for buying USDC on Base by card, Apple Pay or Google
   Pay, in Europe and the US. The page's address is signed with the secret key
   (so the wallet can't be swapped), bound to the buyer's IP address
   (`allowedIpAddress`), and names the Agent ID account and the purchase
@@ -386,7 +400,8 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Live phone numbers through Twilio instead (`AGENT_ID_PHONE_PROVIDER=twilio`) |
 | `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `AGENT_ID_WALLET_CHAIN` | Live wallets |
 | `BRIDGE_API_KEY`, `AGENT_ID_BANK_CURRENCIES` | Bank deposits and withdrawals for live wallets on Base (`usd,eur` by default; `AGENT_ID_BANK=off` hides them). Keys starting with `sk-test` use Bridge's sandbox. The Bridge webhook registers itself (`BRIDGE_WEBHOOK_PUBLIC_KEY` overrides). |
-| `MOONPAY_API_KEY`, `MOONPAY_SECRET_KEY` | Card payments into live wallets (MoonPay, once it has approved the account). `pk_test_`/`sk_test_` use MoonPay's sandbox. `AGENT_ID_CARD_PAYMENTS=off` hides them. |
+| `AGENT_ID_CARD_PROVIDER`, `PRIVY_CLIENT_APP_ID` | Card payments: `privy` (default where Privy runs the wallets), `moonpay` or `stripe`. `AGENT_ID_CARD_PAYMENTS=off` hides them. |
+| `MOONPAY_API_KEY`, `MOONPAY_SECRET_KEY` | Card payments through Timewarp's own MoonPay account (`AGENT_ID_CARD_PROVIDER=moonpay`, once MoonPay has approved it). `pk_test_`/`sk_test_` use MoonPay's sandbox. |
 | `STRIPE_CRYPTO_ONRAMP_ENABLED`, `STRIPE_PUBLISHABLE_KEY` | Buying USDC by card through Stripe's onramp (US only, once approved), when MoonPay isn't set. The publishable key embeds the form. |
 | `STRIPE_SECRET_KEY` (exists), `AGENT_ID_STRIPE_WEBHOOK_SECRET` | Live cards and Stripe Identity |
 | `AZURE_*` (exist) | Live machines |

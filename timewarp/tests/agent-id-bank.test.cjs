@@ -253,7 +253,7 @@ test("adding money by SEPA: an amount in a form opens one transfer to the wallet
 });
 
 test("card payments through MoonPay: a signed page that pays into this wallet, for this buyer, in their money", async t => {
-  const { local, ok, owner, liveWallet, verify } = await setup(t, { ...LIVE, MOONPAY_API_KEY: "pk_test_abc", MOONPAY_SECRET_KEY: "sk_test_secret" });
+  const { local, ok, owner, liveWallet, verify } = await setup(t, { ...LIVE, AGENT_ID_CARD_PROVIDER: "moonpay", MOONPAY_API_KEY: "pk_test_abc", MOONPAY_SECRET_KEY: "sk_test_secret" });
   let now = Date.now();
   local.setClock(() => now);
   const ada = await owner();
@@ -324,4 +324,35 @@ test("a business is checked by Bridge too, started by a verified person who may 
   assert.deepEqual([verification.verified, verification.level], [true, "kyb"]);
   const log = (await ok("GET", "/v1/audit", { token: ada.session })).entries.map(e => e.action);
   for (const action of ["verification.business.start", "verification.business.verified"]) assert.ok(log.includes(action), action);
+});
+
+test("card payments through Privy's funding: the browser opens Privy's onramps for this wallet, recorded first", async t => {
+  const { local, ok, owner, liveWallet, verify } = await setup(t);
+  let now = Date.now();
+  local.setClock(() => now);
+  const ada = await owner();
+  const bot = await liveWallet(ada);
+  const addMoney = `/v1/agents/${bot.id}/wallet/add-money`;
+  // Privy is the default wherever its wallets are; development buys in the sandbox.
+  assert.deepEqual((await ok("GET", addMoney, { token: ada.session })).card, { available: true, provider: "privy", privy: { appId: "privy-app", environment: "sandbox" } });
+  const ownerKey = (await ok("POST", "/v1/keys", { token: ada.session, body: { name: "cli" } })).secret;
+  assert.equal((await local.call("POST", addMoney, { token: ownerKey, body: {} })).body.error.code, "session_required");
+  const opened = await ok("POST", addMoney, { token: ada.session, body: {} });
+  assert.deepEqual(
+    [opened.provider, opened.appId, opened.environment, opened.address, opened.chain, opened.asset, opened.currency, opened.email],
+    ["privy", "privy-app", "sandbox", WALLET, "eip155:8453", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "usd", "ada@example.com"],
+  );
+  assert.match(opened.reference, /^card_[a-z0-9]{24}$/);
+  // Verified as living in Sweden: euros (Privy's onramps take dollars and euros).
+  await verify(ada);
+  now += 6_000;
+  await ok("GET", "/v1/account/bank", { token: ada.session });
+  assert.equal((await ok("POST", addMoney, { token: ada.session, body: {} })).currency, "eur");
+  const log = (await ok("GET", "/v1/audit", { token: ada.session })).entries.filter(e => e.action === "wallet.add_money_card");
+  assert.deepEqual(log.map(e => [e.detail.provider, e.detail.currency, e.agentId]).sort(), [["privy", "eur", bot.id], ["privy", "usd", bot.id]], "Each card payment is recorded for the agent.");
+  // Production buys for real; a separate client app ID can be set for the browser.
+  local.setEnv({ AGENT_ID_ALLOW_TEST: "false", PRIVY_CLIENT_APP_ID: "privy-client" });
+  assert.deepEqual((await ok("GET", addMoney, { token: ada.session })).card.privy, { appId: "privy-client", environment: "production" });
+  local.setEnv({ AGENT_ID_CARD_PAYMENTS: "off" });
+  assert.equal((await ok("GET", addMoney, { token: ada.session })).card.available, false);
 });

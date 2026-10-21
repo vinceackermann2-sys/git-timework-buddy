@@ -331,15 +331,33 @@ export type AddMoneyInfo = {
   mode: Mode;
   network: { id: string; name: string } | null;
   assets: string[];
-  // MoonPay (Europe and the US, on its own page) or Stripe's onramp (the US).
-  card: { available: boolean; provider?: "moonpay" | "stripe" };
+  // Privy's funding (the onramps switched on in Privy), MoonPay on its own page,
+  // or Stripe's onramp (the US).
+  card: {
+    available: boolean;
+    provider?: "privy" | "moonpay" | "stripe";
+    privy?: { appId: string; environment: "sandbox" | "production" };
+  };
   bank?: { available: boolean };
   test: boolean;
 };
 
 // MoonPay's page at `url`; or Stripe's onramp, embedded with the publishable
 // key when the server has one, otherwise Stripe's own page at `url`.
+// Privy's: where the browser sends the card purchase, recorded on Agent ID first.
+export type PrivyCardSession = {
+  provider: "privy";
+  appId: string;
+  environment: "sandbox" | "production";
+  address: string;
+  chain: `${string}:${string}`;
+  asset: string;
+  currency: "eur" | "usd";
+  email: string | null;
+  reference: string;
+};
 export type CardOnrampSession =
+  | PrivyCardSession
   | { provider: "moonpay"; url: string }
   | { provider?: "stripe"; clientSecret: string; publishableKey?: string; url?: string };
 

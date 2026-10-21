@@ -1,7 +1,7 @@
 // Money in and out of a live wallet, as a bank app does it: add money (a card,
 // one SEPA transfer of an amount you choose, or crypto to its address on Base)
 // and withdraw to your bank account or your own wallet or exchange.
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ExternalLink, Loader2 } from "lucide-react";
@@ -30,8 +30,11 @@ import { api } from "@/lib/agent-id/session";
 import type { AddMoneyInfo, Agent, Money } from "@/lib/agent-id/types";
 import { CopyButton, ErrorState, Field, LoadingRows, Muted, Notice, Segmented } from "../ui";
 import { BankDeposit, BankWithdraw } from "./BankMoney";
+import { useAgentIdTheme } from "../AgentIdShell";
 
 type AddMethod = "card" | "bank" | "crypto";
+// Privy's SDK is large: it loads only when someone opens Card.
+const PrivyCardPay = lazy(() => import("./PrivyCardPay"));
 
 export function AddMoney({ agent }: { agent: Agent }) {
   const info = useQuery({
@@ -41,6 +44,12 @@ export function AddMoney({ agent }: { agent: Agent }) {
     staleTime: 60_000,
   });
   const [chosen, setChosen] = useState<AddMethod | null>(null);
+  const { choice } = useAgentIdTheme();
+  const dark =
+    choice === "dark" ||
+    (choice === "system" &&
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
   const bankOn = info.data?.bank?.available === true;
   const bank = useBank(bankOn);
 
@@ -77,7 +86,11 @@ export function AddMoney({ agent }: { agent: Agent }) {
       {method === "bank" ? (
         <BankDeposit agent={agent} />
       ) : method === "card" ? (
-        info.data.card.provider === "moonpay" ? (
+        info.data.card.provider === "privy" && info.data.card.privy ? (
+          <Suspense fallback={<LoadingRows rows={2} />}>
+            <PrivyCardPay agent={agent} appId={info.data.card.privy.appId} dark={dark} />
+          </Suspense>
+        ) : info.data.card.provider === "moonpay" ? (
           <CardPay agent={agent} />
         ) : (
           <CardOnramp agent={agent} />
@@ -155,7 +168,7 @@ function CardPay({ agent }: { agent: Agent }) {
       const tab = window.open("about:blank", "_blank");
       try {
         const session = await api.buyWithCard(agent.id);
-        if (tab && session.url) {
+        if (tab && "url" in session && session.url) {
           tab.opener = null;
           tab.location.href = session.url;
         } else tab?.close();
@@ -262,15 +275,16 @@ function CardOnramp({ agent }: { agent: Agent }) {
     };
   }, [stripeSession]);
 
+  const url = session.data && "url" in session.data ? session.data.url : undefined;
   const problem =
     error ??
     (session.isError
       ? errorMessage(session.error)
-      : session.data && !stripeSession?.publishableKey && !session.data.url
+      : session.data && !stripeSession?.publishableKey && !url
         ? "Couldn't open the card form."
         : null);
   // Without an embed, Stripe's own page, in a new tab.
-  const hosted = session.data && !stripeSession?.publishableKey ? session.data.url : undefined;
+  const hosted = session.data && !stripeSession?.publishableKey ? url : undefined;
   return (
     <div className="grid gap-4">
       {problem && <Notice tone="danger">{problem}</Notice>}

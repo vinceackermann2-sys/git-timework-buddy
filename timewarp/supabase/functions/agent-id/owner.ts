@@ -272,11 +272,26 @@ const testFunds: Handler = async (ctx, owner, input, params) => {
 // --- Wallet: adding and taking out money ---------------------------------------
 // Adding money: the wallet's address for a transfer from an exchange or another
 // wallet (USDC or USDT on Base), a SEPA transfer of a set amount (bank.ts), and
-// a card: MoonPay where its keys are set (Europe and the US, on its own page),
-// else Stripe's crypto onramp where Stripe approved it (the US only, embedded
-// with the publishable key, else on Stripe's page).
+// a card. Cards go through Privy's funding by default: the onramps switched on
+// in Privy's dashboard (Stripe, MoonPay, Meld), opened in the browser by
+// Privy's SDK once the owner confirms their email with Privy. Otherwise MoonPay
+// where its own keys are set, or Stripe's crypto onramp where Stripe approved
+// it (the US only). AGENT_ID_CARD_PROVIDER picks one of them.
 const stripeOnramp = (ctx: Ctx) => /^(sk|rk)_(live|test)_/.test(ctx.config.env('STRIPE_SECRET_KEY')) && !['', 'false', '0', 'off'].includes(ctx.config.env('STRIPE_CRYPTO_ONRAMP_ENABLED').toLowerCase());
-const cardProvider = (ctx: Ctx) => moonpayOn(ctx) ? 'moonpay' : stripeOnramp(ctx) ? 'stripe' : null;
+const privyAppId = (ctx: Ctx) => ctx.config.env('PRIVY_CLIENT_APP_ID') || ctx.config.env('PRIVY_APP_ID');
+function cardProvider(ctx: Ctx) {
+  if (ctx.config.env('AGENT_ID_CARD_PAYMENTS') === 'off') return null;
+  const available: Record<string, boolean> = { privy: ctx.config.providers.wallet.configured && !!privyAppId(ctx), moonpay: moonpayOn(ctx), stripe: stripeOnramp(ctx) };
+  const chosen = ctx.config.env('AGENT_ID_CARD_PROVIDER').toLowerCase();
+  if (chosen) return available[chosen] ? chosen : null;
+  return (['privy', 'moonpay', 'stripe'] as const).find(name => available[name]) ?? null;
+}
+// USDC's contract on Base, where card purchases land.
+const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+// Privy's onramps take US dollars and euros: euros for people in Europe.
+const privyCurrency = (country: string | null | undefined) => cardCurrency(country) === 'usd' ? 'usd' : 'eur';
+// Development deployments buy in the providers' sandboxes, never with real money.
+const privyCard = (ctx: Ctx) => ({ appId: privyAppId(ctx), environment: ctx.config.testMode ? 'sandbox' : 'production' });
 const addMoneyInfo: Handler = async (ctx, owner, _input, params) => {
   const { resource } = await ownedResource(ctx, owner, params.id, 'wallet');
   const live = resource.mode === 'live';
@@ -286,7 +301,7 @@ const addMoneyInfo: Handler = async (ctx, owner, _input, params) => {
     address: resource.address, mode: resource.mode,
     network: live ? { id: chain, name: chain === 'base_sepolia' ? 'Base Sepolia (testnet)' : 'Base' } : null,
     assets: live ? ['USDC', 'USDT'] : [],
-    card: { available: !!card, ...(card ? { provider: card } : {}) },
+    card: { available: !!card, ...(card ? { provider: card } : {}), ...(card === 'privy' ? { privy: privyCard(ctx) } : {}) },
     bank: { available: live && chain === 'base' && bankAvailable(ctx.config) },
     test: !live,
   };
@@ -299,6 +314,14 @@ const addMoneyByCard: Handler = async (ctx, owner, input, params, req) => {
   const amount = input.amount === undefined || input.amount === null || input.amount === '' ? null : cents({ value: input.amount }, 'amount');
   const ip = (req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || '').split(',')[0].trim();
   await rateLimit(ctx, owner.userId, 'card-payment', 10, 50, 'card payments');
+  if (provider === 'privy') {
+    // The browser opens Privy's payment window for this wallet; recorded here first.
+    const currency = privyCurrency((await personOf(ctx, owner.userId))?.country);
+    const reference = `card_${randomId(24)}`;
+    const email = owner.email || (await ctx.admin.auth.admin.getUserById(owner.userId)).data?.user?.email || null;
+    await audit(ctx, owner.userId, agent.id, 'owner', 'wallet.add_money_card', { provider, amount, currency, reference });
+    return { provider, ...privyCard(ctx), address: resource.address, chain: 'eip155:8453', asset: USDC_BASE, currency, email, reference };
+  }
   if (provider === 'moonpay') {
     const currency = cardCurrency((await personOf(ctx, owner.userId))?.country);
     const reference = `card_${randomId(24)}`;
