@@ -64,6 +64,7 @@ describe('a person new to Agent ID', () => {
     process.env.HOME = home; process.env.USERPROFILE = home;
     env = cliEnv(BASE, { idHome: path.join(home, '.timewarp-id'), codexHome: path.join(home, '.codex'), home });
     delete env.npm_command; delete env.npm_lifecycle_event; // Not started by npx here.
+    delete env.CI; // A person's terminal, even when the tests run in CI.
     return home;
   };
   before(() => { root = tempDir('guided'); });
