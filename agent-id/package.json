@@ -1,0 +1,15 @@
+{
+  "name": "timewarp-agent-id-tools",
+  "private": true,
+  "description": "Timewarp Agent ID developer tools: the timewarp-id CLI, the passport verification SDK, and the GitHub Action for verified-agent commits.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:cli": "node --test test/cli.test.mjs",
+    "test:sdk": "node --test test/sdk.test.mjs",
+    "test:action": "node --test test/action.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

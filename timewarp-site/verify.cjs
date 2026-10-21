@@ -136,10 +136,18 @@ mobilePage.platforms[1].events.click();
 assert.equal(mobilePage.get('platform-download').href,officialURLs.mac);
 assert.equal(mobilePage.get('platform-download').hidden,false);
 
-const html = fs.readFileSync(path.join(__dirname,'dist/index.html'),'utf8');
-for (const [,url] of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
-  if (url.startsWith('#')) { if (url.length > 1) assert.ok(html.includes('id="' + url.slice(1) + '"'), 'Missing anchor ' + url); continue; }
-  if (/^https?:/.test(url)) continue;
-  assert.ok(fs.existsSync(path.join(__dirname,'dist',url)), 'Missing asset ' + url);
+// Pages link with clean URLs: /legal/privacy-policy is legal/privacy-policy.html and / is index.html.
+const pages = ['index.html', ...fs.readdirSync(path.join(__dirname,'dist/legal')).map(name => 'legal/' + name)];
+const pageFile = url => { const [file] = url.split('#'); return file === '/' ? 'index.html' : path.extname(file) ? file : file + '.html'; };
+for (const page of pages) {
+  const html = fs.readFileSync(path.join(__dirname,'dist',page),'utf8');
+  for (const [,url] of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+    if (url.startsWith('#')) { if (url.length > 1) assert.ok(html.includes('id="' + url.slice(1) + '"'), 'Missing anchor ' + url + ' in ' + page); continue; }
+    if (/^(https?|mailto):/.test(url)) continue;
+    const file = url.startsWith('/') ? pageFile(url) : path.join(path.dirname(page), url);
+    assert.ok(fs.existsSync(path.join(__dirname,'dist',file)), 'Missing asset ' + url + ' in ' + page);
+    const anchor = url.split('#')[1];
+    if (anchor) assert.ok(fs.readFileSync(path.join(__dirname,'dist',file),'utf8').includes('id="' + anchor + '"'), 'Missing anchor ' + url + ' in ' + page);
+  }
 }
-console.log('Verified: 9 OS cases, alternate-platform links, configured Windows/Mac URLs, Intel vs Apple Silicon Mac detection, unavailable/unsafe URL handling, mobile platform selection, and local assets/anchors.');
+console.log('Verified: 9 OS cases, alternate-platform links, configured Windows/Mac URLs, Intel vs Apple Silicon Mac detection, unavailable/unsafe URL handling, mobile platform selection, and local assets/anchors on every page.');

@@ -10,14 +10,50 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AgentIdRouteRouteImport } from './routes/agent-id/route'
+import { Route as AgentIdIndexRouteImport } from './routes/agent-id/index'
+import { Route as AgentIdAppRouteImport } from './routes/agent-id/_app'
+import { Route as AgentIdSignInRouteImport } from './routes/agent-id/sign-in'
 import { Route as AuthBridgeRouteImport } from './routes/auth.bridge'
 import { Route as AuthGoogleRouteImport } from './routes/auth.google'
+import { Route as LegalAgentIdTermsRouteImport } from './routes/legal.agent-id-terms'
+import { Route as LegalCookiePolicyRouteImport } from './routes/legal.cookie-policy'
+import { Route as LegalPrivacyPolicyRouteImport } from './routes/legal.privacy-policy'
+import { Route as LegalTermsOfServiceRouteImport } from './routes/legal.terms-of-service'
+import { Route as AgentIdAppApprovalsRouteImport } from './routes/agent-id/_app/approvals'
+import { Route as AgentIdAppDashboardRouteImport } from './routes/agent-id/_app/dashboard'
+import { Route as AgentIdAppDevelopersRouteImport } from './routes/agent-id/_app/developers'
+import { Route as AgentIdAppReviewsRouteImport } from './routes/agent-id/_app/reviews'
+import { Route as AgentIdAppSettingsRouteImport } from './routes/agent-id/_app/settings'
+import { Route as AgentIdAppVerifyRouteImport } from './routes/agent-id/_app/verify'
+import { Route as AgentIdClaimIndexRouteImport } from './routes/agent-id/claim/index'
+import { Route as AgentIdClaimCodeRouteImport } from './routes/agent-id/claim/$code'
 import { Route as AuthV1CallbackRouteImport } from './routes/auth.v1.callback'
+import { Route as AgentIdAppAgentsAgentIdRouteImport } from './routes/agent-id/_app/agents.$agentId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AgentIdRouteRoute = AgentIdRouteRouteImport.update({
+  id: '/agent-id',
+  path: '/agent-id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentIdIndexRoute = AgentIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AgentIdRouteRoute,
+} as any)
+const AgentIdAppRoute = AgentIdAppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => AgentIdRouteRoute,
+} as any)
+const AgentIdSignInRoute = AgentIdSignInRouteImport.update({
+  id: '/sign-in',
+  path: '/sign-in',
+  getParentRoute: () => AgentIdRouteRoute,
 } as any)
 const AuthBridgeRoute = AuthBridgeRouteImport.update({
   id: '/auth/bridge',
@@ -29,43 +65,222 @@ const AuthGoogleRoute = AuthGoogleRouteImport.update({
   path: '/auth/google',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LegalAgentIdTermsRoute = LegalAgentIdTermsRouteImport.update({
+  id: '/legal/agent-id-terms',
+  path: '/legal/agent-id-terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalCookiePolicyRoute = LegalCookiePolicyRouteImport.update({
+  id: '/legal/cookie-policy',
+  path: '/legal/cookie-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalPrivacyPolicyRoute = LegalPrivacyPolicyRouteImport.update({
+  id: '/legal/privacy-policy',
+  path: '/legal/privacy-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LegalTermsOfServiceRoute = LegalTermsOfServiceRouteImport.update({
+  id: '/legal/terms-of-service',
+  path: '/legal/terms-of-service',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentIdAppApprovalsRoute = AgentIdAppApprovalsRouteImport.update({
+  id: '/approvals',
+  path: '/approvals',
+  getParentRoute: () => AgentIdAppRoute,
+} as any)
+const AgentIdAppDashboardRoute = AgentIdAppDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AgentIdAppRoute,
+} as any)
+const AgentIdAppDevelopersRoute = AgentIdAppDevelopersRouteImport.update({
+  id: '/developers',
+  path: '/developers',
+  getParentRoute: () => AgentIdAppRoute,
+} as any)
+const AgentIdAppReviewsRoute = AgentIdAppReviewsRouteImport.update({
+  id: '/reviews',
+  path: '/reviews',
+  getParentRoute: () => AgentIdAppRoute,
+} as any)
+const AgentIdAppSettingsRoute = AgentIdAppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AgentIdAppRoute,
+} as any)
+const AgentIdAppVerifyRoute = AgentIdAppVerifyRouteImport.update({
+  id: '/verify',
+  path: '/verify',
+  getParentRoute: () => AgentIdAppRoute,
+} as any)
+const AgentIdClaimIndexRoute = AgentIdClaimIndexRouteImport.update({
+  id: '/claim/',
+  path: '/claim/',
+  getParentRoute: () => AgentIdRouteRoute,
+} as any)
+const AgentIdClaimCodeRoute = AgentIdClaimCodeRouteImport.update({
+  id: '/claim/$code',
+  path: '/claim/$code',
+  getParentRoute: () => AgentIdRouteRoute,
+} as any)
 const AuthV1CallbackRoute = AuthV1CallbackRouteImport.update({
   id: '/auth/v1/callback',
   path: '/auth/v1/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentIdAppAgentsAgentIdRoute = AgentIdAppAgentsAgentIdRouteImport.update({
+  id: '/agents/$agentId',
+  path: '/agents/$agentId',
+  getParentRoute: () => AgentIdAppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/agent-id': typeof AgentIdRouteRouteWithChildren
+  '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/agent-id-terms': typeof LegalAgentIdTermsRoute
+  '/legal/cookie-policy': typeof LegalCookiePolicyRoute
+  '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
+  '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
+  '/agent-id/': typeof AgentIdIndexRoute
+  '/agent-id/approvals': typeof AgentIdAppApprovalsRoute
+  '/agent-id/dashboard': typeof AgentIdAppDashboardRoute
+  '/agent-id/developers': typeof AgentIdAppDevelopersRoute
+  '/agent-id/reviews': typeof AgentIdAppReviewsRoute
+  '/agent-id/settings': typeof AgentIdAppSettingsRoute
+  '/agent-id/verify': typeof AgentIdAppVerifyRoute
+  '/agent-id/claim/$code': typeof AgentIdClaimCodeRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
+  '/agent-id/claim/': typeof AgentIdClaimIndexRoute
+  '/agent-id/agents/$agentId': typeof AgentIdAppAgentsAgentIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agent-id': typeof AgentIdIndexRoute
+  '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/agent-id-terms': typeof LegalAgentIdTermsRoute
+  '/legal/cookie-policy': typeof LegalCookiePolicyRoute
+  '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
+  '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
+  '/agent-id/approvals': typeof AgentIdAppApprovalsRoute
+  '/agent-id/dashboard': typeof AgentIdAppDashboardRoute
+  '/agent-id/developers': typeof AgentIdAppDevelopersRoute
+  '/agent-id/reviews': typeof AgentIdAppReviewsRoute
+  '/agent-id/settings': typeof AgentIdAppSettingsRoute
+  '/agent-id/verify': typeof AgentIdAppVerifyRoute
+  '/agent-id/claim/$code': typeof AgentIdClaimCodeRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
+  '/agent-id/claim': typeof AgentIdClaimIndexRoute
+  '/agent-id/agents/$agentId': typeof AgentIdAppAgentsAgentIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/agent-id': typeof AgentIdRouteRouteWithChildren
+  '/agent-id/_app': typeof AgentIdAppRouteWithChildren
+  '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
+  '/legal/agent-id-terms': typeof LegalAgentIdTermsRoute
+  '/legal/cookie-policy': typeof LegalCookiePolicyRoute
+  '/legal/privacy-policy': typeof LegalPrivacyPolicyRoute
+  '/legal/terms-of-service': typeof LegalTermsOfServiceRoute
+  '/agent-id/': typeof AgentIdIndexRoute
+  '/agent-id/_app/approvals': typeof AgentIdAppApprovalsRoute
+  '/agent-id/_app/dashboard': typeof AgentIdAppDashboardRoute
+  '/agent-id/_app/developers': typeof AgentIdAppDevelopersRoute
+  '/agent-id/_app/reviews': typeof AgentIdAppReviewsRoute
+  '/agent-id/_app/settings': typeof AgentIdAppSettingsRoute
+  '/agent-id/_app/verify': typeof AgentIdAppVerifyRoute
+  '/agent-id/claim/$code': typeof AgentIdClaimCodeRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
+  '/agent-id/claim/': typeof AgentIdClaimIndexRoute
+  '/agent-id/_app/agents/$agentId': typeof AgentIdAppAgentsAgentIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth/bridge' | '/auth/google' | '/auth/v1/callback'
+  fullPaths:
+    | '/'
+    | '/agent-id'
+    | '/agent-id/sign-in'
+    | '/auth/bridge'
+    | '/auth/google'
+    | '/legal/agent-id-terms'
+    | '/legal/cookie-policy'
+    | '/legal/privacy-policy'
+    | '/legal/terms-of-service'
+    | '/agent-id/'
+    | '/agent-id/approvals'
+    | '/agent-id/dashboard'
+    | '/agent-id/developers'
+    | '/agent-id/reviews'
+    | '/agent-id/settings'
+    | '/agent-id/verify'
+    | '/agent-id/claim/$code'
+    | '/auth/v1/callback'
+    | '/agent-id/claim/'
+    | '/agent-id/agents/$agentId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth/bridge' | '/auth/google' | '/auth/v1/callback'
-  id: '__root__' | '/' | '/auth/bridge' | '/auth/google' | '/auth/v1/callback'
+  to:
+    | '/'
+    | '/agent-id'
+    | '/agent-id/sign-in'
+    | '/auth/bridge'
+    | '/auth/google'
+    | '/legal/agent-id-terms'
+    | '/legal/cookie-policy'
+    | '/legal/privacy-policy'
+    | '/legal/terms-of-service'
+    | '/agent-id/approvals'
+    | '/agent-id/dashboard'
+    | '/agent-id/developers'
+    | '/agent-id/reviews'
+    | '/agent-id/settings'
+    | '/agent-id/verify'
+    | '/agent-id/claim/$code'
+    | '/auth/v1/callback'
+    | '/agent-id/claim'
+    | '/agent-id/agents/$agentId'
+  id:
+    | '__root__'
+    | '/'
+    | '/agent-id'
+    | '/agent-id/_app'
+    | '/agent-id/sign-in'
+    | '/auth/bridge'
+    | '/auth/google'
+    | '/legal/agent-id-terms'
+    | '/legal/cookie-policy'
+    | '/legal/privacy-policy'
+    | '/legal/terms-of-service'
+    | '/agent-id/'
+    | '/agent-id/_app/approvals'
+    | '/agent-id/_app/dashboard'
+    | '/agent-id/_app/developers'
+    | '/agent-id/_app/reviews'
+    | '/agent-id/_app/settings'
+    | '/agent-id/_app/verify'
+    | '/agent-id/claim/$code'
+    | '/auth/v1/callback'
+    | '/agent-id/claim/'
+    | '/agent-id/_app/agents/$agentId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AgentIdRouteRoute: typeof AgentIdRouteRouteWithChildren
   AuthBridgeRoute: typeof AuthBridgeRoute
   AuthGoogleRoute: typeof AuthGoogleRoute
+  LegalAgentIdTermsRoute: typeof LegalAgentIdTermsRoute
+  LegalCookiePolicyRoute: typeof LegalCookiePolicyRoute
+  LegalPrivacyPolicyRoute: typeof LegalPrivacyPolicyRoute
+  LegalTermsOfServiceRoute: typeof LegalTermsOfServiceRoute
   AuthV1CallbackRoute: typeof AuthV1CallbackRoute
 }
 
@@ -77,6 +292,34 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/agent-id': {
+      id: '/agent-id'
+      path: '/agent-id'
+      fullPath: '/agent-id'
+      preLoaderRoute: typeof AgentIdRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agent-id/': {
+      id: '/agent-id/'
+      path: '/'
+      fullPath: '/agent-id/'
+      preLoaderRoute: typeof AgentIdIndexRouteImport
+      parentRoute: typeof AgentIdRouteRoute
+    }
+    '/agent-id/_app': {
+      id: '/agent-id/_app'
+      path: ''
+      fullPath: '/agent-id'
+      preLoaderRoute: typeof AgentIdAppRouteImport
+      parentRoute: typeof AgentIdRouteRoute
+    }
+    '/agent-id/sign-in': {
+      id: '/agent-id/sign-in'
+      path: '/sign-in'
+      fullPath: '/agent-id/sign-in'
+      preLoaderRoute: typeof AgentIdSignInRouteImport
+      parentRoute: typeof AgentIdRouteRoute
     }
     '/auth/bridge': {
       id: '/auth/bridge'
@@ -92,6 +335,90 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthGoogleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/legal/agent-id-terms': {
+      id: '/legal/agent-id-terms'
+      path: '/legal/agent-id-terms'
+      fullPath: '/legal/agent-id-terms'
+      preLoaderRoute: typeof LegalAgentIdTermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal/cookie-policy': {
+      id: '/legal/cookie-policy'
+      path: '/legal/cookie-policy'
+      fullPath: '/legal/cookie-policy'
+      preLoaderRoute: typeof LegalCookiePolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal/privacy-policy': {
+      id: '/legal/privacy-policy'
+      path: '/legal/privacy-policy'
+      fullPath: '/legal/privacy-policy'
+      preLoaderRoute: typeof LegalPrivacyPolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/legal/terms-of-service': {
+      id: '/legal/terms-of-service'
+      path: '/legal/terms-of-service'
+      fullPath: '/legal/terms-of-service'
+      preLoaderRoute: typeof LegalTermsOfServiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agent-id/_app/approvals': {
+      id: '/agent-id/_app/approvals'
+      path: '/approvals'
+      fullPath: '/agent-id/approvals'
+      preLoaderRoute: typeof AgentIdAppApprovalsRouteImport
+      parentRoute: typeof AgentIdAppRoute
+    }
+    '/agent-id/_app/dashboard': {
+      id: '/agent-id/_app/dashboard'
+      path: '/dashboard'
+      fullPath: '/agent-id/dashboard'
+      preLoaderRoute: typeof AgentIdAppDashboardRouteImport
+      parentRoute: typeof AgentIdAppRoute
+    }
+    '/agent-id/_app/developers': {
+      id: '/agent-id/_app/developers'
+      path: '/developers'
+      fullPath: '/agent-id/developers'
+      preLoaderRoute: typeof AgentIdAppDevelopersRouteImport
+      parentRoute: typeof AgentIdAppRoute
+    }
+    '/agent-id/_app/reviews': {
+      id: '/agent-id/_app/reviews'
+      path: '/reviews'
+      fullPath: '/agent-id/reviews'
+      preLoaderRoute: typeof AgentIdAppReviewsRouteImport
+      parentRoute: typeof AgentIdAppRoute
+    }
+    '/agent-id/_app/settings': {
+      id: '/agent-id/_app/settings'
+      path: '/settings'
+      fullPath: '/agent-id/settings'
+      preLoaderRoute: typeof AgentIdAppSettingsRouteImport
+      parentRoute: typeof AgentIdAppRoute
+    }
+    '/agent-id/_app/verify': {
+      id: '/agent-id/_app/verify'
+      path: '/verify'
+      fullPath: '/agent-id/verify'
+      preLoaderRoute: typeof AgentIdAppVerifyRouteImport
+      parentRoute: typeof AgentIdAppRoute
+    }
+    '/agent-id/claim/': {
+      id: '/agent-id/claim/'
+      path: '/claim'
+      fullPath: '/agent-id/claim/'
+      preLoaderRoute: typeof AgentIdClaimIndexRouteImport
+      parentRoute: typeof AgentIdRouteRoute
+    }
+    '/agent-id/claim/$code': {
+      id: '/agent-id/claim/$code'
+      path: '/claim/$code'
+      fullPath: '/agent-id/claim/$code'
+      preLoaderRoute: typeof AgentIdClaimCodeRouteImport
+      parentRoute: typeof AgentIdRouteRoute
+    }
     '/auth/v1/callback': {
       id: '/auth/v1/callback'
       path: '/auth/v1/callback'
@@ -99,13 +426,69 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthV1CallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-id/_app/agents/$agentId': {
+      id: '/agent-id/_app/agents/$agentId'
+      path: '/agents/$agentId'
+      fullPath: '/agent-id/agents/$agentId'
+      preLoaderRoute: typeof AgentIdAppAgentsAgentIdRouteImport
+      parentRoute: typeof AgentIdAppRoute
+    }
   }
 }
 
+interface AgentIdAppRouteChildren {
+  AgentIdAppApprovalsRoute: typeof AgentIdAppApprovalsRoute
+  AgentIdAppDashboardRoute: typeof AgentIdAppDashboardRoute
+  AgentIdAppDevelopersRoute: typeof AgentIdAppDevelopersRoute
+  AgentIdAppReviewsRoute: typeof AgentIdAppReviewsRoute
+  AgentIdAppSettingsRoute: typeof AgentIdAppSettingsRoute
+  AgentIdAppVerifyRoute: typeof AgentIdAppVerifyRoute
+  AgentIdAppAgentsAgentIdRoute: typeof AgentIdAppAgentsAgentIdRoute
+}
+
+const AgentIdAppRouteChildren: AgentIdAppRouteChildren = {
+  AgentIdAppApprovalsRoute: AgentIdAppApprovalsRoute,
+  AgentIdAppDashboardRoute: AgentIdAppDashboardRoute,
+  AgentIdAppDevelopersRoute: AgentIdAppDevelopersRoute,
+  AgentIdAppReviewsRoute: AgentIdAppReviewsRoute,
+  AgentIdAppSettingsRoute: AgentIdAppSettingsRoute,
+  AgentIdAppVerifyRoute: AgentIdAppVerifyRoute,
+  AgentIdAppAgentsAgentIdRoute: AgentIdAppAgentsAgentIdRoute,
+}
+
+const AgentIdAppRouteWithChildren = AgentIdAppRoute._addFileChildren(
+  AgentIdAppRouteChildren,
+)
+
+interface AgentIdRouteRouteChildren {
+  AgentIdAppRoute: typeof AgentIdAppRouteWithChildren
+  AgentIdSignInRoute: typeof AgentIdSignInRoute
+  AgentIdIndexRoute: typeof AgentIdIndexRoute
+  AgentIdClaimCodeRoute: typeof AgentIdClaimCodeRoute
+  AgentIdClaimIndexRoute: typeof AgentIdClaimIndexRoute
+}
+
+const AgentIdRouteRouteChildren: AgentIdRouteRouteChildren = {
+  AgentIdAppRoute: AgentIdAppRouteWithChildren,
+  AgentIdSignInRoute: AgentIdSignInRoute,
+  AgentIdIndexRoute: AgentIdIndexRoute,
+  AgentIdClaimCodeRoute: AgentIdClaimCodeRoute,
+  AgentIdClaimIndexRoute: AgentIdClaimIndexRoute,
+}
+
+const AgentIdRouteRouteWithChildren = AgentIdRouteRoute._addFileChildren(
+  AgentIdRouteRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AgentIdRouteRoute: AgentIdRouteRouteWithChildren,
   AuthBridgeRoute: AuthBridgeRoute,
   AuthGoogleRoute: AuthGoogleRoute,
+  LegalAgentIdTermsRoute: LegalAgentIdTermsRoute,
+  LegalCookiePolicyRoute: LegalCookiePolicyRoute,
+  LegalPrivacyPolicyRoute: LegalPrivacyPolicyRoute,
+  LegalTermsOfServiceRoute: LegalTermsOfServiceRoute,
   AuthV1CallbackRoute: AuthV1CallbackRoute,
 }
 export const routeTree = rootRouteImport

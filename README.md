@@ -8,6 +8,13 @@ This repository contains the Timewarp desktop source and the existing Timewarp w
 
 Run `npm ci` and `npm run dev` from this folder for the website. Desktop commands run inside `timewarp`.
 
+**Agent ID** gives each AI agent an identity that traces back to a responsible
+person or business, plus its own mail inbox, phone number, wallet, virtual card
+and virtual machine. Agents use these headless through an API, an MCP server
+and the `timewarp-id` CLI, and companies can accept only verified agents. The
+dashboard is at `/agent-id`, and the cloud service is the `agent-id` edge
+function. See [docs/agent-id.md](docs/agent-id.md).
+
 Private backend credentials remain in the existing production Supabase secret manager. Never add service keys to browser code or Git.
 
 ## Desktop integration

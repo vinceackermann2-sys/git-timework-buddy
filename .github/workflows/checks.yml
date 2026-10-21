@@ -35,8 +35,11 @@ jobs:
       - run: npm run test:engine
       - name: Build the engine and audit its independence
         run: node scripts/build-engine.cjs && node scripts/audit-engine.cjs --report
+      - name: Agent ID CLI, verification SDK and commit check
+        run: npm test
+        working-directory: agent-id
       - run: npm run verify:cloud-source
       - run: npm run test:email
       - name: Check all cloud entry points with the shared email JSX types
-        run: deno check --frozen --config supabase/functions/auth-email-hook/deno.json cloud/index.ts supabase/functions/timewarp-energy/index.ts supabase/functions/stripe-billing/index.ts supabase/functions/stripe-webhook/index.ts supabase/functions/timewarp-workspaces/index.ts supabase/functions/contact/index.ts supabase/functions/auth-email-hook/index.ts
+        run: deno check --frozen --config supabase/functions/auth-email-hook/deno.json cloud/index.ts supabase/functions/timewarp-energy/index.ts supabase/functions/stripe-billing/index.ts supabase/functions/stripe-webhook/index.ts supabase/functions/timewarp-workspaces/index.ts supabase/functions/contact/index.ts supabase/functions/auth-email-hook/index.ts supabase/functions/agent-id/index.ts
       - run: npm audit --audit-level=high

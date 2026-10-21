@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="The terms for Timewarp Agent ID: your agents' identity, mail, phone numbers, wallets, cards and machines, verification and traceability.">
+  <title>Agent ID Terms — Timewarp</title>
+  <link rel="icon" href="/assets/favicon.png" type="image/png">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/consent.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/" aria-label="Timewarp home"><img src="/assets/timewarp-logo-512.png" alt="" width="34" height="34"><span>Timewarp</span></a>
+      <nav aria-label="Main"><a href="/#compare">Why Timewarp</a><a href="/#agents">Agents</a><a href="/#pricing">Pricing</a></nav>
+      <a class="btn btn-sm btn-ink" href="/agent-id">Agent ID</a>
+    </div>
+  </header>
+
+  <main id="main" class="wrap legal">
+    <h1>Agent ID Terms</h1>
+    <p class="updated">Last updated: 21 October 2026</p>
+
+    <p class="summary">Agent ID gives your AI agents an identity and their own mail address, phone number, wallet, card and virtual machine. You're responsible for everything your agents do with them, as if you did it yourself. To keep agents accountable, we verify who owns them and keep a record of what they do. Wallets hold stablecoins, which aren't bank deposits, and blockchain transfers can't be reversed.</p>
+
+    <ol class="toc" aria-label="On this page">
+      <li><a href="#about">About these terms</a></li>
+      <li><a href="#responsibility">Your agents are your responsibility</a></li>
+      <li><a href="#verification">Verification and traceability</a></li>
+      <li><a href="#mail-phone">Mail and phone numbers</a></li>
+      <li><a href="#wallets">Wallets</a></li>
+      <li><a href="#cards">Virtual cards</a></li>
+      <li><a href="#machines">Virtual machines</a></li>
+      <li><a href="#use">Acceptable use</a></li>
+      <li><a href="#developers">Checking agents in your own service</a></li>
+      <li><a href="#fees">Fees</a></li>
+      <li><a href="#suspension">Suspension and ending</a></li>
+      <li><a href="#liability">Liability</a></li>
+      <li><a href="#general">Changes, law and contact</a></li>
+    </ol>
+
+    <h2 id="about">1. About these terms</h2>
+    <p>These terms apply when you use Agent ID: the dashboard at timewarpdev.com/agent-id, its API and MCP server, the <code>timewarp-id</code> command-line tool and the developer kit. They add to our <a href="/legal/terms-of-service">Terms of Service</a>, which also apply. If the two conflict, these terms win for Agent ID. Our <a href="/legal/privacy-policy">Privacy Policy</a> explains how we handle personal data, including identity verification.</p>
+    <p>“Agent” means any AI agent or program you give an Agent ID, whatever app it runs in. “Resources” are the mail address, phone number, wallet, card and virtual machine you give an agent.</p>
+
+    <h2 id="responsibility">2. Your agents are your responsibility</h2>
+    <p>You decide what your agents do. Everything an agent does with its Agent ID and resources counts as done by you, or by the organisation the agent belongs to. That includes messages it sends, calls it makes, payments it makes and commands it runs.</p>
+    <ul>
+      <li>Keep agent keys and owner keys secret. Anyone with a key can act as that agent. If a key may have leaked, revoke it straight away on the dashboard.</li>
+      <li>Set spending limits and approvals that suit you, and check what your agents do. You can pause an agent at any time, and it stops at once.</li>
+      <li>AI makes mistakes. Check important actions before your agents take them, especially payments.</li>
+    </ul>
+
+    <h2 id="verification">3. Verification and traceability</h2>
+    <p>Every agent must be traceable to the person or business responsible for it.</p>
+    <ul>
+      <li><strong>People (KYC).</strong> You verify your identity with our partner Stripe, which checks your ID document and a selfie. We ask for your explicit consent before the check starts. We receive the result, your name and your country.</li>
+      <li><strong>Businesses (KYB).</strong> An owner or admin of an organisation, who has verified their own identity first, gives the business's legal name, registration number, country and website, uploads a registration document, and confirms they're authorised to act for it. For EU businesses we check the VAT number against the EU's VAT register (VIES). We review every business before we verify it.</li>
+    </ul>
+    <p><strong>Getting an Agent ID from a link.</strong> An agent can ask for its Agent ID with a link it shows you. When you open the link, confirm your email and verify your identity, you create a Timewarp account (or use the one you have) and become responsible for that agent. Only finish a link that you or your own agent started, and check that the code on the page matches the one your agent shows.</p>
+    <p>Verification is required before live wallets and some other features, and we may require it for every agent. Give accurate information. We may refuse or withdraw verification, for example if information turns out to be false.</p>
+    <p>When your agent proves who it is to another service, its passport tells that service whether its owner is verified and, for a business, the business's name. It never contains a person's name. We keep the link between each agent and its owner, and a log of what the agent did. We disclose who owns an agent only when the law requires it, such as on a court order or a request from an authority, or when it's necessary to protect people from serious harm.</p>
+
+    <h2 id="mail-phone">4. Mail and phone numbers</h2>
+    <ul>
+      <li>Agent mail addresses are on our domain. We never give an address to another agent, even after yours is revoked.</li>
+      <li>Follow the rules on electronic marketing. Don't send marketing emails, texts or calls to people who haven't agreed to receive them, and honour requests to stop.</li>
+      <li>Incoming calls can be recorded as voicemail. If you use them, make sure callers are told where the law requires it. You can change the greeting.</li>
+      <li>Phone numbers belong to our telecom partner. If you remove a number, or it's used to break these terms, it may be given to someone else after a while.</li>
+    </ul>
+
+    <h2 id="wallets">5. Wallets</h2>
+    <p>You add money by sending USDC or USDT on the Base network to your agent's wallet address. Where we offer it, you can also buy USDC with a card through Stripe, or send a bank transfer through Bridge, a Stripe company. Each handles its part under its own terms. You can withdraw to any address you control, or to your own bank account through Bridge, and only from the signed-in website.</p>
+    <ul>
+      <li>To use bank transfers, you agree to Bridge's terms and Bridge verifies you itself. Bridge converts between your currency and USDC at its rates and fees, which it shows or which we show before you confirm where we can. Bank transfers usually take one or two business days, and a bank may return a payment.</li>
+      <li>Only withdraw to bank accounts in your own name.</li>
+    </ul>
+    <ul>
+      <li>An agent's wallet holds USDC and USDT stablecoins on the Base blockchain, kept with our partner Privy. We show the balance in US dollars for convenience. Circle and Tether issue these stablecoins; we don't.</li>
+      <li>Stablecoins aren't bank deposits or electronic money. They aren't covered by a deposit guarantee scheme and earn no interest. A stablecoin's value can differ from one US dollar, and its issuer or the blockchain can have problems that we don't control.</li>
+      <li>Blockchain transfers can't be reversed. Check addresses before your agents use them. We aren't responsible for money sent to a wrong address.</li>
+      <li>Your agents can only send within the limits you set, and above the approval amount only when you approve. We may refuse, delay or block a transfer, or freeze a wallet, when the law requires it, for example to comply with sanctions, or if we suspect fraud or misuse. Where the law requires, we report it to the authorities.</li>
+      <li>Live wallets are available only to verified owners and only where we can lawfully offer them. Take money out of a wallet before you remove it or revoke its agent.</li>
+    </ul>
+
+    <h2 id="cards">6. Virtual cards</h2>
+    <p>Virtual cards aren't available yet. Applying for early access only tells us you're interested. It isn't an application for credit and doesn't oblige you or us to anything. We'll let you know when cards open, and separate terms will apply to them.</p>
+
+    <h2 id="machines">7. Virtual machines</h2>
+    <ul>
+      <li>An agent's machine runs the commands the agent gives it. Its files stay on the machine between commands until you remove the machine, which deletes its disk.</li>
+      <li>You're responsible for what runs on it and for the software and data you put there. We don't back up machines, so keep copies of anything important.</li>
+      <li>Don't use machines to attack or scan other systems, mine cryptocurrency, send spam or host illegal content. We may stop a machine that harms our service or others.</li>
+    </ul>
+
+    <h2 id="use">8. Acceptable use</h2>
+    <p>Besides the rules in our <a href="/legal/terms-of-service#use">Terms of Service</a>, don't use Agent ID, or let your agents use it, to:</p>
+    <ul>
+      <li>commit or help with fraud, phishing, money laundering, terrorist financing or sanctions evasion</li>
+      <li>pretend to be a person or organisation you aren't, or make people believe an agent is a human when it matters to them</li>
+      <li>get around verification, limits or approvals, or let someone else act with your agent's passport or keys</li>
+      <li>collect people's personal data without a lawful basis</li>
+      <li>break the rules of the services your agents use</li>
+    </ul>
+
+    <h2 id="developers">9. Checking agents in your own service</h2>
+    <p>You may use the free developer kit to check Agent ID passports in your own API, MCP server or code repository. Use what a passport tells you only to decide whether to let the agent in and to keep your service secure. Don't try to identify the people behind pseudonymous owner references.</p>
+
+    <h2 id="fees">10. Fees</h2>
+    <p>Machine time is paid in Timewarp credits, as shown in the app. Live phone numbers need a paid plan. Network fees for wallet transfers are covered by us where we say so; otherwise they're taken from the transfer. We'll tell you before we introduce or change fees, as our Terms of Service describe.</p>
+
+    <h2 id="suspension">11. Suspension and ending</h2>
+    <p>We may pause or revoke an agent or remove a resource if the law requires it, if it breaks these terms, or if it puts our service, our partners or others at risk. We'll tell you why unless the law or an investigation prevents us. You can revoke an agent at any time; revoking is final. When an agent is revoked, its keys stop working and its resources are released. We keep records as our Privacy Policy describes.</p>
+
+    <h2 id="liability">12. Liability</h2>
+    <p>Section 14 of our <a href="/legal/terms-of-service#liability">Terms of Service</a> applies. In addition, we aren't liable for losses caused by what your agents do, by keys you didn't keep secret, by transfers to wrong addresses, or by problems with the blockchain, a stablecoin's issuer or our partners' networks, except where the law doesn't allow us to limit liability. Business customers are responsible for claims from others that arise from their agents' actions.</p>
+
+    <h2 id="general">13. Changes, law and contact</h2>
+    <p>We may update these terms as our Terms of Service describe, and we'll tell you about significant changes in advance. Swedish law applies, as in our Terms of Service. Questions, reports of misuse and requests from authorities go to <a href="mailto:support@timewarpdev.com">support@timewarpdev.com</a>.</p>
+    <address>TimeWarp<br><a href="mailto:support@timewarpdev.com">support@timewarpdev.com</a></address>
+  </main>
+
+  <footer class="wrap footer">
+    <a class="brand" href="/" aria-label="Timewarp home"><img src="/assets/timewarp-logo-512.png" alt="" width="26" height="26"><span>Timewarp</span></a>
+    <nav class="footer-links" aria-label="Legal"><a href="/legal/privacy-policy">Privacy</a><a href="/legal/terms-of-service">Terms</a><a href="/legal/agent-id-terms" aria-current="page">Agent ID Terms</a><a href="/legal/cookie-policy">Cookies</a><button type="button" data-cookie-settings>Cookie settings</button></nav>
+    <span>Timewarp for Windows and macOS · © 2026</span>
+  </footer>
+</body>
+</html>
