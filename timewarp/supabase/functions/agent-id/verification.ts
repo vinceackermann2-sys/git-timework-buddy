@@ -1,5 +1,6 @@
 // Who is responsible for an agent. A person verifies their identity (KYC)
-// with Stripe Identity: a document and a matching selfie, checked by Stripe;
+// once: with Bridge where it moves money to and from banks (bank.ts), else
+// with Stripe Identity. Either checks a document and a matching selfie;
 // Agent ID keeps only the outcome, the name and the country. A business
 // (KYB) is reviewed by Timewarp from its registration details. Without a
 // provider, people are reviewed by hand too. 'test' verifies at once and is
@@ -10,6 +11,7 @@ import type { Ctx } from './context.ts';
 import { audit, membership, personOf } from './shared.ts';
 import { stripe } from './providers/stripe.ts';
 import { completeClaims } from './claims.ts';
+import { startBridgeCheck } from './bank.ts';
 import { BUCKET } from './files.ts';
 
 const COUNTRY = /^[A-Z]{2}$/;
@@ -31,6 +33,11 @@ export async function startVerification(ctx: Ctx, owner: Owner, input: any, opti
   if (input.kind !== 'person') throw fail(400, 'invalid', 'kind is person or business.');
   const current = await personOf(ctx, owner.userId);
   if (current?.status === 'verified') return { person: personView(current) };
+  // Bridge's own page asks for its terms and consent, and checks the ID and selfie.
+  if (ctx.config.kycProvider === 'bridge') {
+    const { link } = await startBridgeCheck(ctx, owner);
+    return { person: personView(await personOf(ctx, owner.userId)), ...(link ? { url: link } : {}) };
+  }
   // The check involves biometric data: explicit consent comes first, and is recorded.
   if (input.consent !== true) throw fail(400, 'consent_required', 'Agree to the identity check (your ID document and a selfie) first.');
   await savePerson(ctx, owner.userId, { consent_version: ctx.config.termsVersion, consent_at: new Date(ctx.now()).toISOString() });

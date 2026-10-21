@@ -29,13 +29,10 @@ async function setup(t, env = LIVE) {
   t.after(() => local.close());
   const terms = (await local.call("GET", "/v1/config")).body.legal.termsVersion;
   const ok = async (method, url, init) => { const r = await local.call(method, url, init); assert.ok(r.status < 300, `${method} ${url} → ${r.status} ${JSON.stringify(r.body)}`); return r.body; };
+  // A new owner: terms accepted, identity not checked yet.
   const owner = async () => {
     const user = await local.user({ email: "ada@example.com" });
     await ok("POST", "/v1/account/terms", { token: user.session, body: { version: terms } });
-    const reviewer = await local.user();
-    local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
-    await ok("POST", "/v1/account/verification", { token: user.session, body: { kind: "person", consent: true, legalName: "Ada Lovelace", country: "SE" } });
-    await ok("POST", `/v1/reviews/person/${user.id}`, { token: reviewer.session, body: { decision: "approve" } });
     return user;
   };
   net.on("POST", /api\.privy\.io\/v1\/wallets$/, () => ({ id: "w_1", address: WALLET, chain_type: "ethereum" }));
@@ -47,7 +44,7 @@ async function setup(t, env = LIVE) {
   return { local, net, ok, owner, liveWallet };
 }
 
-test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank details, withdraw to the bank", async t => {
+test("bank transfers: one identity check (Bridge's), then an IBAN, a wallet's bank details, and withdrawing to the bank", async t => {
   const { local, net, ok, owner, liveWallet } = await setup(t);
   let now = Date.now();
   local.setClock(() => now);
@@ -55,11 +52,14 @@ test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank 
   local.setEnv({ BRIDGE_WEBHOOK_PUBLIC_KEY: bridgeKeys.publicKey.export({ type: "spki", format: "pem" }) });
   const ada = await owner();
   const bot = await liveWallet(ada);
-  assert.equal((await ok("GET", "/v1/config")).bank.available, true);
+  const config = await ok("GET", "/v1/config");
+  assert.deepEqual([config.bank.available, config.verification.person], [true, "bridge"], "Where Bridge moves money, its check is the identity check.");
   assert.equal((await ok("GET", `/v1/agents/${bot.id}/wallet/add-money`, { token: ada.session })).bank.available, true);
   assert.deepEqual(await ok("GET", "/v1/account/bank", { token: ada.session }), { available: true, status: "not_started", currencies: [], accounts: [] });
+  // The wallet was given unverified; money doesn't leave it yet.
+  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/wallet/withdraw`, { token: ada.session, body: { to: "0x" + "34".repeat(20), value: "1" } })).body.error.code, "verification_required");
 
-  // Verifying: Bridge's hosted link, for the person Agent ID verified.
+  // Verifying: Bridge's hosted page, started from the wallet or the Verification page alike.
   let kyc = { id: "kyc_1", customer_id: "cus_1", kyc_link: "https://bridge.withpersona.com/verify?x=1", tos_link: "https://dashboard.bridge.xyz/accept-terms?x=1", kyc_status: "not_started", tos_status: "pending" };
   net.on("POST", /api\.sandbox\.bridge\.xyz\/v0\/kyc_links$/, () => kyc);
   net.on("GET", /\/v0\/kyc_links\/kyc_1$/, () => kyc);
@@ -68,15 +68,18 @@ test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank 
   const started = await ok("POST", "/v1/account/bank/verify", { token: ada.session, body: {} });
   assert.deepEqual([started.status, started.link], ["pending", kyc.kyc_link]);
   const created = net.find("POST", /kyc_links$/)[0];
-  assert.deepEqual(JSON.parse(created.body), { full_name: "Ada Lovelace", email: "ada@example.com", type: "individual", endorsements: ["base", "sepa"], redirect_uri: "https://timewarpdev.com/agent-id/dashboard" });
+  assert.deepEqual(JSON.parse(created.body), { email: "ada@example.com", type: "individual", endorsements: ["base", "sepa"], redirect_uri: "https://timewarpdev.com/agent-id/dashboard" });
   assert.equal(created.headers.get("api-key"), "sk-test-bridge");
   assert.equal(created.headers.get("idempotency-key"), `agent-id-kyc-${ada.id}`);
+  const fromVerifyPage = await ok("POST", "/v1/account/verification", { token: ada.session, body: { kind: "person" } });
+  assert.deepEqual([fromVerifyPage.url, fromVerifyPage.person.status, fromVerifyPage.person.provider], [kyc.kyc_link, "pending", "bridge"]);
+  assert.equal(net.find("POST", /kyc_links$/).length, 1, "One check, not a second one.");
   // Not approved yet: no bank accounts, no deposit details.
   assert.equal((await local.call("POST", "/v1/account/bank/accounts", { token: ada.session, body: { kind: "iban", ownerName: "Ada Lovelace", iban: "SE4550000000058398257466", address: HOME } })).body.error.code, "bank_not_verified");
 
   // Bridge approves, for euros (SEPA) and dollars, and says so (signed) right away.
   kyc = { ...kyc, kyc_status: "approved", tos_status: "approved" };
-  net.on("GET", /\/v0\/customers\/cus_1$/, () => ({ id: "cus_1", status: "active", endorsements: [{ name: "base", status: "approved" }, { name: "sepa", status: "approved" }] }));
+  net.on("GET", /\/v0\/customers\/cus_1$/, () => ({ id: "cus_1", status: "active", first_name: "Ada", last_name: "Lovelace", residential_address: { country: "SWE" }, endorsements: [{ name: "base", status: "approved" }, { name: "sepa", status: "approved" }] }));
   const hook = (event, key = bridgeKeys.privateKey) => {
     const raw = JSON.stringify(event), at = String(now);
     const signature = crypto.sign("sha256", crypto.createHash("sha256").update(`${at}.${raw}`).digest(), key).toString("base64");
@@ -87,6 +90,8 @@ test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank 
   assert.equal((await hook({ event_category: "kyc_link", event_type: "kyc_link.updated.status_transitioned", event_object: { id: "kyc_1", kyc_status: "approved" } })).status, 200);
   const approved = await ok("GET", "/v1/account/bank", { token: ada.session });
   assert.deepEqual([approved.status, approved.currencies, approved.link], ["approved", ["eur", "usd"], undefined]);
+  const person = (await ok("GET", "/v1/account", { token: ada.session })).person;
+  assert.deepEqual([person.status, person.provider, person.legalName, person.country], ["verified", "bridge", "Ada Lovelace", "SE"], "Bridge's approval verifies Ada on Agent ID too.");
 
   // An IBAN: checked here first, then saved at Bridge; only the last four stay here.
   assert.equal((await local.call("POST", "/v1/account/bank/accounts", { token: ada.session, body: { kind: "iban", ownerName: "Ada Lovelace", iban: "SE4550000000058398257467", address: HOME } })).body.error.message, "That IBAN isn't valid. Check it against your bank app.");
@@ -147,7 +152,7 @@ test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank 
   await ok("DELETE", `/v1/account/bank/accounts/${account.id}`, { token: ada.session });
   assert.deepEqual((await ok("GET", "/v1/account/bank", { token: ada.session })).accounts, []);
   const log = (await ok("GET", "/v1/audit", { token: ada.session })).entries.map(e => e.action);
-  for (const action of ["bank.verification_started", "bank.account_added", "bank.deposit_details", "wallet.withdraw", "bank.account_removed"]) assert.ok(log.includes(action), action);
+  for (const action of ["verification.person.start", "verification.person.verified", "bank.account_added", "bank.deposit_details", "wallet.withdraw", "bank.account_removed"]) assert.ok(log.includes(action), action);
 });
 
 test("the deployment registers its own Bridge webhook and switches it on", async t => {
@@ -167,12 +172,14 @@ test("the deployment registers its own Bridge webhook and switches it on", async
   assert.equal((await ok("POST", "/v1/admin/setup", { token: operator.session })).setup.bridge, "kept");
 });
 
-test("bank transfers stay hidden without Bridge, and need a verified person", async t => {
+test("bank transfers stay hidden without Bridge, where Stripe Identity stays the identity check", async t => {
   const { local, ok } = await setup(t, { AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "privy-app", PRIVY_APP_SECRET: "privy-secret" });
   const user = await local.user();
   assert.equal((await ok("GET", "/v1/config")).bank.available, false);
   assert.deepEqual(await ok("GET", "/v1/account/bank", { token: user.session }), { available: false, status: "unavailable", currencies: [], accounts: [] });
   assert.equal((await local.call("POST", "/v1/account/bank/verify", { token: user.session, body: {} })).body.error.code, "bank_unavailable");
+  local.setEnv({ AGENT_ID_KYC: "stripe_identity" });
+  assert.equal((await ok("GET", "/v1/config")).verification.person, "stripe_identity");
   local.setEnv({ BRIDGE_API_KEY: "sk-test-bridge" });
-  assert.equal((await local.call("POST", "/v1/account/bank/verify", { token: user.session, body: {} })).body.error.code, "verification_required");
+  assert.equal((await ok("GET", "/v1/config")).verification.person, "bridge", "With Bridge, one check covers both.");
 });

@@ -10,7 +10,7 @@ import { APPS, sendWithOrigin } from '../origin.js';
 import { withTerms } from '../terms.js';
 
 const KINDS = ['mail', 'phone', 'wallet', 'card', 'vm'];
-const KIND_NAMES = { mail: 'mail inbox', phone: 'phone number', wallet: 'wallet', card: 'virtual card', vm: 'virtual machine' };
+const KIND_NAMES = { mail: 'mail inbox', phone: 'phone number', wallet: 'wallet', card: 'virtual card', vm: 'computer' };
 const RUNTIMES = [...APPS, 'other', 'any'];
 
 const kindArg = (ctx, verb) => {
@@ -89,7 +89,7 @@ export function saveProfile(ctx, agent, secret) {
   ctx.save();
 }
 
-const confirm = async (ctx, question) => ctx.interactive && /^y(es)?$/i.test((await ctx.ask(`${question} [y/N] `)).trim());
+const confirm = async (ctx, question) => ctx.interactive && /^y(es)?$/i.test((await ctx.ask(`${question} [y/N] `) ?? '').trim());
 
 export async function agents(ctx) {
   const [sub = 'list', ...rest] = ctx.args;
@@ -251,7 +251,7 @@ export async function approvals(ctx) {
   ])}${ctx.interactive ? '' : '\n\nAnswer with `timewarp-id approve <id>` or `timewarp-id deny <id>`.'}` : 'Nothing is waiting for your approval.');
   if (ctx.json || !ctx.interactive) return;
   for (const row of rows.filter(r => r.status === 'pending')) {
-    const answer = (await ctx.ask(`${row.agentName || row.agentId}: ${describeRequest(row.request)}. [a]pprove, [d]eny or [s]kip? `)).trim().toLowerCase();
+    const answer = (await ctx.ask(`${row.agentName || row.agentId}: ${describeRequest(row.request)}. [a]pprove, [d]eny or [s]kip? `) ?? '').trim().toLowerCase();
     if (answer === 'a' || answer === 'approve') await decide(ctx, 'approve', row.id, { confirmed: true });
     else if (answer === 'd' || answer === 'deny') await decide(ctx, 'deny', row.id);
   }
@@ -267,7 +267,7 @@ async function decide(ctx, decision, id, { confirmed = false } = {}) {
     const { approvals: waiting } = await ctx.owner.get('/v1/approvals');
     const row = (waiting || []).find(a => a.id === id);
     if (row) {
-      const answer = (await ctx.ask(`Approve ${row.agentName || row.agentId}: ${describeRequest(row.request)}? [y/N] `)).trim().toLowerCase();
+      const answer = (await ctx.ask(`Approve ${row.agentName || row.agentId}: ${describeRequest(row.request)}? [y/N] `) ?? '').trim().toLowerCase();
       if (!/^y(es)?$/.test(answer)) { ctx.out('Not approved.'); return; }
     }
   }

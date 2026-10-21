@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Activity } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ACTOR_LABELS, auditActionLabel, auditDetail } from "@/lib/agent-id/format";
@@ -20,7 +21,7 @@ export function ActivityTab({ agent }: { agent: Agent }) {
       ) : audit.isError ? (
         <ErrorState error={audit.error} onRetry={() => void audit.refetch()} />
       ) : entries.length === 0 ? (
-        <Empty>Nothing yet.</Empty>
+        <Empty icon={Activity}>Nothing yet. Everything this agent does shows up here.</Empty>
       ) : (
         <>
           <Rows label="Activity">

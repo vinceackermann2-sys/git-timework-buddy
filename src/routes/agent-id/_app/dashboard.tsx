@@ -105,6 +105,11 @@ function AgentRow({ agent }: { agent: Agent }) {
             <span className="min-w-0 truncate text-[15px] font-medium">{agent.name}</span>
             <AppIconRow apps={agentApps(agent)} />
           </div>
+          {agent.resources.mail?.address && (
+            <p className="aid-mono mt-0.5 hidden truncate text-xs text-[var(--muted-foreground)] sm:block">
+              {agent.resources.mail.address}
+            </p>
+          )}
           <div className="mt-1.5 flex min-w-0 items-center gap-2 text-xs text-[var(--muted-foreground)] sm:hidden">
             <Capabilities kinds={kinds} />
             {kinds.length > 0 && <span aria-hidden="true">·</span>}
@@ -141,9 +146,9 @@ function Capabilities({ kinds }: { kinds: Kind[] }) {
           <li
             key={kind}
             title={KIND_LABELS[kind]}
-            className="inline-flex h-6 min-w-6 items-center justify-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] text-xs text-[var(--foreground)] sm:h-7 sm:min-w-7 @4xl:px-2.5"
+            className="inline-flex h-6 min-w-6 items-center justify-center gap-1.5 rounded-full bg-[var(--accent)] text-xs font-medium text-[var(--aid-ink)] sm:h-7 sm:min-w-7 @4xl:px-2.5"
           >
-            <Icon className="h-3.5 w-3.5 text-[var(--aid-ink)]" aria-hidden="true" />
+            <Icon className="h-3.5 w-3.5" aria-hidden="true" />
             <span className="sr-only @4xl:not-sr-only">{KIND_LABELS[kind]}</span>
           </li>
         );

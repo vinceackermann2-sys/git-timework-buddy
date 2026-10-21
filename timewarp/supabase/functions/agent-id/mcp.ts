@@ -97,6 +97,8 @@ export async function handleMcp(ctx: Ctx, who: AgentCaller, req: Request) {
     case 'ping': return reply({ result: {} });
     case 'tools/list': {
       const kinds = new Set((await resourcesOf(ctx, [who.agent.id])).filter(r => r.status !== 'released').map(r => r.kind as string));
+      // A machine is set up the first time the agent uses one, so its tools are always there.
+      if (ctx.config.isLive('vm') || ctx.config.testMode) kinds.add('vm');
       return reply({ result: { tools: toolList(kinds) } });
     }
     case 'tools/call': {

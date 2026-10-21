@@ -68,11 +68,13 @@ describe('timewarp-id CLI', () => {
 
   it('explains itself and refuses to act without an owner key', async () => {
     const help = await ok(['--help']);
+    assert.match(help.stdout, /^Get started: run `\S+` and follow the steps\.$/m);
     assert.match(help.stdout, /Usage: timewarp-id <command>/);
     assert.match((await ok(['mail', '--help'])).stdout, /mail send --to/);
     const unknown = await cli(['frobnicate']);
     assert.equal(unknown.code, 2);
     assert.match(unknown.stderr, /no command "frobnicate"/);
+    assert.match(unknown.stderr, /See all commands: \S+ help/);
     const notSignedIn = await cli(['agents', 'list']);
     assert.equal(notSignedIn.code, 1);
     assert.match(notSignedIn.stderr, /not signed in/i);

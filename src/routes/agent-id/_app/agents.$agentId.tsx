@@ -93,10 +93,14 @@ function AgentPage() {
           void navigate({ search: { tab: next as AgentTab }, replace: true, resetScroll: false })
         }
       >
-        <div className="aid-scroll-x -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-          <TabsList className="h-10 w-max justify-start rounded-lg bg-[var(--muted)]">
+        <div className="aid-scroll-x -mx-4 overflow-x-auto border-b border-[var(--border)] px-4 sm:mx-0 sm:px-0">
+          <TabsList className="h-auto w-max justify-start gap-1 rounded-none bg-transparent p-0">
             {tabs.map(([id, label]) => (
-              <TabsTrigger key={id} value={id} className="px-3">
+              <TabsTrigger
+                key={id}
+                value={id}
+                className="-mb-px rounded-none border-b-2 border-transparent px-3 pb-2.5 pt-1.5 text-[var(--muted-foreground)] shadow-none hover:text-[var(--foreground)] data-[state=active]:border-[var(--aid-ink)] data-[state=active]:bg-transparent data-[state=active]:text-[var(--foreground)] data-[state=active]:shadow-none"
+              >
                 {label}
               </TabsTrigger>
             ))}

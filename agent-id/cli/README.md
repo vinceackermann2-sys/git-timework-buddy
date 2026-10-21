@@ -1,14 +1,91 @@
-# @timewarp/agent-id: the `timewarp-id` command
+# Timewarp Agent ID
 
-Give each of your AI agents its own identity, mail inbox, phone number,
-wallet, virtual card and virtual machine with Timewarp Agent ID, and use
-them headless from Claude Code, Codex, Cursor, Claude Desktop, Gemini,
-Windsurf, Grok, opencode and the other agent tools you have, or a script.
-Every agent traces back to you, a verified person or business.
+Timewarp Agent ID gives your AI agent its own email, wallet, phone number and
+computer.
 
-Node 20 or later, no dependencies.
+```sh
+npx @timewarp/agent-id
+```
 
-## Give the agents you already have an Agent ID
+You need [Node.js](https://nodejs.org) 20 or later. Nothing else to install.
+
+## What happens
+
+1. It finds the AI apps on your computer and asks which ones get an Agent ID.
+   Press Enter for the usual ones.
+2. It opens a link in your browser. Confirm your email with the 6-digit code
+   we send you, and accept the terms. That creates your Timewarp account (or
+   uses the one you have).
+3. Back in the terminal, your apps are set up. Restart them, then ask your
+   agent: “What's my Agent ID email address?”
+
+Your agent now has:
+
+- **Email**: its own address, to send and receive mail.
+- **Wallet**: add money on the [dashboard](https://timewarpdev.com/agent-id/dashboard).
+  Payments over your limits wait for your OK.
+- **Phone number**: apply on the dashboard.
+- **Computer**: starts the first time your agent uses it.
+
+We check who you are only once, the first time you move money out.
+
+## Works with
+
+Claude Code (and its subagents), Codex, Cursor, Claude Desktop, Gemini CLI,
+Antigravity, Windsurf, opencode, Grok, Kiro, Qwen Code, Factory Droid,
+Copilot CLI, Amazon Q, Continue, Cline, Roo Code, Kilo Code, and Timewarp and
+OpenClaw agents.
+
+Your own agent in a folder? Run this in that folder:
+
+```sh
+npx @timewarp/agent-id attach --here
+```
+
+## Privacy
+
+Your agent's key stays on your computer, in `~/.timewarp-id/config.json`,
+readable only by you. Your apps reach Agent ID through a small local program
+(`npx @timewarp/agent-id mcp`) and never see the key. In each app, Agent ID
+changes only its own settings entry and a short note that tells the agent who
+it is; each file is backed up once (`<file>.timewarp-id.bak`).
+
+## Commands you might need
+
+| | |
+|---|---|
+| `npx @timewarp/agent-id` | Set up, or give more apps your Agent ID |
+| `npx @timewarp/agent-id me` | What your agent has |
+| `npx @timewarp/agent-id approvals` | Payments waiting for your OK |
+| `npx @timewarp/agent-id help` | Every command |
+
+## Uninstall
+
+```sh
+npx @timewarp/agent-id detach
+```
+
+This takes Agent ID out of your apps and leaves everything else as it was.
+`npx @timewarp/agent-id logout --all` also forgets the agent's key on this
+computer. Your Agent ID itself stays until you end it on the
+[dashboard](https://timewarpdev.com/agent-id/dashboard).
+
+## For developers
+
+The rest of this page is the full reference: `timewarp-id` (installed with
+`npm install -g @timewarp/agent-id`, or run with `npx -y @timewarp/agent-id
+<command>`) also manages agents with an owner key, acts as an agent from
+scripts, runs the MCP server and signs Git commits.
+
+### attach in detail
+
+`timewarp-id` on its own in a terminal is `attach` with a welcome; without a
+terminal (a pipe, a script, an agent's shell) it prints how to start instead.
+
+Not signed in on this computer, `attach` gives everything chosen one Agent ID:
+the one already set up here, or a new one through the email link above
+(`--claim twc_…` finishes one started on the website). Signed in with an
+owner key, each gets an Agent ID of its own:
 
 ```sh
 npx @timewarp/agent-id login --owner-key two_…   # from the Agent ID dashboard → Keys
@@ -20,9 +97,9 @@ npx @timewarp/agent-id attach
 in a terminal, or tell you to run `timewarp-id terms`.)
 
 `attach` finds the agents on this computer and asks which ones to give an
-Agent ID; it creates each one (named after the agent) and writes the wiring
-into it, so the agent can use its own mail, phone, wallet, card and machine
-right away. It finds:
+Agent ID (Enter, or `--yes`, takes each app's main agent); it writes the
+wiring into each, so the agent can use its own mail, phone, wallet, card and
+machine right away. It finds:
 
 | | Where | What `attach` writes |
 |---|---|---|
@@ -81,7 +158,7 @@ timewarp-id detach code-reviewer                          # undo exactly what at
   dashboard gets a key here, once you're logged in), `--give mail,phone,wallet,vm`,
   `--name`, `--origin <app>`, `--yes` (no questions).
 
-## Approvals
+### Approvals
 
 When an agent wants to send more than you approve automatically, the transfer
 waits for you. Owner commands then end with a reminder on stderr, such as
@@ -92,7 +169,7 @@ timewarp-id approvals          # agent, amount, to, memo, expiry; in a terminal 
 timewarp-id approve <id>       # or: timewarp-id deny <id>
 ```
 
-## Start from scratch
+### Start from scratch
 
 ```sh
 npm install -g @timewarp/agent-id    # or: npx -y @timewarp/agent-id <command>
@@ -118,7 +195,7 @@ timewarp-id connect claude-desktop  # Claude Desktop
 timewarp-id connect cursor          # Cursor
 ```
 
-## Commands
+### Commands
 
 | Owner (owner key) | |
 |---|---|
@@ -155,7 +232,7 @@ Every command takes `--json` (Agent ID's answer as JSON; errors as
 `{ "error": { code, message } }`), `--api <url>` and `--help`. Exit codes: 0
 done, 1 failed (the message says why and usually what to do), 2 mistyped.
 
-## Which agent a command acts as
+### Which agent a command acts as
 
 1. `TIMEWARP_AGENT_KEY` (an agent key, `twa_…`) overrides everything, for CI and containers.
 2. `--agent <agent>`.
@@ -166,7 +243,7 @@ done, 1 failed (the message says why and usually what to do), 2 mistyped.
 So with `timewarp-id connect claude` (no `--agent`), every new Claude Code
 session acts as the agent of the project it starts in.
 
-## MCP
+### MCP
 
 `timewarp-id mcp [--agent <agent>]` is a stdio MCP server (newline-delimited
 JSON-RPC on stdin/stdout, logs on stderr) that forwards each message to Agent
@@ -194,7 +271,7 @@ verified agents, attaching a fresh passport (`Agent-Passport` header) instead
 of the key. Add it like any stdio server, e.g.
 `claude mcp add acme -- npx -y @timewarp/agent-id mcp --remote https://mcp.acme.com/mcp`.
 
-## Signed commits
+### Signed commits
 
 ```sh
 cd my-repo
@@ -208,14 +285,14 @@ agent's Git principal) for this repository, or globally. Repositories
 protected by the Agent ID GitHub Action or pre-receive hook accept these
 commits while the agent is active in the company's organization.
 
-## Files and environment
+### Files and environment
 
 - `~/.timewarp-id/config.json` (`$TIMEWARP_ID_HOME`): `{ api, ownerKey, profiles: { <handle>: { agentId, key, name } }, default }`, written with mode 0600 where the OS supports it.
 - `~/.timewarp-id/keys/`: Git signing keys.
 - `AGENT_ID_API` or `--api`: the API (default production; `login --api` remembers it).
 - `TIMEWARP_OWNER_KEY`: an owner key without logging in. `TIMEWARP_AGENT_KEY`: act as that agent.
 
-## Developing locally
+### Developing locally
 
 Point the CLI at a local Agent ID with `AGENT_ID_API` (or `login --api`).
 There, `give <kind> --test` (and `attach --give … --test`) gives test

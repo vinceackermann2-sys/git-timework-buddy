@@ -46,7 +46,7 @@ function simulatedMoney({ apiUrl }) {
       return reply(link);
     }
     if ((m = /^\/v0\/kyc_links\/([^/]+)$/.exec(path))) return kyc.has(m[1]) ? reply(kyc.get(m[1])) : reply({ message: "Not found" }, 404);
-    if ((m = /^\/v0\/customers\/([^/]+)$/.exec(path))) return reply({ id: m[1], status: "active", endorsements: [{ name: "base", status: "approved" }, { name: "sepa", status: "approved" }] });
+    if ((m = /^\/v0\/customers\/([^/]+)$/.exec(path))) return reply({ id: m[1], status: "active", first_name: "Dev", last_name: "Person", residential_address: { country: "SWE" }, endorsements: [{ name: "base", status: "approved" }, { name: "sepa", status: "approved" }] });
     if (method === "POST" && /^\/v0\/customers\/[^/]+\/external_accounts$/.test(path)) {
       const number = body.iban?.account_number || body.account?.account_number || "0000";
       return reply({ id: id("ea"), last_4: number.slice(-4), bank_name: body.iban ? "Demo Bank (SEPA)" : "Demo Bank (ACH)", active: true });

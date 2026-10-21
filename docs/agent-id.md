@@ -55,21 +55,23 @@ npx @timewarp/agent-id attach                     # pick from the agents it find
 
 No account or sign-in is needed first. On a computer that isn't signed in,
 `attach` starts a **claim**: it prints a link (and opens it) with a match code.
-On that page the person confirms their email with a 6-digit code, accepts the
-terms and verifies their identity (Stripe Identity). That creates their
-Timewarp account, or uses the one they have, and signs them in to the website.
-Once they're verified the agent is created for them, and `attach` collects its
-key and wires it in. Everything chosen in one `attach` shares that one Agent
-ID. A claim started on the website (`/agent-id/claim`) ends with
-`npx @timewarp/agent-id attach --claim twc_…`. Signed in
+On that page the person enters their email, ticks the terms and types the
+6-digit code they get. That creates their Timewarp account, or uses the one
+they have, signs them in to the website and creates the agent at once; no
+identity check (that comes the first time money leaves a wallet). `attach`
+collects its key and wires it in. Everything chosen in one `attach` shares
+that one Agent ID. On the website, `/agent-id/claim` asks only for an email:
+the agent is named after its owner ("Ada's agent", renamed any time) and the
+page ends with `npx @timewarp/agent-id attach --claim twc_…`. Signed in
 (`timewarp-id login --owner-key two_…`), `attach` creates agents directly as
 before.
 
 Claims (`agent_id_claims`, `claims.ts`) are open routes: `POST /v1/claims`,
 `GET /v1/claims/:code`, `POST /v1/claims/:code/email`,
-`…/email/confirm`, `…/identity` and `POST /v1/claims/collect`. The link
-code is random, and an unfinished link expires after an hour (a week once the
-identity check is running). The email code allows 5 tries and 5 sends, 30
+`…/email/confirm` (with `terms`, the version ticked), `…/terms` (when the
+terms weren't ticked; `…/identity` is its older name) and
+`POST /v1/claims/collect`. The link code is random, and an unfinished link
+expires after an hour. The email code allows 5 tries and 5 sends, 30
 seconds apart, and a network can start 20 claims an hour. The agent's key goes
 once, to the holder of the claim's secret.
 
@@ -126,19 +128,21 @@ on its own.
 | --- | --- | --- | --- |
 | mail | Resend on `TIMEWARP_AGENT_MAIL_DOMAIN` (`agents.timewarpdev.com`), the domain the previous app's agent mail used | `<handle>@agents.timewarpdev.com`; send, receive, reply in thread; delivery status | — |
 | phone | Telnyx (or Twilio, `AGENT_ID_PHONE_PROVIDER`), on Timewarp's account. Telnyx: one messaging profile and one TeXML app made on first use, Ed25519-signed webhooks | A local number that can text and call; texts; calls that read a message aloud; incoming calls get a greeting and voicemail | paid plan |
-| wallet | Privy server wallets on Base holding USDC and USDT, shown together as US dollars (`AGENT_ID_WALLET_CHAIN=base`, or `base_sepolia` to try it on testnet). Privy keeps the keys; with gas sponsorship on, sends need no ETH | An 0x address; a USD balance; deposits and sends in its history; transfers to addresses, other agents and contacts | verified owner |
+| wallet | Privy server wallets on Base holding USDC and USDT, shown together as US dollars (`AGENT_ID_WALLET_CHAIN=base`, or `base_sepolia` to try it on testnet). Privy keeps the keys; with gas sponsorship on, sends need no ETH | An 0x address; a USD balance; deposits and sends in its history; transfers to addresses, other agents and contacts | given at once; money leaves it only once the owner is verified |
 | card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner, paid plan |
-| vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A machine that resumes for each command, stops after it and keeps its files | credits (time is charged) |
+| vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A computer that resumes for each command, stops after it and keeps its files. Set up the first time the agent uses it (its `vm_*` tools are always listed) | credits (time is charged) |
 
 **Ready on creation.** A new Agent ID, whether made on the dashboard, by
 `attach`, through the API or by a claim link, comes with its resources
 (`provisioning.ts`):
 - mail and a wallet for everyone (`AGENT_ID_AUTO_GIVE`, default `mail,wallet`);
-- a phone number and a machine on paid plans (`AGENT_ID_AUTO_GIVE_PAID`,
-  default `phone,vm`); `none` turns either list off.
+- a phone number on paid plans (`AGENT_ID_AUTO_GIVE_PAID`, default `phone`);
+  `none` turns either list off;
+- no computer: the agent gets one the first time it uses it.
 
-The usual checks still apply: the provider is live, wallets need a verified
-owner, and phone numbers need a paid plan. A kind that can't be given now is
+The usual checks still apply: the provider is live, and phone numbers need a
+paid plan. Wallets come before the owner is verified; money leaves one only
+after (`AGENT_ID_VERIFY_TO_SEND`, on by default). A kind that can't be given now is
 listed in the response's `setup.skipped` with its reason, and never stops the
 agent being made. Providers answer in the background (`EdgeRuntime.waitUntil`).
 The slots show as `provisioning` until they're ready, and one that fails is
@@ -152,10 +156,10 @@ Base (Privy). Money comes in and goes out in three ways:
   network to send USDC or USDT on Base from an exchange or another wallet.
   `POST /v1/agents/:id/wallet/withdraw` with `to` sends to the owner's own
   address.
-- **Bank (Bridge).** With `BRIDGE_API_KEY` set, the owner verifies once with
-  Bridge, a Stripe company (`POST /v1/account/bank/verify` gives Bridge's
-  hosted terms and identity check, for the name Agent ID already verified).
-  After that:
+- **Bank (Bridge).** With `BRIDGE_API_KEY` set, the owner's one identity check
+  is Bridge's (a Stripe company): `POST /v1/account/bank/verify` or
+  `POST /v1/account/verification` gives Bridge's hosted terms and ID check,
+  and Bridge's approval also verifies them on Agent ID. After that:
   - `POST /v1/agents/:id/wallet/bank-deposit` with `currency` (`usd` or
     `eur`) gives the wallet its own bank details (a Bridge virtual account).
     Money sent there arrives as USDC.
@@ -207,9 +211,12 @@ cards and machines go back to their provider.
   cost before it runs, at the same 2.5 × provider cost and 0.125 USD per credit
   as AI usage, then settles what it actually used.
 - **Verification (KYC/KYB).**
-  - A person verifies with Stripe Identity: a document and a matching live
-    selfie (`AGENT_ID_KYC=stripe_identity`). Without it, Timewarp reviewers
-    named in `AGENT_ID_REVIEWERS` review submissions by hand.
+  - A person verifies once, the first time they move money out of a wallet:
+    a document and a matching live selfie. Where Bridge moves money to and
+    from banks, that check is Bridge's, so nobody is checked twice
+    (`kycProvider: 'bridge'`; its approval arrives by webhook). Elsewhere it
+    is Stripe Identity (`AGENT_ID_KYC=stripe_identity`), and without either,
+    Timewarp reviewers named in `AGENT_ID_REVIEWERS` review submissions by hand.
   - A business is reviewed from its registration details, submitted by an
     organization owner or admin.
   - Only the outcome, the legal name and the country are stored. Documents stay
@@ -348,9 +355,10 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | --- | --- |
 | `AGENT_ID_SIGNING_KEY`, `AGENT_ID_WEBHOOK_SECRET` | Passports, phone webhooks, owner pseudonyms. Generate with `node scripts/agent-id-keygen.cjs`. **Required.** |
 | `AGENT_ID_LIVE` | Comma list of the kinds that are live, e.g. `mail,vm`. Empty means everything is test. |
-| `AGENT_ID_REQUIRE_VERIFICATION` | Kinds whose live resources need a verified owner (default `wallet,card`). Add `agent` to require verification before any agent at all. `all` means everything. |
+| `AGENT_ID_REQUIRE_VERIFICATION` | Kinds whose live resources need a verified owner up front (default `card`). Add `agent` to require verification before any agent at all. `all` means everything. |
+| `AGENT_ID_VERIFY_TO_SEND` | `false` lets money leave live wallets before the owner is verified (on by default) |
 | `AGENT_ID_PAID_PLAN_KINDS` | Live kinds that need Pro/Max/Ultra (default `phone,card`) |
-| `AGENT_ID_KYC` | `stripe_identity` (recommended), else manual review. `test` verifies at once: development only. |
+| `AGENT_ID_KYC` | Bridge's check wherever bank transfers are on; otherwise `stripe_identity` (recommended), else manual review. `test` verifies at once: development only. |
 | `AGENT_ID_KYB` | Manual review (default). `test` is for development only. |
 | `AGENT_ID_REVIEWERS` | User ids of Timewarp staff who review verifications |
 | `AGENT_ID_MAX_AGENTS` | Agents per account (default 25) |

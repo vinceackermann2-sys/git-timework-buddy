@@ -1,21 +1,19 @@
 // Getting an Agent ID without an account. An agent (the CLI's `attach`) or a
 // person (the website) starts a claim and gets a link. Whoever opens it
-// confirms their email with a code, accepts the terms and verifies their
-// identity; that makes their Timewarp account (or joins the one they have).
-// Once they're verified the agent is created for them, and its key goes once
-// to whoever holds the claim's secret: the CLI that asked, or the command the
-// website shows. Nothing here needs a sign-in; the link, the email code and
-// the claim session stand in for it.
+// confirms their email with a code and accepts the terms; that makes their
+// Timewarp account (or joins the one they have), and the agent is created for
+// them at once. Identity is checked later, the first time they move money out
+// (bank.ts). The agent's key goes once to whoever holds the claim's secret:
+// the CLI that asked, or the command the website shows. Nothing here needs a
+// sign-in; the link, the email code and the claim session stand in for it.
 import { base64url, checked, EMAIL, fail, handleFor, agentId as newAgentId, newSecret, randomBytes, randomId, sameText, sha256Hex, str } from './util.ts';
 import type { AgentRow, Ctx } from './context.ts';
-import type { Owner } from './app.ts';
 import { APPS, appOf } from './origin.ts';
 import { audit, personOf, resourcesOf } from './shared.ts';
-import { personView, startVerification } from './verification.ts';
+import { personView } from './verification.ts';
 import { autoGive } from './provisioning.ts';
 
-const CLAIM_MINUTES = 60;          // An unanswered claim link works for an hour,
-const VERIFYING_DAYS = 7;          // and for a week once an identity check is running.
+const CLAIM_MINUTES = 60;          // An unanswered claim link works for an hour.
 const CODE_MINUTES = 10;
 const MAX_CODE_ATTEMPTS = 5, MAX_CODE_SENDS = 5, RESEND_SECONDS = 30, CLAIMS_PER_HOUR = 20;
 
@@ -31,12 +29,19 @@ async function clientIpHash(ctx: Ctx, req: Request) {
   return ip ? sha256Hex(`${ctx.config.webhookSecret}:${ip}`) : null;
 }
 
-// The step the person is on: confirm an email, verify who they are, or done.
-function stepOf(row: any, person: any) {
+// The step the person is on: confirm an email, accept the terms (when they
+// weren't accepted with the code), or done.
+function stepOf(row: any) {
   if (row.status === 'claimed') return 'done';
   if (!row.email_verified_at) return 'email';
-  if (person?.status === 'pending') return 'checking';
-  return 'identity';
+  return 'terms';
+}
+// A website claim names no agent: it's named after its owner once their email is known.
+const DEFAULT_NAME = 'My agent';
+function nameFor(claim: any) {
+  if (claim.name !== DEFAULT_NAME || claim.started_by !== 'person' || !claim.email) return claim.name;
+  const first = String(claim.email).split('@')[0].split(/[._+\-\d]+/).find(Boolean) || '';
+  return first.length >= 2 ? `${first[0].toUpperCase()}${first.slice(1, 30).toLowerCase()}'s agent` : DEFAULT_NAME;
 }
 
 async function claimView(ctx: Ctx, row: any, full: boolean) {
@@ -49,7 +54,7 @@ async function claimView(ctx: Ctx, row: any, full: boolean) {
     email: full ? row.email : maskEmail(row.email), emailConfirmed: !!row.email_verified_at,
     expiresAt: row.expires_at, createdAt: row.created_at,
     ...(full ? {
-      step: stepOf(row, person),
+      step: stepOf(row),
       person: personView(person),
       terms: { accepted: person?.terms_version === ctx.config.termsVersion && !!person?.terms_accepted_at, current: ctx.config.termsVersion },
       agent: agent ? { id: agent.id, name: agent.name, handle: agent.handle, resources: Object.fromEntries(resources.map(r => [r.kind, { status: r.status, address: r.address, mode: r.mode }])) } : null,
@@ -77,7 +82,7 @@ const open = (ctx: Ctx, row: any) => {
 
 // --- Start -------------------------------------------------------------------
 export async function startClaim(ctx: Ctx, req: Request, input: any) {
-  const name = str(input.name, 60, 'name') || 'My agent';
+  const name = str(input.name, 60, 'name') || DEFAULT_NAME;
   const app = input.app ? appOf(input.app, 'app') : null;
   const startedBy = input.startedBy === 'person' ? 'person' : 'agent';
   const ipHash = await clientIpHash(ctx, req);
@@ -179,37 +184,40 @@ export async function confirmClaimEmail(ctx: Ctx, code: string, input: any) {
     user_id: account.userId, email_verified_at: iso(ctx), email_code_hash: null, session_hash: await sha256Hex(session), updated_at: iso(ctx),
   }).eq('id', row.id).select('*').single());
   await audit(ctx, account.userId, null, 'owner', account.created ? 'account.create_by_claim' : 'claim.email_confirmed', { claim: row.id });
+  // The terms, ticked next to the email, accepted with the code.
+  if (input.terms === ctx.config.termsVersion) await acceptTermsFor(ctx, account.userId);
   // Signed in on the website from here on, like a magic link would.
   const auth = ctx.signIn ? await ctx.signIn(row.email).catch(error => { console.error('[agent-id] claim sign-in', error?.message); return null; }) : null;
   const done = (await completeClaims(ctx, account.userId, row.id)) || updated;
   return { session, auth, claim: await claimView(ctx, done, true) };
 }
 
-// --- Identity ------------------------------------------------------------------
-export async function verifyClaimIdentity(ctx: Ctx, req: Request, code: string, input: any) {
+// --- Terms -------------------------------------------------------------------------
+async function acceptTermsFor(ctx: Ctx, userId: string) {
+  const person = await personOf(ctx, userId);
+  if (person?.terms_version === ctx.config.termsVersion && person?.terms_accepted_at) return;
+  checked(await ctx.admin.from('agent_id_people').upsert({ user_id: userId, terms_version: ctx.config.termsVersion, terms_accepted_at: iso(ctx), updated_at: iso(ctx) }, { onConflict: 'user_id' }).select('user_id'));
+  await audit(ctx, userId, null, 'owner', 'terms.accept', { version: ctx.config.termsVersion, via: 'claim' });
+}
+
+// The terms, for a claim whose code was confirmed without them (an older
+// page). The agent is made right after.
+export async function acceptClaimTerms(ctx: Ctx, req: Request, code: string, input: any) {
   const row = open(ctx, await sessionClaim(ctx, code, req.headers.get('timewarp-claim-session')));
   if (!row.user_id) throw fail(400, 'invalid', 'Confirm your email first.');
-  const person = await personOf(ctx, row.user_id);
-  if (!(person?.terms_version === ctx.config.termsVersion && person?.terms_accepted_at)) {
-    if (input.terms !== ctx.config.termsVersion) throw fail(400, 'terms_required', 'Accept the Agent ID Terms to continue.', { current: ctx.config.termsVersion });
-    checked(await ctx.admin.from('agent_id_people').upsert({ user_id: row.user_id, terms_version: ctx.config.termsVersion, terms_accepted_at: iso(ctx), updated_at: iso(ctx) }, { onConflict: 'user_id' }).select('user_id'));
-    await audit(ctx, row.user_id, null, 'owner', 'terms.accept', { version: ctx.config.termsVersion, via: 'claim' });
-  }
-  await ctx.admin.from('agent_id_claims').update({ status: 'verifying', expires_at: iso(ctx, VERIFYING_DAYS * 86_400_000), updated_at: iso(ctx) }).eq('id', row.id);
-  const owner: Owner = { kind: 'owner', userId: row.user_id, email: row.email, via: 'session' };
-  const result: any = await startVerification(ctx, owner, { ...input, kind: 'person' }, { returnUrl: `${ctx.config.siteUrl}/agent-id/claim/${row.code}?checked=1` });
+  if (input.terms !== ctx.config.termsVersion) throw fail(400, 'terms_required', 'Accept the Agent ID Terms to continue.', { current: ctx.config.termsVersion });
+  await acceptTermsFor(ctx, row.user_id);
   const done = await completeClaims(ctx, row.user_id, row.id);
-  return { ...(result.url ? { url: result.url } : {}), claim: await claimView(ctx, done || { ...row, status: 'verifying' }, true) };
+  return { claim: await claimView(ctx, done || row, true) };
 }
 
 // --- Finishing -------------------------------------------------------------------
-// Creates the agents of an account's claims once its owner is verified (from
-// the identity webhook, a review, or someone looking at the claim). Returns
-// the claim `onlyId` names, as it is now.
+// Creates the agents of an account's claims once its email is confirmed and
+// the terms accepted. Returns the claim `onlyId` names, as it is now.
 export async function completeClaims(ctx: Ctx, userId: string, onlyId?: string) {
   const person = await personOf(ctx, userId);
   const termsAccepted = person?.terms_version === ctx.config.termsVersion && !!person?.terms_accepted_at;
-  if (person?.status !== 'verified' || (ctx.config.termsRequired && !termsAccepted)) return onlyId ? checked(await ctx.admin.from('agent_id_claims').select('*').eq('id', onlyId).maybeSingle()) : null;
+  if (ctx.config.termsRequired && !termsAccepted) return onlyId ? checked(await ctx.admin.from('agent_id_claims').select('*').eq('id', onlyId).maybeSingle()) : null;
   const rows = (checked(await ctx.admin.from('agent_id_claims').select('*').eq('user_id', userId).in('status', ['pending', 'verifying'])) || []) as any[];
   let result: any = null;
   for (const row of rows) {
@@ -234,7 +242,8 @@ async function createClaimedAgent(ctx: Ctx, userId: string, claim: any) {
   if (active.length >= ctx.config.maxAgents) throw fail(409, 'too_many', `An account can have at most ${ctx.config.maxAgents} agents. Revoke one in Agent ID first.`);
   let agent: AgentRow | null = null;
   for (let attempt = 0; attempt < 3 && !agent; attempt++) {
-    const { data, error } = await ctx.admin.from('agent_id_agents').insert({ id: newAgentId(), owner_user_id: userId, name: claim.name, handle: handleFor(claim.name), runtime: claim.app || 'custom' }).select('*').single();
+    const name = nameFor(claim);
+    const { data, error } = await ctx.admin.from('agent_id_agents').insert({ id: newAgentId(), owner_user_id: userId, name, handle: handleFor(name), runtime: claim.app || 'custom' }).select('*').single();
     if (error?.code === '23505') continue;
     agent = checked({ data, error });
   }
@@ -254,7 +263,7 @@ export async function collectClaim(ctx: Ctx, input: any) {
   if (row.status !== 'claimed' && row.user_id) row = (await completeClaims(ctx, row.user_id, row.id)) || row;
   if (row.status !== 'claimed' || !row.agent_id) {
     if (expired(ctx, row)) throw fail(410, 'expired', 'The link expired before it was used. Run the command again for a new one.');
-    return { status: row.email_verified_at ? 'verifying' : 'waiting', claim: await claimView(ctx, row, false) };
+    return { status: 'waiting', claim: await claimView(ctx, row, false) };
   }
   // Marked first, so two requests can't both take the key.
   const taken = checked(await ctx.admin.from('agent_id_claims').update({ key_delivered_at: iso(ctx) }).eq('id', row.id).is('key_delivered_at', null).select('id')) as any[];

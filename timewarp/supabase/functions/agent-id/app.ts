@@ -17,7 +17,7 @@ import { agentRoutes, RAW_ROUTES } from './agent.ts';
 import { publicAllowedSigners, publicVerify, relyingPartyRoutes } from './relying.ts';
 import { handleMcp } from './mcp.ts';
 import { handleWebhook } from './webhooks.ts';
-import { collectClaim, confirmClaimEmail, getClaim, sendClaimCode, startClaim, verifyClaimIdentity } from './claims.ts';
+import { acceptClaimTerms, collectClaim, confirmClaimEmail, getClaim, sendClaimCode, startClaim } from './claims.ts';
 import { autoSetup } from './admin.ts';
 
 export type Owner = { kind: 'owner'; userId: string; email: string | null; via: 'session' | 'key'; keyId?: string };
@@ -112,13 +112,14 @@ export async function authenticate(ctx: Ctx, req: Request): Promise<Caller> {
 async function claimRoute(ctx: Ctx, req: Request, path: string) {
   if (path === '/v1/claims' && req.method === 'POST') return startClaim(ctx, req, await readBody(req));
   if (path === '/v1/claims/collect' && req.method === 'POST') return collectClaim(ctx, await readBody(req));
-  const m = /^\/v1\/claims\/([a-z0-9]{1,60})(\/email|\/email\/confirm|\/identity)?$/.exec(path);
+  const m = /^\/v1\/claims\/([a-z0-9]{1,60})(\/email|\/email\/confirm|\/terms|\/identity)?$/.exec(path);
   if (!m) return null;
   const [, code, step] = m;
   if (!step && req.method === 'GET') return getClaim(ctx, req, code);
   if (step === '/email' && req.method === 'POST') return sendClaimCode(ctx, code, await readBody(req));
   if (step === '/email/confirm' && req.method === 'POST') return confirmClaimEmail(ctx, code, await readBody(req));
-  if (step === '/identity' && req.method === 'POST') return verifyClaimIdentity(ctx, req, code, await readBody(req));
+  // /identity is the older name of /terms: identity is checked later now.
+  if ((step === '/terms' || step === '/identity') && req.method === 'POST') return acceptClaimTerms(ctx, req, code, await readBody(req));
   throw fail(405, 'method_not_allowed', 'Not available for this method.');
 }
 

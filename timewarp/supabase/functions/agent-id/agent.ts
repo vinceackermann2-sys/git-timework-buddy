@@ -16,6 +16,7 @@ import { revealCard } from './providers/card.ts';
 import { machineCost, machineState, runCommand, startMachine, stopMachine, type Size } from './providers/vm.ts';
 import { parseSshKey } from './ssh.ts';
 import { appOf, recordApp } from './origin.ts';
+import { giveResource } from './provisioning.ts';
 
 type Op = (ctx: Ctx, who: AgentCaller, input: any) => Promise<unknown>;
 const actor = (who: AgentCaller) => who.via === 'owner' ? 'owner' as const : 'agent' as const;
@@ -357,10 +358,21 @@ const TRANSFER_ERRORS: Record<string, [number, string]> = {
   invalid: [400, 'The transfer is not valid.'],
 };
 
+// Money leaves a live wallet only once its owner (or their business) is
+// verified; receiving needs nothing. The owner verifies once, on the website.
+async function mayMoveMoney(ctx: Ctx, agent: AgentRow, byAgent: boolean) {
+  if (!ctx.config.verifyToMoveMoney || (await verificationOf(ctx, agent)).verified) return;
+  const where = `${ctx.config.siteUrl}/agent-id/verify`;
+  throw fail(403, 'verification_required', byAgent
+    ? `Your owner needs to verify their identity before money can leave this wallet. Ask them to do it once at ${where}.`
+    : `Verify your identity once to send and withdraw money: ${where}`);
+}
+
 // Shared with owner approvals: sends once the limits (and, with an
 // approval, the owner) allow it.
 export async function transfer(ctx: Ctx, who: AgentCaller, input: { to: string; amount: number; memo?: string; asset?: string }, approvalId: string | null = null) {
   const from = await resourceFor(ctx, who.agent.id, 'wallet');
+  if (from.mode === 'live') await mayMoveMoney(ctx, who.agent, who.via !== 'owner');
   const target = await recipient(ctx, who, from, input.to);
   if (target.resource?.id === from.id) throw fail(400, 'invalid', 'A wallet can\'t pay itself.');
   if (from.mode === 'live' && await sanctioned(ctx, target.address)) {
@@ -430,6 +442,7 @@ export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; a
     await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.withdraw', { amount: input.amount, to: input.to, mode: 'test' });
     return { status: 'completed', transfer: await eventById(ctx, result.event), balance: usd(Number(result.balance)) };
   }
+  await mayMoveMoney(ctx, agent, false);
   if (input.to.toLowerCase() === String(from.address).toLowerCase()) throw fail(400, 'invalid', 'That is this wallet\'s own address.');
   if (await sanctioned(ctx, input.to)) {
     await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.blocked_sanctioned', { to: input.to });
@@ -555,8 +568,14 @@ const cardTestCharge: Op = async (ctx, who, input) => {
 };
 
 // --- Machine -----------------------------------------------------------------
+// The agent's machine. None is set up in advance: the first time the agent
+// uses one, it gets it (live where machines are, its time on its owner's credits).
 async function machine(ctx: Ctx, who: AgentCaller) {
-  const resource = await resourceFor(ctx, who.agent.id, 'vm');
+  let resource = await resourceFor(ctx, who.agent.id, 'vm', { required: false });
+  if (!resource) {
+    resource = await giveResource(ctx, who.agent, 'vm');
+    await audit(ctx, who.userId, who.agent.id, actor(who), 'vm.first_use', { mode: resource.mode });
+  }
   let state = await machineState(ctx, resource).catch(() => 'unknown');
   if (resource.status === 'provisioning' && ['running', 'stopped', 'suspended', 'idle'].includes(state)) {
     await ctx.admin.from('agent_id_resources').update({ status: 'active', state: { ...resource.state, machine: state }, updated_at: new Date(ctx.now()).toISOString() }).eq('id', resource.id);
@@ -566,7 +585,7 @@ async function machine(ctx: Ctx, who: AgentCaller) {
 }
 const vmGet: Op = async (ctx, who) => {
   const { resource, state } = await machine(ctx, who);
-  return { machine: { label: resource.label, mode: resource.mode, status: resource.status, state, size: resource.state?.size, ...(resource.mode === 'test' ? { note: 'Test machines show a state but don\'t run commands.' } : {}) } };
+  return { machine: { label: resource.label, mode: resource.mode, status: resource.status, state, size: resource.state?.size, ...(resource.mode === 'test' ? { note: 'Test computers show a state but don\'t run commands.' } : {}) } };
 };
 const setTestState = async (ctx: Ctx, resource: ResourceRow, state: string) => {
   await ctx.admin.from('agent_id_resources').update({ state: { ...resource.state, machine: state }, updated_at: new Date(ctx.now()).toISOString() }).eq('id', resource.id);
@@ -645,7 +664,7 @@ async function metered(ctx: Ctx, who: AgentCaller, resource: ResourceRow, comman
   }
   return result;
 }
-const vmHistory: Op = async (ctx, who, input) => { await resourceFor(ctx, who.agent.id, 'vm'); const page = await listEvents(ctx, who.agent.id, ['vm'], input); return { commands: page.events, more: page.more }; };
+const vmHistory: Op = async (ctx, who, input) => { const page = await listEvents(ctx, who.agent.id, ['vm'], input); return { commands: page.events, more: page.more }; };
 
 // --- Identity ----------------------------------------------------------------
 export async function identity(ctx: Ctx, agent: AgentRow) {

@@ -119,14 +119,14 @@ export const KIND_LABELS: Record<Kind, string> = {
   phone: "Phone",
   wallet: "Wallet",
   card: "Card",
-  vm: "Machine",
+  vm: "Computer",
 };
 export const KIND_NOUNS: Record<Kind, string> = {
   mail: "a mail inbox",
   phone: "a phone number",
   wallet: "a wallet",
   card: "a virtual card",
-  vm: "a virtual machine",
+  vm: "a computer",
 };
 
 export const STATUS_LABELS: Record<AgentStatus, string> = {
@@ -265,8 +265,8 @@ const AUDIT_ACTIONS: Record<string, string> = {
   "sms.send": "Text sent",
   "call.place": "Call placed",
   "card.reveal": "Card details revealed",
-  "vm.start": "Machine started",
-  "vm.stop": "Machine stopped",
+  "vm.start": "Computer started",
+  "vm.stop": "Computer stopped",
   "vm.exec": "Command run",
   "passport.issue": "Passport issued",
   "passport.checked": "Passport checked by a company",
@@ -367,8 +367,8 @@ export function liveAvailability(
       available: false,
       reason:
         entry?.unavailable === "not_configured"
-          ? `Live ${kind === "vm" ? "machines aren't" : `${KIND_LABELS[kind].toLowerCase()} isn't`} set up on this deployment.`
-          : `Live ${kind === "vm" ? "machines aren't" : `${KIND_LABELS[kind].toLowerCase()} isn't`} available yet.`,
+          ? `Live ${kind === "vm" ? "computers aren't" : `${KIND_LABELS[kind].toLowerCase()} isn't`} set up on this deployment.`
+          : `Live ${kind === "vm" ? "computers aren't" : `${KIND_LABELS[kind].toLowerCase()} isn't`} available yet.`,
       requirements,
       ready: false,
     };

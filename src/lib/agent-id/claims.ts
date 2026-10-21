@@ -1,13 +1,15 @@
 // Getting an Agent ID without an account (the API's /v1/claims). Someone
 // (a person on this website, or an agent through the CLI) starts a claim and
-// gets a link; whoever opens it confirms an email with a code and verifies
-// their identity, which makes their Timewarp account. No sign-in anywhere:
+// gets a link; whoever opens it confirms an email with a code and accepts
+// the terms, which makes their Timewarp account and the agent. Identity is
+// checked later, the first time money leaves a wallet. No sign-in anywhere:
 // the link, the email code, the claim session and the claim secret stand in.
 import { AgentIdError, buildUrl, errorFromResponse } from "./client";
 import type { PublicConfig } from "./types";
 
 export type ClaimStatus = "pending" | "verifying" | "claimed" | "expired";
-export type ClaimStep = "email" | "identity" | "checking" | "done";
+// "terms" only when the code was confirmed without them (an older page).
+export type ClaimStep = "email" | "terms" | "done";
 
 export type ClaimPerson = {
   status: "unverified" | "pending" | "verified" | "rejected";
@@ -41,7 +43,7 @@ export type Claim = {
     id: string;
     name: string;
     handle: string;
-    // What it came with: mail, wallet and, on paid plans, phone and machine.
+    // What it came with: mail and wallet (a number on paid plans; a machine on first use).
     resources?: Partial<Record<string, { status: string; address: string | null; mode?: string }>>;
   } | null;
   keyCollected?: boolean;
@@ -103,19 +105,20 @@ export function createClaimsClient(options: {
   return {
     // The deployment's public settings (which identity check it uses).
     config: () => call<PublicConfig>("/v1/config"),
-    start: (input: { name: string; app?: string }) =>
+    // From the website no name is asked: the agent is named after its owner.
+    start: (input: { name?: string; app?: string } = {}) =>
       call<StartedClaim>("/v1/claims", { body: { ...input, startedBy: "person" } }),
     get: (code: string, session?: string | null) =>
       call<{ claim: Claim }>(at(code), { session: session ?? null }),
     sendCode: (code: string, email: string) =>
       call<SentCode>(at(code, "/email"), { body: { email } }),
-    confirmEmail: (code: string, digits: string) =>
-      call<ConfirmedEmail>(at(code, "/email/confirm"), { body: { code: digits } }),
-    verifyIdentity: (
-      code: string,
-      session: string,
-      input: { consent: true; terms?: string; legalName?: string; country?: string },
-    ) => call<{ url?: string; claim: Claim }>(at(code, "/identity"), { body: input, session }),
+    // `terms`: the version ticked next to the email, accepted with the code.
+    confirmEmail: (code: string, digits: string, terms?: string) =>
+      call<ConfirmedEmail>(at(code, "/email/confirm"), {
+        body: { code: digits, ...(terms ? { terms } : {}) },
+      }),
+    acceptTerms: (code: string, session: string, terms: string) =>
+      call<{ claim: Claim }>(at(code, "/terms"), { body: { terms }, session }),
   };
 }
 
@@ -123,7 +126,17 @@ export type ClaimsClient = ReturnType<typeof createClaimsClient>;
 
 // --- What this browser keeps (per tab, per claim) ---------------------------------
 
-export type ClaimMemory = { secret?: string; session?: string };
+// The claim's secret and session, and the code sent from the start page
+// (its email, when, the version of the terms ticked, the development code).
+export type ClaimMemory = {
+  secret?: string;
+  session?: string;
+  sentEmail?: string;
+  sentAt?: string;
+  terms?: string;
+  devCode?: string;
+};
+const MEMORY_KEYS = ["sentEmail", "sentAt", "terms", "devCode"] as const;
 const memoryKey = (code: string) => `agent-id-claim:${code}`;
 
 function storage(): Storage | null {
@@ -139,11 +152,17 @@ export function readClaimMemory(code: string, store: Storage | null = storage())
     const raw = store?.getItem(memoryKey(code));
     const value = raw ? (JSON.parse(raw) as unknown) : null;
     if (!value || typeof value !== "object") return {};
-    const { secret, session } = value as Record<string, unknown>;
-    return {
+    const record = value as Record<string, unknown>;
+    const { secret, session } = record;
+    const memory: ClaimMemory = {
       ...(typeof secret === "string" && secret.startsWith("twc_") ? { secret } : {}),
       ...(typeof session === "string" && session ? { session } : {}),
     };
+    for (const key of MEMORY_KEYS) {
+      const item = record[key];
+      if (typeof item === "string" && item) memory[key] = item;
+    }
+    return memory;
   } catch {
     return {};
   }
@@ -181,16 +200,8 @@ export function claimScreen(claim: Claim): ClaimScreen {
   return claim.step ?? "email";
 }
 
-// The three steps a person sees, and which one a screen belongs to.
-export const CLAIM_STEPS = ["Email", "Identity", "Ready"] as const;
-export function claimStepIndex(screen: ClaimScreen): number {
-  return screen === "email" ? 0 : screen === "identity" || screen === "checking" ? 1 : 2;
-}
-
 // Keeps what a person types or pastes as the 6-digit code.
 export const cleanCode = (value: string) => value.replace(/\D/g, "").slice(0, 6);
-
-export const isCountryCode = (value: string) => /^[A-Za-z]{2}$/.test(value.trim());
 
 // Seconds until another code may be sent (the API allows one every 30 s).
 export function resendWait(sentAt: number | null, now: number = Date.now(), gap = 30): number {

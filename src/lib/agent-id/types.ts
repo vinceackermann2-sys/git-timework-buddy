@@ -161,7 +161,8 @@ export type PublicConfig = {
   mailDomain: string;
   resources: Record<Kind, ResourceAvailability>;
   verification: {
-    person: "stripe_identity" | "test" | "manual";
+    // Bridge where it moves money to and from banks: one check covers both.
+    person: "bridge" | "stripe_identity" | "test" | "manual";
     business: "test" | "manual";
     requiredToCreateAgents: boolean;
   };

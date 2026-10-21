@@ -155,7 +155,8 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
                   : "Ready"}
             </Chip>
           ) : (
-            <ProvisionDialog agent={agent} kind="vm" inline />
+            // Set up the first time the agent uses one.
+            <span className="text-[13px] text-[var(--muted-foreground)]">Starts on first use</span>
           ),
         )}
       </dl>
@@ -176,7 +177,7 @@ const LINE_LABELS: Record<Kind, string> = {
   phone: "Phone",
   wallet: "Wallet",
   card: "Card",
-  vm: "Machine",
+  vm: "Computer",
 };
 
 function IdLine({

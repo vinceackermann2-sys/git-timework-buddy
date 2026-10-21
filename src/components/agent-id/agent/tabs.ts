@@ -8,7 +8,7 @@ export const AGENT_TABS = [
   ["phone", "Phone"],
   ["wallet", "Wallet"],
   ["card", "Card"],
-  ["machine", "Machine"],
+  ["machine", "Computer"],
   ["activity", "Activity"],
   ["settings", "Settings"],
 ] as const;

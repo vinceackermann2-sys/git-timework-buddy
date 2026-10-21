@@ -15,7 +15,9 @@ export function loadConfig(env: Env) {
   const siteUrl = (get('AGENT_ID_SITE_URL') || get('TIMEWARP_SITE_URL') || 'https://timewarpdev.com').replace(/\/+$/, '');
   const mailDomain = (get('AGENT_ID_MAIL_DOMAIN') || get('TIMEWARP_AGENT_MAIL_DOMAIN') || 'agents.timewarpdev.com').toLowerCase();
   const live = new Set(list(get('AGENT_ID_LIVE')));
-  const required = new Set(list(get('AGENT_ID_REQUIRE_VERIFICATION') || 'wallet,card'));
+  // Live wallets are given unverified (they can receive); money leaving one
+  // needs a verified owner (verifyToMoveMoney). Cards need one up front.
+  const required = new Set(list(get('AGENT_ID_REQUIRE_VERIFICATION') || 'card'));
   const paid = new Set(list(get('AGENT_ID_PAID_PLAN_KINDS') || 'phone,card'));
 
   // Each kind's live provider, and whether its secrets are present.
@@ -33,6 +35,8 @@ export function loadConfig(env: Env) {
   } as Record<Kind, { provider: string; configured: boolean }>;
 
   const kyc = get('AGENT_ID_KYC').toLowerCase();
+  // Bank transfers through Bridge (needs its key, live wallets on Base mainnet).
+  const bankOn = get('AGENT_ID_BANK') !== 'off' && !!get('BRIDGE_API_KEY') && live.has('wallet') && providers.wallet.configured && get('AGENT_ID_WALLET_CHAIN') !== 'base_sepolia';
   const kyb = get('AGENT_ID_KYB').toLowerCase();
   return {
     env: get,
@@ -54,7 +58,14 @@ export function loadConfig(env: Env) {
     // creating an agent does (the future default).
     verificationRequired: (what: Kind | 'agent') => required.has(what) || required.has('all'),
     paidPlanRequired: (kind: Kind) => paid.has(kind),
-    kycProvider: kyc === 'stripe_identity' || kyc === 'test' ? kyc : 'manual',
+    // One identity check per person. Where Bridge moves money to and from
+    // banks it must check people itself, so its check is the one Agent ID
+    // uses too; Stripe Identity is for deployments without Bridge.
+    kycProvider: (kyc === 'test' ? 'test'
+      : bankOn && (kyc === '' || kyc === 'bridge' || kyc === 'stripe_identity') ? 'bridge'
+      : kyc === 'stripe_identity' ? 'stripe_identity' : 'manual') as 'test' | 'bridge' | 'stripe_identity' | 'manual',
+    // Sending or withdrawing from a live wallet needs a verified owner.
+    verifyToMoveMoney: get('AGENT_ID_VERIFY_TO_SEND') !== 'false',
     kybProvider: kyb === 'test' ? 'test' : 'manual',
     reviewers: new Set(list(get('AGENT_ID_REVIEWERS'))),
     maxAgents: Math.max(1, Math.min(1000, Number(get('AGENT_ID_MAX_AGENTS')) || 25)),
@@ -78,7 +89,8 @@ export function loadConfig(env: Env) {
     passportSeconds: Math.max(60, Math.min(3600, Number(get('AGENT_ID_PASSPORT_SECONDS')) || 300)),
     // What a new Agent ID comes with (provisioning.ts): 'none' for nothing.
     autoGive: get('AGENT_ID_AUTO_GIVE') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE') || 'mail,wallet'),
-    autoGivePaid: get('AGENT_ID_AUTO_GIVE_PAID') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE_PAID') || 'phone,vm'),
+    // Machines aren't given up front: an agent gets one the first time it uses it.
+    autoGivePaid: get('AGENT_ID_AUTO_GIVE_PAID') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE_PAID') || 'phone'),
     // Registering its own webhooks on first use (admin.ts); tests turn it off.
     autoSetup: get('AGENT_ID_AUTO_SETUP') !== 'false',
     // Bank transfers in and out of live wallets through Bridge, once its key

@@ -91,7 +91,7 @@ describe("labels", () => {
         action: "resource.provision",
         detail: { kind: "vm", mode: "live", provider: "azure" },
       }),
-    ).toBe("Machine · Live");
+    ).toBe("Computer · Live");
     expect(auditDetail({ action: "mail.send", detail: { to: 2, mode: "test" } })).toBe(
       "Test · 2 recipients",
     );
@@ -171,7 +171,7 @@ describe("live availability", () => {
   it("says when live isn't offered at all", () => {
     const vm = liveAvailability("vm", config, { plan: "pro", verified: true });
     expect(vm.available).toBe(false);
-    expect(vm.reason).toBe("Live machines aren't available yet.");
+    expect(vm.reason).toBe("Live computers aren't available yet.");
     expect(liveAvailability("mail", undefined, {}).available).toBe(false);
   });
 });

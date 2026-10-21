@@ -187,9 +187,11 @@ export function CreateAgentDialog({ variant = "default" }: { variant?: "default"
   );
 }
 
-// Its mail, wallet and (on paid plans) number and machine, as they come up.
+// Its email and wallet as they come up, a number to apply for, and a computer on first use.
 function Created({ created }: { created: CreatedAgent }) {
   const detail = useAgent(created.agent.id);
   const resources = detail.data?.agent.resources ?? created.agent.resources;
-  return <ReadyList resources={resources} skipped={created.setup?.skipped} />;
+  return (
+    <ReadyList resources={resources} skipped={created.setup?.skipped} agentId={created.agent.id} />
+  );
 }

@@ -266,11 +266,11 @@ test("live resources are opt-in per kind and gated by verification and plan", as
   local.setEnv({ AGENT_ID_LIVE: "mail,phone,wallet,card,vm" });
   assert.equal((await live("mail")).body.error.code, "provider_unavailable", "Listed but without its secrets.");
   local.setEnv({ RESEND_API_KEY: "re_test", TWILIO_ACCOUNT_SID: "AC1", TWILIO_AUTH_TOKEN: "t", PRIVY_APP_ID: "p", PRIVY_APP_SECRET: "s", STRIPE_SECRET_KEY: "sk_test_x" });
-  assert.equal((await live("wallet")).body.error.code, "verification_required", "Live money needs a verified owner.");
-  assert.equal((await live("card")).body.error.code, "verification_required");
+  assert.equal((await live("card")).body.error.code, "verification_required", "A live card needs a verified owner up front.");
   assert.equal((await live("phone")).body.error.code, "plan_required", "A live number needs a paid plan.");
   const config = await ok("GET", "/v1/config", {});
-  assert.equal(config.resources.wallet.verificationRequired, true);
+  assert.equal(config.resources.wallet.verificationRequired, false, "Wallets come unverified; money leaving one needs a verified owner.");
+  assert.equal(config.resources.card.verificationRequired, true);
   assert.equal(config.resources.vm.live, false);
   assert.equal(config.resources.vm.unavailable, "not_configured", "Listed, but without Azure's secrets.");
   assert.equal(config.resources.mail.unavailable, undefined);

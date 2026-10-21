@@ -53,18 +53,33 @@ const kycView = (link: any): BridgeKyc => ({
 
 // Endorsements are the rails Bridge checks the customer for: "base" (US
 // dollars) always, "sepa" (euros) when euro transfers are on.
-export async function createKycLink(ctx: Ctx, input: { userId: string; fullName: string; email: string; type: 'individual' | 'business'; redirectUri: string; endorsements: string[] }) {
+// The person types their name on Bridge's page when Agent ID doesn't know it.
+export async function createKycLink(ctx: Ctx, input: { userId: string; fullName: string | null; email: string; type: 'individual' | 'business'; redirectUri: string; endorsements: string[] }) {
   const link = await bridge(ctx, 'POST', '/kyc_links', {
-    full_name: input.fullName, email: input.email, type: input.type, endorsements: input.endorsements, redirect_uri: input.redirectUri,
+    ...(input.fullName ? { full_name: input.fullName } : {}), email: input.email, type: input.type, endorsements: input.endorsements, redirect_uri: input.redirectUri,
   }, `agent-id-kyc-${input.userId}`);
   return kycView(link);
 }
 export const kycLink = async (ctx: Ctx, id: string) => kycView(await bridge(ctx, 'GET', `/kyc_links/${encodeURIComponent(id)}`));
 
-// The customer's endorsements by name, with their status (approved, incomplete, revoked).
-export async function customerEndorsements(ctx: Ctx, customerId: string) {
+// Bridge's countries (ISO 3166 alpha-3) in Agent ID's two letters.
+const ALPHA2: Record<string, string> = {
+  AND: 'AD', AUT: 'AT', BEL: 'BE', BGR: 'BG', CHE: 'CH', CYP: 'CY', CZE: 'CZ', DEU: 'DE', DNK: 'DK', EST: 'EE', ESP: 'ES', FIN: 'FI',
+  FRA: 'FR', GBR: 'GB', GRC: 'GR', HRV: 'HR', HUN: 'HU', IRL: 'IE', ISL: 'IS', ITA: 'IT', LIE: 'LI', LTU: 'LT', LUX: 'LU', LVA: 'LV',
+  MCO: 'MC', MLT: 'MT', NLD: 'NL', NOR: 'NO', POL: 'PL', PRT: 'PT', ROU: 'RO', SWE: 'SE', SVN: 'SI', SVK: 'SK', SMR: 'SM',
+  USA: 'US', CAN: 'CA', MEX: 'MX', BRA: 'BR', ARG: 'AR', COL: 'CO', AUS: 'AU', NZL: 'NZ', JPN: 'JP', SGP: 'SG', IND: 'IN', ZAF: 'ZA', ARE: 'AE',
+};
+
+// What Bridge knows of an approved customer: the rails it approved them for
+// (endorsement name → approved, incomplete or revoked), their name and country.
+export async function customerDetails(ctx: Ctx, customerId: string) {
   const customer = await bridge(ctx, 'GET', `/customers/${encodeURIComponent(customerId)}`);
-  return Object.fromEntries((customer?.endorsements || []).map((e: any) => [String(e?.name), String(e?.status)])) as Record<string, string>;
+  const name = [customer?.first_name, customer?.last_name].filter(Boolean).join(' ').trim().slice(0, 200) || null;
+  const code = String(customer?.residential_address?.country || customer?.address?.country || '').toUpperCase();
+  return {
+    endorsements: Object.fromEntries((customer?.endorsements || []).map((e: any) => [String(e?.name), String(e?.status)])) as Record<string, string>,
+    name, country: code.length === 2 ? code : ALPHA2[code] || null,
+  };
 }
 
 // --- Bank accounts -----------------------------------------------------------------

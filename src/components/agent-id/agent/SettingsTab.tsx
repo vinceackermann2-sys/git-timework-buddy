@@ -403,7 +403,7 @@ function Access({ detail }: { detail: AgentDetail }) {
         </Button>
         <ConfirmButton
           title={`Revoke ${agent.name}?`}
-          description="Final. Its keys stop working and its mail, phone, wallet and machine are released. Its history stays."
+          description="Final. Its keys stop working and its mail, phone, wallet and computer are released. Its history stays."
           typed={agent.name}
           confirmLabel="Revoke"
           variant="outline"

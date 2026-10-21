@@ -17,7 +17,7 @@ import { releaseMachine } from './providers/vm.ts';
 import { appsOf, originInput } from './origin.ts';
 import { stripe } from './providers/stripe.ts';
 import { adminRoutes } from './admin.ts';
-import { addBankAccount, bankDeposit, bankStatus, refreshPayouts, removeBankAccount, startBankVerification, withdrawToBank } from './bank.ts';
+import { addBankAccount, bankDeposit, bankStatus, refreshBridgeCheck, refreshPayouts, removeBankAccount, startBankVerification, withdrawToBank } from './bank.ts';
 
 type Handler = Route<Owner>[2];
 const iso = (ctx: Ctx) => new Date(ctx.now()).toISOString();
@@ -45,6 +45,8 @@ const keyView = (row: any) => ({ id: row.id, name: row.name, prefix: row.prefix,
 
 // --- Account -------------------------------------------------------------------
 const account: Handler = async (ctx, owner) => {
+  // A check running at Bridge: look how it's going (at most every few seconds).
+  await refreshBridgeCheck(ctx, owner.userId).catch(error => console.error('[agent-id] identity check', (error as Error).message));
   const [person, members, plan, agents] = await Promise.all([
     personOf(ctx, owner.userId),
     ctx.admin.from('timewarp_workspace_members').select('workspace_id,role').eq('user_id', owner.userId).eq('status', 'active'),

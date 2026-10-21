@@ -1,5 +1,6 @@
 import { createFileRoute, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { ShieldCheck } from "lucide-react";
 
 import { PendingApprovals, approvalAmount } from "@/components/agent-id/ApprovalList";
 import {
@@ -57,7 +58,10 @@ function ApprovalsPage() {
         ) : pending.isError ? (
           <ErrorState error={pending.error} onRetry={() => void pending.refetch()} />
         ) : pending.data.length === 0 ? (
-          <Empty>Nothing waiting for you.</Empty>
+          <Empty icon={ShieldCheck}>
+            Nothing waiting for you. When an agent wants to pay more than its limit, it shows up
+            here.
+          </Empty>
         ) : (
           <PendingApprovals approvals={pending.data} highlight={highlight} />
         )}

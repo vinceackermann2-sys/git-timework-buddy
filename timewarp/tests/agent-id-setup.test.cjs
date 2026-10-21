@@ -17,7 +17,7 @@ function network() {
   return { fetch, calls, on: (method, pattern, handler) => routes.unshift([method, pattern, handler]) };
 }
 
-const AUTO = { AGENT_ID_AUTO_GIVE: "mail,wallet", AGENT_ID_AUTO_GIVE_PAID: "phone,vm" };
+const AUTO = { AGENT_ID_AUTO_GIVE: "mail,wallet", AGENT_ID_AUTO_GIVE_PAID: "phone" };
 async function setup(t, env = {}) {
   const net = network();
   const local = await startLocal({ fetch: net.fetch, env: { ...AUTO, ...env } });
@@ -34,7 +34,7 @@ async function setup(t, env = {}) {
   return { local, net, ok, resources };
 }
 
-test("a new Agent ID has its mail and wallet at once; a paid plan adds its number and machine", async t => {
+test("a new Agent ID has its mail and wallet at once; a paid plan adds its number; a machine comes the first time the agent uses one", async t => {
   const { local, ok, resources } = await setup(t);
   const free = await local.user();
   const made = await ok("POST", "/v1/agents", { token: free.session, body: { name: "Helper" } });
@@ -49,10 +49,15 @@ test("a new Agent ID has its mail and wallet at once; a paid plan adds its numbe
 
   const pro = await local.user({ plan: "pro" });
   const paid = await ok("POST", "/v1/agents", { token: pro.session, body: { name: "Closer" } });
-  assert.deepEqual(paid.setup.given, ["mail", "wallet", "phone", "vm"]);
+  assert.deepEqual(paid.setup.given, ["mail", "wallet", "phone"]);
   const theirs = await resources(pro, paid.agent.id);
-  assert.deepEqual(Object.keys(theirs).sort(), ["mail", "phone", "vm", "wallet"]);
+  assert.deepEqual(Object.keys(theirs).sort(), ["mail", "phone", "wallet"]);
   assert.match(theirs.phone.address, /^\+1/);
+  // The machine: its tools are there from the start, and it's set up the first time the agent uses it.
+  const tools = (await ok("POST", "/mcp", { token: paid.secret, body: { jsonrpc: "2.0", id: 1, method: "tools/list" } })).result.tools.map(tool => tool.name);
+  assert.ok(tools.includes("vm_exec") && tools.includes("vm_get"));
+  await ok("GET", "/v1/me/vm", { token: paid.secret });
+  assert.deepEqual(Object.keys(await resources(pro, paid.agent.id)).sort(), ["mail", "phone", "vm", "wallet"]);
 
   // Asked for exactly: some, or none.
   const bare = await ok("POST", "/v1/agents", { token: pro.session, body: { name: "Bare", resources: [] } });
@@ -70,16 +75,14 @@ test("a new Agent ID has its mail and wallet at once; a paid plan adds its numbe
 test("in production, what can't be given yet is skipped with a reason; a provider failure frees the slot to add later", async t => {
   const { local, net, ok, resources } = await setup(t, { AGENT_ID_ALLOW_TEST: "false", AGENT_ID_LIVE: "mail,wallet", RESEND_API_KEY: "re_live", PRIVY_APP_ID: "privy-app", PRIVY_APP_SECRET: "privy-secret" });
   const pro = await local.user({ plan: "pro" });
+  net.on("POST", /api\.privy\.io\/v1\/wallets$/, () => ({ id: "w_scout", address: "0x" + "cd".repeat(20) }));
   const made = await ok("POST", "/v1/agents", { token: pro.session, body: { name: "Scout" } });
-  assert.deepEqual(made.setup.given, ["mail"]);
-  assert.deepEqual(made.setup.skipped.map(s => [s.kind, s.code]), [["wallet", "verification_required"], ["phone", "waitlist"], ["vm", "live_unavailable"]], "Phone numbers are an application until live numbers open.");
-  assert.equal(Object.keys(await resources(pro, made.agent.id)).join(), "mail");
+  // The wallet comes unverified (money leaves only once the owner is); a machine starts the first time the agent uses it.
+  assert.deepEqual(made.setup.given, ["mail", "wallet"]);
+  assert.deepEqual(made.setup.skipped.map(s => [s.kind, s.code]), [["phone", "waitlist"]], "Phone numbers are an application until live numbers open.");
+  assert.deepEqual(Object.keys(await resources(pro, made.agent.id)).sort(), ["mail", "wallet"]);
 
-  // Verified: the wallet comes too, unless Privy fails, which leaves the agent and a free slot.
-  const reviewer = await local.user();
-  local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
-  await ok("POST", "/v1/account/verification", { token: pro.session, body: { kind: "person", consent: true, legalName: "Ada Lovelace", country: "SE" } });
-  await ok("POST", `/v1/reviews/person/${pro.id}`, { token: reviewer.session, body: { decision: "approve" } });
+  // Privy failing leaves the agent and a free slot.
   net.on("POST", /api\.privy\.io\/v1\/wallets$/, () => new Response(JSON.stringify({ message: "Privy is down" }), { status: 500 }));
   const second = await ok("POST", "/v1/agents", { token: pro.session, body: { name: "Buyer" } });
   assert.deepEqual(second.setup.given, ["mail", "wallet"]);
@@ -96,9 +99,8 @@ test("an Agent ID claimed by link comes ready too, and the page and the CLI see 
   const started = await ok("POST", "/v1/claims", { body: { name: "Concierge", app: "claude-code" } });
   const code = started.claim.code;
   const sent = await ok("POST", `/v1/claims/${code}/email`, { body: { email: "kim@example.com" } });
-  const confirmed = await ok("POST", `/v1/claims/${code}/email/confirm`, { body: { code: sent.devCode } });
   const terms = (await ok("GET", "/v1/config")).legal.termsVersion;
-  await ok("POST", `/v1/claims/${code}/identity`, { headers: { "timewarp-claim-session": confirmed.session }, body: { terms, consent: true, legalName: "Kim Lee", country: "SE" } });
+  const confirmed = await ok("POST", `/v1/claims/${code}/email/confirm`, { body: { code: sent.devCode, terms } });
   await local.settle();
   const claim = (await ok("GET", `/v1/claims/${code}`, { headers: { "timewarp-claim-session": confirmed.session } })).claim;
   assert.deepEqual(Object.keys(claim.agent.resources).sort(), ["mail", "wallet"]);

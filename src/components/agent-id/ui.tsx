@@ -326,11 +326,24 @@ export function Row({ children, className }: { children: ReactNode; className?: 
   );
 }
 
-// The one empty state: a short line and, when there is one, the action.
-export function Empty({ children, action }: { children: ReactNode; action?: ReactNode }) {
+// The one empty state: an icon, a short line and, when there is one, the action.
+export function Empty({
+  children,
+  action,
+  icon: Icon,
+}: {
+  children: ReactNode;
+  action?: ReactNode;
+  icon?: LucideIcon | undefined;
+}) {
   return (
-    <div className="flex flex-col items-center gap-3 px-5 py-10 text-center">
-      <p className="text-sm text-[var(--muted-foreground)]">{children}</p>
+    <div className="flex flex-col items-center gap-3 px-5 py-12 text-center">
+      {Icon && (
+        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--accent)] text-[var(--aid-ink)]">
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </span>
+      )}
+      <p className="max-w-sm text-sm text-[var(--muted-foreground)]">{children}</p>
       {action}
     </div>
   );

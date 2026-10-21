@@ -41,6 +41,21 @@
       "port": 8093
     },
     {
+      "name": "agent-id-site-guest",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/website.cjs",
+        "dev",
+        "--port",
+        "8096",
+        "--strictPort"
+      ],
+      "env": {
+        "VITE_AGENT_ID_API": "http://127.0.0.1:54341/agent-id"
+      },
+      "port": 8096
+    },
+    {
       "name": "agent-id-site-live",
       "runtimeExecutable": "node",
       "runtimeArgs": [

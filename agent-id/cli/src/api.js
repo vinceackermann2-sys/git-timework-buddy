@@ -1,6 +1,7 @@
 // Agent ID's HTTP API: JSON in, JSON out, errors as { error: { code, message } }.
 import { ApiError, CliError } from './errors.js';
 import { VERSION } from './version.js';
+import { DEFAULT_API } from './config.js';
 
 // "timewarp-id/1.2.3 (claude-code)" when the tool it runs in is known.
 export const userAgent = tool => `timewarp-id/${VERSION}${tool ? ` (${tool})` : ''}`;
@@ -31,14 +32,18 @@ export class Api {
       });
     } catch (error) {
       const reason = error?.cause?.code || error?.cause?.message || error?.message || String(error);
-      throw new CliError(`Could not reach Agent ID at ${this.base} (${reason}).`, { hint: 'Check your connection, or the API address (--api, AGENT_ID_API).' });
+      // Production's address means nothing to people; another one is a developer's.
+      throw new CliError('Can\'t reach Agent ID. Check your internet connection and try again.', {
+        code: 'network', hint: this.base === DEFAULT_API ? undefined : `Tried ${this.base} (${reason}); change it with --api or AGENT_ID_API.`,
+      });
     }
     const text = await response.text();
     let data = text;
     try { data = text ? JSON.parse(text) : {}; } catch { /* plain text */ }
     if (!response.ok) {
       const error = data && typeof data === 'object' ? data.error : null;
-      throw new ApiError(response.status, error?.code || `http_${response.status}`, error?.message || `Agent ID answered HTTP ${response.status}.`, data);
+      const message = error?.message || (response.status >= 500 ? `Agent ID isn't answering right now (HTTP ${response.status}). Try again in a minute.` : `Agent ID answered HTTP ${response.status}.`);
+      throw new ApiError(response.status, error?.code || `http_${response.status}`, message, data);
     }
     return data;
   }

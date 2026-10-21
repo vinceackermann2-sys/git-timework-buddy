@@ -101,7 +101,8 @@ function BankVerify({ bank }: { bank: BankStatus }) {
   return (
     <div className="grid gap-3 text-center">
       <Muted>
-        Bank transfers go through Bridge, a Stripe company. Verify with them once to use your bank.
+        Verify once to use your bank: Bridge, a Stripe company, checks your ID and a selfie. The
+        same check lets you send and withdraw.
       </Muted>
       <Button
         size="lg"
@@ -114,7 +115,7 @@ function BankVerify({ bank }: { bank: BankStatus }) {
         ) : (
           <Landmark aria-hidden="true" />
         )}
-        Continue with Bridge
+        Verify my identity
       </Button>
       {start.isError && <Notice tone="danger">{errorMessage(start.error)}</Notice>}
     </div>

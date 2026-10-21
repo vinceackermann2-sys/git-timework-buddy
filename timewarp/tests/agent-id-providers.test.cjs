@@ -250,11 +250,14 @@ test("live wallets: Privy server wallets holding USDC and USDT, shown as US doll
   const basic = "Basic " + Buffer.from("privy-app:privy-secret").toString("base64");
   const alice = await local.user();
   const bot = await agent(alice, "Treasurer");
-  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "wallet", mode: "live" } })).body.error.code, "verification_required", "Real money needs a verified owner.");
-  await verify(alice);
   const address = "0x" + "ab".repeat(20);
   net.on("POST", /api\.privy\.io\/v1\/wallets$/, () => ({ id: "w_treasurer", address, chain_type: "ethereum" }));
+  // Given before the owner is verified: it can receive, but nothing leaves it yet.
   const wallet = (await ok("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "wallet", mode: "live", settings: { approvalAbove: null } } })).resource;
+  const early = (await local.call("POST", "/v1/me/wallet/transfers", { token: bot.key, body: { to: "0x" + "12".repeat(20), value: "1" } })).body.error;
+  assert.equal(early.code, "verification_required", "Money leaves a live wallet only once its owner is verified.");
+  assert.match(early.message, /Your owner needs to verify/);
+  await verify(alice);
   assert.deepEqual([wallet.address, wallet.provider, wallet.currency, wallet.details.chain], [address, "privy", "USD", "base"]);
   const [create] = net.find("POST", /v1\/wallets$/);
   assert.equal(create.headers.get("authorization"), basic);

@@ -132,6 +132,6 @@ export function emailAddress(value: unknown, field = 'to') {
 // A handle for an agent's mail address: its name in lowercase with a short
 // random tail, so two agents called "Research" don't collide.
 export function handleFor(name: string) {
-  const base = name.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'agent';
+  const base = name.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'agent';
   return `${base}-${randomId(4)}`;
 }

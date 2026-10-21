@@ -6,12 +6,14 @@ import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownLeft,
+  ArrowLeftRight,
   ArrowDownToLine,
   ArrowUpRight,
   ExternalLink,
   Info,
   Loader2,
   Plus,
+  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -32,6 +34,7 @@ import {
 } from "@/lib/agent-id/format";
 import {
   queryKeys,
+  useAgent,
   useAgents,
   useApprovals,
   useContacts,
@@ -46,6 +49,7 @@ import {
   Avatar,
   Chip,
   CopyButton,
+  Empty,
   ErrorState,
   Field,
   LoadingRows,
@@ -70,6 +74,7 @@ export function WalletTab({ agent }: { agent: Agent }) {
   const wallet = agent.resources.wallet;
   const blocked = blockedReason(agent, wallet);
   const summary = useWalletSummary(agent.id, !!wallet && !blocked);
+  const detail = useAgent(agent.id);
   const pages = useEventPages(agent.id, { kind: ["wallet"] }, { enabled: !!wallet });
   const approvals = useApprovals();
   const [panel, setPanel] = useState<"add" | "send" | "withdraw" | "details" | null>(null);
@@ -80,13 +85,16 @@ export function WalletTab({ agent }: { agent: Agent }) {
 
   const balance = summary.data?.balance ?? wallet.balance ?? null;
   const test = wallet.mode === "test";
+  // Money comes in at once; it leaves a live wallet once the owner is verified.
+  const mustVerify = !test && detail.data?.verification.verified === false;
   const events = pages.data?.pages.flatMap((p) => p.events) ?? [];
   const waiting = (approvals.data ?? []).filter((a) => a.agentId === agent.id);
   const network = summary.data?.network ?? wallet.details.network;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="space-y-6">
       <BlockedNotice reason={blocked} />
+      {mustVerify && <VerifyToMoveMoney />}
 
       <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-[#f6ecff] via-[#efe0ff] to-[#e3ccff] p-6 text-[#172033] shadow-[0_1px_2px_rgba(23,32,51,0.06)] sm:p-8">
         <p className="text-sm font-medium text-[#172033]/70">Balance</p>
@@ -141,9 +149,9 @@ export function WalletTab({ agent }: { agent: Agent }) {
           ) : pages.isError ? (
             <ErrorState error={pages.error} onRetry={() => void pages.refetch()} />
           ) : events.length === 0 ? (
-            <p className="px-5 py-14 text-center text-sm text-[var(--muted-foreground)]">
-              No transactions yet
-            </p>
+            <Empty icon={ArrowLeftRight}>
+              No transactions yet. Money in and out shows up here.
+            </Empty>
           ) : (
             <>
               {groupByDay(events).map((group) => (
@@ -174,7 +182,11 @@ export function WalletTab({ agent }: { agent: Agent }) {
         title="Send"
         trigger={<span className="hidden" />}
       >
-        <SendForm agent={agent} onDone={() => setPanel(null)} />
+        {mustVerify ? (
+          <VerifyToMoveMoney inPanel />
+        ) : (
+          <SendForm agent={agent} onDone={() => setPanel(null)} />
+        )}
       </SidePanel>
       <SidePanel
         open={panel === "add"}
@@ -194,7 +206,11 @@ export function WalletTab({ agent }: { agent: Agent }) {
         title={test ? "Withdraw test money" : "Withdraw"}
         trigger={<span className="hidden" />}
       >
-        <Withdraw agent={agent} balance={balance} onDone={() => setPanel(null)} />
+        {mustVerify ? (
+          <VerifyToMoveMoney inPanel />
+        ) : (
+          <Withdraw agent={agent} balance={balance} onDone={() => setPanel(null)} />
+        )}
       </SidePanel>
       <SidePanel
         open={panel === "details"}
@@ -243,6 +259,31 @@ function QuickAction({
 }
 
 const isIn = (e: AgentEvent) => e.direction === "in";
+
+// Before the owner's one identity check: what it unlocks, and the way to it.
+function VerifyToMoveMoney({ inPanel = false }: { inPanel?: boolean }) {
+  return (
+    <section
+      className={cn(
+        "flex flex-col gap-3 sm:flex-row sm:items-center",
+        inPanel ? "py-2" : "aid-card px-5 py-4",
+      )}
+    >
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--accent)] text-[var(--aid-ink)]">
+        <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">Verify once to send and withdraw</p>
+        <p className="text-sm text-[var(--muted-foreground)]">
+          Money can already come in. A two-minute check of your ID unlocks sending and withdrawing.
+        </p>
+      </div>
+      <Button asChild className={cn(inPanel && "w-full")}>
+        <Link to="/agent-id/verify">Verify</Link>
+      </Button>
+    </section>
+  );
+}
 
 function TransactionRow({ event, onOpen }: { event: AgentEvent; onOpen: () => void }) {
   const name = counterpartyLabel(event.counterparty);

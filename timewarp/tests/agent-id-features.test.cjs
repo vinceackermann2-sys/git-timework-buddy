@@ -252,7 +252,7 @@ test("developers need no account: anyone can check a passport shown to them, and
 });
 
 test("production: no test resources, and live transfers to sanctioned addresses are refused", async t => {
-  const { local, net, ok, agent } = await setup(t, { AGENT_ID_ALLOW_TEST: "false", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "app", PRIVY_APP_SECRET: "secret", CHAINALYSIS_API_KEY: "ch_key", AGENT_ID_REQUIRE_VERIFICATION: "card" });
+  const { local, net, ok, agent } = await setup(t, { AGENT_ID_ALLOW_TEST: "false", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "app", PRIVY_APP_SECRET: "secret", CHAINALYSIS_API_KEY: "ch_key", AGENT_ID_REQUIRE_VERIFICATION: "card", AGENT_ID_VERIFY_TO_SEND: "false" });
   const owner = await local.user();
   const bot = await agent(owner, "Payer");
   assert.equal((await ok("GET", "/v1/config", {})).testMode, false);

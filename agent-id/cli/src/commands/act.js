@@ -25,7 +25,8 @@ export async function me(ctx) {
     fields([
       ['Agent', `${agent.name} (${agent.handle})`], ['Id', agent.id], ['Status', agent.status], ['Runtime', agent.runtime],
       ['Git identity', agent.gitPrincipal],
-      ['Owner', `${owner.verified ? 'verified' : 'not verified'} (${owner.level})${owner.business ? `, ${owner.business}` : ''}`],
+      // Owners are checked the first time money leaves, not before.
+      ['Owner', `${owner.verified ? `verified (${owner.level})` : 'identity not checked yet (needed the first time money leaves)'}${owner.business ? `, ${owner.business}` : ''}`],
       ['Organization', organization ? `${organization.name || organization.id}${organization.verified ? ' (verified business)' : ''}` : null],
     ]),
     ...Object.values(agent.resources || {}).map(r => `  ${describeResource(r)}`),

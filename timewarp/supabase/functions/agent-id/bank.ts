@@ -10,7 +10,7 @@ import { audit, personOf, rateLimit, resourceFor } from './shared.ts';
 import { withdraw } from './agent.ts';
 import { liveBalance } from './providers/wallet.ts';
 import {
-  addExternalAccount, cancelPayout, createKycLink, createPayout, createVirtualAccount, customerEndorsements, kycLink,
+  addExternalAccount, cancelPayout, createKycLink, createPayout, createVirtualAccount, customerDetails, kycLink,
   type NewAccount, payoutState, removeExternalAccount,
 } from './providers/bridge.ts';
 
@@ -44,17 +44,69 @@ async function refreshed(ctx: Ctx, row: any, { force = false } = {}) {
   try {
     const link = await kycLink(ctx, row.kyc_link_ref);
     const customer = link.customerId || row.customer_ref;
-    const endorsements = customer && link.kycStatus === 'approved' ? await customerEndorsements(ctx, customer) : row.endorsements;
+    const details = customer && link.kycStatus === 'approved' ? await customerDetails(ctx, customer) : null;
     const next = {
       customer_ref: customer, kyc_status: link.kycStatus, tos_status: link.tosStatus, kyc_link: link.kycLink, tos_link: link.tosLink,
-      rejection: link.rejection, endorsements: endorsements || {}, updated_at: iso(ctx),
+      rejection: link.rejection, endorsements: details?.endorsements || row.endorsements || {}, updated_at: iso(ctx),
     };
     await ctx.admin.from('agent_id_bank_customers').update(next).eq('user_id', row.user_id);
-    return { ...row, ...next };
+    const updated = { ...row, ...next };
+    await syncPerson(ctx, updated, details);
+    return updated;
   } catch (error) {
     console.error('[agent-id] bank status', (error as Error).message);
     return row;
   }
+}
+
+// Bridge's check is the person's identity check on Agent ID too, so they
+// verify once. A person already verified another way keeps that.
+async function syncPerson(ctx: Ctx, row: any, details: { name: string | null; country: string | null } | null) {
+  if (ctx.config.kycProvider !== 'bridge') return;
+  const person = await personOf(ctx, row.user_id);
+  if (person?.status === 'verified' && person.provider !== 'bridge') return;
+  const status = statusOf(row);
+  const fields = status === 'approved'
+    ? { status: 'verified', legal_name: details?.name || person?.legal_name || null, country: details?.country || person?.country || null, verified_at: person?.verified_at || iso(ctx), last_error: null }
+    : status === 'rejected' ? { status: 'rejected', last_error: (row.rejection || 'Bridge couldn\'t verify you.').slice(0, 300) }
+    : { status: 'pending', last_error: null };
+  if (person?.status === fields.status && person?.provider === 'bridge' && (fields.status !== 'verified' || person.legal_name)) return;
+  checked(await ctx.admin.from('agent_id_people').upsert({ user_id: row.user_id, provider: 'bridge', provider_ref: row.customer_ref || row.kyc_link_ref, ...fields, updated_at: iso(ctx) }, { onConflict: 'user_id' }).select('user_id'));
+  if (fields.status !== 'pending') await audit(ctx, row.user_id, null, 'provider', `verification.person.${fields.status}`, { provider: 'bridge' });
+}
+
+// Starts Bridge's identity check (its terms, then an ID and a selfie on its
+// page), or picks up the one already started. Returns where to finish it.
+export async function startBridgeCheck(ctx: Ctx, owner: Owner, { returnTo = '/agent-id/verify?done=1' } = {}) {
+  if (owner.via !== 'session') throw fail(403, 'session_required', 'Verify on the Agent ID website.');
+  needBank(ctx);
+  let row = await customerRow(ctx, owner.userId);
+  if (!row?.kyc_link_ref) {
+    const person = await personOf(ctx, owner.userId);
+    const email = owner.email || (await ctx.admin.auth.admin.getUserById(owner.userId)).data?.user?.email;
+    if (!email) throw fail(409, 'email_required', 'Your account needs an email address to verify.');
+    const link = await createKycLink(ctx, {
+      userId: owner.userId, fullName: String(person?.legal_name || '').trim() || null, email, type: 'individual',
+      redirectUri: `${ctx.config.siteUrl}${returnTo}`, endorsements: ctx.config.bank.currencies.map(currency => ENDORSEMENT[currency]),
+    });
+    checked(await ctx.admin.from('agent_id_bank_customers').upsert({
+      user_id: owner.userId, type: 'individual', kyc_link_ref: link.id, customer_ref: link.customerId, kyc_link: link.kycLink, tos_link: link.tosLink,
+      kyc_status: link.kycStatus, tos_status: link.tosStatus, rejection: link.rejection, updated_at: iso(ctx),
+    }, { onConflict: 'user_id' }));
+    await audit(ctx, owner.userId, null, 'owner', 'verification.person.start', { provider: 'bridge' });
+    row = await customerRow(ctx, owner.userId);
+    await syncPerson(ctx, row, null);
+  }
+  if (statusOf(row) === 'rejected') throw fail(409, 'verification_rejected', 'Bridge couldn\'t verify you. Contact support if you think this is wrong.');
+  return { row, link: linkOf(row) };
+}
+const linkOf = (row: any) => statusOf(row) === 'pending' ? (row.tos_status !== 'approved' && row.kyc_status === 'approved' ? row.tos_link : row.kyc_link || row.tos_link) || null : null;
+
+// The person's Bridge check, looked at again (from the account page).
+export async function refreshBridgeCheck(ctx: Ctx, userId: string) {
+  if (ctx.config.kycProvider !== 'bridge') return;
+  const row = await customerRow(ctx, userId);
+  if (row) await refreshed(ctx, row);
 }
 
 const accountView = (row: any) => ({
@@ -74,10 +126,11 @@ export async function bankStatus(ctx: Ctx, owner: Owner) {
   // Euros first for people who live where they're paid in euros.
   const currencies = status === 'approved' ? currenciesOf(ctx, row) : [];
   if (SEPA[(await personOf(ctx, owner.userId))?.country || '']) currencies.sort((a, b) => Number(b === 'eur') - Number(a === 'eur'));
+  const link = linkOf(row);
   return {
     available: true, status,
     // Bridge's page: its terms, then its identity check.
-    ...(status === 'pending' && (row.kyc_link || row.tos_link) ? { link: row.tos_status !== 'approved' && row.kyc_status === 'approved' ? row.tos_link : row.kyc_link || row.tos_link } : {}),
+    ...(link ? { link } : {}),
     ...(status === 'rejected' && row.rejection ? { rejection: row.rejection } : {}),
     currencies,
     accounts: status === 'approved' ? (await accountsOf(ctx, owner.userId)).map(accountView) : [],
@@ -94,26 +147,9 @@ async function approvedCustomer(ctx: Ctx, owner: Owner) {
   return row;
 }
 
+// From the wallet: the same single check, back on the dashboard after.
 export async function startBankVerification(ctx: Ctx, owner: Owner) {
-  if (owner.via !== 'session') throw fail(403, 'session_required', 'Verify with Bridge on the Agent ID website.');
-  needBank(ctx);
-  const row = await customerRow(ctx, owner.userId);
-  if (row?.kyc_link_ref) {
-    if (statusOf(row) === 'rejected') throw fail(409, 'bank_rejected', 'Bridge couldn\'t verify you, so bank transfers aren\'t available.');
-    return bankStatus(ctx, owner);
-  }
-  // Bridge checks the same person Agent ID verified.
-  const person = await personOf(ctx, owner.userId);
-  const fullName = person?.status === 'verified' ? String(person.legal_name || '').trim() : '';
-  if (!fullName) throw fail(409, 'verification_required', 'Verify your identity on Agent ID first, then continue with Bridge.');
-  const email = owner.email || (await ctx.admin.auth.admin.getUserById(owner.userId)).data?.user?.email;
-  if (!email) throw fail(409, 'email_required', 'Your account needs an email address for Bridge.');
-  const link = await createKycLink(ctx, { userId: owner.userId, fullName, email, type: 'individual', redirectUri: `${ctx.config.siteUrl}/agent-id/dashboard`, endorsements: ctx.config.bank.currencies.map(currency => ENDORSEMENT[currency]) });
-  checked(await ctx.admin.from('agent_id_bank_customers').upsert({
-    user_id: owner.userId, type: 'individual', kyc_link_ref: link.id, customer_ref: link.customerId, kyc_link: link.kycLink, tos_link: link.tosLink,
-    kyc_status: link.kycStatus, tos_status: link.tosStatus, rejection: link.rejection, updated_at: iso(ctx),
-  }, { onConflict: 'user_id' }));
-  await audit(ctx, owner.userId, null, 'owner', 'bank.verification_started', { provider: 'bridge' });
+  await startBridgeCheck(ctx, owner, { returnTo: '/agent-id/dashboard' });
   return bankStatus(ctx, owner);
 }
 
