@@ -41,6 +41,18 @@
       "port": 8093
     },
     {
+      "name": "agent-id-site-live",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/website.cjs",
+        "dev",
+        "--port",
+        "8095",
+        "--strictPort"
+      ],
+      "port": 8095
+    },
+    {
       "name": "agent-id-site-teammate",
       "runtimeExecutable": "node",
       "runtimeArgs": [

@@ -40,6 +40,8 @@
   --aid-bubble-in: #ececf0;
   /* The page behind the cards. */
   --aid-canvas: #f6f6f9;
+  /* The soft light behind the home page's ID card. */
+  --aid-glow: rgb(233 210 255 / 0.55);
 
   /* Tailwind's theme variables resolve where they are declared (:root), so
      they are re-pointed here to pick up the tokens above. */
@@ -83,6 +85,7 @@
   .agent-id:not([data-theme="light"]) {
     --background: #171b23;
     --aid-canvas: #171b23;
+    --aid-glow: rgb(233 210 255 / 0.07);
     --foreground: #f3f5fa;
     --card: #1c212a;
     --card-foreground: #f3f5fa;
@@ -116,6 +119,7 @@
 .agent-id[data-theme="dark"] {
   --background: #171b23;
     --aid-canvas: #171b23;
+    --aid-glow: rgb(233 210 255 / 0.07);
   --foreground: #f3f5fa;
   --card: #1c212a;
   --card-foreground: #f3f5fa;
