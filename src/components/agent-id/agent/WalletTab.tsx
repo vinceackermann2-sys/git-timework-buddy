@@ -55,6 +55,7 @@ import {
 } from "../ui";
 import { BlockedNotice, LoadMore, NoResource, blockedReason } from "./common";
 import { AddMoney, AmountField, Withdraw } from "./WalletMoney";
+import { bankPayoutLabel } from "./BankMoney";
 import { PendingApprovals } from "../ApprovalList";
 import { LimitsEditor } from "./LimitsEditor";
 
@@ -293,6 +294,7 @@ function TransactionRow({ event, onOpen }: { event: AgentEvent; onOpen: () => vo
 function TransactionDetail({ event, network }: { event: AgentEvent; network: string | undefined }) {
   const explorer = typeof event.data["explorer"] === "string" ? event.data["explorer"] : null;
   const asset = typeof event.data["asset"] === "string" ? event.data["asset"] : null;
+  const bank = bankPayoutLabel(event.data["bank"]);
   const name = counterpartyLabel(event.counterparty);
   return (
     <div className="flex flex-col items-center text-center">
@@ -311,6 +313,7 @@ function TransactionDetail({ event, network }: { event: AgentEvent; network: str
       </p>
       <dl className="mt-6 w-full divide-y divide-[var(--border)] overflow-hidden rounded-xl border border-[var(--border)] text-left text-sm">
         <Row term="Status" value={eventStatusLabel(event.status)} />
+        {bank && <Row term="Bank" value={bank} />}
         <Row term="Date" value={formatDateTime(event.at)} />
         {event.subject && <Row term="Note" value={event.subject} />}
         <Row

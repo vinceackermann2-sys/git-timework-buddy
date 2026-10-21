@@ -4,6 +4,10 @@
 import type {
   Account,
   AddMoneyInfo,
+  BankAccount,
+  BankCurrency,
+  BankDeposit,
+  BankStatus,
   CardOnrampSession,
   AdminSetup,
   AdminStatus,
@@ -48,6 +52,7 @@ import type {
   TransferResult,
   VmListing,
   WalletSummary,
+  NewBankAccount,
   WithdrawResult,
 } from "./types";
 
@@ -336,11 +341,27 @@ export function createAgentIdClient(options: ClientOptions) {
       request<CardOnrampSession>(`/v1/agents/${id(agentId)}/wallet/add-money`, {
         body: amount ? { amount } : {},
       }),
-    // The owner taking money out of a live wallet, to their own address on Base.
+    // The owner taking money out of a live wallet: to their own address on
+    // Base, or to one of their bank accounts.
     withdraw: (
       agentId: string,
-      input: { to: string; value: string; asset?: "usdc" | "usdt"; remember?: boolean },
+      input:
+        | { to: string; value: string; asset?: "usdc" | "usdt"; remember?: boolean }
+        | { bankAccount: string; value: string },
     ) => request<WithdrawResult>(`/v1/agents/${id(agentId)}/wallet/withdraw`, { body: input }),
+    // This wallet's own bank details for deposits in a currency.
+    bankDeposit: (agentId: string, currency: BankCurrency) =>
+      request<{ deposit: BankDeposit }>(`/v1/agents/${id(agentId)}/wallet/bank-deposit`, {
+        body: { currency },
+      }),
+    bank: () => request<BankStatus>("/v1/account/bank"),
+    startBankVerification: () => request<BankStatus>("/v1/account/bank/verify", { body: {} }),
+    addBankAccount: (input: NewBankAccount) =>
+      request<{ account: BankAccount }>("/v1/account/bank/accounts", { body: input }),
+    removeBankAccount: (accountId: string) =>
+      request<{ removed: boolean }>(`/v1/account/bank/accounts/${id(accountId)}`, {
+        method: "DELETE",
+      }),
     addTestFunds: (agentId: string, amount: number) =>
       request<{ balance: Money }>(`/v1/agents/${id(agentId)}/wallet/test-funds`, {
         body: { amount },

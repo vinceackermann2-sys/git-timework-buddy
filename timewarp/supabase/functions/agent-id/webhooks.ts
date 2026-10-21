@@ -1,6 +1,7 @@
 // Providers calling back: mail arriving (Resend), texts, calls and voicemail
-// (Twilio), identity checks and card payments (Stripe). Each is
-// authenticated the provider's way before anything is read from it.
+// (Twilio, Telnyx), identity checks and card payments (Stripe), bank
+// verification and payouts (Bridge). Each is authenticated the provider's way
+// before anything is read from it.
 import { checked, fail, fromBase64, hmac, json, sameText, text, toBase64 } from './util.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
 import { audit, setting } from './shared.ts';
@@ -9,7 +10,9 @@ import { MAX_ATTACHMENTS, MAX_FILE, saveFile, shareFiles } from './files.ts';
 import { checkWebhookToken, voicemailTwiml } from './providers/phone.ts';
 import { telnyxSigned } from './providers/telnyx.ts';
 import { verifyStripeSignature } from './providers/stripe.ts';
+import { bridgeSigned } from './providers/bridge.ts';
 import { identityEvent } from './verification.ts';
+import { refreshCustomer, setPayoutState } from './bank.ts';
 
 const MAX = 1024 * 1024;
 async function rawBody(req: Request) {
@@ -230,9 +233,25 @@ async function stripeEvent(ctx: Ctx, req: Request) {
   return json({ ok: true, ignored: true });
 }
 
+// --- Bridge (RSA signatures): verification, and bank payouts --------------------------
+async function bridgeEvent(ctx: Ctx, req: Request) {
+  const body = await rawBody(req);
+  const key = ctx.config.env('BRIDGE_WEBHOOK_PUBLIC_KEY') || (await setting(ctx, 'bridge.webhook'))?.publicKey || '';
+  if (!(await bridgeSigned(key, req.headers.get('x-webhook-signature') || '', body, ctx.now()))) return json({ error: 'Invalid signature.' }, 400);
+  const event = JSON.parse(body), object = event?.event_object || {};
+  const id = String(object.id || event?.event_object_id || '').slice(0, 100);
+  if (!id) return json({ ok: true, ignored: true });
+  if (event.event_category === 'transfer') await setPayoutState(ctx, id, String(object.state || event.event_object_status || '').slice(0, 40));
+  else if (event.event_category === 'kyc_link') await refreshCustomer(ctx, { kycLink: id });
+  else if (event.event_category === 'customer') await refreshCustomer(ctx, { customer: id });
+  else return json({ ok: true, ignored: true });
+  return json({ ok: true });
+}
+
 export async function handleWebhook(ctx: Ctx, req: Request, path: string) {
   const parts = path.split('/').filter(Boolean); // webhooks, provider, …
   if (parts[1] === 'resend' && parts.length === 2) return resend(ctx, req);
+  if (parts[1] === 'bridge' && parts.length === 2) return bridgeEvent(ctx, req);
   if (parts[1] === 'stripe' && parts.length === 2) return stripeEvent(ctx, req);
   if (parts[1] === 'twilio' && parts.length === 5) return twilio(ctx, req, parts[2], parts[3], parts[4]);
   if (parts[1] === 'telnyx' && parts.length === 3) return telnyx(ctx, req, parts[2]);

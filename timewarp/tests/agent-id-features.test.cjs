@@ -171,14 +171,14 @@ test("operators register Stripe and Resend webhooks in one step", async t => {
   net.on("POST", /api\.stripe\.com\/v1\/webhook_endpoints$/, () => ({ id: "we_1", secret: "whsec_stripe_auto" }));
   net.on("POST", /api\.resend\.com\/webhooks$/, () => ({ object: "webhook", id: "wh_1", signing_secret: "whsec_" + Buffer.from("resend-secret-bytes").toString("base64") }));
   const setup1 = await ok("POST", "/v1/admin/setup", { token: operator.session });
-  assert.deepEqual(setup1.setup, { stripe: "registered", resend: "registered" });
+  assert.deepEqual(setup1.setup, { stripe: "registered", resend: "registered", bridge: "not_needed" });
   const stripeForm = new URLSearchParams(net.find("POST", /webhook_endpoints$/)[0].body);
   assert.equal(stripeForm.get("url"), "http://127.0.0.1:54329/agent-id/webhooks/stripe");
   assert.deepEqual(stripeForm.getAll("enabled_events[]"), ["identity.verification_session.verified", "identity.verification_session.requires_input", "identity.verification_session.canceled"]);
   assert.deepEqual(JSON.parse(net.find("POST", /resend\.com\/webhooks$/)[0].body).events.includes("email.received"), true);
   // Running it again keeps what works.
   net.on("GET", /webhook_endpoints\/we_1$/, () => ({ id: "we_1", status: "enabled", enabled_events: ["identity.verification_session.verified", "identity.verification_session.requires_input", "identity.verification_session.canceled"] }));
-  assert.deepEqual((await ok("POST", "/v1/admin/setup", { token: operator.session })).setup, { stripe: "kept", resend: "kept" });
+  assert.deepEqual((await ok("POST", "/v1/admin/setup", { token: operator.session })).setup, { stripe: "kept", resend: "kept", bridge: "not_needed" });
   // The stored secret now checks Stripe's events.
   const body = JSON.stringify({ type: "identity.verification_session.canceled", data: { object: { id: "vs_x", metadata: { agent_id_user: someone.id } } } });
   const timestamp = Math.floor(Date.now() / 1000);

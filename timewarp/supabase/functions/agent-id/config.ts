@@ -81,9 +81,19 @@ export function loadConfig(env: Env) {
     autoGivePaid: get('AGENT_ID_AUTO_GIVE_PAID') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE_PAID') || 'phone,vm'),
     // Registering its own webhooks on first use (admin.ts); tests turn it off.
     autoSetup: get('AGENT_ID_AUTO_SETUP') !== 'false',
+    // Bank transfers in and out of live wallets through Bridge, once its key
+    // is set; AGENT_ID_BANK=off hides them.
+    // Euros (SEPA) need Bridge to open them for the account; AGENT_ID_BANK_CURRENCIES=usd until then.
+    bank: {
+      provider: 'bridge', configured: !!get('BRIDGE_API_KEY'), on: get('AGENT_ID_BANK') !== 'off',
+      currencies: (['usd', 'eur'] as const).filter(currency => list(get('AGENT_ID_BANK_CURRENCIES') || 'usd,eur').includes(currency)),
+    },
   };
 }
 export type Config = ReturnType<typeof loadConfig>;
+
+// Bank transfers need Bridge and live wallets on Base mainnet.
+export const bankAvailable = (config: Config) => config.bank.on && config.bank.configured && config.isLive('wallet') && config.walletChain === 'base';
 
 // What the dashboard, CLI and agents are told about this deployment.
 export function publicConfig(config: Config) {
@@ -106,5 +116,6 @@ export function publicConfig(config: Config) {
     testMode: config.testMode,
     legal: { termsVersion: config.termsVersion, termsUrl: `${config.siteUrl}/legal/agent-id-terms`, privacyUrl: `${config.siteUrl}/legal/privacy-policy` },
     passports: { available: !!config.signingKey, lifetimeSeconds: config.passportSeconds },
+    bank: { available: bankAvailable(config) },
   };
 }

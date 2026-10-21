@@ -128,6 +128,36 @@ describe("Agent ID client", () => {
     expect(JSON.parse(String(calls[3]?.init.body))).toEqual({ decision: "reject", note: "Blurry" });
   });
 
+  it("calls the bank routes: verify, accounts, deposit details, withdraw to a bank", async () => {
+    const { fn, calls } = fakeFetch(() => json({ ok: true }));
+    const client = createAgentIdClient({
+      baseUrl: "http://api",
+      getToken: async () => "tok",
+      fetch: fn,
+    });
+    await client.bank();
+    await client.startBankVerification();
+    await client.addBankAccount({
+      kind: "iban",
+      ownerName: "Ada Lovelace",
+      iban: "SE4550000000058398257466",
+      address: { line1: "Drottninggatan 1", city: "Stockholm", postalCode: "111 51" },
+    });
+    await client.removeBankAccount("bnk_1");
+    await client.bankDeposit("agt_1", "eur");
+    await client.withdraw("agt_1", { bankAccount: "bnk_1", value: "60" });
+    expect(calls.map((c) => `${c.init.method ?? "GET"} ${c.url}`)).toEqual([
+      "GET http://api/v1/account/bank",
+      "POST http://api/v1/account/bank/verify",
+      "POST http://api/v1/account/bank/accounts",
+      "DELETE http://api/v1/account/bank/accounts/bnk_1",
+      "POST http://api/v1/agents/agt_1/wallet/bank-deposit",
+      "POST http://api/v1/agents/agt_1/wallet/withdraw",
+    ]);
+    expect(JSON.parse(String(calls[4]?.init.body))).toEqual({ currency: "eur" });
+    expect(JSON.parse(String(calls[5]?.init.body))).toEqual({ bankAccount: "bnk_1", value: "60" });
+  });
+
   it("turns API errors into AgentIdError with the server's message", async () => {
     const { fn } = fakeFetch(() =>
       json(

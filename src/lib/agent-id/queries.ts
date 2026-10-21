@@ -22,6 +22,7 @@ export const queryKeys = {
   ownerKeys: ["agent-id", "owner-keys"] as const,
   relyingParties: ["agent-id", "relying-parties"] as const,
   reviews: ["agent-id", "reviews"] as const,
+  bank: ["agent-id", "bank"] as const,
 };
 
 // Client errors (4xx) won't change on a retry; network and server errors might.
@@ -165,6 +166,16 @@ export const usePhoneApplication = (agentId: string, enabled = true) =>
 
 // Phone numbers are an application while the deployment hasn't opened them.
 export const usePhonesWaitlist = () => useAccount().data?.config.resources.phone?.waitlist === true;
+
+// Bank transfers (Bridge): while Bridge checks the owner, look again every few seconds.
+export const useBank = (enabled = true) =>
+  useQuery({
+    ...base,
+    enabled,
+    queryKey: queryKeys.bank,
+    queryFn: () => api.bank(),
+    refetchInterval: (query) => (query.state.data?.status === "pending" ? 5000 : false),
+  });
 
 export const useMailCounts = (agentId: string, enabled: boolean) =>
   useQuery({

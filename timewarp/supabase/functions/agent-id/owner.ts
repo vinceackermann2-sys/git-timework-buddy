@@ -4,7 +4,7 @@
 // responsible, and register companies that accept only verified agents.
 import { agentId, cents, checked, fail, handleFor, int, newSecret, relyingPartyId, sha256Hex, str } from './util.ts';
 import { autoGive, giveResource, kindsFor, settingsFor } from './provisioning.ts';
-import { KINDS, type Kind, publicConfig } from './config.ts';
+import { bankAvailable, KINDS, type Kind, publicConfig } from './config.ts';
 import type { AgentCaller, Owner, Route } from './app.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
 import { agentView, audit, listEvents, membership, personOf, planOf, rateLimit, resourcesOf, resourceView, verificationOf } from './shared.ts';
@@ -17,6 +17,7 @@ import { releaseMachine } from './providers/vm.ts';
 import { appsOf, originInput } from './origin.ts';
 import { stripe } from './providers/stripe.ts';
 import { adminRoutes } from './admin.ts';
+import { addBankAccount, bankDeposit, bankStatus, refreshPayouts, removeBankAccount, startBankVerification, withdrawToBank } from './bank.ts';
 
 type Handler = Route<Owner>[2];
 const iso = (ctx: Ctx) => new Date(ctx.now()).toISOString();
@@ -260,9 +261,10 @@ const testFunds: Handler = async (ctx, owner, input, params) => {
 
 // --- Wallet: adding and taking out money ---------------------------------------
 // Adding money: the wallet's address for a transfer from an exchange or another
-// wallet (USDC or USDT on Base), and, where Stripe's crypto onramp is switched
-// on, buying USDC by card straight into it.
-const cardOnramp = (ctx: Ctx) => !!ctx.config.env('STRIPE_PUBLISHABLE_KEY') && !['', 'false', '0', 'off'].includes(ctx.config.env('STRIPE_CRYPTO_ONRAMP_ENABLED').toLowerCase());
+// wallet (USDC or USDT on Base), a bank transfer (bank.ts), and, where Stripe
+// has approved its crypto onramp for this account, buying USDC by card
+// straight into it: embedded with the publishable key, else on Stripe's page.
+const cardOnramp = (ctx: Ctx) => /^(sk|rk)_(live|test)_/.test(ctx.config.env('STRIPE_SECRET_KEY')) && !['', 'false', '0', 'off'].includes(ctx.config.env('STRIPE_CRYPTO_ONRAMP_ENABLED').toLowerCase());
 const addMoneyInfo: Handler = async (ctx, owner, _input, params) => {
   const { resource } = await ownedResource(ctx, owner, params.id, 'wallet');
   const live = resource.mode === 'live';
@@ -272,6 +274,7 @@ const addMoneyInfo: Handler = async (ctx, owner, _input, params) => {
     network: live ? { id: chain, name: chain === 'base_sepolia' ? 'Base Sepolia (testnet)' : 'Base' } : null,
     assets: live ? ['USDC', 'USDT'] : [],
     card: { available: live && chain === 'base' && cardOnramp(ctx) },
+    bank: { available: live && chain === 'base' && bankAvailable(ctx.config) },
     test: !live,
   };
 };
@@ -287,14 +290,23 @@ const addMoneyByCard: Handler = async (ctx, owner, input, params, req) => {
     ...(amount ? { source_currency: 'usd', source_amount: (amount / 100).toFixed(2) } : {}),
     ...(ip ? { customer_ip_address: ip } : {}),
     metadata: { agent_id: agent.id },
+  }).catch(error => {
+    // Stripe sells USDC on Base to buyers in the US only (not the EU, not Hawaii).
+    if (String((error as any)?.code || '').startsWith('crypto_onramp_')) throw fail(409, 'card_unavailable_here', 'Buying USDC on Base by card isn\'t available where you are. Use a bank transfer or send crypto instead.');
+    throw error;
   });
   await audit(ctx, owner.userId, agent.id, 'owner', 'wallet.add_money_card', { amount });
-  return { clientSecret: String(session.client_secret), publishableKey: ctx.config.env('STRIPE_PUBLISHABLE_KEY'), ...(session.redirect_url ? { url: String(session.redirect_url) } : {}) };
+  const publishableKey = ctx.config.env('STRIPE_PUBLISHABLE_KEY');
+  return { clientSecret: String(session.client_secret), ...(publishableKey ? { publishableKey } : {}), ...(session.redirect_url ? { url: String(session.redirect_url) } : {}) };
 };
 const withdrawMoney: Handler = async (ctx, owner, input, params) => {
   // Money leaves only from a signed-in session: a leaked CLI key can't empty a wallet.
   if (owner.via !== 'session') throw fail(403, 'session_required', 'Withdraw on the Agent ID website.');
   const agent = activeAgent(await ownedAgent(ctx, owner, params.id));
+  if (input.bankAccount !== undefined) {
+    await rateLimit(ctx, owner.userId, `withdraw:${agent.id}`, 5, 50, 'withdrawals');
+    return withdrawToBank(ctx, owner, agent, { bankAccount: str(input.bankAccount, 40, 'bankAccount', { required: true }), amount: cents(input), memo: str(input.memo, 300, 'memo') || undefined });
+  }
   const to = str(input.to, 100, 'to', { required: true });
   const asset = input.asset ? str(input.asset, 10, 'asset').toLowerCase() : undefined;
   if (asset && asset !== 'usdc' && asset !== 'usdt') throw fail(400, 'invalid', 'asset is usdc or usdt.');
@@ -312,6 +324,8 @@ const agentEvents: Handler = async (ctx, owner, input, params) => {
   const agent = await ownedAgent(ctx, owner, params.id);
   const kinds = input.kind ? String(input.kind).split(',').filter(kind => EVENT_KINDS.includes(kind)) : EVENT_KINDS;
   if (!kinds.length) throw fail(400, 'invalid', `kind is one of ${EVENT_KINDS.join(', ')}.`);
+  // Bank payouts take a day or two: look how they're doing.
+  if (kinds.includes('wallet')) await refreshPayouts(ctx, agent.id).catch(error => console.error('[agent-id] payouts', (error as Error).message));
   return listEvents(ctx, agent.id, kinds, input);
 };
 const agentContacts: Handler = async (ctx, owner, _input, params) => {
@@ -484,6 +498,11 @@ export const ownerRoutes: Route<Owner>[] = [
   ['POST', '/v1/agents/:id/wallet/test-funds', testFunds],
   ['GET', '/v1/agents/:id/wallet/add-money', addMoneyInfo], ['POST', '/v1/agents/:id/wallet/add-money', addMoneyByCard],
   ['POST', '/v1/agents/:id/wallet/withdraw', withdrawMoney],
+  ['POST', '/v1/agents/:id/wallet/bank-deposit', async (ctx, owner, input, params) => bankDeposit(ctx, owner, activeAgent(await ownedAgent(ctx, owner, params.id)), input)],
+  ['GET', '/v1/account/bank', (ctx, owner) => bankStatus(ctx, owner)],
+  ['POST', '/v1/account/bank/verify', (ctx, owner) => startBankVerification(ctx, owner)],
+  ['POST', '/v1/account/bank/accounts', (ctx, owner, input) => addBankAccount(ctx, owner, input)],
+  ['DELETE', '/v1/account/bank/accounts/:accountId', (ctx, owner, _input, params) => removeBankAccount(ctx, owner, params.accountId)],
   ['POST', '/v1/account/verification/document', (ctx, owner, input, _params, req) => uploadBusinessDocument(ctx, owner, req, String(input.organization || new URL(req.url).searchParams.get('organization') || ''))],
   ['GET', '/v1/agents/:id/events', agentEvents], ['GET', '/v1/agents/:id/contacts', agentContacts],
   ['GET', '/v1/agents/:id/card-application', cardApplication], ['POST', '/v1/agents/:id/card-application', applyForCard],

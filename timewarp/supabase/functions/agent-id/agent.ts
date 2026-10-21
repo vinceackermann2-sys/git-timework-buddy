@@ -415,9 +415,11 @@ export async function transfer(ctx: Ctx, who: AgentCaller, input: { to: string; 
 }
 
 // The owner taking money out of their agent's live wallet: to their own wallet
-// or an exchange (USDC or USDT on Base). Screened like any transfer, but not
-// held to the limits the owner set for the agent.
-export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; amount: number; asset?: string; memo?: string }) {
+// or an exchange (USDC or USDT on Base), or to their bank (bank.ts: `to` is
+// then Bridge's deposit address, shown as `label`, with the payout in `data`).
+// Screened like any transfer, but not held to the limits the owner set for
+// the agent.
+export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; amount: number; asset?: string; memo?: string; label?: string; data?: Record<string, unknown> }) {
   const from = await resourceFor(ctx, agent.id, 'wallet');
   if (!EVM_ADDRESS.test(input.to)) throw fail(400, 'invalid', 'Withdraw to an address that starts with 0x, on Base.');
   if (from.mode === 'test') {
@@ -436,11 +438,12 @@ export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; a
   const asset = await payingAsset(ctx, from, input.amount, input.asset);
   const result = checked(await ctx.admin.rpc('agent_id_wallet_withdraw', { p_agent: agent.id, p_amount: input.amount, p_to: input.to, p_memo: input.memo || 'Withdrawal' })) as any;
   if (result?.status !== 'ok') throw fail(result?.status === 'no_wallet' ? 404 : 409, result?.status || 'withdraw_failed', 'The withdrawal could not be started.');
+  if (input.label) await ctx.admin.from('agent_id_events').update({ counterparty: input.label.slice(0, 300), data: { withdrawal: true, ...input.data } }).eq('id', result.event);
   let actionId: string | null = null, outcome = 'pending';
   try {
     const sent = await sendStablecoin(ctx, from, input.to, input.amount, asset, `agent-id-withdraw-${result.event}`);
     actionId = sent.actionId;
-    await ctx.admin.from('agent_id_events').update({ data: { withdrawal: true, action: actionId, asset: asset.toUpperCase() } }).eq('id', result.event);
+    await ctx.admin.from('agent_id_events').update({ data: { withdrawal: true, ...input.data, action: actionId, asset: asset.toUpperCase() } }).eq('id', result.event);
     let action = { status: sent.status === 'created' ? 'pending' : sent.status, hash: null as string | null, reason: null as string | null };
     for (let i = 0; i < 6 && action.status === 'pending'; i++) {
       await ctx.sleep(1500);
@@ -455,7 +458,7 @@ export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; a
     if (!actionId) await ctx.admin.rpc('agent_id_finish_transfer', { p_event: result.event, p_ok: false, p_provider_ref: null, p_data: { error: (error as Error).message } });
     throw error;
   }
-  await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.withdraw', { amount: input.amount, to: input.to, asset });
+  await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.withdraw', { amount: input.amount, to: input.label || input.to, asset });
   return { status: outcome, transfer: await eventById(ctx, result.event) };
 }
 

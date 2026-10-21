@@ -73,6 +73,12 @@ grant usage on schema public, auth to anon, authenticated, service_role;
 `;
 
 const quote = name => { if (!/^[a-z_][a-z0-9_]*$/.test(name)) throw new Error("Bad identifier " + name); return `"${name}"`; };
+// A filter column, with PostgREST's JSON paths: data->bank->>transfer.
+const columnSql = name => {
+  const match = /^([a-z_][a-z0-9_]*)((?:->[a-z_][a-z0-9_]*)*)(->>[a-z_][a-z0-9_]*)?$/.exec(name);
+  if (!match) throw new Error("Bad column " + name);
+  return quote(match[1]) + match[2].split("->").filter(Boolean).map(key => `->'${key}'`).join("") + (match[3] ? `->>'${match[3].slice(3)}'` : "");
+};
 const plain = value => value instanceof Date ? value.toISOString() : typeof value === "bigint" ? Number(value) : value;
 const row = record => Object.fromEntries(Object.entries(record).map(([key, value]) => [key, plain(value)]));
 const param = value => value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) ? JSON.stringify(value) : value;
@@ -90,6 +96,7 @@ class Query {
   gt(c, v) { return this.filter(c, ">", v); } gte(c, v) { return this.filter(c, ">=", v); }
   lt(c, v) { return this.filter(c, "<", v); } lte(c, v) { return this.filter(c, "<=", v); }
   is(c, v) { return this.filter(c, v === null ? "is null" : "is", v); }
+  not(c, op, v) { if (op !== "is" || v !== null) throw new Error("Unsupported not() " + op); return this.filter(c, "is not null", null); }
   in(c, v) { return this.filter(c, "in", v); }
   ilike(c, v) { return this.filter(c, "ilike", v); }
   // PostgREST's or(): "column.operator.value,…" with eq and ilike.
@@ -102,8 +109,8 @@ class Query {
   where(values) {
     if (!this.filters.length) return "";
     return " where " + this.filters.map(([column, operator, value]) => {
-      if (operator === "is null") return `${quote(column)} is null`;
-      if (operator === "in") { values.push(value); return `${quote(column)} = any($${values.length})`; }
+      if (operator === "is null" || operator === "is not null") return `${columnSql(column)} ${operator}`;
+      if (operator === "in") { values.push(value); return `${columnSql(column)} = any($${values.length})`; }
       if (operator === "or") return "(" + value.split(",").map(part => {
         const [col, op, ...rest] = part.split(".");
         if (!["eq", "ilike"].includes(op)) throw new Error("Unsupported or() operator " + op);
@@ -111,7 +118,7 @@ class Query {
         return `${quote(col)} ${op === "eq" ? "=" : "ilike"} $${values.length}`;
       }).join(" or ") + ")";
       values.push(param(value));
-      return `${quote(column)} ${operator} $${values.length}`;
+      return `${columnSql(column)} ${operator} $${values.length}`;
     }).join(" and ");
   }
   columnsSql(columns) { return columns === "*" ? "*" : columns.split(",").map(c => quote(c.trim())).join(","); }

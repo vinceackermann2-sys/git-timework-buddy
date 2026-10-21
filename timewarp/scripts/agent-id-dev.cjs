@@ -1,6 +1,8 @@
 "use strict";
 // A local Agent ID API for building the dashboard and the CLI without the
-// cloud: the real service on embedded Postgres, test resources only.
+// cloud: the real service on embedded Postgres, test resources, and live
+// wallets and bank transfers against simulated Privy and Bridge
+// (agent-id-dev-money.cjs).
 //
 //   node scripts/agent-id-dev.cjs [--port 54329]
 //
@@ -9,8 +11,10 @@
 // creating agents as usual. Data lives in memory until the process ends.
 const http = require("node:http");
 const { startLocal } = require("./agent-id-local.cjs");
+const { simulatedMoney } = require("./agent-id-dev-money.cjs");
 
 const port = Number(process.argv[process.argv.indexOf("--port") + 1]) || Number(process.env.AGENT_ID_DEV_PORT) || 54329;
+const money = simulatedMoney({ apiUrl: `http://127.0.0.1:${port}` });
 
 // --demo: agents from different apps with mail, texts, calls, contacts,
 // money and a machine, as an owner would see them after a few days.
@@ -53,13 +57,20 @@ async function demo(local, owner) {
   await call("POST", "/v1/me/wallet/transfers", research.key, { to: sales.handle, value: "18.00", memo: "Data set from Sales" });
   await call("POST", "/v1/me/wallet/transfers", research.key, { to: sales.handle, value: "75.00", memo: "Deposit for supplier samples" });
   await call("POST", `/v1/agents/${sales.id}/card-application`, owner.session, { useCase: "Buy sample orders and software subscriptions", monthlySpend: 30000, country: "SE" });
+  // A verified owner with a live wallet (simulated Privy) holding $250 in USDC,
+  // for adding money by bank and withdrawing to a bank (simulated Bridge).
+  await call("POST", "/v1/account/verification", owner.session, { kind: "person", consent: true, legalName: "Dev Person", country: "SE" });
+  const treasurer = await make("Treasurer", "claude-code", "project ~/finance", []);
+  await call("POST", `/v1/agents/${treasurer.id}/resources`, owner.session, { kind: "wallet", mode: "live" });
+  await local.settle();
+  money.fund((await address(treasurer)).wallet.address, 25000);
   const claim = await call("POST", "/v1/claims", null, { name: "Travel Planner", app: "claude-code", device: "MacBook Pro" });
   console.log("  Demo data: 4 agents (Research Assistant used in Claude Code, Codex and Cursor) with mail, texts, calls, contacts, money and an approval waiting.");
   console.log(`  A claim waiting for someone: ${claim.url}  (secret ${claim.secret})`);
 }
 
 (async () => {
-  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080", AGENT_ID_KYC: process.env.AGENT_ID_KYC || "test", AGENT_ID_AUTO_GIVE: process.env.AGENT_ID_AUTO_GIVE || "mail,wallet", AGENT_ID_AUTO_GIVE_PAID: process.env.AGENT_ID_AUTO_GIVE_PAID || "phone,vm", AGENT_ID_PHONES: process.env.AGENT_ID_PHONES || "waitlist" } });
+  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, fetch: money.fetch, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080", AGENT_ID_KYC: process.env.AGENT_ID_KYC || "test", AGENT_ID_AUTO_GIVE: process.env.AGENT_ID_AUTO_GIVE || "mail,wallet", AGENT_ID_AUTO_GIVE_PAID: process.env.AGENT_ID_AUTO_GIVE_PAID || "phone,vm", AGENT_ID_PHONES: process.env.AGENT_ID_PHONES || "waitlist", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "dev-privy", PRIVY_APP_SECRET: "dev-privy", BRIDGE_API_KEY: "sk-test-dev" } });
   const dev = await local.user({ email: "dev@timewarp.test", plan: "pro", credits: 100 });
   const teammate = await local.user({ email: "teammate@timewarp.test" });
   const org = await local.organization("Acme Robotics", [[dev, "owner"], [teammate, "lead"]]);
@@ -70,6 +81,10 @@ async function demo(local, owner) {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = Buffer.concat(chunks);
+    if (req.url.startsWith("/dev/bridge-kyc")) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(money.kycPage(req.url.split("?")[1] || ""));
+      return;
+    }
     try {
       const request = new Request(`http://127.0.0.1:${port}${req.url}`, { method: req.method, headers: Object.entries(req.headers).filter(([, v]) => typeof v === "string"), ...(body.length && !["GET", "HEAD"].includes(req.method) ? { body } : {}) });
       const response = await local.handle(request);

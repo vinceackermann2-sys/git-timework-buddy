@@ -1,10 +1,10 @@
-// Money in and out of a live wallet, as a bank app does it: add money (an
-// address on Base with a QR code, or a card where Stripe's onramp is on) and
-// withdraw to your own wallet or exchange.
+// Money in and out of a live wallet, as a bank app does it: add money (a bank
+// transfer, a card where Stripe's onramp is on, or crypto to its address on
+// Base) and withdraw to your bank account or your own wallet or exchange.
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CreditCard, Loader2 } from "lucide-react";
+import { ExternalLink, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -19,10 +19,18 @@ import {
   shortAddress,
 } from "@/lib/agent-id/format";
 import { qrPath } from "@/lib/agent-id/qr";
-import { queryKeys, shouldRetry, useRefreshAgent } from "@/lib/agent-id/queries";
+import { queryKeys, shouldRetry, useAccount, useRefreshAgent } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
-import type { Agent, Money } from "@/lib/agent-id/types";
-import { CopyButton, ErrorState, Field, LoadingRows, Muted, Notice } from "../ui";
+import type { AddMoneyInfo, Agent, Money } from "@/lib/agent-id/types";
+import { CopyButton, ErrorState, Field, LoadingRows, Muted, Notice, Segmented } from "../ui";
+import { BankDeposit, BankWithdraw } from "./BankMoney";
+
+type AddMethod = "bank" | "card" | "crypto";
+const ADD_METHODS: { value: AddMethod; label: string }[] = [
+  { value: "bank", label: "Bank" },
+  { value: "card", label: "Card" },
+  { value: "crypto", label: "Crypto" },
+];
 
 export function AddMoney({ agent }: { agent: Agent }) {
   const info = useQuery({
@@ -31,28 +39,45 @@ export function AddMoney({ agent }: { agent: Agent }) {
     retry: shouldRetry,
     staleTime: 60_000,
   });
-  const [card, setCard] = useState(false);
+  const [chosen, setChosen] = useState<AddMethod | null>(null);
 
   if (info.isPending) return <LoadingRows rows={3} />;
   if (info.isError) return <ErrorState error={info.error} onRetry={() => void info.refetch()} />;
-  if (card) return <CardOnramp agent={agent} onBack={() => setCard(false)} />;
 
-  const { address, network, assets } = info.data;
+  const available: Record<AddMethod, boolean> = {
+    bank: info.data.bank?.available === true,
+    card: info.data.card.available,
+    crypto: true,
+  };
+  const offered = ADD_METHODS.filter((m) => available[m.value]);
+  const method = chosen && offered.some((m) => m.value === chosen) ? chosen : offered[0]!.value;
+  return (
+    <div className="grid gap-6">
+      {offered.length > 1 && (
+        <Segmented
+          label="How to add money"
+          value={method}
+          onChange={setChosen}
+          options={offered}
+          className="w-full [&>button]:flex-1"
+        />
+      )}
+      {method === "bank" ? (
+        <BankDeposit agent={agent} />
+      ) : method === "card" ? (
+        <CardOnramp agent={agent} />
+      ) : (
+        <CryptoDeposit info={info.data} />
+      )}
+    </div>
+  );
+}
+
+function CryptoDeposit({ info }: { info: AddMoneyInfo }) {
+  const { address, network, assets } = info;
   const networkName = network?.name ?? "Base";
   return (
     <div className="grid gap-6">
-      {info.data.card.available && (
-        <>
-          <Button size="lg" className="h-12 rounded-full" onClick={() => setCard(true)}>
-            <CreditCard aria-hidden="true" /> Buy with card
-          </Button>
-          <div className="flex items-center gap-3 text-xs text-[var(--muted-foreground)]">
-            <span className="h-px flex-1 bg-[var(--border)]" />
-            or send from an exchange
-            <span className="h-px flex-1 bg-[var(--border)]" />
-          </div>
-        </>
-      )}
       {address ? (
         <div className="grid justify-items-center gap-4 text-center">
           <QrCode value={address} />
@@ -70,7 +95,7 @@ export function AddMoney({ agent }: { agent: Agent }) {
                 text={address}
                 label="Copy address"
                 toastText="Address copied"
-                variant={info.data.card.available ? "outline" : "default"}
+                variant="default"
                 className="rounded-full"
               />
             </div>
@@ -131,7 +156,7 @@ function loadScript(src: string): Promise<void> {
   });
 }
 
-function CardOnramp({ agent, onBack }: { agent: Agent; onBack: () => void }) {
+function CardOnramp({ agent }: { agent: Agent }) {
   const mount = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
@@ -146,11 +171,8 @@ function CardOnramp({ agent, onBack }: { agent: Agent; onBack: () => void }) {
 
   useEffect(() => {
     const data = session.data;
-    if (!data) return;
-    if (data.url) {
-      window.location.assign(data.url);
-      return;
-    }
+    const publishableKey = data?.publishableKey;
+    if (!data || !publishableKey) return;
     let cancelled = false;
     (async () => {
       try {
@@ -161,7 +183,7 @@ function CardOnramp({ agent, onBack }: { agent: Agent; onBack: () => void }) {
         if (cancelled || !element) return;
         if (!StripeOnramp) throw new Error("Couldn't load the card form.");
         element.replaceChildren();
-        StripeOnramp(data.publishableKey)
+        StripeOnramp(publishableKey)
           .createSession({ clientSecret: data.clientSecret })
           .mount(element);
         setMounted(true);
@@ -174,15 +196,33 @@ function CardOnramp({ agent, onBack }: { agent: Agent; onBack: () => void }) {
     };
   }, [session.data]);
 
-  const problem = error ?? (session.isError ? errorMessage(session.error) : null);
+  const problem =
+    error ??
+    (session.isError
+      ? errorMessage(session.error)
+      : session.data && !session.data.publishableKey && !session.data.url
+        ? "Couldn't open the card form."
+        : null);
+  // Without an embed, Stripe's own page, in a new tab.
+  const hosted = session.data && !session.data.publishableKey ? session.data.url : undefined;
   return (
     <div className="grid gap-4">
-      {!mounted && !problem && <LoadingRows rows={4} />}
       {problem && <Notice tone="danger">{problem}</Notice>}
+      {hosted ? (
+        <div className="grid gap-3 text-center">
+          <Button asChild size="lg" className="h-12 rounded-full">
+            <a href={hosted} target="_blank" rel="noopener noreferrer">
+              Buy with card <ExternalLink aria-hidden="true" />
+            </a>
+          </Button>
+          <Muted>
+            Stripe sends the USDC straight to this wallet. It shows here within minutes.
+          </Muted>
+        </div>
+      ) : (
+        !mounted && !problem && <LoadingRows rows={4} />
+      )}
       <div ref={mount} className="min-h-0" />
-      <Button variant="ghost" onClick={onBack}>
-        Back
-      </Button>
     </div>
   );
 }
@@ -226,7 +266,43 @@ export function AmountField({
 
 // --- Withdrawing --------------------------------------------------------------------
 
+// To the owner's bank account (live wallets, where bank transfers are on) or
+// to their own crypto wallet or exchange.
 export function Withdraw({
+  agent,
+  balance,
+  onDone,
+}: {
+  agent: Agent;
+  balance: Money | null;
+  onDone: () => void;
+}) {
+  const bankOn =
+    useAccount().data?.config.bank?.available === true && agent.resources.wallet?.mode === "live";
+  const [to, setTo] = useState<"bank" | "crypto">("bank");
+  if (!bankOn) return <CryptoWithdraw agent={agent} balance={balance} onDone={onDone} />;
+  return (
+    <div className="grid gap-5">
+      <Segmented
+        label="Withdraw to"
+        value={to}
+        onChange={setTo}
+        options={[
+          { value: "bank", label: "Bank account" },
+          { value: "crypto", label: "Crypto wallet" },
+        ]}
+        className="w-full [&>button]:flex-1"
+      />
+      {to === "bank" ? (
+        <BankWithdraw agent={agent} balance={balance} onDone={onDone} />
+      ) : (
+        <CryptoWithdraw agent={agent} balance={balance} onDone={onDone} />
+      )}
+    </div>
+  );
+}
+
+function CryptoWithdraw({
   agent,
   balance,
   onDone,

@@ -166,6 +166,8 @@ export type PublicConfig = {
     requiredToCreateAgents: boolean;
   };
   passports: { available: boolean; lifetimeSeconds: number };
+  // Bank transfers in and out of live wallets (Bridge); older servers leave it out.
+  bank?: { available: boolean };
   // True on development deployments: test resources, test money.
   testMode?: boolean;
   legal?: { termsVersion: string; termsUrl: string; privacyUrl: string };
@@ -320,12 +322,71 @@ export type AddMoneyInfo = {
   network: { id: string; name: string } | null;
   assets: string[];
   card: { available: boolean };
+  bank?: { available: boolean };
   test: boolean;
 };
 
-export type CardOnrampSession = { clientSecret: string; publishableKey: string; url?: string };
+// Embedded with the publishable key when the server has one; otherwise
+// Stripe's own page at `url`.
+export type CardOnrampSession = { clientSecret: string; publishableKey?: string; url?: string };
 
-export type WithdrawResult = { status: "completed" | "pending"; transfer: AgentEvent };
+export type WithdrawResult = {
+  status: "completed" | "pending";
+  transfer: AgentEvent;
+  bank?: { account: BankAccount; state: string };
+};
+
+// Bank transfers in and out of live wallets (through Bridge). The owner
+// verifies once with Bridge; bank numbers stay with Bridge.
+export type BankCurrency = "usd" | "eur";
+export type BankAccount = {
+  id: string;
+  currency: BankCurrency;
+  rail: "ach" | "wire" | "sepa";
+  bankName: string | null;
+  last4: string;
+  ownerName: string | null;
+  createdAt: string;
+};
+export type BankStatus = {
+  available: boolean;
+  // not_started: never verified; pending: Bridge is checking or waits for
+  // the owner to finish; approved: ready; rejected: Bridge said no.
+  status: "unavailable" | "not_started" | "pending" | "approved" | "rejected";
+  // Where to continue with Bridge (its terms, then the identity check).
+  link?: string;
+  rejection?: string;
+  currencies: BankCurrency[];
+  accounts: BankAccount[];
+};
+export type BankDeposit = {
+  currency: BankCurrency;
+  rails: string[];
+  beneficiary: string | null;
+  bankName: string | null;
+  bankAddress: string | null;
+  accountNumber: string | null;
+  routingNumber: string | null;
+  iban: string | null;
+  bic: string | null;
+  reference: string | null;
+};
+export type NewBankAccount =
+  | {
+      kind: "iban";
+      ownerName: string;
+      iban: string;
+      bic?: string;
+      address: { line1: string; city: string; postalCode: string };
+    }
+  | {
+      kind: "us";
+      ownerName: string;
+      accountNumber: string;
+      routingNumber: string;
+      checkingOrSavings: "checking" | "savings";
+      address: { line1: string; city: string; state: string; postalCode: string };
+    };
 
 export type TransferResult =
   | { status: "needs_approval"; approval: string; message: string }

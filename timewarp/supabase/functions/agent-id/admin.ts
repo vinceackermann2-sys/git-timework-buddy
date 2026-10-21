@@ -1,13 +1,14 @@
 // Running Agent ID: what this deployment has switched on, and registering
-// its own webhooks with Stripe (identity checks, card payments) and Resend
-// (incoming mail), keeping their signing secrets in agent_id_settings so no
+// its own webhooks with Stripe (identity checks, card payments), Resend
+// (incoming mail) and Bridge (bank verification and payouts), keeping their signing secrets in agent_id_settings so no
 // one has to copy them by hand. For Timewarp staff named in AGENT_ID_REVIEWERS.
 import { fail } from './util.ts';
-import { KINDS, type Kind } from './config.ts';
+import { bankAvailable, KINDS, type Kind } from './config.ts';
 import type { Owner, Route } from './app.ts';
 import type { Ctx } from './context.ts';
 import { audit, putSetting, setting } from './shared.ts';
 import { stripe } from './providers/stripe.ts';
+import { registerBridgeWebhook } from './providers/bridge.ts';
 
 function operator(ctx: Ctx, owner: Owner) {
   if (owner.via !== 'session' || !ctx.config.reviewers.has(owner.userId)) throw fail(403, 'forbidden', 'Only Agent ID operators can do this.');
@@ -20,7 +21,7 @@ const RESEND_EVENTS = ['email.received', 'email.delivered', 'email.delivery_dela
 const wantsStripe = (ctx: Ctx) => ctx.config.kycProvider === 'stripe_identity' || ctx.config.isLive('card');
 
 async function status(ctx: Ctx) {
-  const [stripeHook, resendHook] = await Promise.all([setting(ctx, 'stripe.webhook'), setting(ctx, 'resend.webhook')]);
+  const [stripeHook, resendHook, bridgeHook] = await Promise.all([setting(ctx, 'stripe.webhook'), setting(ctx, 'resend.webhook'), setting(ctx, 'bridge.webhook')]);
   return {
     passports: !!ctx.config.signingKey, phoneWebhooks: !!ctx.config.webhookSecret,
     resources: Object.fromEntries(KINDS.map((kind: Kind) => [kind, { enabled: ctx.config.liveListed(kind), configured: ctx.config.providers[kind].configured, live: ctx.config.isLive(kind), provider: ctx.config.providers[kind].provider }])),
@@ -28,6 +29,7 @@ async function status(ctx: Ctx) {
     webhooks: {
       stripe: { needed: wantsStripe(ctx), registered: !!ctx.config.env('AGENT_ID_STRIPE_WEBHOOK_SECRET') || !!stripeHook?.secret, url: `${ctx.config.publicUrl}/webhooks/stripe` },
       resend: { needed: ctx.config.isLive('mail'), registered: !!ctx.config.env('AGENT_ID_RESEND_WEBHOOK_SECRET') || !!resendHook?.secret, url: `${ctx.config.publicUrl}/webhooks/resend` },
+      bridge: { needed: bankAvailable(ctx.config), registered: !!ctx.config.env('BRIDGE_WEBHOOK_PUBLIC_KEY') || !!bridgeHook?.publicKey, url: `${ctx.config.publicUrl}/webhooks/bridge` },
     },
   };
 }
@@ -61,15 +63,23 @@ async function registerResend(ctx: Ctx) {
   return 'registered';
 }
 
+async function registerBridge(ctx: Ctx) {
+  if (!bankAvailable(ctx.config) || ctx.config.env('BRIDGE_WEBHOOK_PUBLIC_KEY')) return 'not_needed';
+  if ((await setting(ctx, 'bridge.webhook'))?.publicKey) return 'kept';
+  const hook = await registerBridgeWebhook(ctx, `${ctx.config.publicUrl}/webhooks/bridge`);
+  await putSetting(ctx, 'bridge.webhook', hook);
+  return 'registered';
+}
+
 // The same setup, on the first request after a deploy: registers whatever
 // isn't registered yet and remembers it was done for this configuration.
 export async function autoSetup(ctx: Ctx) {
-  const wanted = JSON.stringify({ stripe: wantsStripe(ctx) && !ctx.config.env('AGENT_ID_STRIPE_WEBHOOK_SECRET'), card: ctx.config.isLive('card'), resend: ctx.config.isLive('mail') && !ctx.config.env('AGENT_ID_RESEND_WEBHOOK_SECRET'), url: ctx.config.publicUrl });
+  const wanted = JSON.stringify({ stripe: wantsStripe(ctx) && !ctx.config.env('AGENT_ID_STRIPE_WEBHOOK_SECRET'), card: ctx.config.isLive('card'), resend: ctx.config.isLive('mail') && !ctx.config.env('AGENT_ID_RESEND_WEBHOOK_SECRET'), bridge: bankAvailable(ctx.config) && !ctx.config.env('BRIDGE_WEBHOOK_PUBLIC_KEY'), url: ctx.config.publicUrl });
   const done = await setting(ctx, 'setup.auto');
   if (done?.wanted === wanted && done?.ok) return;
   const result: Record<string, string> = {};
   let ok = true;
-  for (const [name, register] of [['stripe', registerStripe], ['resend', registerResend]] as const) {
+  for (const [name, register] of [['stripe', registerStripe], ['resend', registerResend], ['bridge', registerBridge]] as const) {
     try { result[name] = await register(ctx); } catch (error) { ok = false; result[name] = 'failed'; console.error(`[agent-id] auto setup ${name}`, (error as Error)?.message); }
   }
   await putSetting(ctx, 'setup.auto', { wanted, ok, result, at: new Date(ctx.now()).toISOString() });
@@ -79,7 +89,7 @@ export const adminRoutes: Route<Owner>[] = [
   ['GET', '/v1/admin/status', async (ctx, owner) => { operator(ctx, owner); return status(ctx); }],
   ['POST', '/v1/admin/setup', async (ctx, owner) => {
     operator(ctx, owner);
-    const result = { stripe: await registerStripe(ctx), resend: await registerResend(ctx) };
+    const result = { stripe: await registerStripe(ctx), resend: await registerResend(ctx), bridge: await registerBridge(ctx) };
     await audit(ctx, owner.userId, null, 'owner', 'admin.setup', result);
     return { setup: result, status: await status(ctx) };
   }],

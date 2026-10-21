@@ -145,13 +145,40 @@ The slots show as `provisioning` until they're ready, and one that fails is
 freed, so the owner can add it later. `resources: []` on
 `POST /v1/agents` makes an agent with nothing.
 
-**Adding and taking out money.** `GET /v1/agents/:id/wallet/add-money` gives
-the address and network to send USDC or USDT on Base from an exchange or
-another wallet. With `STRIPE_PUBLISHABLE_KEY` and
-`STRIPE_CRYPTO_ONRAMP_ENABLED` set, `POST` on it starts Stripe's crypto onramp
-to buy USDC by card into that wallet only. `POST /v1/agents/:id/wallet/withdraw`
-(signed-in session only) sends to the owner's own address. Withdrawals are
-screened like any transfer but aren't counted against the agent's limits.
+**Adding and taking out money.** A live wallet holds real USDC and USDT on
+Base (Privy). Money comes in and goes out in three ways:
+
+- **Crypto.** `GET /v1/agents/:id/wallet/add-money` gives the address and
+  network to send USDC or USDT on Base from an exchange or another wallet.
+  `POST /v1/agents/:id/wallet/withdraw` with `to` sends to the owner's own
+  address.
+- **Bank (Bridge).** With `BRIDGE_API_KEY` set, the owner verifies once with
+  Bridge, a Stripe company (`POST /v1/account/bank/verify` gives Bridge's
+  hosted terms and identity check, for the name Agent ID already verified).
+  After that:
+  - `POST /v1/agents/:id/wallet/bank-deposit` with `currency` (`usd` or
+    `eur`) gives the wallet its own bank details (a Bridge virtual account).
+    Money sent there arrives as USDC.
+  - `POST /v1/account/bank/accounts` saves a bank account at Bridge: an IBAN
+    (euros, SEPA) or a US account (ACH), with the holder's address. Agent ID
+    keeps only the bank's name and the last four characters.
+  - `POST /v1/agents/:id/wallet/withdraw` with `bankAccount` opens a Bridge
+    payout for the amount, and the wallet sends Bridge the USDC. If the USDC
+    isn't sent, the payout is cancelled.
+  - The payout's progress (`data.bank.state`) comes from Bridge's webhook
+    and from a look when the history is read.
+  - US dollars need Bridge's `base` endorsement, euros its `sepa` one. Bridge
+    opens SEPA per developer account; until it does, set
+    `AGENT_ID_BANK_CURRENCIES=usd`.
+- **Card (Stripe).** With `STRIPE_CRYPTO_ONRAMP_ENABLED` set and Stripe's
+  onramp approved for the account, `POST /v1/agents/:id/wallet/add-money`
+  starts Stripe's crypto onramp. It buys USDC by card into that wallet only:
+  embedded with `STRIPE_PUBLISHABLE_KEY`, else on Stripe's own page. Stripe
+  sells USDC on Base to US buyers only. Others are told to use a bank
+  transfer.
+
+Withdrawals need a signed-in session. They are screened like any transfer,
+but they don't count against the agent's limits.
 
 An agent has at most one resource of each kind. Mail and wallet addresses are
 never given to anyone else, even after the agent is revoked. Phone numbers,
@@ -331,6 +358,8 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | `TELNYX_API_KEY`, `TELNYX_PUBLIC_KEY` | Live phone numbers through Timewarp's own Telnyx account (used when its key is set) |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Live phone numbers through Twilio instead (`AGENT_ID_PHONE_PROVIDER=twilio`) |
 | `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `AGENT_ID_WALLET_CHAIN` | Live wallets |
+| `BRIDGE_API_KEY`, `AGENT_ID_BANK_CURRENCIES` | Bank deposits and withdrawals for live wallets on Base (`usd,eur` by default; `AGENT_ID_BANK=off` hides them). Keys starting with `sk-test` use Bridge's sandbox. The Bridge webhook registers itself (`BRIDGE_WEBHOOK_PUBLIC_KEY` overrides). |
+| `STRIPE_CRYPTO_ONRAMP_ENABLED`, `STRIPE_PUBLISHABLE_KEY` | Buying USDC by card (Stripe's onramp, once approved). The publishable key embeds the form. |
 | `STRIPE_SECRET_KEY` (exists), `AGENT_ID_STRIPE_WEBHOOK_SECRET` | Live cards and Stripe Identity |
 | `AZURE_*` (exist) | Live machines |
 | `AGENT_ID_SITE_URL`, `AGENT_ID_ISSUER`, `AGENT_ID_PUBLIC_URL`, `AGENT_ID_PASSPORT_SECONDS` | Overrides (defaults: `https://timewarpdev.com`, `<site>/agent-id`, the function URL, 300) |
@@ -341,7 +370,8 @@ Secrets on the Supabase project, read by the `agent-id` function:
   version (`POST /v1/account/terms`) before they create agents. The version
   and the time of acceptance are recorded.
 - **Privacy Policy:** section 7 covers Agent ID. It lists the data, the legal
-  bases, Stripe Identity, Privy, Telnyx, Twilio and Azure as processors, and how long
+  bases, Stripe Identity, Privy, Telnyx, Twilio and Azure as processors, Bridge
+  (bank transfers) as a company responsible for its own data, and how long
   records are kept (content: while it exists, plus 30 days; verification, the
   agent–owner link and the audit log: 5 years).
 - **KYC:** explicit consent to the biometric check (GDPR Art. 9(2)(a)) is
@@ -363,8 +393,8 @@ name and address are stored in `checks.vat`. Reviewers see both in the review
 queue (`GET /v1/reviews/business/:id/document`) before approving.
 
 **Webhooks set themselves up.** On the first request after a deploy, the
-function registers its Stripe (identity, cards) and Resend (incoming mail)
-webhooks if they're needed and missing, and remembers that in
+function registers its Stripe (identity, cards), Resend (incoming mail) and
+Bridge (bank verification, payouts) webhooks if they're needed and missing, and remembers that in
 `agent_id_settings` (`setup.auto`). `AGENT_ID_AUTO_SETUP=false` turns this
 off. The operator button does the same by hand.
 
