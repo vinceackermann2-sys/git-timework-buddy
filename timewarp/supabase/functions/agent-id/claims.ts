@@ -9,7 +9,7 @@
 import { base64url, checked, EMAIL, fail, handleFor, agentId as newAgentId, newSecret, randomBytes, randomId, sameText, sha256Hex, str } from './util.ts';
 import type { AgentRow, Ctx } from './context.ts';
 import { APPS, appOf } from './origin.ts';
-import { audit, personOf, resourcesOf } from './shared.ts';
+import { audit, mascotOf, personOf, resourcesOf } from './shared.ts';
 import { personView } from './verification.ts';
 import { autoGive } from './provisioning.ts';
 
@@ -46,10 +46,10 @@ function nameFor(claim: any) {
 
 async function claimView(ctx: Ctx, row: any, full: boolean) {
   const person = full && row.user_id ? await personOf(ctx, row.user_id) : null;
-  const agent = full && row.agent_id ? checked(await ctx.admin.from('agent_id_agents').select('id,name,handle').eq('id', row.agent_id).maybeSingle()) as any : null;
-  const resources = agent ? await resourcesOf(ctx, [agent.id]) : [];
+  const agent = row.agent_id ? checked(await ctx.admin.from('agent_id_agents').select('id,name,handle,mascot').eq('id', row.agent_id).maybeSingle()) as any : null;
+  const resources = full && agent ? await resourcesOf(ctx, [agent.id]) : [];
   return {
-    code: row.code, name: row.name, app: appView(row.app), device: row.device || null, startedBy: row.started_by, matchCode: row.match_code,
+    code: row.code, name: row.name, mascot: agent?.mascot || mascotOf(row.code), app: appView(row.app), device: row.device || null, startedBy: row.started_by, matchCode: row.match_code,
     status: row.status !== 'claimed' && expired(ctx, row) ? 'expired' : row.status,
     email: full ? row.email : maskEmail(row.email), emailConfirmed: !!row.email_verified_at,
     expiresAt: row.expires_at, createdAt: row.created_at,
@@ -57,7 +57,7 @@ async function claimView(ctx: Ctx, row: any, full: boolean) {
       step: stepOf(row),
       person: personView(person),
       terms: { accepted: person?.terms_version === ctx.config.termsVersion && !!person?.terms_accepted_at, current: ctx.config.termsVersion },
-      agent: agent ? { id: agent.id, name: agent.name, handle: agent.handle, resources: Object.fromEntries(resources.map(r => [r.kind, { status: r.status, address: r.address, mode: r.mode }])) } : null,
+      agent: agent ? { id: agent.id, name: agent.name, handle: agent.handle, mascot: agent.mascot || mascotOf(row.code), resources: Object.fromEntries(resources.map(r => [r.kind, { status: r.status, address: r.address, mode: r.mode }])) } : null,
       keyCollected: !!row.key_delivered_at,
     } : {}),
   };
@@ -243,7 +243,7 @@ async function createClaimedAgent(ctx: Ctx, userId: string, claim: any) {
   let agent: AgentRow | null = null;
   for (let attempt = 0; attempt < 3 && !agent; attempt++) {
     const name = nameFor(claim);
-    const { data, error } = await ctx.admin.from('agent_id_agents').insert({ id: newAgentId(), owner_user_id: userId, name, handle: handleFor(name), runtime: claim.app || 'custom' }).select('*').single();
+    const { data, error } = await ctx.admin.from('agent_id_agents').insert({ id: newAgentId(), owner_user_id: userId, name, handle: handleFor(name), runtime: claim.app || 'custom', mascot: mascotOf(claim.code) }).select('*').single();
     if (error?.code === '23505') continue;
     agent = checked({ data, error });
   }

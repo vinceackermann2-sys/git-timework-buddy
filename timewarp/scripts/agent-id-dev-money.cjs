@@ -1,9 +1,10 @@
 "use strict";
 // Simulated money providers for the local dev API (agent-id-dev.cjs): Privy
-// wallets holding USDC on Base, and Bridge (verification, bank accounts,
-// deposit details, payouts), all in memory. Nothing leaves this process.
-// Bridge's verification page is /dev/bridge-kyc on the dev API: opening it
-// approves the owner, as finishing Bridge's real page would.
+// wallets holding USDC on Base, and Bridge (verification of people and
+// businesses, bank accounts, deposit details, SEPA pay-ins, payouts), all in
+// memory. Nothing leaves this process. Bridge's verification page is
+// /dev/bridge-kyc on the dev API: opening it approves the owner, as finishing
+// Bridge's real page would. A SEPA pay-in arrives 20 seconds after it opens.
 const crypto = require("node:crypto");
 
 function simulatedMoney({ apiUrl }) {
@@ -16,7 +17,7 @@ function simulatedMoney({ apiUrl }) {
   function privy(method, path, body) {
     let m;
     if (method === "POST" && path === "/v1/wallets") {
-      const wallet = { id: id("w"), address: address(), usdc: 0 };
+      const wallet = { id: id("w"), address: address(), usdc: 0, received: [] };
       wallets.set(wallet.id, wallet);
       return reply({ id: wallet.id, address: wallet.address, chain_type: "ethereum" });
     }
@@ -24,7 +25,7 @@ function simulatedMoney({ apiUrl }) {
       const wallet = wallets.get(m[1]);
       return reply({ balances: [{ chain: "base", asset: "usdc", raw_value: String((wallet?.usdc || 0) * 10_000), raw_value_decimals: 6 }] });
     }
-    if (/^\/v1\/wallets\/[^/]+\/transactions/.test(path)) return reply({ transactions: [] });
+    if ((m = /^\/v1\/wallets\/([^/]+)\/transactions/.exec(path))) return reply({ transactions: wallets.get(m[1])?.received || [] });
     if (method === "POST" && (m = /^\/v1\/wallets\/([^/]+)\/transfer$/.exec(path))) {
       const wallet = wallets.get(m[1]);
       const cents = Math.round(Number(body.amount) * 100);
@@ -34,6 +35,18 @@ function simulatedMoney({ apiUrl }) {
     }
     if ((m = /^\/v1\/wallets\/[^/]+\/actions\/([^/?]+)/.exec(path))) return reply({ id: m[1], status: "succeeded", steps: [{ transaction_hash: "0x" + crypto.randomBytes(32).toString("hex") }] });
     return null;
+  }
+
+  // Money arriving at a wallet: its balance, and a received transfer in its history.
+  function fund(walletAddress, cents) {
+    for (const wallet of wallets.values()) {
+      if (wallet.address !== walletAddress) continue;
+      wallet.usdc += cents;
+      wallet.received.unshift({
+        transaction_hash: "0x" + crypto.randomBytes(32).toString("hex"), status: "confirmed", created_at: Date.now(),
+        details: { type: "transfer_received", sender: "0x" + "d3".repeat(20), asset: "usdc", raw_value: String(cents * 10_000), raw_value_decimals: 6 },
+      });
+    }
   }
 
   function bridge(method, path, body) {
@@ -58,6 +71,18 @@ function simulatedMoney({ apiUrl }) {
         : { currency: "usd", payment_rails: ["ach_push", "wire"], bank_beneficiary_name: "Bridge Ventures Inc. (demo)", bank_name: "Demo Bank", bank_address: "1 Demo Ave, New York", bank_account_number: "900123456789", bank_routing_number: "101019644" };
       return reply({ id: id("va"), status: "activated", source_deposit_instructions: instructions });
     }
+    if (method === "POST" && path === "/v0/transfers" && body.source?.payment_rail === "sepa") {
+      // A pay-in: euros by SEPA, converted and sent to the wallet as USDC.
+      const payin = { id: id("tr"), state: "awaiting_funds", at: Date.now(), amount: Number(body.amount), to: body.destination?.to_address };
+      payouts.set(payin.id, payin);
+      return reply({
+        id: payin.id, state: payin.state,
+        source_deposit_instructions: {
+          payment_rail: "sepa", currency: "eur", amount: body.amount, deposit_message: `BRGDEV${String(next).padStart(6, "0")}`,
+          iban: "DE89370400440532013000", bic: "COBADEFFXXX", account_holder_name: "Bridge Building Sp. z o.o. (demo)", bank_name: "Demo Bank", bank_address: "Demo Street 1, 10115 Berlin, DE",
+        },
+      });
+    }
     if (method === "POST" && path === "/v0/transfers") {
       const payout = { id: id("tr"), state: "awaiting_funds", at: Date.now() };
       payouts.set(payout.id, payout);
@@ -67,7 +92,14 @@ function simulatedMoney({ apiUrl }) {
       const payout = payouts.get(m[1]);
       if (!payout) return reply({ message: "Not found" }, 404);
       if (method === "DELETE") payout.state = "canceled";
-      // Reaches the bank half a minute later.
+      // A pay-in's euros arrive after 20 seconds, as USDC at about 1.08 dollars each.
+      else if (payout.to) {
+        if (payout.state === "awaiting_funds" && Date.now() - payout.at > 20_000) {
+          payout.state = "payment_processed";
+          fund(payout.to, Math.round(payout.amount * 108));
+        }
+      }
+      // A payout reaches the bank half a minute later.
       else if (payout.state === "awaiting_funds") payout.state = Date.now() - payout.at > 30_000 ? "payment_processed" : "payment_submitted";
       return reply({ id: payout.id, state: payout.state });
     }
@@ -89,9 +121,7 @@ function simulatedMoney({ apiUrl }) {
       if (link) Object.assign(link, { kyc_status: "approved", tos_status: "approved" });
       return `<!doctype html><meta charset="utf-8"><title>Bridge (simulated)</title><body style="font:16px system-ui;margin:4rem auto;max-width:28rem;text-align:center"><h1>Verified with Bridge</h1><p>${link ? "This is the dev API's stand-in for Bridge. You're approved; close this tab." : "Unknown link."}</p></body>`;
     },
-    fund(walletAddress, cents) {
-      for (const wallet of wallets.values()) if (wallet.address === walletAddress) wallet.usdc += cents;
-    },
+    fund,
   };
 }
 

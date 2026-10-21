@@ -4,6 +4,8 @@ import {
   amountValue,
   auditActionLabel,
   auditDetail,
+  balanceHistory,
+  balanceTrend,
   centsToInput,
   counterpartyLabel,
   declineReason,
@@ -211,5 +213,54 @@ bearer_token_env_var = "TIMEWARP_AGENT_KEY"`,
     );
     expect(githubActionSnippet("org-1")).toContain("organization: org-1");
     expect(githubActionSnippet("org-1")).not.toContain("secret");
+  });
+});
+
+describe("balance history", () => {
+  const now = new Date(2026, 9, 21, 15, 0).getTime();
+  const at = (daysAgo: number, hour = 12) => new Date(2026, 9, 21 - daysAgo, hour).toISOString();
+  const move = (daysAgo: number, direction: "in" | "out", cents: number, status = "completed") => ({
+    at: at(daysAgo),
+    direction,
+    status,
+    amount: { amount: cents },
+  });
+
+  it("walks back from today's balance, one point per day", () => {
+    const points = balanceHistory(
+      15000,
+      [move(0, "out", 5000), move(2, "in", 20000), move(5, "failed" as never, 1)],
+      { days: 5, now },
+    );
+    // Five days back: nothing yet; two days ago $200 came in; today $50 left.
+    expect(points).toEqual([0, 0, 20000, 20000, 15000]);
+    expect(balanceTrend(points)).toBe("up");
+  });
+
+  it("skips failed and pending transfers", () => {
+    const points = balanceHistory(
+      1000,
+      [move(1, "in", 500, "failed"), move(1, "out", 300, "pending")],
+      {
+        days: 3,
+        now,
+      },
+    );
+    expect(points).toEqual([1000, 1000, 1000]);
+    expect(balanceTrend(points)).toBe("flat");
+  });
+
+  it("goes down when more left than came in", () => {
+    expect(balanceTrend(balanceHistory(100, [move(3, "out", 900)], { days: 7, now }))).toBe("down");
+  });
+
+  it("leaves days it can't know empty when older transfers weren't loaded", () => {
+    const points = balanceHistory(700, [move(1, "in", 200), move(2, "out", 100)], {
+      days: 5,
+      now,
+      complete: false,
+    });
+    expect(points).toEqual([null, null, 500, 700, 700]);
+    expect(balanceTrend(points)).toBe("up");
   });
 });

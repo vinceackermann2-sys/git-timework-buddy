@@ -7,14 +7,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Copy, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Avatar, CommandLine, Field, Notice } from "../ui";
+import { AgentAvatar, Field, Notice } from "../ui";
+import { AppIcon } from "../AppIcons";
 import { ReadyList } from "../ReadyList";
 import { ClaimAgent, ClaimHeading, ClaimLayout } from "./ClaimLayout";
 import {
@@ -328,7 +330,12 @@ function EmailStep({
       </ClaimHeading>
       {claim.startedBy === "agent" && (
         <>
-          <ClaimAgent name={claim.name} app={claim.app} device={claim.device} />
+          <ClaimAgent
+            name={claim.name}
+            app={claim.app}
+            device={claim.device}
+            mascot={claim.mascot}
+          />
           <StartedByAgent claim={claim} />
         </>
       )}
@@ -528,12 +535,16 @@ function Done({ claim, secret }: { claim: Claim; secret: string | null }) {
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
       <div className="flex flex-col items-center text-center">
         <span className="relative">
-          <Avatar name={name} size="xl" />
-          <span className="absolute -bottom-1 -right-1 grid h-8 w-8 place-items-center rounded-full border-4 border-[var(--card)] bg-[var(--aid-success)] text-white">
+          <AgentAvatar
+            mascot={claim.agent?.mascot ?? claim.mascot}
+            id={claim.agent?.id}
+            size="xl"
+          />
+          <span className="absolute bottom-1 right-1 grid h-8 w-8 place-items-center rounded-full border-4 border-[var(--card)] bg-[var(--aid-success)] text-white">
             <Check className="h-4 w-4" strokeWidth={3} aria-hidden="true" />
           </span>
         </span>
-        <h1 className="mt-4 text-2xl font-semibold tracking-tight text-balance">{name} is ready</h1>
+        <h1 className="mt-3 text-2xl font-semibold tracking-tight text-balance">{name} is ready</h1>
         <p className="mt-1.5 text-sm text-[var(--muted-foreground)]">
           Its own email address and wallet, a phone number when you want one, and a computer.
         </p>
@@ -549,13 +560,7 @@ function Done({ claim, secret }: { claim: Claim; secret: string | null }) {
           Then try asking it: “What's my Agent ID email address?”
         </NextStep>
       ) : showCommand && secret ? (
-        <NextStep title="Connect it to your AI app">
-          Run this on the computer where you use Claude Code, Codex, Cursor or another AI app. It
-          works once.
-          <div className="mt-3">
-            <CommandLine command={claimCommand(secret)} />
-          </div>
-        </NextStep>
+        <ConnectApp command={claimCommand(secret)} />
       ) : claim.keyCollected ? (
         <NextStep title={`${name} is connected`}>
           You'll find everything it does in Agent ID.
@@ -566,6 +571,59 @@ function Done({ claim, secret }: { claim: Claim; secret: string | null }) {
         <Link to="/agent-id/dashboard">Open Agent ID</Link>
       </Button>
     </div>
+  );
+}
+
+// Connecting the new Agent ID to the AI apps on this computer: one button that
+// copies the setup line, and plain words on where to paste it. The line itself
+// stays out of the way until someone wants to see it.
+function ConnectApp({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  const [shown, setShown] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+    } catch {
+      setShown(true);
+      return;
+    }
+    setCopied(true);
+    toast.success("Copied. Paste it in Terminal and press Enter.");
+  };
+  return (
+    <section className="rounded-2xl border border-[var(--border)] p-5 text-center">
+      <div className="flex justify-center gap-2" aria-hidden="true">
+        {["claude-code", "codex", "cursor"].map((app) => (
+          <AppIcon key={app} app={app} size="lg" tooltip={false} />
+        ))}
+      </div>
+      <h2 className="mt-3 text-lg font-semibold">Connect it to your AI app</h2>
+      <p className="mx-auto mt-1 max-w-sm text-sm text-[var(--muted-foreground)]">
+        Copy this, paste it in Terminal on your computer and press Enter. It finds Claude Code,
+        Codex, Cursor and others by itself.
+      </p>
+      <Button
+        size="lg"
+        className="mt-4 h-12 w-full rounded-full text-base"
+        onClick={() => void copy()}
+      >
+        {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        {copied ? "Copied" : "Copy setup"}
+      </Button>
+      {shown ? (
+        <code className="aid-code aid-mono mt-3 block break-all px-3 py-2 text-left text-xs">
+          {command}
+        </code>
+      ) : (
+        <button
+          type="button"
+          className="mt-3 text-xs text-[var(--muted-foreground)] underline-offset-2 hover:underline"
+          onClick={() => setShown(true)}
+        >
+          Show what it runs
+        </button>
+      )}
+    </section>
   );
 }
 

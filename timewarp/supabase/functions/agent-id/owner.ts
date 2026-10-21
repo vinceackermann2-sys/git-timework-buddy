@@ -2,12 +2,12 @@
 // them mail, a number, a wallet, a card and a machine (test or live), set
 // their limits, answer approvals, see everything they did, verify who is
 // responsible, and register companies that accept only verified agents.
-import { agentId, cents, checked, fail, handleFor, int, newSecret, relyingPartyId, sha256Hex, str } from './util.ts';
+import { agentId, cents, checked, fail, handleFor, int, newSecret, randomId, relyingPartyId, sha256Hex, str } from './util.ts';
 import { autoGive, giveResource, kindsFor, settingsFor } from './provisioning.ts';
 import { bankAvailable, KINDS, type Kind, publicConfig } from './config.ts';
 import type { AgentCaller, Owner, Route } from './app.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
-import { agentView, audit, listEvents, membership, personOf, planOf, rateLimit, resourcesOf, resourceView, verificationOf } from './shared.ts';
+import { agentView, audit, MASCOTS, mascotOf, listEvents, membership, personOf, planOf, rateLimit, resourcesOf, resourceView, verificationOf } from './shared.ts';
 import { businessView, decideReview, listReviews, personView, reviewDocument, startVerification, uploadBusinessDocument } from './verification.ts';
 import { transfer, withdraw } from './agent.ts';
 import { releasePhone } from './providers/phone.ts';
@@ -17,7 +17,8 @@ import { releaseMachine } from './providers/vm.ts';
 import { appsOf, originInput } from './origin.ts';
 import { stripe } from './providers/stripe.ts';
 import { adminRoutes } from './admin.ts';
-import { addBankAccount, bankDeposit, bankStatus, refreshBridgeCheck, refreshPayouts, removeBankAccount, startBankVerification, withdrawToBank } from './bank.ts';
+import { addBankAccount, bankDeposit, bankPayins, bankStatus, cancelBankPayin, refreshBridgeCheck, refreshBusinessCheck, refreshPayouts, removeBankAccount, startBankPayin, startBankVerification, withdrawToBank } from './bank.ts';
+import { cardCurrency, moonpayOn, moonpayUrl } from './providers/moonpay.ts';
 
 type Handler = Route<Owner>[2];
 const iso = (ctx: Ctx) => new Date(ctx.now()).toISOString();
@@ -55,6 +56,8 @@ const account: Handler = async (ctx, owner) => {
   ]);
   const memberships = (checked(members) || []) as any[];
   const ids = memberships.map(m => m.workspace_id);
+  // Businesses Bridge is checking: how it's going, and where to finish.
+  const links = new Map(await Promise.all(ids.map(async id => [id, await refreshBusinessCheck(ctx, id).catch(() => null)] as const)));
   const [workspaces, businesses] = ids.length ? await Promise.all([
     ctx.admin.from('timewarp_workspaces').select('id,name').in('id', ids),
     ctx.admin.from('agent_id_businesses').select('*').in('workspace_id', ids),
@@ -65,7 +68,7 @@ const account: Handler = async (ctx, owner) => {
     user: { id: owner.userId, email: await ownerEmail(ctx, owner), name: await profileName(ctx, owner.userId) },
     person: personView(person),
     terms: termsView(ctx, person),
-    organizations: memberships.map(m => ({ id: m.workspace_id, name: names.get(m.workspace_id) || 'Organization', role: m.role, business: businessView(verified.get(m.workspace_id)) })),
+    organizations: memberships.map(m => ({ id: m.workspace_id, name: names.get(m.workspace_id) || 'Organization', role: m.role, business: businessView(verified.get(m.workspace_id), links.get(m.workspace_id)) })),
     plan, reviewer: owner.via === 'session' && ctx.config.reviewers.has(owner.userId),
     agents: { count: (checked(agents) || []).length, max: ctx.config.maxAgents },
     config: publicConfig(ctx.config),
@@ -125,7 +128,8 @@ const createAgent: Handler = async (ctx, owner, input) => {
   if (existing.length >= ctx.config.maxAgents) throw fail(409, 'too_many', `An account can have at most ${ctx.config.maxAgents} agents.`);
   let agent: AgentRow | null = null;
   for (let attempt = 0; attempt < 3 && !agent; attempt++) {
-    const { data, error } = await ctx.admin.from('agent_id_agents').insert({ id: agentId(), owner_user_id: owner.userId, workspace_id: workspaceId, name, handle: handleFor(name), ...origin, runtime, desktop_agent_id: desktopAgentId }).select('*').single();
+    const id = agentId();
+    const { data, error } = await ctx.admin.from('agent_id_agents').insert({ id, owner_user_id: owner.userId, workspace_id: workspaceId, name, handle: handleFor(name), mascot: mascotOf(id), ...origin, runtime, desktop_agent_id: desktopAgentId }).select('*').single();
     if (error?.code === '23505') continue;
     agent = checked({ data, error });
   }
@@ -158,6 +162,10 @@ const updateAgent: Handler = async (ctx, owner, input, params) => {
   const agent = activeAgent(await ownedAgent(ctx, owner, params.id));
   const patch: Record<string, unknown> = { updated_at: iso(ctx) };
   if (input.name !== undefined) patch.name = str(input.name, 60, 'name', { required: true });
+  if (input.mascot !== undefined) {
+    if (!(MASCOTS as readonly string[]).includes(input.mascot)) throw fail(400, 'invalid', `mascot is one of ${MASCOTS.join(', ')}.`);
+    patch.mascot = input.mascot;
+  }
   Object.assign(patch, originInput(input));
   if (input.status !== undefined) { if (!['active', 'suspended'].includes(input.status)) throw fail(400, 'invalid', 'status is active or suspended. Revoke with DELETE.'); patch.status = input.status; }
   if (input.desktopAgentId !== undefined) patch.desktop_agent_id = input.desktopAgentId ? str(input.desktopAgentId, 100, 'desktopAgentId') : null;
@@ -263,19 +271,22 @@ const testFunds: Handler = async (ctx, owner, input, params) => {
 
 // --- Wallet: adding and taking out money ---------------------------------------
 // Adding money: the wallet's address for a transfer from an exchange or another
-// wallet (USDC or USDT on Base), a bank transfer (bank.ts), and, where Stripe
-// has approved its crypto onramp for this account, buying USDC by card
-// straight into it: embedded with the publishable key, else on Stripe's page.
-const cardOnramp = (ctx: Ctx) => /^(sk|rk)_(live|test)_/.test(ctx.config.env('STRIPE_SECRET_KEY')) && !['', 'false', '0', 'off'].includes(ctx.config.env('STRIPE_CRYPTO_ONRAMP_ENABLED').toLowerCase());
+// wallet (USDC or USDT on Base), a SEPA transfer of a set amount (bank.ts), and
+// a card: MoonPay where its keys are set (Europe and the US, on its own page),
+// else Stripe's crypto onramp where Stripe approved it (the US only, embedded
+// with the publishable key, else on Stripe's page).
+const stripeOnramp = (ctx: Ctx) => /^(sk|rk)_(live|test)_/.test(ctx.config.env('STRIPE_SECRET_KEY')) && !['', 'false', '0', 'off'].includes(ctx.config.env('STRIPE_CRYPTO_ONRAMP_ENABLED').toLowerCase());
+const cardProvider = (ctx: Ctx) => moonpayOn(ctx) ? 'moonpay' : stripeOnramp(ctx) ? 'stripe' : null;
 const addMoneyInfo: Handler = async (ctx, owner, _input, params) => {
   const { resource } = await ownedResource(ctx, owner, params.id, 'wallet');
   const live = resource.mode === 'live';
   const chain = String(resource.state?.chain || ctx.config.walletChain);
+  const card = live && chain === 'base' ? cardProvider(ctx) : null;
   return {
     address: resource.address, mode: resource.mode,
     network: live ? { id: chain, name: chain === 'base_sepolia' ? 'Base Sepolia (testnet)' : 'Base' } : null,
     assets: live ? ['USDC', 'USDT'] : [],
-    card: { available: live && chain === 'base' && cardOnramp(ctx) },
+    card: { available: !!card, ...(card ? { provider: card } : {}) },
     bank: { available: live && chain === 'base' && bankAvailable(ctx.config) },
     test: !live,
   };
@@ -283,9 +294,22 @@ const addMoneyInfo: Handler = async (ctx, owner, _input, params) => {
 const addMoneyByCard: Handler = async (ctx, owner, input, params, req) => {
   if (owner.via !== 'session') throw fail(403, 'session_required', 'Add money on the Agent ID website.');
   const { agent, resource } = await ownedResource(ctx, owner, params.id, 'wallet');
-  if (resource.mode !== 'live' || !cardOnramp(ctx) || String(resource.state?.chain || ctx.config.walletChain) !== 'base') throw fail(409, 'card_unavailable', 'Buying with a card isn\'t available for this wallet. Send USDC on Base to its address instead.');
+  const provider = resource.mode === 'live' && String(resource.state?.chain || ctx.config.walletChain) === 'base' ? cardProvider(ctx) : null;
+  if (!provider) throw fail(409, 'card_unavailable', 'Buying with a card isn\'t available for this wallet. Send USDC on Base to its address instead.');
   const amount = input.amount === undefined || input.amount === null || input.amount === '' ? null : cents({ value: input.amount }, 'amount');
   const ip = (req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || '').split(',')[0].trim();
+  await rateLimit(ctx, owner.userId, 'card-payment', 10, 50, 'card payments');
+  if (provider === 'moonpay') {
+    const currency = cardCurrency((await personOf(ctx, owner.userId))?.country);
+    const reference = `card_${randomId(24)}`;
+    const email = owner.email || (await ctx.admin.auth.admin.getUserById(owner.userId)).data?.user?.email || null;
+    const url = await moonpayUrl(ctx, {
+      address: resource.address!, currency, amount, email, customer: owner.userId, reference, ip: ip || null,
+      returnTo: `${ctx.config.siteUrl}/agent-id/agents/${agent.id}?tab=wallet`,
+    });
+    await audit(ctx, owner.userId, agent.id, 'owner', 'wallet.add_money_card', { provider, amount, currency, reference });
+    return { provider, url };
+  }
   const session = await stripe(ctx, 'POST', '/v1/crypto/onramp_sessions', {
     wallet_addresses: { base_network: resource.address }, lock_wallet_address: true,
     destination_networks: ['base'], destination_network: 'base', destination_currencies: ['usdc'], destination_currency: 'usdc',
@@ -297,9 +321,9 @@ const addMoneyByCard: Handler = async (ctx, owner, input, params, req) => {
     if (String((error as any)?.code || '').startsWith('crypto_onramp_')) throw fail(409, 'card_unavailable_here', 'Buying USDC on Base by card isn\'t available where you are. Use a bank transfer or send crypto instead.');
     throw error;
   });
-  await audit(ctx, owner.userId, agent.id, 'owner', 'wallet.add_money_card', { amount });
+  await audit(ctx, owner.userId, agent.id, 'owner', 'wallet.add_money_card', { provider, amount });
   const publishableKey = ctx.config.env('STRIPE_PUBLISHABLE_KEY');
-  return { clientSecret: String(session.client_secret), ...(publishableKey ? { publishableKey } : {}), ...(session.redirect_url ? { url: String(session.redirect_url) } : {}) };
+  return { provider, clientSecret: String(session.client_secret), ...(publishableKey ? { publishableKey } : {}), ...(session.redirect_url ? { url: String(session.redirect_url) } : {}) };
 };
 const withdrawMoney: Handler = async (ctx, owner, input, params) => {
   // Money leaves only from a signed-in session: a leaked CLI key can't empty a wallet.
@@ -501,6 +525,9 @@ export const ownerRoutes: Route<Owner>[] = [
   ['GET', '/v1/agents/:id/wallet/add-money', addMoneyInfo], ['POST', '/v1/agents/:id/wallet/add-money', addMoneyByCard],
   ['POST', '/v1/agents/:id/wallet/withdraw', withdrawMoney],
   ['POST', '/v1/agents/:id/wallet/bank-deposit', async (ctx, owner, input, params) => bankDeposit(ctx, owner, activeAgent(await ownedAgent(ctx, owner, params.id)), input)],
+  ['GET', '/v1/agents/:id/wallet/bank-payins', async (ctx, owner, _input, params) => bankPayins(ctx, owner, await ownedAgent(ctx, owner, params.id))],
+  ['POST', '/v1/agents/:id/wallet/bank-payins', async (ctx, owner, input, params) => startBankPayin(ctx, owner, activeAgent(await ownedAgent(ctx, owner, params.id)), input)],
+  ['DELETE', '/v1/agents/:id/wallet/bank-payins/:payinId', async (ctx, owner, _input, params) => cancelBankPayin(ctx, owner, await ownedAgent(ctx, owner, params.id), params.payinId)],
   ['GET', '/v1/account/bank', (ctx, owner) => bankStatus(ctx, owner)],
   ['POST', '/v1/account/bank/verify', (ctx, owner) => startBankVerification(ctx, owner)],
   ['POST', '/v1/account/bank/accounts', (ctx, owner, input) => addBankAccount(ctx, owner, input)],

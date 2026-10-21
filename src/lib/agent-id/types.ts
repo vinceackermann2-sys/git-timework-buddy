@@ -59,10 +59,15 @@ export type Resource = {
   createdAt: string;
 };
 
+// Timewarp's mascots, one per agent as its face.
+export type Mascot = "orbit" | "nova" | "cosmo";
+
 export type Agent = {
   id: string;
   name: string;
   handle: string;
+  // Older servers leave it out: then it follows from the id (mascotOf).
+  mascot?: Mascot;
   runtime: Runtime;
   status: AgentStatus;
   organizationId: string | null;
@@ -163,7 +168,8 @@ export type PublicConfig = {
   verification: {
     // Bridge where it moves money to and from banks: one check covers both.
     person: "bridge" | "stripe_identity" | "test" | "manual";
-    business: "test" | "manual";
+    // Bridge checks businesses too where it moves money; else Timewarp reviews them.
+    business: "bridge" | "test" | "manual";
     requiredToCreateAgents: boolean;
   };
   passports: { available: boolean; lifetimeSeconds: number };
@@ -194,6 +200,9 @@ export type VatCheck = {
 
 export type Business = {
   status: VerificationStatus;
+  provider?: "bridge" | "test" | "manual";
+  // Bridge's page, while its business check waits for the person to finish it.
+  link?: string;
   legalName?: string | null;
   registrationNumber?: string | null;
   vatNumber?: string | null;
@@ -322,14 +331,17 @@ export type AddMoneyInfo = {
   mode: Mode;
   network: { id: string; name: string } | null;
   assets: string[];
-  card: { available: boolean };
+  // MoonPay (Europe and the US, on its own page) or Stripe's onramp (the US).
+  card: { available: boolean; provider?: "moonpay" | "stripe" };
   bank?: { available: boolean };
   test: boolean;
 };
 
-// Embedded with the publishable key when the server has one; otherwise
-// Stripe's own page at `url`.
-export type CardOnrampSession = { clientSecret: string; publishableKey?: string; url?: string };
+// MoonPay's page at `url`; or Stripe's onramp, embedded with the publishable
+// key when the server has one, otherwise Stripe's own page at `url`.
+export type CardOnrampSession =
+  | { provider: "moonpay"; url: string }
+  | { provider?: "stripe"; clientSecret: string; publishableKey?: string; url?: string };
 
 export type WithdrawResult = {
   status: "completed" | "pending";
@@ -371,6 +383,25 @@ export type BankDeposit = {
   iban: string | null;
   bic: string | null;
   reference: string | null;
+};
+// Adding money with one SEPA transfer of a set amount: where to send it, and
+// how far it got (Bridge's transfer states).
+export type BankPayin = {
+  id: string;
+  currency: "eur";
+  amount: number;
+  state: string;
+  instructions: {
+    currency: "eur";
+    amount: string;
+    beneficiary: string;
+    iban: string;
+    bic: string | null;
+    bankName: string | null;
+    bankAddress: string | null;
+    reference: string;
+  };
+  createdAt: string;
 };
 export type NewBankAccount =
   | {

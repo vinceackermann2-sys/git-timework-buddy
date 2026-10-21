@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Brand, ThemeMenu } from "@/components/agent-id/Brand";
 import { AppIcon } from "../AppIcons";
-import { Avatar } from "../ui";
+import { AgentAvatar } from "../ui";
 
 export function ClaimLayout({
   children,
@@ -50,15 +50,17 @@ export function ClaimAgent({
   name,
   app,
   device,
+  mascot,
 }: {
   name: string;
   app: { app: string; label: string } | null;
   device: string | null;
+  mascot?: string | undefined;
 }) {
   const where = [app?.label, device].filter(Boolean).join(" on ");
   return (
     <div className="mb-6 flex items-center gap-3 rounded-xl bg-[var(--muted)] p-3">
-      <Avatar name={name} size="md" />
+      <AgentAvatar mascot={mascot} id={name} size="md" />
       <div className="min-w-0">
         <p className="truncate font-medium">{name}</p>
         {where && (

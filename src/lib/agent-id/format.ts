@@ -512,6 +512,14 @@ export const shortAddress = (value: string) =>
 
 // --- Money in US dollars (wallets hold USDC and USDT, 1:1) -----------------------------
 
+// The mascot an agent has without one picked: the same as the API's choice.
+export const MASCOTS = ["orbit", "nova", "cosmo"] as const;
+export function mascotOf(key: string): (typeof MASCOTS)[number] {
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return MASCOTS[hash % MASCOTS.length]!;
+}
+
 export function formatUsd(cents: number | null | undefined): string {
   if (cents === null || cents === undefined || !Number.isFinite(cents)) return "—";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -669,6 +677,45 @@ export function dayLabel(iso: string, now: number = Date.now()): string {
       ? { month: "short", day: "numeric" }
       : { year: "numeric", month: "short", day: "numeric" },
   );
+}
+
+// The balance at the end of each of the last `days` days, oldest first, walked
+// back from today's balance through completed money in and out. Days before
+// the oldest loaded transfer are null when older ones weren't loaded.
+export function balanceHistory(
+  balance: number,
+  events: { at: string; direction: string; status: string; amount: { amount: number } | null }[],
+  { days = 30, now = Date.now(), complete = true } = {},
+): (number | null)[] {
+  const moves = events
+    .filter((e) => e.status === "completed" && e.amount && e.direction !== "none")
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const endOfToday = new Date(now);
+  endOfToday.setHours(24, 0, 0, 0);
+  const oldest = moves.length ? Date.parse(moves[moves.length - 1]!.at) : null;
+  const points: (number | null)[] = [];
+  let running = balance;
+  let next = 0;
+  for (let back = 0; back < days; back++) {
+    const end = new Date(endOfToday);
+    end.setDate(end.getDate() - back);
+    for (; next < moves.length && Date.parse(moves[next]!.at) >= end.getTime(); next++) {
+      const { direction, amount } = moves[next]!;
+      running += direction === "in" ? -amount!.amount : amount!.amount;
+    }
+    points.push(
+      !complete && oldest !== null && end.getTime() <= oldest ? null : Math.max(0, running),
+    );
+  }
+  return points.reverse();
+}
+
+// Up, down or flat over the known part of a balance history.
+export function balanceTrend(points: (number | null)[]): "up" | "down" | "flat" {
+  const known = points.filter((p): p is number => p !== null);
+  const first = known[0] ?? 0;
+  const last = known.at(-1) ?? 0;
+  return last > first ? "up" : last < first ? "down" : "flat";
 }
 
 // Items (newest first) grouped under day labels, keeping their order.

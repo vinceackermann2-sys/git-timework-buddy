@@ -43,6 +43,8 @@ import {
   initials,
   statusLabel,
   type Tone,
+  MASCOTS,
+  mascotOf,
 } from "@/lib/agent-id/format";
 import type { Kind, Mode } from "@/lib/agent-id/types";
 import { useTestMode } from "@/lib/agent-id/queries";
@@ -612,6 +614,41 @@ export function toastError(error: unknown, title?: string) {
 }
 
 // --- Identity ------------------------------------------------------------------------
+
+const MASCOT_SIZES = {
+  sm: "h-8 w-8",
+  md: "h-11 w-11",
+  lg: "h-16 w-16",
+  xl: "h-28 w-28",
+} as const;
+
+// An agent's face: its Timewarp mascot (Orbit, Nova or Cosmo). People and
+// contacts keep their initials (Avatar).
+export function AgentAvatar({
+  mascot,
+  id,
+  size = "md",
+  className,
+}: {
+  mascot?: string | null | undefined;
+  // Without a mascot, the one that follows from the agent's id.
+  id?: string | undefined;
+  size?: keyof typeof MASCOT_SIZES;
+  className?: string;
+}) {
+  const name =
+    mascot && (MASCOTS as readonly string[]).includes(mascot) ? mascot : mascotOf(id ?? "agent");
+  const pixels = size === "lg" || size === "xl" ? 256 : 128;
+  return (
+    <img
+      src={`/agent-id/mascots/${name}-${pixels}.png`}
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      className={cn("shrink-0 select-none object-contain", MASCOT_SIZES[size], className)}
+    />
+  );
+}
 
 const AVATAR_SIZES = {
   sm: "h-8 w-8 text-xs",

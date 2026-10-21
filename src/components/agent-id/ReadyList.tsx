@@ -9,7 +9,8 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatPhone, shortAddress } from "@/lib/agent-id/format";
 import type { AgentSetup, Kind } from "@/lib/agent-id/types";
-import { CopyButton, KIND_ICONS } from "./ui";
+import { CopyButton } from "./ui";
+import { ResourceArt } from "./ResourceArt";
 
 type Ready = Partial<Record<string, { status: string; address: string | null } | undefined>>;
 
@@ -118,12 +119,9 @@ export function ReadyList({
   return (
     <ul className="aid-card divide-y divide-[var(--border)] overflow-hidden text-left">
       {rows.map(({ kind, label, value, mono, copy, quiet }) => {
-        const Icon = KIND_ICONS[kind];
         return (
-          <li key={kind} className="flex min-h-14 items-center gap-3 px-4 py-2.5">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--accent)] text-[var(--aid-ink)]">
-              <Icon className="h-4 w-4" aria-hidden="true" />
-            </span>
+          <li key={kind} className="flex min-h-16 items-center gap-3.5 px-4 py-3">
+            <ResourceArt kind={kind === "card" ? "wallet" : kind} />
             <span className="min-w-0 flex-1">
               <span className="block text-xs text-[var(--muted-foreground)]">{label}</span>
               <span

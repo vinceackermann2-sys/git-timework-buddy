@@ -34,6 +34,9 @@
   --aid-warning-bg: #fff4d9;
   --aid-danger: #b02a45;
   --aid-danger-bg: #fdecef;
+  /* The wallet's balance line: up, down. */
+  --aid-up: #16a34a;
+  --aid-down: #e5484d;
   --aid-test: #5d6474;
   --aid-test-bg: #f1f2f5;
   --aid-code-bg: #f8f7fb;
@@ -109,6 +112,8 @@
     --aid-warning-bg: #33280f;
     --aid-danger: #f28da0;
     --aid-danger-bg: #3a1a22;
+    --aid-up: #4ade80;
+    --aid-down: #f87171;
     --aid-test: #c0c8d6;
     --aid-test-bg: #262c38;
     --aid-code-bg: #141820;
@@ -143,6 +148,8 @@
   --aid-warning-bg: #33280f;
   --aid-danger: #f28da0;
   --aid-danger-bg: #3a1a22;
+  --aid-up: #4ade80;
+  --aid-down: #f87171;
   --aid-test: #c0c8d6;
   --aid-test-bg: #262c38;
   --aid-code-bg: #141820;

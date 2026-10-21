@@ -14,7 +14,7 @@ import {
 } from "@/lib/agent-id/queries";
 import type { AgentDetail, Kind } from "@/lib/agent-id/types";
 import { AppChip } from "../AppIcons";
-import { Avatar, Chip, KIND_ICONS, ModeBadge, StatusBadge } from "../ui";
+import { AgentAvatar, Chip, KIND_ICONS, ModeBadge, StatusBadge } from "../ui";
 import { ProvisionDialog } from "./ProvisionDialog";
 import { KIND_TABS } from "./tabs";
 
@@ -45,7 +45,7 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
   return (
     <section className="aid-card overflow-hidden" aria-label={`${agent.name}'s identity`}>
       <div className="flex items-start gap-4 p-5">
-        <Avatar name={agent.name} large />
+        <AgentAvatar mascot={agent.mascot} id={agent.id} size="lg" />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
             <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">{agent.name}</h1>

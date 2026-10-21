@@ -10,7 +10,7 @@ import { audit, personOf, rateLimit, resourceFor } from './shared.ts';
 import { withdraw } from './agent.ts';
 import { liveBalance } from './providers/wallet.ts';
 import {
-  addExternalAccount, cancelPayout, createKycLink, createPayout, createVirtualAccount, customerDetails, kycLink,
+  addExternalAccount, cancelPayout, createKycLink, createPayin, createPayout, createVirtualAccount, customerDetails, kycLink,
   type NewAccount, payoutState, removeExternalAccount,
 } from './providers/bridge.ts';
 
@@ -40,7 +40,9 @@ const currenciesOf = (ctx: Ctx, row: any): Currency[] =>
 async function refreshed(ctx: Ctx, row: any, { force = false } = {}) {
   if (!row?.kyc_link_ref) return row;
   const status = statusOf(row), age = ctx.now() - (Date.parse(row.updated_at) || 0);
-  if (!force && (status === 'rejected' || age < (status === 'approved' ? 10 * 60_000 : 5_000))) return row;
+  // Approved without its rails known yet: ask again soon, as while checking.
+  const settled = status === 'approved' && Object.keys(row.endorsements || {}).length > 0;
+  if (!force && (status === 'rejected' || age < (settled ? 10 * 60_000 : 5_000))) return row;
   try {
     const link = await kycLink(ctx, row.kyc_link_ref);
     const customer = link.customerId || row.customer_ref;
@@ -107,6 +109,67 @@ export async function refreshBridgeCheck(ctx: Ctx, userId: string) {
   if (ctx.config.kycProvider !== 'bridge') return;
   const row = await customerRow(ctx, userId);
   if (row) await refreshed(ctx, row);
+}
+
+// --- A business, checked by Bridge too (KYB) ------------------------------------------
+
+async function businessRow(ctx: Ctx, workspaceId: string) {
+  return checked(await ctx.admin.from('agent_id_bank_businesses').select('*').eq('workspace_id', workspaceId).maybeSingle()) as any;
+}
+
+// Starts Bridge's business check for an organization (its registration,
+// owners and documents, on Bridge's page), or picks up the one started.
+export async function startBridgeBusinessCheck(ctx: Ctx, owner: Owner, input: { workspaceId: string; legalName: string; email: string | null }) {
+  if (owner.via !== 'session') throw fail(403, 'session_required', 'Verify on the Agent ID website.');
+  needBank(ctx);
+  let row = await businessRow(ctx, input.workspaceId);
+  if (!row?.kyc_link_ref) {
+    const email = input.email || owner.email || (await ctx.admin.auth.admin.getUserById(owner.userId)).data?.user?.email;
+    if (!email) throw fail(409, 'email_required', 'Enter the business\'s email address.');
+    const link = await createKycLink(ctx, {
+      userId: `business-${input.workspaceId}`, fullName: input.legalName, email, type: 'business',
+      redirectUri: `${ctx.config.siteUrl}/agent-id/verify?done=1`, endorsements: ctx.config.bank.currencies.map(currency => ENDORSEMENT[currency]),
+    });
+    checked(await ctx.admin.from('agent_id_bank_businesses').upsert({
+      workspace_id: input.workspaceId, started_by: owner.userId, kyc_link_ref: link.id, customer_ref: link.customerId, kyc_link: link.kycLink, tos_link: link.tosLink,
+      kyc_status: link.kycStatus, tos_status: link.tosStatus, rejection: link.rejection, updated_at: iso(ctx),
+    }, { onConflict: 'workspace_id' }));
+    row = await businessRow(ctx, input.workspaceId);
+  }
+  if (statusOf(row) === 'rejected') throw fail(409, 'verification_rejected', 'Bridge couldn\'t verify this business. Contact support if you think this is wrong.');
+  return { row, link: linkOf(row) };
+}
+
+// Bridge's answer moved onto Agent ID's record of the business.
+async function syncBusiness(ctx: Ctx, row: any) {
+  const business = checked(await ctx.admin.from('agent_id_businesses').select('*').eq('workspace_id', row.workspace_id).maybeSingle()) as any;
+  if (!business || business.provider !== 'bridge') return;
+  const status = statusOf(row);
+  const next = status === 'approved' ? { status: 'verified', verified_at: business.verified_at || iso(ctx), review_note: null }
+    : status === 'rejected' ? { status: 'rejected', verified_at: null, review_note: (row.rejection || 'Bridge couldn\'t verify the business.').slice(0, 1000) }
+    : { status: 'pending', verified_at: null, review_note: null };
+  if (business.status === next.status) return;
+  await ctx.admin.from('agent_id_businesses').update({ ...next, provider_ref: row.customer_ref || row.kyc_link_ref, updated_at: iso(ctx) }).eq('workspace_id', row.workspace_id);
+  if (business.submitted_by && next.status !== 'pending') await audit(ctx, business.submitted_by, null, 'provider', `verification.business.${next.status}`, { organization: row.workspace_id, provider: 'bridge' });
+}
+
+// A business's Bridge check, looked at again while it runs. Returns where to finish it.
+export async function refreshBusinessCheck(ctx: Ctx, workspaceId: string, { force = false } = {}) {
+  let row = await businessRow(ctx, workspaceId);
+  if (!row?.kyc_link_ref) return null;
+  const status = statusOf(row);
+  if (force || (status === 'pending' && ctx.now() - (Date.parse(row.updated_at) || 0) >= 5_000)) {
+    try {
+      const link = await kycLink(ctx, row.kyc_link_ref);
+      const next = { customer_ref: link.customerId || row.customer_ref, kyc_status: link.kycStatus, tos_status: link.tosStatus, kyc_link: link.kycLink, tos_link: link.tosLink, rejection: link.rejection, updated_at: iso(ctx) };
+      await ctx.admin.from('agent_id_bank_businesses').update(next).eq('workspace_id', workspaceId);
+      row = { ...row, ...next };
+    } catch (error) {
+      console.error('[agent-id] business check', (error as Error).message);
+    }
+  }
+  await syncBusiness(ctx, row);
+  return linkOf(row);
 }
 
 const accountView = (row: any) => ({
@@ -271,9 +334,70 @@ export async function bankDeposit(ctx: Ctx, owner: Owner, agent: AgentRow, input
   return { deposit: created.instructions };
 }
 
-// --- Withdrawals to a bank -------------------------------------------------------------
+// --- Pay-ins: adding money with one SEPA transfer ----------------------------------------
 
 const decimal = (cents: number) => `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`;
+// Waiting for the person's transfer; the rest are on their way or done.
+const PAYIN_OPEN = new Set(['awaiting_funds', 'funds_received', 'in_review', 'payment_submitted']);
+const PAYIN_MIN = 100, PAYIN_MAX = 10_000_000; // €1 to €100,000
+
+const payinView = (row: any) => ({
+  id: row.id, currency: row.currency, amount: Number(row.amount_minor), state: row.state,
+  instructions: row.instructions, createdAt: row.created_at,
+});
+
+// The person enters an amount; Bridge opens one transfer for it, to this
+// wallet, and they send exactly that with its reference from their bank.
+export async function startBankPayin(ctx: Ctx, owner: Owner, agent: AgentRow, input: any) {
+  if (owner.via !== 'session') throw fail(403, 'session_required', 'Add money on the Agent ID website.');
+  const amount = Number(input.amount);
+  if (!Number.isInteger(amount) || amount < PAYIN_MIN || amount > PAYIN_MAX) throw fail(400, 'invalid', 'Enter an amount from €1 to €100,000.');
+  const customer = await approvedCustomer(ctx, owner);
+  if (!currenciesOf(ctx, customer).includes('eur')) throw fail(409, 'currency_unavailable', 'SEPA transfers aren\'t open for you yet.');
+  const wallet = liveBaseWallet(ctx, await resourceFor(ctx, agent.id, 'wallet'));
+  await rateLimit(ctx, owner.userId, 'bank-payin', 10, 40, 'bank transfers');
+  const id = `pay_${randomId(24)}`;
+  const payin = await createPayin(ctx, { customerId: customer.customer_ref, amount: decimal(amount), toAddress: wallet.address!, reference: id, idempotencyKey: `agent-id-payin-${id}` });
+  const row = checked(await ctx.admin.from('agent_id_bank_payins').insert({
+    id, resource_id: wallet.id, user_id: owner.userId, provider_ref: payin.id, currency: 'eur', amount_minor: amount, state: payin.state, instructions: payin.instructions,
+    created_at: iso(ctx), updated_at: iso(ctx),
+  }).select('*').single());
+  await audit(ctx, owner.userId, agent.id, 'owner', 'bank.payin_started', { payin: id, currency: 'eur', amount });
+  return { payin: payinView(row) };
+}
+
+// The wallet's recent pay-ins, open ones looked at again now and then.
+export async function bankPayins(ctx: Ctx, owner: Owner, agent: AgentRow) {
+  if (!bankAvailable(ctx.config)) return { payins: [] };
+  const wallet = await resourceFor(ctx, agent.id, 'wallet');
+  const rows = (checked(await ctx.admin.from('agent_id_bank_payins').select('*').eq('resource_id', wallet.id).eq('user_id', owner.userId).order('created_at', { ascending: false }).limit(10)) || []) as any[];
+  for (const row of rows.filter(r => PAYIN_OPEN.has(r.state) && ctx.now() - (Date.parse(r.updated_at) || 0) > 30_000).slice(0, 3)) {
+    const state = await payoutState(ctx, row.provider_ref).catch(() => null);
+    const next = { state: state || row.state, updated_at: iso(ctx) };
+    await ctx.admin.from('agent_id_bank_payins').update(next).eq('id', row.id);
+    Object.assign(row, next);
+  }
+  return { payins: rows.filter(r => r.state !== 'canceled').map(payinView) };
+}
+
+// Changed their mind before sending: the transfer is closed at Bridge too.
+export async function cancelBankPayin(ctx: Ctx, owner: Owner, agent: AgentRow, id: string) {
+  const wallet = await resourceFor(ctx, agent.id, 'wallet');
+  const row = /^pay_[a-z0-9]{24}$/.test(id) ? checked(await ctx.admin.from('agent_id_bank_payins').select('*').eq('id', id).eq('resource_id', wallet.id).eq('user_id', owner.userId).maybeSingle()) as any : null;
+  if (!row) throw fail(404, 'not_found', 'No such bank transfer.');
+  if (row.state !== 'awaiting_funds') throw fail(409, 'too_late', 'The money is already on its way.');
+  await cancelPayout(ctx, row.provider_ref);
+  await ctx.admin.from('agent_id_bank_payins').update({ state: 'canceled', updated_at: iso(ctx) }).eq('id', row.id);
+  await audit(ctx, owner.userId, agent.id, 'owner', 'bank.payin_canceled', { payin: row.id });
+  return { canceled: true };
+}
+
+export async function setPayinState(ctx: Ctx, transferId: string, state: string) {
+  const rows = (checked(await ctx.admin.from('agent_id_bank_payins').update({ state, updated_at: iso(ctx) }).eq('provider_ref', transferId).neq('state', state).select('id')) || []) as any[];
+  return rows.length;
+}
+
+// --- Withdrawals to a bank -------------------------------------------------------------
 
 // Bridge takes USDC on Base: the payout opens at Bridge, then the wallet sends
 // it the USDC, and Bridge pays the bank. Not sent means not paid: the payout
@@ -323,10 +447,15 @@ export async function refreshPayouts(ctx: Ctx, agentId: string) {
   }
 }
 
-// A webhook said a customer or KYC link changed: look again now.
+// A webhook said a customer or KYC link changed (a person's or a business's): look again now.
 export async function refreshCustomer(ctx: Ctx, match: { kycLink?: string; customer?: string }) {
-  const query = ctx.admin.from('agent_id_bank_customers').select('*');
-  const row = checked(await (match.kycLink ? query.eq('kyc_link_ref', match.kycLink) : query.eq('customer_ref', match.customer || '')).maybeSingle()) as any;
+  const find = (table: string, columns: string) => {
+    const query = ctx.admin.from(table).select(columns);
+    return match.kycLink ? query.eq('kyc_link_ref', match.kycLink) : query.eq('customer_ref', match.customer || '');
+  };
+  const row = checked(await find('agent_id_bank_customers', '*').maybeSingle()) as any;
   if (row) await refreshed(ctx, row, { force: true });
-  return !!row;
+  const business = checked(await find('agent_id_bank_businesses', 'workspace_id').maybeSingle()) as any;
+  if (business) await refreshBusinessCheck(ctx, business.workspace_id, { force: true });
+  return !!row || !!business;
 }

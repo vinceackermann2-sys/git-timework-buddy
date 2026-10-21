@@ -134,6 +134,31 @@ export async function createVirtualAccount(ctx: Ctx, customerId: string, currenc
   return { id: String(account.id), instructions };
 }
 
+// --- Pay-ins: one SEPA transfer of a set amount, arriving as USDC -----------------------
+
+// The person sends exactly this amount with this reference from their bank;
+// Bridge converts it and sends the USDC to the wallet's address. SEPA Instant
+// works where the person's bank offers it (their bank picks the scheme).
+export type PayinInstructions = {
+  currency: 'eur'; amount: string; beneficiary: string; iban: string; bic: string | null;
+  bankName: string | null; bankAddress: string | null; reference: string;
+};
+export async function createPayin(ctx: Ctx, input: { customerId: string; amount: string; toAddress: string; reference: string; idempotencyKey: string }) {
+  const transfer = await bridge(ctx, 'POST', '/transfers', {
+    on_behalf_of: input.customerId, amount: input.amount, client_reference_id: input.reference,
+    source: { payment_rail: 'sepa', currency: 'eur' },
+    destination: { payment_rail: 'base', currency: 'usdc', to_address: input.toAddress },
+  }, input.idempotencyKey);
+  const i = transfer?.source_deposit_instructions || {};
+  const beneficiary = text(i.account_holder_name || i.bank_beneficiary_name), iban = text(i.iban), reference = text(i.deposit_message);
+  if (!transfer?.id || !beneficiary || !iban || !reference) throw fail(502, 'bank_failed', 'The bank partner did not open the transfer.');
+  const instructions: PayinInstructions = {
+    currency: 'eur', amount: text(i.amount) || input.amount, beneficiary, iban: iban.replace(/\s+/g, ''), bic: text(i.bic),
+    bankName: text(i.bank_name), bankAddress: text(i.bank_address), reference,
+  };
+  return { id: String(transfer.id), state: String(transfer.state || 'awaiting_funds'), instructions };
+}
+
 // --- Payouts: USDC sent to Bridge, paid to a bank ---------------------------------------
 
 // A fixed amount from the wallet's own address, so Bridge matches the deposit
@@ -152,7 +177,7 @@ export async function payoutState(ctx: Ctx, id: string) {
   const transfer = await bridge(ctx, 'GET', `/transfers/${encodeURIComponent(id)}`);
   return String(transfer?.state || '');
 }
-// Only while it still waits for the USDC.
+// Only while it still waits for the money (USDC for a payout, the bank transfer for a pay-in).
 export async function cancelPayout(ctx: Ctx, id: string) {
   await bridge(ctx, 'DELETE', `/transfers/${encodeURIComponent(id)}`).catch(() => null);
 }

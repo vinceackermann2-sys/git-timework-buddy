@@ -6,11 +6,11 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { counterpartyLabel, formatCents } from "@/lib/agent-id/format";
-import { queryKeys } from "@/lib/agent-id/queries";
+import { queryKeys, useAgents } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
 import type { Approval } from "@/lib/agent-id/types";
 import { cn } from "@/lib/utils";
-import { Avatar, Rows, TimeAgo, toastError } from "./ui";
+import { AgentAvatar, Rows, TimeAgo, toastError } from "./ui";
 
 export const approvalAmount = (a: Approval) =>
   typeof a.request.amount === "number" ? formatCents(a.request.amount, a.request.currency) : "—";
@@ -46,6 +46,8 @@ function PendingRow({
   }, [highlighted]);
   const queryClient = useQueryClient();
   const agentName = approval.agentName ?? "Your agent";
+  // Its face, as on the agent's own page.
+  const mascot = useAgents().data?.find((a) => a.id === approval.agentId)?.mascot;
   const decide = useMutation({
     mutationFn: (decision: "approve" | "deny") => api.decideApproval(approval.id, decision),
     onSuccess: async (_result, decision) => {
@@ -76,7 +78,7 @@ function PendingRow({
       )}
     >
       <div className="flex min-w-0 flex-1 items-start gap-3">
-        <Avatar name={agentName} size="md" />
+        <AgentAvatar mascot={mascot} id={approval.agentId} size="md" />
         <div className="min-w-0">
           <p className="text-sm text-[var(--muted-foreground)]">
             <Link

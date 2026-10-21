@@ -5,7 +5,7 @@ import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppIcon } from "@/components/agent-id/AppIcons";
 import { Brand, ThemeMenu } from "@/components/agent-id/Brand";
-import { Avatar, KIND_ICONS } from "@/components/agent-id/ui";
+import { AgentAvatar, KIND_ICONS } from "@/components/agent-id/ui";
 import { useSession } from "@/lib/agent-id/session";
 
 export const Route = createFileRoute("/agent-id/")({ component: AgentIdLanding });
@@ -106,7 +106,7 @@ function SampleId() {
   return (
     <div className="aid-card overflow-hidden shadow-[0_24px_60px_-20px_rgba(23,32,51,0.25)]">
       <div className="flex items-center gap-4 border-b border-[var(--border)] px-6 py-5">
-        <Avatar name="Research Assistant" size="lg" />
+        <AgentAvatar mascot="orbit" size="lg" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-lg font-semibold">Research Assistant</p>
           <p className="mt-0.5 flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">

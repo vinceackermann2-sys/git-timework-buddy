@@ -7,6 +7,8 @@ import type {
   BankAccount,
   BankCurrency,
   BankDeposit,
+  BankPayin,
+  Mascot,
   BankStatus,
   CardOnrampSession,
   AdminSetup,
@@ -239,14 +241,15 @@ export function createAgentIdClient(options: ClientOptions) {
     verifyBusiness: (input: {
       organizationId: string;
       legalName: string;
-      registrationNumber: string;
+      // Bridge's own page asks for the registration where it checks businesses.
+      registrationNumber?: string;
       vatNumber?: string;
       country: string;
       website?: string;
       representativeRole?: string;
       attestation?: boolean;
     }) =>
-      request<{ business: Business }>("/v1/account/verification", {
+      request<{ business: Business; url?: string }>("/v1/account/verification", {
         body: { kind: "business", ...input },
       }),
     // The business's registration certificate (PDF or photo, at most 10 MB).
@@ -282,6 +285,7 @@ export function createAgentIdClient(options: ClientOptions) {
         organizationId?: string | null;
         desktopAgentId?: string | null;
         origin?: { app: string; detail?: string | null };
+        mascot?: Mascot;
       },
     ) => request<{ agent: Agent }>(`/v1/agents/${id(agentId)}`, { method: "PATCH", body: patch }),
     cardApplication: (agentId: string) =>
@@ -336,7 +340,7 @@ export function createAgentIdClient(options: ClientOptions) {
       }),
     addMoneyInfo: (agentId: string) =>
       request<AddMoneyInfo>(`/v1/agents/${id(agentId)}/wallet/add-money`),
-    // Buying USDC by card (Stripe's crypto onramp), only where offered.
+    // Buying USDC by card (MoonPay, or Stripe's crypto onramp), only where offered.
     buyWithCard: (agentId: string, amount?: string) =>
       request<CardOnrampSession>(`/v1/agents/${id(agentId)}/wallet/add-money`, {
         body: amount ? { amount } : {},
@@ -354,6 +358,18 @@ export function createAgentIdClient(options: ClientOptions) {
       request<{ deposit: BankDeposit }>(`/v1/agents/${id(agentId)}/wallet/bank-deposit`, {
         body: { currency },
       }),
+    // Adding money by SEPA: one transfer of a set amount (cents), to this wallet.
+    bankPayins: (agentId: string) =>
+      request<{ payins: BankPayin[] }>(`/v1/agents/${id(agentId)}/wallet/bank-payins`),
+    startBankPayin: (agentId: string, amount: number) =>
+      request<{ payin: BankPayin }>(`/v1/agents/${id(agentId)}/wallet/bank-payins`, {
+        body: { amount },
+      }),
+    cancelBankPayin: (agentId: string, payinId: string) =>
+      request<{ canceled: boolean }>(
+        `/v1/agents/${id(agentId)}/wallet/bank-payins/${id(payinId)}`,
+        { method: "DELETE" },
+      ),
     bank: () => request<BankStatus>("/v1/account/bank"),
     startBankVerification: () => request<BankStatus>("/v1/account/bank/verify", { body: {} }),
     addBankAccount: (input: NewBankAccount) =>

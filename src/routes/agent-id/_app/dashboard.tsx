@@ -6,7 +6,7 @@ import { CreateAgentDialog } from "@/components/agent-id/CreateAgentDialog";
 import { AppIconRow } from "@/components/agent-id/AppIcons";
 import { AgentsIcon } from "@/components/agent-id/icons";
 import {
-  Avatar,
+  AgentAvatar,
   CommandLine,
   ErrorState,
   KIND_ICONS,
@@ -98,7 +98,7 @@ function AgentRow({ agent }: { agent: Agent }) {
         className="group flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-[var(--accent)] sm:px-5"
       >
         <span className={cn(!active && "opacity-60")}>
-          <Avatar name={agent.name} size="md" />
+          <AgentAvatar mascot={agent.mascot} id={agent.id} size="md" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">

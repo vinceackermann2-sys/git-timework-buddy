@@ -1,7 +1,8 @@
 // Bank transfers in and out of a live wallet, through Bridge (a Stripe
-// company): the owner verifies with Bridge once, then each wallet has its own
-// bank details for deposits (they arrive as USDC), and withdrawals go to the
-// owner's own bank account. Bank numbers stay with Bridge.
+// company): the owner verifies with Bridge once, then adds money with a SEPA
+// transfer of an amount they choose (it arrives as USDC; in US dollars, the
+// wallet's own bank details), and withdraws to their own bank account. Bank
+// numbers stay with Bridge.
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,6 +21,7 @@ import type {
   BankAccount,
   BankCurrency,
   BankDeposit as Deposit,
+  BankPayin,
   BankStatus,
   Money,
   NewBankAccount,
@@ -136,7 +138,207 @@ function WithBank({ children }: { children: (bank: BankStatus) => ReactNode }) {
 
 export function BankDeposit({ agent }: { agent: Agent }) {
   return (
-    <WithBank>{(bank) => <DepositDetails agent={agent} currencies={bank.currencies} />}</WithBank>
+    <WithBank>
+      {(bank) =>
+        bank.currencies.includes("eur") ? (
+          <SepaDeposit agent={agent} />
+        ) : (
+          <DepositDetails agent={agent} currencies={bank.currencies} />
+        )
+      }
+    </WithBank>
+  );
+}
+
+// --- Adding money by SEPA: an amount, then one transfer to make ----------------------
+
+const PAYIN_LABELS: Record<string, string> = {
+  awaiting_funds: "Waiting for your transfer",
+  funds_received: "Received, on its way",
+  in_review: "Being checked",
+  payment_submitted: "On its way to the wallet",
+  payment_processed: "Arrived",
+  returned: "Sent back to your bank",
+  refund_in_flight: "Being sent back to your bank",
+  refunded: "Sent back to your bank",
+  canceled: "Canceled",
+};
+export const payinStateLabel = (state: string) =>
+  PAYIN_LABELS[state] ?? "Didn't go through. Contact support.";
+const PAYIN_OPEN = new Set(["awaiting_funds", "funds_received", "in_review", "payment_submitted"]);
+export const payinOpen = (payin: BankPayin) => PAYIN_OPEN.has(payin.state);
+export const formatEur = (cents: number) =>
+  new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" }).format(cents / 100);
+
+// The wallet's recent SEPA transfers, looked at again while one is on its way.
+export function usePayins(agentId: string, enabled = true) {
+  return useQuery({
+    queryKey: [...queryKeys.agent(agentId), "bank-payins"],
+    queryFn: async () => (await api.bankPayins(agentId)).payins,
+    enabled,
+    retry: shouldRetry,
+    refetchInterval: (query) => (query.state.data?.some(payinOpen) ? 15_000 : false),
+  });
+}
+
+function SepaDeposit({ agent }: { agent: Agent }) {
+  const queryClient = useQueryClient();
+  const payins = usePayins(agent.id);
+  const [amount, setAmount] = useState("");
+  const [shown, setShown] = useState<string | null>(null);
+  const cents = parseAmount(amount);
+  const start = useMutation({
+    mutationFn: async () => (await api.startBankPayin(agent.id, cents!)).payin,
+    onSuccess: (payin) => {
+      queryClient.setQueryData<BankPayin[]>(
+        [...queryKeys.agent(agent.id), "bank-payins"],
+        (list) => [payin, ...(list ?? [])],
+      );
+      setShown(payin.id);
+      setAmount("");
+    },
+  });
+  const current = payins.data?.find((p) => p.id === shown);
+  if (current) return <PayinDetails agent={agent} payin={current} onBack={() => setShown(null)} />;
+
+  const waiting = (payins.data ?? []).filter((p) => p.state === "awaiting_funds");
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (cents !== null && cents >= 100) start.mutate();
+  };
+  return (
+    <form onSubmit={submit} className="grid gap-5">
+      <div className="grid gap-2 py-2 text-center">
+        <AmountField
+          id="sepa-amount"
+          value={amount}
+          onChange={setAmount}
+          currency="eur"
+          autoFocus
+        />
+        <Muted>From your bank in euros. It arrives in this wallet as US dollars.</Muted>
+      </div>
+      {start.isError && <Notice tone="danger">{errorMessage(start.error)}</Notice>}
+      <Button
+        type="submit"
+        size="lg"
+        className="h-12 rounded-full"
+        disabled={cents === null || cents < 100 || start.isPending}
+      >
+        {start.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
+        Continue
+      </Button>
+      {waiting.length > 0 && (
+        <div className="grid gap-2">
+          <p className="text-xs font-semibold text-[var(--muted-foreground)]">Waiting for you</p>
+          <ul className="aid-card divide-y divide-[var(--border)] overflow-hidden">
+            {waiting.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  onClick={() => setShown(p.id)}
+                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm hover:bg-[var(--muted)]/60"
+                >
+                  <span className="font-medium tabular-nums">{formatEur(p.amount)}</span>
+                  <span className="text-[var(--muted-foreground)]">See how to pay</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </form>
+  );
+}
+
+// The one transfer to make: exactly this amount, to this account, with this reference.
+export function PayinDetails({
+  agent,
+  payin,
+  onBack,
+}: {
+  agent: Agent;
+  payin: BankPayin;
+  onBack?: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const i = payin.instructions;
+  const cancel = useMutation({
+    mutationFn: () => api.cancelBankPayin(agent.id, payin.id),
+    onSuccess: () => {
+      queryClient.setQueryData<BankPayin[]>([...queryKeys.agent(agent.id), "bank-payins"], (list) =>
+        (list ?? []).filter((p) => p.id !== payin.id),
+      );
+      toast.success("Canceled");
+      onBack?.();
+    },
+  });
+  const rows: [string, string][] = [
+    ["Amount", formatEur(payin.amount)],
+    ["Name", i.beneficiary],
+    ["IBAN", i.iban.replace(/(.{4})/g, "$1 ").trim()],
+    ...(i.bic ? [["BIC", i.bic] as [string, string]] : []),
+    ["Reference", i.reference],
+  ];
+  const waiting = payin.state === "awaiting_funds";
+  return (
+    <div className="grid gap-5">
+      <div className="grid gap-1 text-center">
+        <p className="text-sm text-[var(--muted-foreground)]">
+          {waiting ? "Send from your bank" : payinStateLabel(payin.state)}
+        </p>
+        <p className="text-4xl font-semibold tracking-tight tabular-nums">
+          {formatEur(payin.amount)}
+        </p>
+      </div>
+      <dl className="aid-card divide-y divide-[var(--border)] overflow-hidden">
+        {rows.map(([term, value]) => (
+          <div
+            key={term}
+            className={cn(
+              "flex items-center gap-3 px-4 py-3",
+              term === "Reference" && "bg-[var(--aid-warning-bg)]",
+            )}
+          >
+            <div className="min-w-0 flex-1">
+              <dt className="text-xs text-[var(--muted-foreground)]">{term}</dt>
+              <dd className={cn("break-all text-sm", term !== "Name" && "aid-mono")}>{value}</dd>
+            </div>
+            <CopyButton
+              text={term === "IBAN" ? i.iban : term === "Amount" ? i.amount : value}
+              label={`Copy ${term.toLowerCase()}`}
+              toastText={`${term} copied`}
+              variant="ghost"
+              iconOnly
+            />
+          </div>
+        ))}
+      </dl>
+      {waiting && (
+        <Muted className="text-center">
+          Send exactly this amount and write the reference, or the money can't be matched. With
+          instant transfers it arrives in minutes, otherwise within a business day.
+        </Muted>
+      )}
+      {cancel.isError && <Notice tone="danger">{errorMessage(cancel.error)}</Notice>}
+      <div className="flex flex-wrap justify-center gap-2">
+        {onBack && (
+          <Button variant="outline" className="rounded-full" onClick={onBack}>
+            Done
+          </Button>
+        )}
+        {waiting && (
+          <Button
+            variant="ghost"
+            className="rounded-full text-[var(--muted-foreground)]"
+            disabled={cancel.isPending}
+            onClick={() => cancel.mutate()}
+          >
+            Cancel transfer
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 

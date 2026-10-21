@@ -12,7 +12,7 @@ import { telnyxSigned } from './providers/telnyx.ts';
 import { verifyStripeSignature } from './providers/stripe.ts';
 import { bridgeSigned } from './providers/bridge.ts';
 import { identityEvent } from './verification.ts';
-import { refreshCustomer, setPayoutState } from './bank.ts';
+import { refreshCustomer, setPayinState, setPayoutState } from './bank.ts';
 
 const MAX = 1024 * 1024;
 async function rawBody(req: Request) {
@@ -241,7 +241,11 @@ async function bridgeEvent(ctx: Ctx, req: Request) {
   const event = JSON.parse(body), object = event?.event_object || {};
   const id = String(object.id || event?.event_object_id || '').slice(0, 100);
   if (!id) return json({ ok: true, ignored: true });
-  if (event.event_category === 'transfer') await setPayoutState(ctx, id, String(object.state || event.event_object_status || '').slice(0, 40));
+  if (event.event_category === 'transfer') {
+    // A payout (money out to a bank) or a pay-in (a SEPA transfer in).
+    const state = String(object.state || event.event_object_status || '').slice(0, 40);
+    if (state) await Promise.all([setPayoutState(ctx, id, state), setPayinState(ctx, id, state)]);
+  }
   else if (event.event_category === 'kyc_link') await refreshCustomer(ctx, { kycLink: id });
   else if (event.event_category === 'customer') await refreshCustomer(ctx, { customer: id });
   else return json({ ok: true, ignored: true });

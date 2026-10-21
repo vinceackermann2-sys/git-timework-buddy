@@ -1,6 +1,6 @@
 // The agent's wallet, like a modern bank app: a dollar balance, round quick
 // actions, and transactions by day. Live wallets hold USDC and USDT 1:1.
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
   ExternalLink,
   Info,
+  Landmark,
   Loader2,
   Plus,
   ShieldCheck,
@@ -23,6 +24,8 @@ import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/agent-id/client";
 import {
   amountValue,
+  balanceHistory,
+  balanceTrend,
   counterpartyLabel,
   eventStatusLabel,
   formatDateTime,
@@ -34,6 +37,7 @@ import {
 } from "@/lib/agent-id/format";
 import {
   queryKeys,
+  useAccount,
   useAgent,
   useAgents,
   useApprovals,
@@ -44,7 +48,7 @@ import {
   useWalletSummary,
 } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
-import type { Agent, AgentEvent, WalletSummary } from "@/lib/agent-id/types";
+import type { Agent, AgentEvent, BankPayin, WalletSummary } from "@/lib/agent-id/types";
 import {
   Avatar,
   Chip,
@@ -59,7 +63,14 @@ import {
 } from "../ui";
 import { BlockedNotice, LoadMore, NoResource, blockedReason } from "./common";
 import { AddMoney, AmountField, Withdraw } from "./WalletMoney";
-import { bankPayoutLabel } from "./BankMoney";
+import {
+  PayinDetails,
+  bankPayoutLabel,
+  formatEur,
+  payinOpen,
+  payinStateLabel,
+  usePayins,
+} from "./BankMoney";
 import { PendingApprovals } from "../ApprovalList";
 import { LimitsEditor } from "./LimitsEditor";
 
@@ -79,7 +90,11 @@ export function WalletTab({ agent }: { agent: Agent }) {
   const approvals = useApprovals();
   const [panel, setPanel] = useState<"add" | "send" | "withdraw" | "details" | null>(null);
   const [openTx, setOpenTx] = useState<AgentEvent | null>(null);
+  const [openPayin, setOpenPayin] = useState<string | null>(null);
   const testMode = useTestMode();
+  const bankOn = useAccount().data?.config.bank?.available === true && wallet?.mode === "live";
+  // SEPA transfers on their way in: shown above the transactions until they arrive.
+  const payins = usePayins(agent.id, bankOn && !!wallet);
 
   if (!wallet) return <NoResource agent={agent} kind="wallet" />;
 
@@ -90,24 +105,33 @@ export function WalletTab({ agent }: { agent: Agent }) {
   const events = pages.data?.pages.flatMap((p) => p.events) ?? [];
   const waiting = (approvals.data ?? []).filter((a) => a.agentId === agent.id);
   const network = summary.data?.network ?? wallet.details.network;
+  const incoming = (payins.data ?? []).filter(payinOpen);
+  const shownPayin = payins.data?.find((p) => p.id === openPayin) ?? null;
+  // The last 30 days, walked back from the balance through the transfers loaded.
+  const history = balanceHistory(balance?.amount ?? 0, pages.isPending ? [] : events, {
+    complete: !pages.hasNextPage,
+  });
 
   return (
     <div className="space-y-6">
       <BlockedNotice reason={blocked} />
       {mustVerify && <VerifyToMoveMoney />}
 
-      <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-[#f6ecff] via-[#efe0ff] to-[#e3ccff] p-6 text-[#172033] shadow-[0_1px_2px_rgba(23,32,51,0.06)] sm:p-8">
-        <p className="text-sm font-medium text-[#172033]/70">Balance</p>
-        <p className="mt-1 text-5xl font-semibold tracking-tight tabular-nums">
-          {balance ? formatUsd(balance.amount) : summary.isPending && !blocked ? "…" : "—"}
-        </p>
-        <p className="mt-2 text-sm text-[#172033]/70">
-          {test ? "Test dollars" : "USD · backed 1:1 by USDC and USDT"}
+      <section aria-label="Balance" className="aid-card p-6 sm:p-8">
+        <p className="text-sm font-medium text-[var(--muted-foreground)]">Balance</p>
+        <p className="mt-1 flex flex-wrap items-baseline gap-x-2">
+          <span className="text-5xl font-semibold tracking-tight tabular-nums">
+            {balance ? formatUsd(balance.amount) : summary.isPending && !blocked ? "…" : "—"}
+          </span>
+          <span className="text-lg font-medium text-[var(--muted-foreground)]">
+            {test ? "test USD" : "USD"}
+          </span>
         </p>
         {summary.data?.balanceError && (
           <p className="mt-1 text-xs text-[var(--aid-danger)]">{summary.data.balanceError}</p>
         )}
-        <div className="mt-7 flex gap-5 sm:gap-6">
+        <BalanceChart points={history} />
+        <div className="mt-7 flex justify-between gap-2 sm:justify-start sm:gap-8">
           <QuickAction
             label="Add money"
             icon={<Plus className="h-5 w-5" />}
@@ -148,12 +172,19 @@ export function WalletTab({ agent }: { agent: Agent }) {
             <LoadingRows rows={4} />
           ) : pages.isError ? (
             <ErrorState error={pages.error} onRetry={() => void pages.refetch()} />
-          ) : events.length === 0 ? (
+          ) : events.length === 0 && incoming.length === 0 ? (
             <Empty icon={ArrowLeftRight}>
               No transactions yet. Money in and out shows up here.
             </Empty>
           ) : (
             <>
+              {incoming.length > 0 && (
+                <ul aria-label="On the way">
+                  {incoming.map((p) => (
+                    <PayinRow key={p.id} payin={p} onOpen={() => setOpenPayin(p.id)} />
+                  ))}
+                </ul>
+              )}
               {groupByDay(events).map((group) => (
                 <div key={group.day}>
                   <p className="bg-[var(--muted)]/60 px-5 py-1.5 text-xs font-semibold text-[var(--muted-foreground)]">
@@ -221,6 +252,16 @@ export function WalletTab({ agent }: { agent: Agent }) {
         <Details agent={agent} summary={summary.data} network={network} />
       </SidePanel>
       <SidePanel
+        open={!!shownPayin}
+        onOpenChange={(open) => !open && setOpenPayin(null)}
+        title="Bank transfer"
+        trigger={<span className="hidden" />}
+      >
+        {shownPayin && (
+          <PayinDetails agent={agent} payin={shownPayin} onBack={() => setOpenPayin(null)} />
+        )}
+      </SidePanel>
+      <SidePanel
         open={!!openTx}
         onOpenChange={(open) => !open && setOpenTx(null)}
         title="Transaction"
@@ -248,13 +289,85 @@ function QuickAction({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="group flex flex-col items-center gap-2 text-xs font-medium text-[#172033] disabled:opacity-40"
+      className="group flex flex-col items-center gap-2 text-xs font-medium disabled:opacity-40"
     >
-      <span className="grid h-12 w-12 place-items-center rounded-full bg-white/80 shadow-sm transition group-hover:bg-white group-active:scale-95">
+      <span className="grid h-12 w-12 place-items-center rounded-full bg-[var(--muted)] transition group-hover:bg-[var(--border)] group-active:scale-95">
         {icon}
       </span>
       {label}
     </button>
+  );
+}
+
+// The balance over the last 30 days as a line: green when it went up, red when
+// it went down, a grey dashed line when nothing changed.
+function BalanceChart({ points }: { points: (number | null)[] }) {
+  const id = useId().replace(/:/g, "");
+  const trend = balanceTrend(points);
+  const known = points.flatMap((p, i) => (p === null ? [] : [[i, p] as const]));
+  const first = known[0]?.[1] ?? 0;
+  const change = (known.at(-1)?.[1] ?? 0) - first;
+  const color =
+    trend === "up"
+      ? "var(--aid-up)"
+      : trend === "down"
+        ? "var(--aid-down)"
+        : "var(--muted-foreground)";
+  const [W, H, PAD] = [300, 72, 6];
+  const values = known.map(([, p]) => p);
+  const [min, max] = [Math.min(...values), Math.max(...values)];
+  const x = (i: number) => (i / Math.max(points.length - 1, 1)) * W;
+  const y = (v: number) =>
+    max === min ? H / 2 : PAD + (H - 2 * PAD) * (1 - (v - min) / (max - min));
+  const line =
+    known.length < 2
+      ? `M0 ${H / 2}H${W}`
+      : known.map(([i, p], n) => `${n ? "L" : "M"}${x(i).toFixed(1)} ${y(p).toFixed(1)}`).join("");
+  const area =
+    known.length < 2
+      ? ""
+      : `${line}L${x(known.at(-1)![0]).toFixed(1)} ${H}L${x(known[0]![0]).toFixed(1)} ${H}Z`;
+  const said =
+    trend === "flat"
+      ? "No change in the last 30 days"
+      : `${trend === "up" ? "Up" : "Down"} ${formatUsd(Math.abs(change))} in the last 30 days`;
+  return (
+    <div className="mt-5">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={said}
+        className="h-20 w-full overflow-visible"
+      >
+        <defs>
+          <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" style={{ stopColor: color, stopOpacity: 0.16 }} />
+            <stop offset="1" style={{ stopColor: color, stopOpacity: 0 }} />
+          </linearGradient>
+        </defs>
+        {trend !== "flat" && area && <path d={area} fill={`url(#${id}-fill)`} />}
+        <path
+          d={line}
+          fill="none"
+          style={{ stroke: color }}
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeDasharray={trend === "flat" ? "5 5" : undefined}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <p className="mt-2 flex justify-between text-xs text-[var(--muted-foreground)]">
+        <span>Last 30 days</span>
+        {trend !== "flat" && (
+          <span className="font-medium tabular-nums" style={{ color }}>
+            {trend === "up" ? "+" : "−"}
+            {formatUsd(Math.abs(change))}
+          </span>
+        )}
+      </p>
+    </div>
   );
 }
 
@@ -282,6 +395,35 @@ function VerifyToMoveMoney({ inPanel = false }: { inPanel?: boolean }) {
         <Link to="/agent-id/verify">Verify</Link>
       </Button>
     </section>
+  );
+}
+
+// A SEPA transfer on its way in: the amount in euros, and where it is.
+function PayinRow({ payin, onOpen }: { payin: BankPayin; onOpen: () => void }) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full items-center gap-3 border-b border-[var(--border)] px-5 py-3 text-left transition-colors hover:bg-[var(--muted)]/60"
+      >
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]">
+          <Landmark className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-medium">Bank transfer</span>
+          <span className="block truncate text-xs text-[var(--muted-foreground)]">
+            {payinStateLabel(payin.state)}
+          </span>
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-1">
+          <span className="text-[15px] font-semibold tabular-nums text-[var(--muted-foreground)]">
+            +{formatEur(payin.amount)}
+          </span>
+          <Chip tone="warning">{payin.state === "awaiting_funds" ? "Waiting" : "On its way"}</Chip>
+        </span>
+      </button>
+    </li>
   );
 }
 

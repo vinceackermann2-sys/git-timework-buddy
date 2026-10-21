@@ -66,10 +66,14 @@ function VerifyPage() {
   const { done } = Route.useSearch();
   const queryClient = useQueryClient();
   const person = account.data?.person;
-  // Back from Stripe: the result arrives by webhook, so keep looking until
+  // Back from the check: the result arrives by webhook, so keep looking until
   // it's in (or two minutes pass).
   const waiting =
-    !!done && (!person || person.status === "pending" || person.status === "unverified");
+    !!done &&
+    (!person ||
+      person.status === "pending" ||
+      person.status === "unverified" ||
+      !!account.data?.organizations.some((o) => o.business.status === "pending"));
 
   useEffect(() => {
     if (!waiting) return;
@@ -106,6 +110,7 @@ function VerifyPage() {
             <BusinessSection
               key={org.id}
               org={org}
+              provider={account.data.config.verification.business}
               personVerified={account.data.person.status === "verified"}
             />
           ))}
@@ -345,9 +350,19 @@ function FormCheck({
   );
 }
 
-function BusinessSection({ org, personVerified }: { org: Organization; personVerified: boolean }) {
+function BusinessSection({
+  org,
+  provider,
+  personVerified,
+}: {
+  org: Organization;
+  provider: "bridge" | "test" | "manual";
+  personVerified: boolean;
+}) {
   const queryClient = useQueryClient();
   const b = org.business;
+  // Bridge checks the business on its page, the same way it checked you.
+  const bridge = provider === "bridge";
   const admin = org.role === "owner" || org.role === "admin";
   const [legalName, setLegalName] = useState(b.legalName ?? org.name);
   const [registrationNumber, setRegistrationNumber] = useState(b.registrationNumber ?? "");
@@ -361,7 +376,7 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
       api.verifyBusiness({
         organizationId: org.id,
         legalName: legalName.trim(),
-        registrationNumber: registrationNumber.trim(),
+        ...(registrationNumber.trim() ? { registrationNumber: registrationNumber.trim() } : {}),
         ...(vatNumber.trim() ? { vatNumber: vatNumber.trim() } : {}),
         country: country.trim().toUpperCase(),
         ...(website.trim() ? { website: website.trim() } : {}),
@@ -369,6 +384,7 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
         attestation: true,
       }),
     onSuccess: async (result) => {
+      if (result.url) return window.location.assign(result.url);
       toast.success(
         result.business.status === "verified" ? `${org.name} is verified` : "Sent for review",
       );
@@ -380,7 +396,7 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
   const vatOk = !vatNumber.trim() || /^[A-Za-z0-9 .-]{4,30}$/.test(vatNumber.trim());
   const ready =
     legalName.trim() &&
-    registrationNumber.trim() &&
+    (bridge || registrationNumber.trim()) &&
     countryOk &&
     websiteOk &&
     vatOk &&
@@ -401,11 +417,27 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
     >
       {b.status === "verified" || b.status === "pending" ? (
         <div className="space-y-3">
-          {b.status === "pending" && (
-            <p className="text-sm text-[var(--muted-foreground)]">
-              We're reviewing it, usually within a day.
-            </p>
-          )}
+          {b.status === "pending" &&
+            (b.link ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-[var(--muted-foreground)]">
+                  Finish the business check: the registration, the owners and a document, on
+                  Bridge's page.
+                </p>
+                <Button asChild size="sm">
+                  <a href={b.link}>
+                    <ShieldCheck aria-hidden="true" />
+                    Continue verifying
+                  </a>
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-[var(--muted-foreground)]">
+                {b.provider === "bridge"
+                  ? "Bridge is reviewing it, usually within a business day."
+                  : "We're reviewing it, usually within a day."}
+              </p>
+            ))}
           <BusinessFacts business={b} />
         </div>
       ) : !admin ? (
@@ -454,14 +486,16 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
                 onChange={(e) => setCountry(e.target.value.toUpperCase())}
               />
             </Field>
-            <Field id={id("reg")} label="Registration number">
-              <Input
-                id={id("reg")}
-                value={registrationNumber}
-                maxLength={100}
-                onChange={(e) => setRegistrationNumber(e.target.value)}
-              />
-            </Field>
+            {!bridge && (
+              <Field id={id("reg")} label="Registration number">
+                <Input
+                  id={id("reg")}
+                  value={registrationNumber}
+                  maxLength={100}
+                  onChange={(e) => setRegistrationNumber(e.target.value)}
+                />
+              </Field>
+            )}
             <Field
               id={id("vat")}
               label={
@@ -504,7 +538,14 @@ function BusinessSection({ org, personVerified }: { org: Organization; personVer
               />
             </Field>
           </div>
-          <DocumentUpload org={org} />
+          {bridge ? (
+            <Muted>
+              Next, Bridge asks for the registration, who owns the business and a document. It
+              usually takes ten minutes, and the review a business day.
+            </Muted>
+          ) : (
+            <DocumentUpload org={org} />
+          )}
           <label className="flex items-start gap-3 rounded-xl bg-[var(--muted)] p-4 text-sm leading-relaxed">
             <Checkbox
               checked={attest}

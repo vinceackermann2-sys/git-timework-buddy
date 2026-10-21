@@ -24,15 +24,19 @@ import {
 } from "@/lib/agent-id/connect";
 import {
   KIND_LABELS,
+  MASCOTS,
   ORIGIN_CHOICES,
   ORIGIN_LABELS,
+  mascotOf,
   originOf,
   runtimeForOrigin,
 } from "@/lib/agent-id/format";
 import { useAccount, useRefreshAgent } from "@/lib/agent-id/queries";
 import { API_BASE, api } from "@/lib/agent-id/session";
-import { KINDS, type AgentDetail, type Kind } from "@/lib/agent-id/types";
+import { KINDS, type AgentDetail, type Kind, type Mascot } from "@/lib/agent-id/types";
+import { cn } from "@/lib/utils";
 import {
+  AgentAvatar,
   CodeBlock,
   CommandLine,
   ConfirmButton,
@@ -74,12 +78,15 @@ function Details({ detail }: { detail: AgentDetail }) {
   const [name, setName] = useState(agent.name);
   const [app, setApp] = useState(origin.app);
   const [org, setOrg] = useState(agent.organizationId ?? PERSONAL);
+  const current = agent.mascot ?? mascotOf(agent.id);
+  const [mascot, setMascot] = useState<Mascot>(current);
   const revoked = agent.status === "revoked";
 
   useEffect(() => {
     setName(agent.name);
     setApp(originOf(agent).app);
     setOrg(agent.organizationId ?? PERSONAL);
+    setMascot(agent.mascot ?? mascotOf(agent.id));
   }, [agent]);
 
   const patch = () => {
@@ -91,6 +98,7 @@ function Details({ detail }: { detail: AgentDetail }) {
     }
     const nextOrg = org === PERSONAL ? null : org;
     if (nextOrg !== agent.organizationId) p.organizationId = nextOrg;
+    if (mascot !== current) p.mascot = mascot;
     return p;
   };
   const dirty = Object.keys(patch()).length > 0;
@@ -160,6 +168,29 @@ function Details({ detail }: { detail: AgentDetail }) {
             </Field>
           )}
         </div>
+        <fieldset disabled={revoked}>
+          <legend className="mb-2 text-sm font-medium">Mascot</legend>
+          <div className="flex gap-2" role="radiogroup" aria-label="Mascot">
+            {MASCOTS.map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={mascot === m}
+                aria-label={m[0]!.toUpperCase() + m.slice(1)}
+                onClick={() => setMascot(m)}
+                className={cn(
+                  "grid place-items-center rounded-2xl border-2 p-1.5 transition-colors",
+                  mascot === m
+                    ? "border-[var(--aid-ink)] bg-[var(--accent)]"
+                    : "border-transparent bg-[var(--muted)] hover:border-[var(--border)]",
+                )}
+              >
+                <AgentAvatar mascot={m} size="lg" />
+              </button>
+            ))}
+          </div>
+        </fieldset>
         <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
           <div className="min-w-0">
             <dt className="aid-label">Agent ID</dt>

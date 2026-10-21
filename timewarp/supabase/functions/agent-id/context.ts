@@ -16,7 +16,7 @@ export type Ctx = {
 
 export type AgentRow = {
   id: string; owner_user_id: string; workspace_id: string | null; name: string; handle: string;
-  runtime: string; origin_detail?: string | null; client_name?: string | null; client_version?: string | null; client_seen_at?: string | null; status: string; desktop_agent_id: string | null; created_at: string; updated_at: string; last_seen_at: string | null;
+  runtime: string; origin_detail?: string | null; client_name?: string | null; client_version?: string | null; client_seen_at?: string | null; status: string; desktop_agent_id: string | null; mascot?: string | null; created_at: string; updated_at: string; last_seen_at: string | null;
 };
 export type ResourceRow = {
   id: string; agent_id: string; owner_user_id: string; kind: 'mail' | 'phone' | 'wallet' | 'card' | 'vm'; provider: string; mode: 'live' | 'test';

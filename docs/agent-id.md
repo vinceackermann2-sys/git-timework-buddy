@@ -160,9 +160,18 @@ Base (Privy). Money comes in and goes out in three ways:
   is Bridge's (a Stripe company): `POST /v1/account/bank/verify` or
   `POST /v1/account/verification` gives Bridge's hosted terms and ID check,
   and Bridge's approval also verifies them on Agent ID. After that:
+  - **SEPA, as a form.** `POST /v1/agents/:id/wallet/bank-payins` with
+    `amount` (euro cents, €1 to €100,000) opens one Bridge transfer of that
+    amount to the wallet (`agent_id_bank_payins`). The person gets exactly
+    what to send: amount, name, IBAN, BIC and a reference. Bridge converts the
+    euros and sends USDC to the wallet; SEPA Instant arrives in minutes.
+    `GET …/bank-payins` lists them (open ones are looked at again every half
+    minute, and Bridge's transfer webhook updates them), `DELETE
+    …/bank-payins/:id` cancels one still waiting for the money.
   - `POST /v1/agents/:id/wallet/bank-deposit` with `currency` (`usd` or
     `eur`) gives the wallet its own bank details (a Bridge virtual account).
-    Money sent there arrives as USDC.
+    Money sent there arrives as USDC. The website uses these for US dollars
+    only.
   - `POST /v1/account/bank/accounts` saves a bank account at Bridge: an IBAN
     (euros, SEPA) or a US account (ACH), with the holder's address. Agent ID
     keeps only the bank's name and the last four characters.
@@ -174,12 +183,18 @@ Base (Privy). Money comes in and goes out in three ways:
   - US dollars need Bridge's `base` endorsement, euros its `sepa` one. Bridge
     opens SEPA per developer account; until it does, set
     `AGENT_ID_BANK_CURRENCIES=usd`.
-- **Card (Stripe).** With `STRIPE_CRYPTO_ONRAMP_ENABLED` set and Stripe's
-  onramp approved for the account, `POST /v1/agents/:id/wallet/add-money`
-  starts Stripe's crypto onramp. It buys USDC by card into that wallet only:
-  embedded with `STRIPE_PUBLISHABLE_KEY`, else on Stripe's own page. Stripe
-  sells USDC on Base to US buyers only. Others are told to use a bank
-  transfer.
+- **Card (MoonPay, else Stripe).** With `MOONPAY_API_KEY` and
+  `MOONPAY_SECRET_KEY` set (same mode), `POST /v1/agents/:id/wallet/add-money`
+  returns MoonPay's page for buying USDC on Base by card, Apple Pay or Google
+  Pay, in Europe and the US. The page's address is signed with the secret key
+  (so the wallet can't be swapped), bound to the buyer's IP address
+  (`allowedIpAddress`), and names the Agent ID account and the purchase
+  (`externalCustomerId`, `externalTransactionId`). The buyer pays in their
+  own money (euros in the euro area, crowns in Sweden, and so on). MoonPay
+  checks the buyer itself the first time. Without MoonPay, and with
+  `STRIPE_CRYPTO_ONRAMP_ENABLED` set and Stripe's onramp approved, the same
+  call starts Stripe's crypto onramp (US buyers only): embedded with
+  `STRIPE_PUBLISHABLE_KEY`, else on Stripe's own page.
 
 Withdrawals need a signed-in session. They are screened like any transfer,
 but they don't count against the agent's limits.
@@ -217,10 +232,14 @@ cards and machines go back to their provider.
     (`kycProvider: 'bridge'`; its approval arrives by webhook). Elsewhere it
     is Stripe Identity (`AGENT_ID_KYC=stripe_identity`), and without either,
     Timewarp reviewers named in `AGENT_ID_REVIEWERS` review submissions by hand.
-  - A business is reviewed from its registration details, submitted by an
-    organization owner or admin.
+  - A business is checked the same way: where Bridge moves money, by Bridge's
+    business check (`kybProvider: 'bridge'`, `agent_id_bank_businesses`): its
+    registration, owners and a document on Bridge's page, then Bridge's
+    review. Elsewhere it's reviewed by Timewarp from its registration details.
+    Either way it's started by an organization owner or admin who is verified
+    themselves, with their role and a signed confirmation.
   - Only the outcome, the legal name and the country are stored. Documents stay
-    with Stripe.
+    with Bridge or Stripe.
   - An organization's agent counts as the business's only while its owner is an
     active member. Someone who leaves takes no company standing or Git rights
     along.
@@ -288,7 +307,7 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | Owner | |
 | --- | --- |
 | `GET /v1/account` | user, verification, organizations (with KYB), plan, reviewer flag, config |
-| `POST /v1/account/verification` | `{kind:'person'}` → Stripe Identity `url`, or `{legalName,country}` for review · `{kind:'business', organizationId, legalName, registrationNumber, country, website}` |
+| `POST /v1/account/verification` | `{kind:'person'}` → Bridge's or Stripe Identity's `url`, or `{legalName,country}` for review · `{kind:'business', organizationId, legalName, country, representativeRole, attestation, website?, registrationNumber?}` → Bridge's `url` where Bridge checks businesses (else the registration number is required, for review) |
 | `GET/POST /v1/agents` · `GET/PATCH/DELETE /v1/agents/:id` | create (returns the agent key once), list, rename, runtime, organization, desktop link, pause/resume, revoke |
 | `POST /v1/agents/:id/keys` · `DELETE …/keys/:keyId` | more agent keys |
 | `POST /v1/agents/:id/resources` | `{kind, mode:'test'|'live', settings, options}` (options: `size`, `country`, `areaCode`, `billing`, `currency`) |
@@ -359,7 +378,7 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | `AGENT_ID_VERIFY_TO_SEND` | `false` lets money leave live wallets before the owner is verified (on by default) |
 | `AGENT_ID_PAID_PLAN_KINDS` | Live kinds that need Pro/Max/Ultra (default `phone,card`) |
 | `AGENT_ID_KYC` | Bridge's check wherever bank transfers are on; otherwise `stripe_identity` (recommended), else manual review. `test` verifies at once: development only. |
-| `AGENT_ID_KYB` | Manual review (default). `test` is for development only. |
+| `AGENT_ID_KYB` | Bridge's business check wherever bank transfers are on; otherwise manual review. `manual` keeps manual review. `test` is for development only. |
 | `AGENT_ID_REVIEWERS` | User ids of Timewarp staff who review verifications |
 | `AGENT_ID_MAX_AGENTS` | Agents per account (default 25) |
 | `RESEND_API_KEY` (exists), `AGENT_ID_RESEND_WEBHOOK_SECRET` | Live mail. Optional `AGENT_ID_MAIL_DOMAIN` overrides the domain. |
@@ -367,7 +386,8 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Live phone numbers through Twilio instead (`AGENT_ID_PHONE_PROVIDER=twilio`) |
 | `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `AGENT_ID_WALLET_CHAIN` | Live wallets |
 | `BRIDGE_API_KEY`, `AGENT_ID_BANK_CURRENCIES` | Bank deposits and withdrawals for live wallets on Base (`usd,eur` by default; `AGENT_ID_BANK=off` hides them). Keys starting with `sk-test` use Bridge's sandbox. The Bridge webhook registers itself (`BRIDGE_WEBHOOK_PUBLIC_KEY` overrides). |
-| `STRIPE_CRYPTO_ONRAMP_ENABLED`, `STRIPE_PUBLISHABLE_KEY` | Buying USDC by card (Stripe's onramp, once approved). The publishable key embeds the form. |
+| `MOONPAY_API_KEY`, `MOONPAY_SECRET_KEY` | Card payments into live wallets (MoonPay, once it has approved the account). `pk_test_`/`sk_test_` use MoonPay's sandbox. `AGENT_ID_CARD_PAYMENTS=off` hides them. |
+| `STRIPE_CRYPTO_ONRAMP_ENABLED`, `STRIPE_PUBLISHABLE_KEY` | Buying USDC by card through Stripe's onramp (US only, once approved), when MoonPay isn't set. The publishable key embeds the form. |
 | `STRIPE_SECRET_KEY` (exists), `AGENT_ID_STRIPE_WEBHOOK_SECRET` | Live cards and Stripe Identity |
 | `AZURE_*` (exist) | Live machines |
 | `AGENT_ID_SITE_URL`, `AGENT_ID_ISSUER`, `AGENT_ID_PUBLIC_URL`, `AGENT_ID_PASSPORT_SECONDS` | Overrides (defaults: `https://timewarpdev.com`, `<site>/agent-id`, the function URL, 300) |
@@ -379,7 +399,8 @@ Secrets on the Supabase project, read by the `agent-id` function:
   and the time of acceptance are recorded.
 - **Privacy Policy:** section 7 covers Agent ID. It lists the data, the legal
   bases, Stripe Identity, Privy, Telnyx, Twilio and Azure as processors, Bridge
-  (bank transfers) as a company responsible for its own data, and how long
+  (bank transfers and identity checks) and MoonPay (card payments) as
+  companies responsible for their own data, and how long
   records are kept (content: while it exists, plus 30 days; verification, the
   agent–owner link and the audit log: 5 years).
 - **KYC:** explicit consent to the biometric check (GDPR Art. 9(2)(a)) is
@@ -387,7 +408,7 @@ Secrets on the Supabase project, read by the `agent-id` function:
   Identity session starts.
 - **KYB:** submitted by an organization owner or admin who is personally
   verified, with their role and a signed confirmation (`attested_at`).
-  Reviewed by operators.
+  Checked by Bridge where it moves money, else reviewed by operators.
 - **Sanctions:** with `CHAINALYSIS_API_KEY` set, live transfers to sanctioned
   addresses are refused, and a transfer fails closed when screening can't be
   reached.

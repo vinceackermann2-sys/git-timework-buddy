@@ -66,7 +66,9 @@ export function loadConfig(env: Env) {
       : kyc === 'stripe_identity' ? 'stripe_identity' : 'manual') as 'test' | 'bridge' | 'stripe_identity' | 'manual',
     // Sending or withdrawing from a live wallet needs a verified owner.
     verifyToMoveMoney: get('AGENT_ID_VERIFY_TO_SEND') !== 'false',
-    kybProvider: kyb === 'test' ? 'test' : 'manual',
+    // Businesses the same way: Bridge's business check where it moves money,
+    // else Timewarp reviews the registration details by hand.
+    kybProvider: (kyb === 'test' ? 'test' : bankOn && (kyb === '' || kyb === 'bridge') ? 'bridge' : 'manual') as 'test' | 'bridge' | 'manual',
     reviewers: new Set(list(get('AGENT_ID_REVIEWERS'))),
     maxAgents: Math.max(1, Math.min(1000, Number(get('AGENT_ID_MAX_AGENTS')) || 25)),
     // Privy's chain for live wallets: Base, or Base Sepolia (testnet) for trials.

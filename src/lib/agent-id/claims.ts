@@ -24,6 +24,8 @@ export type ClaimPerson = {
 export type Claim = {
   code: string;
   name: string;
+  // The face it will have: the agent's mascot, picked when the link was made.
+  mascot?: "orbit" | "nova" | "cosmo";
   app: { app: string; label: string } | null;
   device: string | null;
   startedBy: "agent" | "person";
@@ -43,6 +45,7 @@ export type Claim = {
     id: string;
     name: string;
     handle: string;
+    mascot?: "orbit" | "nova" | "cosmo";
     // What it came with: mail and wallet (a number on paid plans; a machine on first use).
     resources?: Partial<Record<string, { status: string; address: string | null; mode?: string }>>;
   } | null;

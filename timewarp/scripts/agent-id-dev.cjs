@@ -75,7 +75,9 @@ async function demo(local, owner) {
 }
 
 (async () => {
-  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, fetch: money.fetch, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080", AGENT_ID_KYC: process.env.AGENT_ID_KYC || "", AGENT_ID_AUTO_GIVE: process.env.AGENT_ID_AUTO_GIVE || "mail,wallet", AGENT_ID_AUTO_GIVE_PAID: process.env.AGENT_ID_AUTO_GIVE_PAID || "phone", AGENT_ID_PHONES: process.env.AGENT_ID_PHONES || "waitlist", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "dev-privy", PRIVY_APP_SECRET: "dev-privy", BRIDGE_API_KEY: "sk-test-dev" } });
+  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, fetch: money.fetch, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080", AGENT_ID_KYC: process.env.AGENT_ID_KYC || "", AGENT_ID_AUTO_GIVE: process.env.AGENT_ID_AUTO_GIVE || "mail,wallet", AGENT_ID_AUTO_GIVE_PAID: process.env.AGENT_ID_AUTO_GIVE_PAID || "phone", AGENT_ID_PHONES: process.env.AGENT_ID_PHONES || "waitlist", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "dev-privy", PRIVY_APP_SECRET: "dev-privy", BRIDGE_API_KEY: "sk-test-dev",
+    // Card payments open MoonPay's sandbox page; it only takes a payment with your own sandbox keys.
+    MOONPAY_API_KEY: process.env.MOONPAY_API_KEY || "pk_test_dev", MOONPAY_SECRET_KEY: process.env.MOONPAY_SECRET_KEY || "sk_test_dev" } });
   const dev = await local.user({ email: "dev@timewarp.test", plan: "pro", credits: 100 });
   const teammate = await local.user({ email: "teammate@timewarp.test" });
   const org = await local.organization("Acme Robotics", [[dev, "owner"], [teammate, "lead"]]);

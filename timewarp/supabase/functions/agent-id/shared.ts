@@ -95,9 +95,18 @@ export async function resourcesOf(ctx: Ctx, agentIds: string[]) {
 }
 
 // apps: from appsOf(), the apps this Agent ID is used in.
+// Every agent's face is one of Timewarp's mascots: the one its owner picked,
+// else one that follows from its id (or its claim's code), so it never changes.
+export const MASCOTS = ['orbit', 'nova', 'cosmo'] as const;
+export function mascotOf(key: string) {
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return MASCOTS[hash % MASCOTS.length];
+}
+
 export function agentView(ctx: Ctx, agent: AgentRow, resources: ResourceRow[] = [], apps?: Map<string, any[]>) {
   return {
-    id: agent.id, name: agent.name, handle: agent.handle, runtime: agent.runtime, origin: originView(agent), apps: appsView(agent, apps?.get(agent.id)), status: agent.status,
+    id: agent.id, name: agent.name, handle: agent.handle, mascot: agent.mascot || mascotOf(agent.id), runtime: agent.runtime, origin: originView(agent), apps: appsView(agent, apps?.get(agent.id)), status: agent.status,
     organizationId: agent.workspace_id, desktopAgentId: agent.desktop_agent_id,
     gitPrincipal: principalOf(ctx, agent),
     createdAt: agent.created_at, lastSeenAt: agent.last_seen_at,
