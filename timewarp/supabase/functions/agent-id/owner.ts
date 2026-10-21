@@ -7,7 +7,7 @@ import { autoGive, giveResource, kindsFor, settingsFor } from './provisioning.ts
 import { KINDS, type Kind, publicConfig } from './config.ts';
 import type { AgentCaller, Owner, Route } from './app.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
-import { agentView, audit, listEvents, membership, personOf, planOf, resourcesOf, resourceView, verificationOf } from './shared.ts';
+import { agentView, audit, listEvents, membership, personOf, planOf, rateLimit, resourcesOf, resourceView, verificationOf } from './shared.ts';
 import { businessView, decideReview, listReviews, personView, reviewDocument, startVerification, uploadBusinessDocument } from './verification.ts';
 import { transfer, withdraw } from './agent.ts';
 import { releasePhone } from './providers/phone.ts';
@@ -298,6 +298,7 @@ const withdrawMoney: Handler = async (ctx, owner, input, params) => {
   const to = str(input.to, 100, 'to', { required: true });
   const asset = input.asset ? str(input.asset, 10, 'asset').toLowerCase() : undefined;
   if (asset && asset !== 'usdc' && asset !== 'usdt') throw fail(400, 'invalid', 'asset is usdc or usdt.');
+  await rateLimit(ctx, owner.userId, `withdraw:${agent.id}`, 5, 50, 'withdrawals');
   const result = await withdraw(ctx, agent, { to, amount: cents(input), asset, memo: str(input.memo, 300, 'memo') || undefined });
   if (input.remember === true) {
     const { resource } = await ownedResource(ctx, owner, params.id, 'wallet');

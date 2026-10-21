@@ -235,7 +235,7 @@ describe('timewarp-id CLI', () => {
     const waiting = await ok(['wallet', 'send', bob.handle, '30', '--agent', alice.handle]);
     assert.match(waiting.stdout, /Waiting for the owner/);
     const approvalId = /Approval id: (\S+)/.exec(waiting.stdout)[1];
-    assert.match(waiting.stdout, new RegExp(`timewarp-id approve ${approvalId}`));
+    assert.match(waiting.stdout, new RegExp(`/agent-id/approvals\\?id=${approvalId}`));
     const pending = await json(['approvals']);
     assert.equal(pending.approvals.length, 1);
     assert.equal(pending.approvals[0].id, approvalId);
@@ -254,12 +254,15 @@ describe('timewarp-id CLI', () => {
   it('approving a waiting transfer sends it', async () => {
     const waiting = await json(['wallet', 'send', bob.handle, '26', '--agent', alice.handle]);
     assert.equal(waiting.status, 'needs_approval');
-    const approved = await ok(['approve', waiting.approval]);
-    assert.match(approved.stdout, /Approved and sent \$26\.00 USD to Bob Builder/);
+    // An agent running commands has no terminal of its own: it can't approve.
+    const refused = await cli(['approve', waiting.approval]);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /Approve payments yourself/);
+    // The owner approves on the website (the same API, signed in).
+    const approved = await api.call('POST', `/v1/approvals/${waiting.approval}`, { token: owner.session, body: { decision: 'approve' } });
+    assert.equal(approved.status, 'completed');
     assert.equal((await json(['wallet', 'show', '--agent', bob.handle])).wallet.balance.amount, 3600);
-    const again = await cli(['approve', waiting.approval]);
-    assert.equal(again.code, 1);
-    assert.match(again.stderr, /already_decided/);
+    await api.call('POST', `/v1/approvals/${waiting.approval}`, { token: owner.session, body: { decision: 'approve' }, expect: 409 });
   });
 
   it('charges the test card within its limits', async () => {
@@ -457,6 +460,61 @@ describe('timewarp-id CLI', () => {
     assert.match(stderr, /acting as alice/);
     const inbox = await json(['mail', 'list', '--agent', bob.handle]);
     assert.ok(inbox.messages.some(m => m.subject === 'Via MCP'));
+  });
+
+  it('mcp asks the person in the app to approve a payment, and waits for their answer on Agent ID', async () => {
+    // Room for payments above the approval amount.
+    await api.call('PATCH', `/v1/agents/${alice.id}/resources/wallet`, { token: owner.session, body: { settings: { perTransfer: 100000, daily: 1000000, approvalAbove: 2500 } } });
+    await api.call('POST', `/v1/agents/${alice.id}/wallet/test-funds`, { token: owner.session, body: { amount: 10000 } });
+    const child = spawn(process.execPath, [CLI, 'mcp', '--agent', alice.handle], { env, cwd: home, stdio: ['pipe', 'pipe', 'pipe'] });
+    const seen = [];
+    let buffer = '', stderr = '';
+    const waiting = [];
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.stdout.setEncoding('utf8').on('data', chunk => {
+      buffer += chunk;
+      let newline;
+      while ((newline = buffer.indexOf('\n')) !== -1) {
+        seen.push(JSON.parse(buffer.slice(0, newline)));
+        buffer = buffer.slice(newline + 1);
+        for (const w of waiting.splice(0)) w();
+      }
+    });
+    const next = match => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`timed out; stderr: ${stderr}`)), 30000);
+      const check = () => { const found = seen.find(match); if (found) { clearTimeout(timer); resolve(found); } else waiting.push(check); };
+      check();
+    });
+    const send = message => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const exited = new Promise(resolve => child.on('close', resolve));
+
+    // Claude Code says it can show prompts, including ones that open a link.
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: { elicitation: { form: {}, url: {} } }, clientInfo: { name: 'claude-code', version: '2.2.0' } } });
+    await next(m => m.id === 1);
+    send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'wallet_send', arguments: { to: bob.handle, amount: '40', memo: 'Supplier deposit' } } });
+    const prompt = await next(m => m.method === 'elicitation/create');
+    assert.equal(prompt.params.mode, 'url');
+    assert.match(prompt.params.url, /\/agent-id\/approvals\?id=/);
+    assert.match(prompt.params.message, /wants to send \$40\.00 to Bob Builder.*Supplier deposit/);
+    send({ jsonrpc: '2.0', id: prompt.id, result: { action: 'accept' } });
+    // The owner answers on the website (the same API, signed in).
+    const approvalId = prompt.params.elicitationId;
+    await api.call('POST', `/v1/approvals/${approvalId}`, { token: owner.session, body: { decision: 'approve' } });
+    const result = JSON.parse((await next(m => m.id === 2)).result.content[0].text);
+    assert.equal(result.status, 'completed');
+    assert.match(result.message, /approved it, and the money was sent/);
+    assert.equal(result.transfer.amount.amount, 4000);
+    assert.ok(seen.some(m => m.method === 'notifications/elicitation/complete' && m.params.elicitationId === approvalId));
+
+    // Declined in the prompt: the payment is cancelled.
+    send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'wallet_send', arguments: { to: bob.handle, amount: '35' } } });
+    const second = await next(m => m.method === 'elicitation/create' && m.id !== prompt.id);
+    send({ jsonrpc: '2.0', id: second.id, result: { action: 'decline' } });
+    const declined = JSON.parse((await next(m => m.id === 3)).result.content[0].text);
+    assert.deepEqual([declined.status, declined.approval.status], ['declined', 'denied']);
+    assert.equal((await api.call('GET', '/v1/approvals', { token: owner.session })).approvals.length, 0, 'Nothing left waiting.');
+    child.stdin.end();
+    assert.equal(await exited, 0);
   });
 
   it('mcp --remote reaches another MCP server with passports, never the key', async () => {

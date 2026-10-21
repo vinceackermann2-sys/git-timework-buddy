@@ -252,13 +252,25 @@ export async function approvals(ctx) {
   if (ctx.json || !ctx.interactive) return;
   for (const row of rows.filter(r => r.status === 'pending')) {
     const answer = (await ctx.ask(`${row.agentName || row.agentId}: ${describeRequest(row.request)}. [a]pprove, [d]eny or [s]kip? `)).trim().toLowerCase();
-    if (answer === 'a' || answer === 'approve') await decide(ctx, 'approve', row.id);
+    if (answer === 'a' || answer === 'approve') await decide(ctx, 'approve', row.id, { confirmed: true });
     else if (answer === 'd' || answer === 'deny') await decide(ctx, 'deny', row.id);
   }
 }
 
-async function decide(ctx, decision, id) {
+async function decide(ctx, decision, id, { confirmed = false } = {}) {
   if (!id) throw new UsageError(`Which approval? timewarp-id ${decision} <id> (see \`timewarp-id approvals\`).`);
+  // Approving moves money, so a person answers it: in a terminal they type
+  // in, or on the website. An agent running commands (no terminal of its own)
+  // can't approve its own payments, even on a computer signed in as the owner.
+  if (decision === 'approve' && !confirmed) {
+    if (!ctx.interactive) throw new CliError('Approve payments yourself: in a terminal you type in, or with the link on the Agent ID website.', { hint: 'Agents can\'t approve their own payments. `timewarp-id deny <id>` works anywhere.' });
+    const { approvals: waiting } = await ctx.owner.get('/v1/approvals');
+    const row = (waiting || []).find(a => a.id === id);
+    if (row) {
+      const answer = (await ctx.ask(`Approve ${row.agentName || row.agentId}: ${describeRequest(row.request)}? [y/N] `)).trim().toLowerCase();
+      if (!/^y(es)?$/.test(answer)) { ctx.out('Not approved.'); return; }
+    }
+  }
   const data = await ctx.owner.post(`/v1/approvals/${encodeURIComponent(id)}`, { decision });
   ctx.print(data, result => decision === 'deny' ? 'Denied. The agent is told the transfer was not approved.'
     : result.status === 'completed' ? `Approved and sent${result.transfer?.amount ? ` ${money(result.transfer.amount)}` : ''}${result.transfer?.counterparty ? ` to ${result.transfer.counterparty}` : ''}.` : `Approved (${result.status}).`);

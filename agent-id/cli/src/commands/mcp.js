@@ -3,6 +3,11 @@
 // and every answer is written to stdout as one line. Notifications (no id)
 // are forwarded and get no answer. Anything else goes to stderr, so the
 // protocol stream stays clean.
+//
+// A payment that waits for the owner's approval is shown to the person in the
+// app (Claude Code) with MCP elicitation: it opens the approval page, the call
+// waits while they answer on Agent ID, and the agent gets the outcome. The
+// person approves on the website, signed in; the agent can never approve.
 import readline from 'node:readline';
 import { UsageError } from '../errors.js';
 import { userAgent } from '../api.js';
@@ -27,14 +32,75 @@ function sseMessages(text) {
 // Messages go through unchanged (the client's clientInfo included, which
 // Agent ID records); the user-agent names the tool, from TIMEWARP_ID_TOOL or
 // else the client's name.
-export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, log, tool = null, onTool = () => {} }) {
-  let sessionId = null, protocolVersion = null, clientTool = tool;
+export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, log, tool = null, onTool = () => {}, approvals = null, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), approvalWaitMs = 180_000 }) {
+  let sessionId = null, protocolVersion = null, clientTool = tool, clientElicitation = null, nextAsk = 0;
+  const asks = new Map();
+
+  // A request to the client (the app); its answer comes back on stdin.
+  function ask(method, params, timeoutMs = 10 * 60_000) {
+    const id = `timewarp-id-${++nextAsk}`;
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { asks.delete(id); resolve(null); }, timeoutMs);
+      asks.set(id, reply => { clearTimeout(timer); resolve(reply); });
+      write({ jsonrpc: '2.0', id, method, params });
+    });
+  }
+
+  const dollars = money => money && typeof money.amount === 'number' ? `$${(money.amount / 100).toFixed(2)}` : 'money';
+  const OUTCOMES = {
+    completed: 'Your owner approved it, and the money was sent.',
+    denied: 'It was declined, so nothing was sent.',
+    failed: 'It was approved, but the transfer did not go through.',
+    expired: 'It expired without an answer.',
+  };
+
+  // wallet_send answered "needs_approval": ask the person in the app.
+  async function approvalFlow(reply) {
+    let data;
+    try { data = JSON.parse(reply?.result?.content?.[0]?.text ?? ''); } catch { return reply; }
+    if (data?.status !== 'needs_approval' || !data.approval || !data.approveUrl) return reply;
+    let details = null;
+    try { details = (await approvals.status(data.approval)).approval; } catch { /* the link still works */ }
+    const what = details ? `send ${dollars(details.amount)} to ${details.to}${details.memo ? ` ("${details.memo}")` : ''}` : 'make a payment above your approval amount';
+    const message = `Your agent wants to ${what}. Approve or decline it on Agent ID.`;
+    const urlMode = !!clientElicitation?.url && String(protocolVersion || '') >= '2025-11-25';
+    const params = urlMode
+      ? { mode: 'url', message, url: data.approveUrl, elicitationId: data.approval }
+      : { message: `${message}\n\nOpen ${data.approveUrl}, answer there, then choose Accept. Decline cancels the payment.`, requestedSchema: { type: 'object', properties: {} } };
+    log(`asking you to approve payment ${data.approval} on Agent ID`);
+    const answer = await ask('elicitation/create', params);
+    const action = answer?.result?.action;
+    const respond = body => ({ ...reply, result: { content: [{ type: 'text', text: JSON.stringify(body) }] } });
+    if (action === 'decline') {
+      try {
+        const withdrawn = await approvals.withdraw(data.approval);
+        return respond({ ...withdrawn, status: 'declined', message: 'The person declined it, so the payment was cancelled.' });
+      } catch { return reply; }
+    }
+    if (action !== 'accept') return reply;
+    const deadline = Date.now() + approvalWaitMs;
+    while (Date.now() < deadline) {
+      let status;
+      try { status = await approvals.status(data.approval); } catch { break; }
+      const state = status?.approval?.status;
+      // "approved" is a live transfer still on its way: wait for it.
+      if (state && state !== 'pending' && state !== 'approved') {
+        if (urlMode) write({ jsonrpc: '2.0', method: 'notifications/elicitation/complete', params: { elicitationId: data.approval } });
+        return respond({ ...status, status: state, message: OUTCOMES[state] || `It is ${state}.` });
+      }
+      await sleep(2000);
+    }
+    return respond({ ...data, message: `${data.message} No answer yet; check later with approval_status.` });
+  }
 
   async function forward(message) {
     const request = isRequest(message);
-    if (message.method === 'initialize' && !clientTool) {
-      clientTool = appFromClient(message.params?.clientInfo?.name);
-      if (clientTool) onTool(clientTool);
+    if (message.method === 'initialize') {
+      clientElicitation = message.params?.capabilities?.elicitation ?? null;
+      if (!clientTool) {
+        clientTool = appFromClient(message.params?.clientInfo?.name);
+        if (clientTool) onTool(clientTool);
+      }
     }
     let credentials;
     try { credentials = await auth(); }
@@ -81,6 +147,9 @@ export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, lo
       const version = replies.find(r => r?.id === message.id)?.result?.protocolVersion;
       if (typeof version === 'string') protocolVersion = version;
     }
+    if (request && message.method === 'tools/call' && approvals && clientElicitation) {
+      replies = await Promise.all(replies.map(reply => reply?.id === message.id ? approvalFlow(reply) : reply));
+    }
     return request ? replies : [];
   }
 
@@ -92,7 +161,12 @@ export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, lo
       return;
     }
     if (!message || typeof message !== 'object' || message.jsonrpc !== '2.0') return write(rpcError(message?.id, -32600, 'Invalid request.'));
-    if (typeof message.method !== 'string') return; // A response to a request this server never makes.
+    if (typeof message.method !== 'string') {
+      // The app answering a request of ours (elicitation).
+      const done = asks.get(message.id);
+      if (done) { asks.delete(message.id); done(message); }
+      return;
+    }
     for (const reply of await forward(message)) write(reply);
   }
 
@@ -134,7 +208,12 @@ export async function mcp(ctx) {
   }
   const write = message => ctx.stdout.write(`${JSON.stringify(message)}\n`);
   // Requests this command makes itself (passports) carry the tool too.
-  const proxy = createProxy({ url, auth, write, log, tool: ctx.tool, onTool: tool => { ctx.api.tool = tool; } });
+  // Approvals are followed on Agent ID itself, not on someone else's server.
+  const approvals = remote ? null : {
+    status: id => ctx.self.get(`/v1/me/approvals/${encodeURIComponent(id)}`),
+    withdraw: id => ctx.self.post(`/v1/me/approvals/${encodeURIComponent(id)}/withdraw`, {}),
+  };
+  const proxy = createProxy({ url, auth, write, log, tool: ctx.tool, onTool: tool => { ctx.api.tool = tool; }, approvals });
   const pending = new Set();
   const lines = readline.createInterface({ input: ctx.stdin, crlfDelay: Infinity, terminal: false });
   for await (const line of lines) {

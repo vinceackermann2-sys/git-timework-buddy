@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, createFileRoute, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BadgeCheck,
@@ -40,6 +40,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/agent-id/session";
 import { planLabel } from "@/lib/agent-id/format";
 import { queryKeys, useAccount, useApprovals } from "@/lib/agent-id/queries";
+import { approvalAmount } from "@/components/agent-id/ApprovalList";
+import { counterpartyLabel } from "@/lib/agent-id/format";
+import { toast } from "sonner";
 import { useSession } from "@/lib/agent-id/session";
 
 // The signed-in part of Agent ID: navigation, the account, and a sign-in check.
@@ -152,6 +155,29 @@ function SignedInLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => setMenuOpen(false), [path]);
+
+  // A payment an agent asks to make shows up wherever the owner is.
+  const seenApprovals = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const list = approvals.data;
+    if (!list) return;
+    if (!seenApprovals.current) {
+      seenApprovals.current = new Set(list.map((a) => a.id));
+      return;
+    }
+    for (const a of list) {
+      if (seenApprovals.current.has(a.id)) continue;
+      seenApprovals.current.add(a.id);
+      toast(`${a.agentName ?? "Your agent"} wants to send ${approvalAmount(a)}`, {
+        description: `To ${counterpartyLabel(a.request.to)}`,
+        duration: 20_000,
+        action: {
+          label: "Review",
+          onClick: () => void navigate({ href: `/agent-id/approvals?id=${a.id}` }),
+        },
+      });
+    }
+  }, [approvals.data, navigate]);
 
   const expired = account.error instanceof AgentIdError && account.error.status === 401;
   const pending = approvals.data?.length ?? 0;

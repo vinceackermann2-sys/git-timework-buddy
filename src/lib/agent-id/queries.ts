@@ -92,7 +92,7 @@ export const useApprovals = ({ poll = false }: { poll?: boolean } = {}) =>
     ...base,
     queryKey: queryKeys.approvals,
     queryFn: async () => (await api.approvals()).approvals,
-    ...(poll ? { refetchInterval: 30_000 } : {}),
+    ...(poll ? { refetchInterval: 10_000 } : {}),
   });
 
 export const useAudit = (agent?: string, limit = 100) =>

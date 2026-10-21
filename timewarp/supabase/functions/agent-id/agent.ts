@@ -372,7 +372,12 @@ export async function transfer(ctx: Ctx, who: AgentCaller, input: { to: string; 
     // What the agent asked for, so the approved transfer finds the same recipient.
     await ctx.admin.from('agent_id_approvals').update({ request: { amount: input.amount, currency: from.currency, to: target.label, memo: input.memo || null, input: input.to } }).eq('id', result.approval);
     await audit(ctx, who.userId, who.agent.id, actor(who), 'wallet.approval_requested', { amount: input.amount, approval: result.approval });
-    return { status: 'needs_approval', approval: result.approval, message: `This is above the amount your owner approves automatically, so it waits for them. Tell them: run \`timewarp-id approve ${result.approval}\` (or open Approvals in Agent ID). It expires in 24 hours.` };
+    const approveUrl = approvalUrl(ctx, result.approval);
+    ctx.background(notifyApproval(ctx, who, input.amount, target.label, input.memo || null, approveUrl).catch(error => console.error('[agent-id] approval mail', error?.message)));
+    return {
+      status: 'needs_approval', approval: result.approval, approveUrl,
+      message: `This is above the amount your owner approves automatically, so it waits for them. Show them this link to approve or decline it: ${approveUrl} (they were emailed it too). Check the answer with approval_status. It expires in 24 hours.`,
+    };
   }
   if (result?.status !== 'ok') {
     const [status, message] = TRANSFER_ERRORS[result?.status] || [400, 'The transfer could not be made.'];
@@ -414,8 +419,15 @@ export async function transfer(ctx: Ctx, who: AgentCaller, input: { to: string; 
 // held to the limits the owner set for the agent.
 export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; amount: number; asset?: string; memo?: string }) {
   const from = await resourceFor(ctx, agent.id, 'wallet');
-  if (from.mode !== 'live') throw fail(409, 'test_wallet', 'Test money stays inside Agent ID.');
   if (!EVM_ADDRESS.test(input.to)) throw fail(400, 'invalid', 'Withdraw to an address that starts with 0x, on Base.');
+  if (from.mode === 'test') {
+    // Test dollars leave the test balance; nothing reaches a blockchain.
+    const result = checked(await ctx.admin.rpc('agent_id_wallet_withdraw', { p_agent: agent.id, p_amount: input.amount, p_to: input.to, p_memo: input.memo || 'Withdrawal' })) as any;
+    if (result?.status === 'insufficient') throw fail(402, 'insufficient', 'The wallet doesn\'t have enough money for this.');
+    if (result?.status !== 'ok') throw fail(409, result?.status || 'withdraw_failed', 'The withdrawal could not be made.');
+    await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.withdraw', { amount: input.amount, to: input.to, mode: 'test' });
+    return { status: 'completed', transfer: await eventById(ctx, result.event), balance: usd(Number(result.balance)) };
+  }
   if (input.to.toLowerCase() === String(from.address).toLowerCase()) throw fail(400, 'invalid', 'That is this wallet\'s own address.');
   if (await sanctioned(ctx, input.to)) {
     await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.blocked_sanctioned', { to: input.to });
@@ -446,6 +458,63 @@ export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; a
   await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.withdraw', { amount: input.amount, to: input.to, asset });
   return { status: outcome, transfer: await eventById(ctx, result.event) };
 }
+
+// --- Approvals ------------------------------------------------------------------
+// Payments above the approval amount wait for the owner, who answers on the
+// signed-in website (or from the email link), never from the agent's side.
+const approvalUrl = (ctx: Ctx, id: string) => `${ctx.config.siteUrl}/agent-id/approvals?id=${id}`;
+const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+const escapeHtml = (value: string) => value.replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]!));
+
+async function notifyApproval(ctx: Ctx, who: AgentCaller, amount: number, to: string, memo: string | null, url: string) {
+  const key = ctx.config.env('RESEND_API_KEY');
+  if (!key) return;
+  const { data } = await ctx.admin.auth.admin.getUserById(who.userId);
+  const email = data?.user?.email;
+  if (!email) return;
+  const what = `${who.agent.name} wants to send ${dollars(amount)} to ${to}`;
+  const response = await ctx.fetch('https://api.resend.com/emails', {
+    method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: `Timewarp Agent ID <no-reply@${ctx.config.mailDomain}>`, to: [email],
+      subject: `Approve ${dollars(amount)} from ${who.agent.name}?`,
+      text: `${what}${memo ? ` (${memo})` : ''}.\n\nApprove or decline it: ${url}\n\nIt expires in 24 hours. Nothing is sent unless you approve.`,
+      html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:440px;margin:0 auto;padding:24px;color:#1c1b22"><p style="font-size:15px;margin:0 0 6px">${escapeHtml(what)}</p>${memo ? `<p style="font-size:13px;color:#6b6878;margin:0 0 18px">"${escapeHtml(memo)}"</p>` : ''}<a href="${escapeHtml(url)}" style="display:inline-block;background:#6d4bd8;color:#fff;text-decoration:none;font-weight:600;padding:11px 20px;border-radius:10px">Review payment</a><p style="font-size:12px;color:#6b6878;margin-top:18px">It expires in 24 hours. Nothing is sent unless you approve.</p></div>`,
+      tags: [{ name: 'agent_id', value: 'approval' }],
+    }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) console.error('[agent-id] approval mail', response.status);
+}
+
+const approvalView = async (ctx: Ctx, row: any) => {
+  const expired = row.status === 'pending' && Date.parse(row.expires_at) <= ctx.now();
+  const transfer = row.result?.event ? await eventById(ctx, row.result.event).catch(() => null) : null;
+  return {
+    approval: {
+      id: row.id, status: expired ? 'expired' : row.status, amount: usd(Number(row.request?.amount) || 0), to: row.request?.to || null,
+      memo: row.request?.memo || null, reason: row.reason, createdAt: row.created_at, decidedAt: row.decided_at, expiresAt: row.expires_at,
+    },
+    approveUrl: approvalUrl(ctx, row.id),
+    ...(transfer ? { transfer } : {}),
+  };
+};
+async function ownApproval(ctx: Ctx, who: AgentCaller, id: unknown) {
+  const value = str(id, 60, 'approval', { required: true });
+  const row = /^[0-9a-f-]{36}$/.test(value) ? checked(await ctx.admin.from('agent_id_approvals').select('*').eq('id', value).eq('agent_id', who.agent.id).maybeSingle()) : null;
+  if (!row) throw fail(404, 'not_found', 'No approval with that id.');
+  return row;
+}
+// Whether the owner answered: pending, approved, completed (sent), denied, failed or expired.
+const approvalStatus: Op = async (ctx, who, input) => approvalView(ctx, await ownApproval(ctx, who, input.id ?? input.approval));
+// The agent takes its own request back (it can never approve one).
+const approvalWithdraw: Op = async (ctx, who, input) => {
+  const row = await ownApproval(ctx, who, input.id ?? input.approval);
+  const rows = checked(await ctx.admin.from('agent_id_approvals').update({ status: 'denied', reason: 'Withdrawn by the agent', decided_at: new Date(ctx.now()).toISOString() }).eq('id', row.id).eq('status', 'pending').select('*')) as any[];
+  if (!rows?.length) throw fail(409, 'not_pending', 'This request was already answered.');
+  await audit(ctx, who.userId, who.agent.id, actor(who), 'wallet.approval_withdrawn', { approval: row.id });
+  return approvalView(ctx, rows[0]);
+};
 
 const walletSend: Op = async (ctx, who, input) => {
   const to = str(input.to, 300, 'to', { required: true });
@@ -638,7 +707,7 @@ const signingKeyRemove: Op = async (ctx, who, input) => {
 export const ops: Record<string, Op> = {
   me, mailList, mailCounts, mailRead, mailSend, mailMove, mailMarkRead, mailDelete, fileUploadBase64, smsList, smsSend, callList, callPlace,
   contactsList, contactSave, contactDelete,
-  walletGet, walletHistory, walletSend,
+  walletGet, walletHistory, walletSend, approvalStatus, approvalWithdraw,
   cardGet, cardReveal, cardTransactions, cardTestCharge,
   vmGet, vmStart, vmStop, vmExec, vmFiles, vmHistory,
   passport, signingKeysList, signingKeyAdd, signingKeyRemove,
@@ -663,6 +732,7 @@ export const agentRoutes: Route<AgentCaller>[] = [
   ['GET', '/v1/me/calls', callList], ['POST', '/v1/me/calls', callPlace],
   ['GET', '/v1/me/contacts', contactsList], ['POST', '/v1/me/contacts', contactSave],
   ['PATCH', '/v1/me/contacts/:id', contactSave], ['DELETE', '/v1/me/contacts/:id', contactDelete],
+  ['GET', '/v1/me/approvals/:id', wrap(approvalStatus)], ['POST', '/v1/me/approvals/:id/withdraw', wrap(approvalWithdraw)],
   ['GET', '/v1/me/wallet', walletGet], ['GET', '/v1/me/wallet/transactions', walletHistory], ['POST', '/v1/me/wallet/transfers', walletSend],
   ['GET', '/v1/me/card', cardGet], ['POST', '/v1/me/card/reveal', cardReveal], ['GET', '/v1/me/card/transactions', cardTransactions], ['POST', '/v1/me/card/test-charge', cardTestCharge],
   ['GET', '/v1/me/vm', vmGet], ['POST', '/v1/me/vm/start', vmStart], ['POST', '/v1/me/vm/stop', vmStop], ['POST', '/v1/me/vm/exec', vmExec], ['GET', '/v1/me/vm/files', vmFiles], ['GET', '/v1/me/vm/commands', vmHistory],

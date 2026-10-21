@@ -213,7 +213,7 @@ export async function wallet(ctx) {
       return ctx.print(data, () => [
         `Waiting for the owner: $${value} USD to ${ctx.args[1]} is above the amount sent without approval.`,
         `Approval id: ${data.approval}`,
-        `The owner approves it on the Agent ID dashboard or with \`timewarp-id approve ${data.approval}\`.`,
+        data.approveUrl ? `Approve or decline it here: ${data.approveUrl}` : 'The owner approves it on the Agent ID website.',
       ].join('\n'));
     }
     return ctx.print(data, ({ transfer, balance }) => `Sent ${money(transfer.amount)} to ${transfer.counterparty}.${balance ? ` Balance: ${money(balance)}.` : ''}`);

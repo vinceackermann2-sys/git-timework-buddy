@@ -231,13 +231,50 @@ test("wallets: owners add money (address or card) and withdraw, without using up
   assert.deepEqual([form["wallet_addresses[base_network]"], form.lock_wallet_address, form["destination_networks[]"], form["destination_currencies[]"], form.source_amount, form.customer_ip_address], [address, "true", "base", "usdc", "25.00", "198.51.100.4"]);
 });
 
-test("test wallets can't be withdrawn from", async t => {
+test("test wallets withdraw too, as a simulation inside Agent ID", async t => {
   const { local, ok, agent } = await setup(t);
   const alice = await local.user();
   const bot = await agent(alice, "Saver");
   await ok("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "wallet" } });
   assert.equal((await ok("GET", `/v1/agents/${bot.id}/wallet/add-money`, { token: alice.session })).test, true);
-  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/wallet/withdraw`, { token: alice.session, body: { to: "0x" + "34".repeat(20), value: "1" } })).body.error.code, "test_wallet");
+  await ok("POST", `/v1/agents/${bot.id}/wallet/test-funds`, { token: alice.session, body: { amount: 5000 } });
+  const out = await ok("POST", `/v1/agents/${bot.id}/wallet/withdraw`, { token: alice.session, body: { to: "0x" + "34".repeat(20), value: "12.50" } });
+  assert.deepEqual([out.status, out.balance.amount, out.transfer.data.withdrawal, out.transfer.data.test], ["completed", 3750, true, true]);
+  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/wallet/withdraw`, { token: alice.session, body: { to: "0x" + "34".repeat(20), value: "100" } })).body.error.code, "insufficient");
+});
+
+test("payments above the approval amount wait for the owner: a link, an email, a status the agent can follow, and no way for the agent to approve", async t => {
+  const { local, net, ok, agent } = await setup(t, { RESEND_API_KEY: "re_test", AGENT_ID_SITE_URL: "https://timewarpdev.com" });
+  const alice = await local.user({ email: "alice@example.com" });
+  const payer = await agent(alice, "Payer"), payee = await agent(alice, "Payee");
+  for (const bot of [payer, payee]) await ok("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "wallet" } });
+  await ok("POST", `/v1/agents/${payer.id}/wallet/test-funds`, { token: alice.session, body: { amount: 10000 } });
+  net.on("POST", /api\.resend\.com\/emails$/, () => ({ id: "email_1" }));
+  const waiting = await ok("POST", "/v1/me/wallet/transfers", { token: payer.key, body: { to: payee.handle, value: "40", memo: "Supplier deposit" } });
+  assert.equal(waiting.status, "needs_approval");
+  assert.equal(waiting.approveUrl, `https://timewarpdev.com/agent-id/approvals?id=${waiting.approval}`);
+  assert.doesNotMatch(waiting.message, /timewarp-id approve/, "The agent isn't told to approve it itself.");
+  await local.settle();
+  const [mail] = net.find("POST", /resend\.com\/emails$/);
+  const sent = JSON.parse(mail.body);
+  assert.deepEqual([sent.to, sent.subject], [["alice@example.com"], "Approve $40.00 from Payer?"]);
+  assert.match(sent.html, new RegExp(waiting.approveUrl.replace(/[?.]/g, "\\$&")));
+  // The agent follows it, and can't answer it.
+  assert.equal((await ok("GET", `/v1/me/approvals/${waiting.approval}`, { token: payer.key })).approval.status, "pending");
+  assert.equal((await local.call("POST", `/v1/approvals/${waiting.approval}`, { token: payer.key, body: { decision: "approve" } })).status, 403, "An agent key can't decide approvals.");
+  assert.equal((await local.call("GET", `/v1/me/approvals/${waiting.approval}`, { token: payee.key })).status, 404, "Only the agent that asked sees it.");
+  // The owner approves on the website: it's sent, and the agent sees that.
+  assert.equal((await ok("POST", `/v1/approvals/${waiting.approval}`, { token: alice.session, body: { decision: "approve" } })).status, "completed");
+  const done = await ok("GET", `/v1/me/approvals/${waiting.approval}`, { token: payer.key });
+  assert.deepEqual([done.approval.status, done.transfer.amount.amount, done.transfer.status], ["completed", 4000, "completed"]);
+  // A request the agent no longer needs, it takes back.
+  const second = await ok("POST", "/v1/me/wallet/transfers", { token: payer.key, body: { to: payee.handle, value: "30" } });
+  const withdrawn = await ok("POST", `/v1/me/approvals/${second.approval}/withdraw`, { token: payer.key });
+  assert.deepEqual([withdrawn.approval.status, withdrawn.approval.reason], ["denied", "Withdrawn by the agent"]);
+  assert.equal((await local.call("POST", `/v1/approvals/${second.approval}`, { token: alice.session, body: { decision: "approve" } })).body.error.code, "already_decided");
+  // Both are in the MCP tools.
+  const tools = (await ok("POST", "/mcp", { token: payer.key, body: { jsonrpc: "2.0", id: 1, method: "tools/list" } })).result.tools.map(tool => tool.name);
+  assert.ok(tools.includes("approval_status") && tools.includes("approval_withdraw"));
 });
 
 test("business checks: the VAT number is checked against the EU register and the registration document goes to reviewers", async t => {

@@ -38,6 +38,8 @@
   --aid-test-bg: #f1f2f5;
   --aid-code-bg: #f8f7fb;
   --aid-bubble-in: #ececf0;
+  /* The page behind the cards. */
+  --aid-canvas: #f6f6f9;
 
   /* Tailwind's theme variables resolve where they are declared (:root), so
      they are re-pointed here to pick up the tokens above. */
@@ -63,7 +65,7 @@
   --color-ring-offset-background: var(--background);
 
   color-scheme: light;
-  background-color: var(--background);
+  background-color: var(--aid-canvas, var(--background));
   color: var(--foreground);
   font-family:
     "Segoe UI Variable Text",
@@ -80,6 +82,7 @@
 @media (prefers-color-scheme: dark) {
   .agent-id:not([data-theme="light"]) {
     --background: #171b23;
+    --aid-canvas: #171b23;
     --foreground: #f3f5fa;
     --card: #1c212a;
     --card-foreground: #f3f5fa;
@@ -112,6 +115,7 @@
 }
 .agent-id[data-theme="dark"] {
   --background: #171b23;
+    --aid-canvas: #171b23;
   --foreground: #f3f5fa;
   --card: #1c212a;
   --card-foreground: #f3f5fa;
@@ -143,14 +147,15 @@
 }
 
 html.agent-id body {
-  background-color: var(--background);
+  background-color: var(--aid-canvas, var(--background));
 }
 
-/* One card style: flat, hairline border. Shadows only on overlays. */
+/* One card style: white on the canvas, hairline border, a whisper of shadow. */
 .agent-id .aid-card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) + 4px);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.04);
 }
 
 .agent-id .aid-link {

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import { PendingApprovals, approvalAmount } from "@/components/agent-id/ApprovalList";
@@ -32,7 +32,12 @@ const OUTCOMES: Record<Approval["status"], [string, "success" | "danger" | "neut
 };
 
 function ApprovalsPage() {
-  const pending = useApprovals();
+  const pending = useApprovals({ poll: true });
+  // Opened from the agent's link or the email: that payment comes first.
+  const target = useRouterState({
+    select: (s) => (s.location.search as Record<string, unknown>)["id"],
+  });
+  const highlight = typeof target === "string" ? target : undefined;
   const history = useQuery({
     queryKey: [...queryKeys.approvals, "all"],
     queryFn: async () => (await api.approvals("all")).approvals,
@@ -54,7 +59,7 @@ function ApprovalsPage() {
         ) : pending.data.length === 0 ? (
           <Empty>Nothing waiting for you.</Empty>
         ) : (
-          <PendingApprovals approvals={pending.data} />
+          <PendingApprovals approvals={pending.data} highlight={highlight} />
         )}
       </Section>
 
@@ -67,7 +72,10 @@ function ApprovalsPage() {
                   ? (["Expired", "neutral"] as const)
                   : OUTCOMES[a.status];
               return (
-                <Row key={a.id}>
+                <Row
+                  key={a.id}
+                  {...(a.id === highlight ? { className: "bg-[var(--accent)]" } : {})}
+                >
                   <p className="min-w-0 break-words text-sm">
                     <span className="font-semibold">{approvalAmount(a)}</span>
                     <span className="text-[var(--muted-foreground)]"> from </span>

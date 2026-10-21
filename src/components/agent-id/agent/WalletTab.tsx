@@ -55,6 +55,7 @@ import {
 } from "../ui";
 import { BlockedNotice, LoadMore, NoResource, blockedReason } from "./common";
 import { AddMoney, AmountField, Withdraw } from "./WalletMoney";
+import { PendingApprovals } from "../ApprovalList";
 import { LimitsEditor } from "./LimitsEditor";
 
 const NETWORK_LABELS: Record<string, string> = {
@@ -79,7 +80,7 @@ export function WalletTab({ agent }: { agent: Agent }) {
   const balance = summary.data?.balance ?? wallet.balance ?? null;
   const test = wallet.mode === "test";
   const events = pages.data?.pages.flatMap((p) => p.events) ?? [];
-  const waiting = (approvals.data ?? []).filter((a) => a.agentId === agent.id).length;
+  const waiting = (approvals.data ?? []).filter((a) => a.agentId === agent.id);
   const network = summary.data?.network ?? wallet.details.network;
 
   return (
@@ -111,14 +112,12 @@ export function WalletTab({ agent }: { agent: Agent }) {
             disabled={!!blocked}
             onClick={() => setPanel("send")}
           />
-          {!test && (
-            <QuickAction
-              label="Withdraw"
-              icon={<ArrowDownToLine className="h-5 w-5" />}
-              disabled={agent.status === "revoked" || wallet.status !== "active"}
-              onClick={() => setPanel("withdraw")}
-            />
-          )}
+          <QuickAction
+            label="Withdraw"
+            icon={<ArrowDownToLine className="h-5 w-5" />}
+            disabled={agent.status === "revoked" || wallet.status !== "active"}
+            onClick={() => setPanel("withdraw")}
+          />
           <QuickAction
             label="Details"
             icon={<Info className="h-5 w-5" />}
@@ -127,13 +126,10 @@ export function WalletTab({ agent }: { agent: Agent }) {
         </div>
       </section>
 
-      {waiting > 0 && (
-        <Notice tone="warning">
-          {waiting} payment{waiting === 1 ? " is" : "s are"} waiting for your approval.{" "}
-          <Link to="/agent-id/approvals" className="font-medium underline">
-            Review
-          </Link>
-        </Notice>
+      {waiting.length > 0 && (
+        <section aria-label="Waiting for your approval" className="aid-card overflow-hidden">
+          <PendingApprovals approvals={waiting} />
+        </section>
       )}
 
       <section aria-label="Transactions">
@@ -191,16 +187,14 @@ export function WalletTab({ agent }: { agent: Agent }) {
           <AddMoney agent={agent} />
         )}
       </SidePanel>
-      {!test && (
-        <SidePanel
-          open={panel === "withdraw"}
-          onOpenChange={(open) => setPanel(open ? "withdraw" : null)}
-          title="Withdraw"
-          trigger={<span className="hidden" />}
-        >
-          <Withdraw agent={agent} balance={balance} onDone={() => setPanel(null)} />
-        </SidePanel>
-      )}
+      <SidePanel
+        open={panel === "withdraw"}
+        onOpenChange={(open) => setPanel(open ? "withdraw" : null)}
+        title={test ? "Withdraw test money" : "Withdraw"}
+        trigger={<span className="hidden" />}
+      >
+        <Withdraw agent={agent} balance={balance} onDone={() => setPanel(null)} />
+      </SidePanel>
       <SidePanel
         open={panel === "details"}
         onOpenChange={(open) => setPanel(open ? "details" : null)}

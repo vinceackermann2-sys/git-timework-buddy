@@ -293,7 +293,11 @@ export function Withdraw({
       <Field
         id="withdraw-to"
         label="To"
-        hint="Your own wallet or exchange address on Base. It starts with 0x."
+        hint={
+          agent.resources.wallet?.mode === "test"
+            ? "Test dollars leave this wallet; nothing is sent anywhere."
+            : "Your own wallet or exchange address on Base. It starts with 0x."
+        }
         error={to.trim() && !addressOk ? "That isn't a wallet address on Base." : null}
       >
         <Input
