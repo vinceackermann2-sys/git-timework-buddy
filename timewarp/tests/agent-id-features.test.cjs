@@ -7,6 +7,14 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { startLocal } = require("../scripts/agent-id-local.cjs");
 
+// The agent's own command inside the wrapper that runs it as the agent's
+// ordinary account (vault/shell.ts), and the folder it runs in.
+function agentPart(body) {
+  const { command } = JSON.parse(body);
+  const match = /runuser -u agent -- .* bash -lc '[^']*' _ '((?:[^']|'\\'')*)' ([A-Za-z0-9+/=]+); else/.exec(command);
+  return match ? { cwd: match[1].replace(/'\\''/g, "'"), command: Buffer.from(match[2], "base64").toString() } : null;
+}
+
 function network() {
   const routes = [], calls = [];
   const fetch = async (url, init = {}) => {
@@ -151,11 +159,11 @@ test("a live machine lists its files, which stay between commands", async t => {
   const listed = await ok("GET", "/v1/me/vm/files?path=~", { token: bot.key });
   assert.equal(listed.path, "/root");
   assert.deepEqual(listed.entries.map(e => [e.type, e.name, e.size]), [["dir", "projects", 4096], ["file", "notes.md", 120]]);
-  const command = JSON.parse(net.find("POST", /executeShellCommand/)[0].body).command;
+  const command = agentPart(net.find("POST", /executeShellCommand/)[0].body).command;
   assert.match(command, /^p='~';/);
   assert.match(command, /find \. -mindepth 1 -maxdepth 1 -printf/);
   await ok("GET", `/v1/me/vm/files?path=${encodeURIComponent("/tmp/it's here")}`, { token: bot.key });
-  assert.match(JSON.parse(net.find("POST", /executeShellCommand/)[1].body).command, /^p='\/tmp\/it'\\''s here';/, "Paths are quoted for the shell.");
+  assert.match(agentPart(net.find("POST", /executeShellCommand/)[1].body).command, /^p='\/tmp\/it'\\''s here';/, "Paths are quoted for the shell.");
   assert.equal((await ok("GET", "/v1/me/vm/commands", { token: bot.key })).commands.length, 0, "Listing files isn't a command in the history.");
   // Each listing is machine time like a command: here from the free hours, so no credits.
   const { rows: [allowance] } = await local.db.query("select used_seconds from agent_id_compute_allowance where user_id=$1", [alice.id]);

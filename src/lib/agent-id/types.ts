@@ -429,6 +429,28 @@ export type BankPayin = {
   };
   createdAt: string;
 };
+// An agent's vault: sign-ins and keys kept on its computer, sealed in the
+// owner's browser. Agent ID lists them without their values.
+export type VaultItem = {
+  id: string;
+  kind: "login" | "key";
+  label: string;
+  site: string | null;
+  hosts: string[];
+  send: "bearer" | "header" | "query" | "basic" | null;
+  totp: boolean;
+  createdAt: string;
+  lastUsedAt: string | null;
+};
+// computer: "none" (it gets one at set-up), "ready", or "replace" (made before
+// agents ran as an ordinary user, so not trusted with a vault).
+export type VaultStatus = {
+  computer: "none" | "ready" | "replace";
+  ready: boolean;
+  publicKey: string | null;
+  test: boolean;
+};
+
 export type NewBankAccount =
   | {
       kind: "iban";

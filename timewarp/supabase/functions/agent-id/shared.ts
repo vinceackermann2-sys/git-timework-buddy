@@ -80,7 +80,8 @@ export async function membership(ctx: Ctx, userId: string, workspaceId: string) 
 export const principalOf = (ctx: Ctx, agent: AgentRow) => `${agent.id}@${ctx.config.principalDomain}`;
 
 export function resourceView(row: ResourceRow) {
-  const { cvc: _cvc, ...state } = row.state || {};
+  // The card's code, and a test computer's vault key, are never shown.
+  const { cvc: _cvc, testVault: _testVault, ...state } = row.state || {};
   return {
     id: row.id, kind: row.kind, mode: row.mode, provider: row.provider, status: row.status,
     address: row.address, label: row.label, settings: row.settings || {}, details: state,

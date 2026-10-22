@@ -9,6 +9,8 @@ import type {
   BankDeposit,
   BankPayin,
   Mascot,
+  VaultItem,
+  VaultStatus,
   BankStatus,
   CardOnrampSession,
   AdminSetup,
@@ -57,6 +59,7 @@ import type {
   NewBankAccount,
   WithdrawResult,
 } from "./types";
+import type { SealedItem } from "./vault";
 
 export class AgentIdError extends Error {
   readonly status: number;
@@ -333,6 +336,19 @@ export function createAgentIdClient(options: ClientOptions) {
       request<{ resource: Resource }>(`/v1/agents/${id(agentId)}/resources/${kind}`, {
         method: "PATCH",
         body: patch,
+      }),
+    // The vault on the agent's computer; items go in sealed (lib/agent-id/vault.ts).
+    vault: (agentId: string) =>
+      request<{ vault: VaultStatus; items: VaultItem[] }>(`/v1/agents/${id(agentId)}/vault`),
+    setupVault: (agentId: string) =>
+      request<{ vault: VaultStatus; items: VaultItem[] }>(`/v1/agents/${id(agentId)}/vault/setup`, {
+        body: {},
+      }),
+    addVaultItem: (agentId: string, input: { label: string; envelope: SealedItem }) =>
+      request<{ item: VaultItem }>(`/v1/agents/${id(agentId)}/vault/items`, { body: input }),
+    removeVaultItem: (agentId: string, itemId: string) =>
+      request<{ removed: boolean }>(`/v1/agents/${id(agentId)}/vault/items/${id(itemId)}`, {
+        method: "DELETE",
       }),
     removeResource: (agentId: string, kind: Kind) =>
       request<{ released: boolean }>(`/v1/agents/${id(agentId)}/resources/${kind}`, {

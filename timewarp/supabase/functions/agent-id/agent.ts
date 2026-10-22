@@ -17,6 +17,7 @@ import { machineCost, machineState, runCommand, startMachine, stopMachine, type 
 import { parseSshKey } from './ssh.ts';
 import { appOf, recordApp } from './origin.ts';
 import { giveResource } from './provisioning.ts';
+import { agentCommand, installCommand, PACKAGE } from './vault/shell.ts';
 
 type Op = (ctx: Ctx, who: AgentCaller, input: any) => Promise<unknown>;
 const actor = (who: AgentCaller) => who.via === 'owner' ? 'owner' as const : 'agent' as const;
@@ -570,7 +571,7 @@ const cardTestCharge: Op = async (ctx, who, input) => {
 // --- Machine -----------------------------------------------------------------
 // The agent's machine. None is set up in advance: the first time the agent
 // uses one, it gets it (live where machines are, its time on its owner's credits).
-async function machine(ctx: Ctx, who: AgentCaller) {
+export async function machine(ctx: Ctx, who: AgentCaller) {
   let resource = await resourceFor(ctx, who.agent.id, 'vm', { required: false });
   if (!resource) {
     resource = await giveResource(ctx, who.agent, 'vm');
@@ -609,8 +610,18 @@ const vmExec: Op = async (ctx, who, input) => {
   const command = str(input.command, 20_000, 'command', { required: true, multiline: true });
   const cwd = input.cwd ? str(input.cwd, 500, 'cwd') : undefined;
   const timeoutSeconds = input.timeoutSeconds === undefined ? 120 : int(input.timeoutSeconds, 'timeoutSeconds', { min: 5, max: 900 });
-  const result = await metered(ctx, who, resource, command, cwd, timeoutSeconds, true);
+  const result = await metered(ctx, who, resource, command, { cwd, timeoutSeconds, history: true });
   return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, seconds: result.seconds };
+};
+
+// The agent's commands don't run as root, so system packages come through
+// here: installed by name from the system's own signed sources.
+const vmInstall: Op = async (ctx, who, input) => {
+  const { resource } = await machine(ctx, who);
+  const packages = (Array.isArray(input.packages) ? input.packages : String(input.packages || '').split(/[\s,]+/)).map((p: unknown) => String(p).trim()).filter(Boolean);
+  if (!packages.length || packages.length > 30 || !packages.every((p: string) => PACKAGE.test(p))) throw fail(400, 'invalid', 'packages: up to 30 package names, like python3-pip or ffmpeg.');
+  const result = await metered(ctx, who, resource, installCommand(packages), { timeoutSeconds: 600, history: true, as: 'system', subject: `Install ${packages.join(' ')}` });
+  return { exitCode: result.exitCode, installed: result.exitCode === 0 ? packages : [], output: (result.stderr || result.stdout).slice(-4000), seconds: result.seconds };
 };
 
 // What is in a folder on the machine (the agent's files stay there between
@@ -621,7 +632,7 @@ const vmFiles: Op = async (ctx, who, input) => {
   if (/[\u0000-\u001f]/.test(path)) throw fail(400, 'invalid', 'path is not valid.');
   const quoted = `'${path.replace(/'/g, `'\\''`)}'`;
   const command = `p=${quoted}; case "$p" in "~"|"~/"*) p="$HOME\${p#\\~}";; esac; cd -- "$p" && pwd && find . -mindepth 1 -maxdepth 1 -printf '%y\\t%s\\t%T@\\t%f\\n' 2>/dev/null | head -500`;
-  const result = await metered(ctx, who, resource, command, undefined, 60, false);
+  const result = await metered(ctx, who, resource, command, { timeoutSeconds: 60, history: false });
   if (result.exitCode !== 0) throw fail(404, 'not_found', result.stderr.trim().split('\n').pop() || 'That folder does not exist on the machine.');
   const [where, ...lines] = result.stdout.trim().split('\n');
   const entries = lines.map(line => line.split('\t')).filter(parts => parts.length === 4).map(([type, size, modified, name]) => ({
@@ -633,7 +644,10 @@ const vmFiles: Op = async (ctx, who, input) => {
 // Runs a command on a live machine. Its time comes out of the owner's free
 // machine hours first, then their credits: the most it can use is taken from
 // both up front, one command runs at a time, and what it didn't use goes back.
-async function metered(ctx: Ctx, who: AgentCaller, resource: ResourceRow, command: string, cwd: string | undefined, timeoutSeconds: number, history: boolean) {
+// The agent's commands run as its ordinary account (vault/shell.ts); Agent ID's
+// own (the vault, installing packages) as the computer's root.
+export async function metered(ctx: Ctx, who: AgentCaller, resource: ResourceRow, command: string, options: { cwd?: string; timeoutSeconds: number; history: boolean; as?: 'agent' | 'system'; subject?: string }) {
+  const { cwd, timeoutSeconds, history, as = 'agent' } = options;
   if (resource.mode === 'test') throw fail(409, 'test_machine', 'Test machines don\'t run commands. The owner can give this agent a live machine in Agent ID.');
   if (resource.status !== 'active') throw fail(409, 'machine_not_ready', 'The machine is still being set up. Try again in a minute.');
   await rateLimit(ctx, who.userId, `vm-exec:${who.agent.id}`, 30, 1000, 'commands');
@@ -661,7 +675,7 @@ async function metered(ctx: Ctx, who: AgentCaller, resource: ResourceRow, comman
     throw fail(409, 'machine_busy', 'The machine is running another command. Try again when it finishes.');
   }
   let result;
-  try { result = await runCommand(ctx, resource, command, { cwd, timeoutSeconds }); }
+  try { result = await runCommand(ctx, resource, as === 'agent' ? agentCommand(command, cwd) : command, { timeoutSeconds }); }
   catch (error) {
     await Promise.all([release(), giveBack(free)]);
     throw error;
@@ -677,7 +691,7 @@ async function metered(ctx: Ctx, who: AgentCaller, resource: ResourceRow, comman
     if (settleError) console.error('[agent-id] machine time settlement pending', reservation, cost);
   }
   if (history) {
-    await record(ctx, resource, { kind: 'vm', direction: 'none', status: result.failed ? 'failed' : result.exitCode === 0 ? 'completed' : 'exited', subject: command.slice(0, 1000), body: (result.stdout + (result.stderr ? `\n[stderr]\n${result.stderr}` : '')).slice(-20_000), data: { exitCode: result.exitCode, seconds: result.seconds, freeSeconds: usedFree, credits: Math.round(cost * AI_COST_MARKUP / USD_PER_CREDIT * 1000) / 1000 } });
+    await record(ctx, resource, { kind: 'vm', direction: 'none', status: result.failed ? 'failed' : result.exitCode === 0 ? 'completed' : 'exited', subject: (options.subject ?? command).slice(0, 1000), body: (result.stdout + (result.stderr ? `\n[stderr]\n${result.stderr}` : '')).slice(-20_000), data: { exitCode: result.exitCode, seconds: result.seconds, freeSeconds: usedFree, credits: Math.round(cost * AI_COST_MARKUP / USD_PER_CREDIT * 1000) / 1000 } });
     await audit(ctx, who.userId, who.agent.id, actor(who), 'vm.exec', { seconds: result.seconds, freeSeconds: usedFree, exitCode: result.exitCode });
   }
   return result;
@@ -749,7 +763,7 @@ export const ops: Record<string, Op> = {
   contactsList, contactSave, contactDelete,
   walletGet, walletHistory, walletSend, approvalStatus, approvalWithdraw,
   cardGet, cardReveal, cardTransactions, cardTestCharge,
-  vmGet, vmStart, vmStop, vmExec, vmFiles, vmHistory,
+  vmGet, vmStart, vmStop, vmExec, vmFiles, vmHistory, vmInstall,
   passport, signingKeysList, signingKeyAdd, signingKeyRemove,
 };
 
@@ -775,7 +789,7 @@ export const agentRoutes: Route<AgentCaller>[] = [
   ['GET', '/v1/me/approvals/:id', wrap(approvalStatus)], ['POST', '/v1/me/approvals/:id/withdraw', wrap(approvalWithdraw)],
   ['GET', '/v1/me/wallet', walletGet], ['GET', '/v1/me/wallet/transactions', walletHistory], ['POST', '/v1/me/wallet/transfers', walletSend],
   ['GET', '/v1/me/card', cardGet], ['POST', '/v1/me/card/reveal', cardReveal], ['GET', '/v1/me/card/transactions', cardTransactions], ['POST', '/v1/me/card/test-charge', cardTestCharge],
-  ['GET', '/v1/me/vm', vmGet], ['POST', '/v1/me/vm/start', vmStart], ['POST', '/v1/me/vm/stop', vmStop], ['POST', '/v1/me/vm/exec', vmExec], ['GET', '/v1/me/vm/files', vmFiles], ['GET', '/v1/me/vm/commands', vmHistory],
+  ['GET', '/v1/me/vm', vmGet], ['POST', '/v1/me/vm/start', vmStart], ['POST', '/v1/me/vm/stop', vmStop], ['POST', '/v1/me/vm/exec', vmExec], ['POST', '/v1/me/vm/install', vmInstall], ['GET', '/v1/me/vm/files', vmFiles], ['GET', '/v1/me/vm/commands', vmHistory],
   ['POST', '/v1/me/passport', passport],
   ['GET', '/v1/me/signing-keys', signingKeysList], ['POST', '/v1/me/signing-keys', signingKeyAdd], ['DELETE', '/v1/me/signing-keys/:id', signingKeyRemove],
   ] as [string, string, Op][]).map(([method, pattern, op]) => [method, pattern, wrap(op)] as Route<AgentCaller>),

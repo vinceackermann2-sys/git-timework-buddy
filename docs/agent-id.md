@@ -130,7 +130,7 @@ on its own.
 | phone | Telnyx (or Twilio, `AGENT_ID_PHONE_PROVIDER`), on Timewarp's account. Telnyx: one messaging profile and one TeXML app made on first use, Ed25519-signed webhooks | A local number that can text and call; texts; calls that read a message aloud; incoming calls get a greeting and voicemail | an application for now; will use credits |
 | wallet | Privy server wallets on Base holding USDC and USDT, shown together as US dollars (`AGENT_ID_WALLET_CHAIN=base`, or `base_sepolia` to try it on testnet). Privy keeps the keys; with gas sponsorship on, sends need no ETH | An 0x address; a USD balance; deposits and sends in its history; transfers to addresses, other agents and contacts | given at once; money leaves it only once the owner is verified |
 | card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner; an application for now, will use credits |
-| vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A computer that resumes for each command, stops after it and keeps its files. Set up the first time the agent uses it (its `vm_*` tools are always listed) | credits (time is charged) |
+| vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A computer that resumes for each command, stops after it and keeps its files. Set up the first time the agent uses it (its `vm_*` tools are always listed). The agent's commands run as an ordinary user; it can hold the agent's vault | credits (time is charged) |
 
 **Ready on creation.** A new Agent ID, whether made on the dashboard, by
 `attach`, through the API or by a claim link, comes with its resources
@@ -216,6 +216,50 @@ but they don't count against the agent's limits.
 An agent has at most one resource of each kind. Mail and wallet addresses are
 never given to anyone else, even after the agent is revoked. Phone numbers,
 cards and machines go back to their provider.
+
+## The vault: sign-ins and keys on the agent's computer
+
+Each agent can have a vault: website sign-ins (with a 2FA setup key) and API
+keys, kept only on its own computer. Neither Timewarp nor the AI model ever
+has them in the clear.
+
+- **On the computer** (`vault/shell.ts`, `vault/vm-script.ts`): the agent's
+  commands run as an ordinary account, `agent` (made on first use; a computer
+  from before keeps its files, copied from root's home), never as root. The
+  vault runs as its own locked account, `vault`, whose folder
+  (`/var/lib/agent-id-vault`) only it can read, with its own Node (checked
+  against nodejs.org's sums) under `/opt/agent-id-vault`. Other accounts'
+  processes are hidden where the computer allows it, and nothing secret is ever
+  on a command line. System packages come through `vm_install` (by name, from
+  the system's signed sources) now that the agent isn't root.
+- **Sealed in the browser** (`src/lib/agent-id/vault.ts`): the computer makes
+  its key pair at set-up and only its public key leaves it. The owner's browser
+  encrypts each item with a new AES-256-GCM key, wrapped with RSA-OAEP-256 to
+  that public key; Agent ID passes the sealed item to the computer, which opens
+  it to check it and keeps it sealed. Agent ID stores no secret, sealed or
+  not: `agent_id_vault_items` (migration 20261022100000) has the name, the
+  kind, and the website or the sites a key may go to, so the vault lists
+  without the computer.
+- **Using a key** (`vault_list`, `vault_request`; `/v1/me/vault`,
+  `/v1/me/vault/request`): the agent sees names and sites, never values. It
+  asks for a request, and the vault adds the key on the computer (as a bearer
+  token, its own header, an address parameter or a basic password), only over
+  https and only to the sites the owner bound to the key, which are sealed with
+  it. Redirects aren't followed, and every form of the key is taken out of the
+  reply. Each use is audited (`vault.request`) and counts as machine time.
+- **Owners only, from the website:** `GET/POST /v1/agents/:id/vault`,
+  `/vault/setup`, `/vault/items`, `DELETE /vault/items/:id` need a signed-in
+  session; agents and owner keys can't add or remove items. A computer made
+  before agents ran as an ordinary user (`state.rootFree` missing) is replaced
+  before it gets a vault, since the agent once had root on it.
+- **Sign-ins** are stored the same way; using them needs a browser on the
+  computer that the vault types into (next).
+- Test computers (development) keep a test key pair in Agent ID instead and
+  simulate requests; that key is never shown.
+- **Limits:** Timewarp operates the computer (through Azure), so this protects
+  secrets from the model, from leaks of Agent ID's data and from anyone with
+  the API, not from Timewarp changing its own code. A key bound to a site is
+  as powerful there as the owner made it.
 
 ## Safety
 

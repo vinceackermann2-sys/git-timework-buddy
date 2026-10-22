@@ -20,6 +20,7 @@ import { adminRoutes } from './admin.ts';
 import { addBankAccount, bankDeposit, bankPayins, bankStatus, cancelBankPayin, refreshBridgeCheck, refreshBusinessCheck, refreshPayouts, removeBankAccount, startBankPayin, startBankVerification, withdrawToBank } from './bank.ts';
 import { cardCurrency, moonpayOn, moonpayUrl } from './providers/moonpay.ts';
 import { CREDIT_PACKS } from './pricing.ts';
+import { vaultOwnerRoutes } from './vault.ts';
 
 type Handler = Route<Owner>[2];
 const iso = (ctx: Ctx) => new Date(ctx.now()).toISOString();
@@ -574,6 +575,7 @@ export const ownerRoutes: Route<Owner>[] = [
   ['GET', '/v1/account', account],
   ['POST', '/v1/account/verification', (ctx, owner, input) => startVerification(ctx, owner, input)],
   ['POST', '/v1/account/terms', acceptTerms],
+  ...vaultOwnerRoutes,
   ['POST', '/v1/account/credits', buyCredits],
   ['GET', '/v1/agents', listAgents], ['POST', '/v1/agents', createAgent],
   ['GET', '/v1/agents/:id', getAgent], ['PATCH', '/v1/agents/:id', updateAgent], ['DELETE', '/v1/agents/:id', revokeAgent],

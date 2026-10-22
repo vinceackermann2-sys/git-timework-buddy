@@ -5,7 +5,7 @@ import { useId } from "react";
 
 import { cn } from "@/lib/utils";
 
-export type ArtKind = "mail" | "wallet" | "phone" | "vm" | "card";
+export type ArtKind = "mail" | "wallet" | "phone" | "vm" | "card" | "vault";
 
 // Drawn a little larger than the 40px box's middle, now that no tile frames them.
 const GROW = "translate(20 20) scale(1.22) translate(-20 -20)";
@@ -85,6 +85,20 @@ export function ResourceArt({
             />
             <path d="M17 27h6l.9 3.6h-7.8Z" fill="#AEAEB2" />
             <rect x="14.5" y="30.2" width="11" height="1.6" rx="0.8" fill="#8E8E93" />
+          </g>
+        )}
+        {kind === "vault" && (
+          <g>
+            <path
+              d="M13.5 18v-3.5a6.5 6.5 0 0 1 13 0V18"
+              fill="none"
+              stroke={brand}
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+            <rect x="9.5" y="17" width="21" height="15.5" rx="3.5" fill={brand} />
+            <circle cx="20" cy="23.5" r="2.2" fill="#fff" />
+            <rect x="19" y="24.5" width="2" height="4.2" rx="1" fill="#fff" />
           </g>
         )}
         {kind === "card" && (

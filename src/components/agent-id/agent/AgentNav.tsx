@@ -16,6 +16,7 @@ import {
 import type { AgentDetail } from "@/lib/agent-id/types";
 import { ResourceArt } from "../ResourceArt";
 import type { AgentTab } from "./tabs";
+import { useVault } from "./VaultTab";
 
 export function AgentNav({ detail }: { detail: AgentDetail }) {
   const { agent } = detail;
@@ -26,6 +27,7 @@ export function AgentNav({ detail }: { detail: AgentDetail }) {
   const phonesWaitlist = usePhonesWaitlist();
   const phoneApplication = usePhoneApplication(agent.id, phonesWaitlist && !phone);
   const balance = summary.data?.balance ?? wallet?.balance ?? null;
+  const vault = useVault(agent.id);
   const settingUp = (
     <span className="inline-flex items-center gap-1">
       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> Setting up
@@ -82,6 +84,18 @@ export function AgentNav({ detail }: { detail: AgentDetail }) {
           : vm.details.machine
             ? vm.details.machine.charAt(0).toUpperCase() + vm.details.machine.slice(1)
             : "Ready",
+    },
+    {
+      tab: "vault",
+      label: "Vault",
+      icon: <ResourceArt kind="vault" size={32} />,
+      value: !vault.data
+        ? ""
+        : !vault.data.vault.ready
+          ? "Set up"
+          : vault.data.items.length === 1
+            ? "1 saved"
+            : `${vault.data.items.length} saved`,
     },
     { tab: "activity", label: "Activity", icon: <Plain icon={<Activity className="h-5 w-5" />} /> },
     { tab: "settings", label: "Settings", icon: <Plain icon={<Settings className="h-5 w-5" />} /> },

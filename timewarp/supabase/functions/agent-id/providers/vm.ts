@@ -67,7 +67,9 @@ const sandbox = (id: string) => `/sandboxes/${encodeURIComponent(id)}`;
 const STOPPED = new Set(['stopped', 'suspended', 'idle']);
 
 export async function provisionVm(ctx: Ctx, agent: AgentRow, mode: 'live' | 'test', size: Size) {
-  if (mode === 'test') return { provider: 'test', providerRef: null as string | null, label: `Test computer (${size})`, status: 'active', state: { size, machine: 'stopped' } };
+  // rootFree: made since the agent's commands run as an ordinary account, so the
+  // agent never had root on it (the vault needs that).
+  if (mode === 'test') return { provider: 'test', providerRef: null as string | null, label: `Test computer (${size})`, status: 'active', state: { size, machine: 'stopped', rootFree: true } };
   const config = azure(ctx), plan = SIZES[size];
   const created = await request(ctx, 'PUT', '/sandboxes', {
     sourcesRef: config.diskId ? { diskImage: { id: config.diskId } } : { diskImage: { name: config.publicDisk, isPublic: true } },
@@ -77,7 +79,7 @@ export async function provisionVm(ctx: Ctx, agent: AgentRow, mode: 'live' | 'tes
     environment: { TIMEWARP_AGENT_ID: agent.id },
   });
   if (!created?.id) throw fail(502, 'machine_failed', 'The machine provider did not return a machine id.');
-  return { provider: 'azure_sandbox', providerRef: String(created.id), label: `Linux computer (${size})`, status: 'provisioning', state: { size, machine: String(created.state || 'creating').toLowerCase() } };
+  return { provider: 'azure_sandbox', providerRef: String(created.id), label: `Linux computer (${size})`, status: 'provisioning', state: { size, machine: String(created.state || 'creating').toLowerCase(), rootFree: true } };
 }
 
 export async function machineState(ctx: Ctx, resource: ResourceRow) {

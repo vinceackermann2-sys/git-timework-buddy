@@ -14,6 +14,7 @@ import { jwks } from './passport.ts';
 import type { AgentRow, Ctx } from './context.ts';
 import { ownerRoutes } from './owner.ts';
 import { agentRoutes, RAW_ROUTES } from './agent.ts';
+import { vaultAgentRoutes } from './vault.ts';
 import { publicAllowedSigners, publicVerify, relyingPartyRoutes } from './relying.ts';
 import { handleMcp } from './mcp.ts';
 import { handleWebhook } from './webhooks.ts';
@@ -152,7 +153,7 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
         return await handleMcp(ctx, caller, req);
       }
       const caller = await authenticate(ctx, req);
-      const routes: Route<any>[] = caller.kind === 'agent' ? agentRoutes : caller.kind === 'owner' ? ownerRoutes : relyingPartyRoutes;
+      const routes: Route<any>[] = caller.kind === 'agent' ? [...agentRoutes, ...vaultAgentRoutes] : caller.kind === 'owner' ? ownerRoutes : relyingPartyRoutes;
       for (const [method, pattern, handler] of routes) {
         if (method !== req.method) continue;
         const params = match(pattern, path);
@@ -161,7 +162,7 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
         const result = await handler(ctx, caller, input, params, req);
         return result instanceof Response ? result : json(result);
       }
-      const other = [ownerRoutes, agentRoutes, relyingPartyRoutes].some(list => list.some(([, pattern]) => match(pattern, path)));
+      const other = [ownerRoutes, agentRoutes, vaultAgentRoutes, relyingPartyRoutes].some(list => list.some(([, pattern]) => match(pattern, path)));
       throw other ? fail(403, 'wrong_credential', caller.kind === 'agent' ? 'Agents can\'t use this endpoint; it needs the owner.' : caller.kind === 'owner' ? 'This endpoint acts as an agent: use an agent key or a Timewarp-Agent header.' : 'Company secrets can only check passports and signing keys.') : fail(404, 'not_found', 'This endpoint does not exist.');
     } catch (error) {
       if (error instanceof ApiError) return json({ error: { code: error.code, message: error.message, ...error.extra } }, error.status);

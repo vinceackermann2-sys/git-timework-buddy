@@ -5,7 +5,10 @@
 import { ApiError, json } from './util.ts';
 import type { AgentCaller } from './app.ts';
 import type { Ctx } from './context.ts';
-import { ops } from './agent.ts';
+import { ops as agentOps } from './agent.ts';
+import { vaultOps } from './vault.ts';
+
+const ops = { ...agentOps, ...vaultOps };
 import { resourcesOf, verificationOf } from './shared.ts';
 import { appForClient, appOfClient, recordApp } from './origin.ts';
 
@@ -46,6 +49,9 @@ const TOOLS: Tool[] = [
   { name: 'vm_start', op: 'vmStart', needs: 'vm', description: 'Start your machine ahead of commands (it stops by itself after a minute idle).' },
   { name: 'vm_stop', op: 'vmStop', needs: 'vm', description: 'Stop your machine.' },
   { name: 'vm_history', op: 'vmHistory', needs: 'vm', readOnly: true, description: 'Commands run on your machine, newest first.', properties: { limit: n('At most this many.') } },
+  { name: 'vm_install', op: 'vmInstall', needs: 'vm', description: 'Install system packages on your machine (your commands run as an ordinary user, not root). Package names from the system\'s sources, like python3-pip or ffmpeg.', properties: { packages: s('Package names, separated by spaces.') }, required: ['packages'] },
+  { name: 'vault_list', op: 'vaultList', needs: 'vm', readOnly: true, description: 'Your vault: sign-ins (the website) and keys (the sites each may be sent to) your owner saved for you. You never see their values: you use a key with vault_request.' },
+  { name: 'vault_request', op: 'vaultRequest', needs: 'vm', description: 'Make a web request with a key from your vault added for you (as your owner set it: a bearer token, a header, a parameter or a password). It only goes to the sites the key is for, over https, and the key is removed from the reply. Use it for APIs that need the key.', properties: { item: s('The vault item id from vault_list.'), url: s('The https address.'), method: s('GET, POST, PUT, PATCH, DELETE or HEAD; GET by default.'), headers: { type: 'object', description: 'Other headers to send, like Content-Type.', additionalProperties: { type: 'string' } }, body: s('The request body, for example JSON text.') }, required: ['item', 'url'] },
   { name: 'passport_issue', op: 'passport', description: 'A short-lived signed passport proving who you are and that your owner is verified, for a service that accepts only verified agents. Send it as the service asks (usually an Agent-Passport header).', properties: { audience: s('The service\'s audience, as it tells you (often its API address).') }, required: ['audience'] },
   { name: 'signing_keys_list', op: 'signingKeysList', readOnly: true, description: 'The SSH keys registered for signing your Git commits, and the Git email (principal) to commit as.' },
   { name: 'signing_key_remove', op: 'signingKeyRemove', description: 'Remove a signing key, for example one that may have leaked. Commits it signed stop being accepted.', properties: { id: s('The key id from signing_keys_list.') }, required: ['id'] },

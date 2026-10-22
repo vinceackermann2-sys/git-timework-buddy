@@ -7,6 +7,14 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { startLocal } = require("../scripts/agent-id-local.cjs");
 
+// The agent's own command inside the wrapper that runs it as the agent's
+// ordinary account (vault/shell.ts), and the folder it runs in.
+function agentPart(body) {
+  const { command } = JSON.parse(body);
+  const match = /runuser -u agent -- .* bash -lc '[^']*' _ '((?:[^']|'\\'')*)' ([A-Za-z0-9+/=]+); else/.exec(command);
+  return match ? { cwd: match[1].replace(/'\\''/g, "'"), command: Buffer.from(match[2], "base64").toString() } : null;
+}
+
 // A provider network: [method, url pattern, handler(url, init, body)].
 function network() {
   const routes = [], calls = [];
@@ -343,7 +351,7 @@ test("live machines: Azure sandboxes started for each command and charged in cre
   assert.equal((await ok("GET", "/v1/me/vm", { token: bot.key })).machine.status, "active");
   const run = await ok("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "uname -a", cwd: "/root" } });
   assert.deepEqual([run.exitCode, run.stdout], [0, "Linux sbx-1\n"]);
-  assert.deepEqual(JSON.parse(net.find("POST", /executeShellCommand/)[0].body), { command: "uname -a", workingDirectory: "/root" });
+  assert.deepEqual(agentPart(net.find("POST", /executeShellCommand/)[0].body), { cwd: "/root", command: "uname -a" }, "Run as the agent's ordinary account, in its folder.");
   assert.equal(state, "Suspended", "The machine stops after the command.");
   assert.equal(net.find("POST", /\/resume\?/)[0].headers.get("authorization"), "Bearer azure-token");
   const { rows: [reservation] } = await local.db.query("select status, model, cost, credits from test_reservations");
