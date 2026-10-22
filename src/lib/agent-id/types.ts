@@ -329,7 +329,8 @@ export type WalletSummary = {
   provider?: string;
   currency?: string | null;
   balance: Money | null;
-  assets?: { asset: string; amount: number }[];
+  // Each stablecoin it holds, as money (the API's shape).
+  assets?: { asset: string; amount: Money | null }[];
   balanceError?: string;
   limits: ResourceSettings;
   sent: { last24Hours: Money | null; last30Days: Money | null };

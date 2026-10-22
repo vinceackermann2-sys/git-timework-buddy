@@ -639,7 +639,13 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
               <p className="aid-mono truncate text-xs text-[var(--muted-foreground)]">{payee.id}</p>
             </div>
             {noWallet ? (
-              <Chip tone="danger">No {wallet?.mode === "test" ? "test " : ""}wallet</Chip>
+              <Chip tone="danger">
+                {payee.wallet === "test"
+                  ? "Only a test wallet"
+                  : payee.wallet
+                    ? "Only a live wallet"
+                    : "No wallet"}
+              </Chip>
             ) : payee.verified ? (
               <Chip tone="success">
                 <BadgeCheck className="h-3 w-3" aria-hidden="true" />
@@ -707,7 +713,7 @@ function Details({
           <Row term="Network" value={NETWORK_LABELS[network] ?? network} />
         )}
         {(summary?.assets ?? []).map((a) => (
-          <Row key={a.asset} term={a.asset} value={formatUsd(a.amount)} />
+          <Row key={a.asset} term={a.asset} value={formatUsd(a.amount?.amount)} />
         ))}
         {summary?.sent.last24Hours && (
           <Row term="Sent today" value={formatUsd(summary.sent.last24Hours.amount)} />
