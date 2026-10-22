@@ -26,18 +26,23 @@ function seal(publicKey, item) {
   return { v: 1, key: key.toString("base64"), iv: iv.toString("base64"), data: data.toString("base64") };
 }
 
-// The agent's computer: the vault program in its own folder.
+// The agent's computer: the vault program in its own folder. Called with an
+// object, the operation gets Agent ID's half of the vault's key (`unlock`),
+// as Agent ID sends it; called with what Agent ID encoded, it's passed as is.
 function computer(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tw-vault-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const script = path.join(dir, "vault.js");
   fs.writeFileSync(script, VAULT_VM_SCRIPT);
   const home = path.join(dir, "home");
+  const unlock = crypto.randomBytes(32).toString("base64");
   const run = (op, input = {}) => new Promise(resolve => {
-    const encoded = typeof input === "string" ? input : Buffer.from(JSON.stringify(input)).toString("base64");
+    const encoded = typeof input === "string" ? input : Buffer.from(JSON.stringify({ unlock, ...input })).toString("base64");
     execFile(process.execPath, [script, op, encoded], { env: { ...process.env, AGENT_ID_VAULT_HOME: home, AGENT_ID_VAULT_TEST_HTTP: "1" } }, (_error, stdout) => resolve(JSON.parse(stdout)));
   });
-  return { run, home };
+  // Everything in the vault's folder, as one text.
+  const disk = () => fs.readdirSync(home, { recursive: true }).map(name => path.join(home, String(name))).filter(file => fs.statSync(file).isFile()).map(file => fs.readFileSync(file).toString("latin1")).join("\n");
+  return { run, home, unlock, disk };
 }
 
 // A website that says what it was sent.
@@ -58,11 +63,16 @@ async function echoServer(t) {
 }
 
 test("the vault program: opens only what was sealed to it, never prints a secret, and sends a key only where it's bound", async t => {
-  const { run, home } = computer(t);
+  const { run, home, disk } = computer(t);
   const site = await echoServer(t);
+  assert.equal((await run("init", { unlock: undefined })).error.code, "locked", "Not without Agent ID's half.");
   const { publicKey } = await run("init");
   assert.match(publicKey, /^-----BEGIN PUBLIC KEY-----/);
   assert.equal((await run("init")).publicKey, publicKey, "The key pair is made once.");
+  // On the disk, the vault's key is encrypted: no key in the clear, and Agent
+  // ID's half isn't there either.
+  assert.ok(fs.existsSync(path.join(home, "key.enc")) && !fs.existsSync(path.join(home, "key.pem")));
+  assert.doesNotMatch(disk(), /PRIVATE KEY/);
   const id = n => `vlt_${String(n).padStart(24, "0")}`;
 
   const secret = "sk-live-0123456789abcdef";
@@ -105,6 +115,22 @@ test("the vault program: opens only what was sealed to it, never prints a secret
 
   assert.deepEqual(await run("remove", { id: id(2) }), { removed: true });
   assert.equal((await run("request", { id: id(2), url: `${site.base}/h` })).error.code, "not_found");
+
+  // A wrong half opens nothing, and nothing on the disk shows a secret.
+  assert.equal((await run("request", { id: id(1), url: `${site.base}/x`, unlock: crypto.randomBytes(32).toString("base64") })).error.code, "locked");
+  assert.doesNotMatch(disk(), /sk-live|hdr-secret|hunter2|basic-pass/);
+});
+
+test("a vault from before its key was encrypted is encrypted the first time it's used", async t => {
+  const { run, home, disk } = computer(t);
+  const pair = crypto.generateKeyPairSync("rsa", { modulusLength: 2048, publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } });
+  fs.mkdirSync(path.join(home, "items"), { recursive: true });
+  fs.writeFileSync(path.join(home, "key.pem"), pair.privateKey);
+  const id = `vlt_${"1".padStart(24, "0")}`;
+  assert.deepEqual(await run("put", { id, envelope: seal(pair.publicKey, { kind: "key", value: "old-vault-secret", hosts: ["api.example.com"] }) }), { kind: "key", hosts: ["api.example.com"], send: "bearer" });
+  assert.ok(!fs.existsSync(path.join(home, "key.pem")) && fs.existsSync(path.join(home, "key.enc")));
+  assert.doesNotMatch(disk(), /PRIVATE KEY|old-vault-secret/);
+  assert.equal((await run("init")).publicKey, pair.publicKey, "Still the same key.");
 });
 
 // --- Through Agent ID: a live computer behind a stand-in for Azure -------------------
@@ -136,7 +162,8 @@ async function liveVault(t) {
   const net = network();
   const local = await startLocal({ fetch: net.fetch, env: azure });
   t.after(() => local.close());
-  const { run } = computer(t);
+  const box = computer(t);
+  const { run } = box;
   let state = "Suspended";
   const agentCommands = [];
   net.on("POST", /oauth2\/v2\.0\/token$/, () => ({ access_token: "azure-token", expires_in: 3600 }));
@@ -160,11 +187,11 @@ async function liveVault(t) {
   const ada = await local.user({ email: "ada@example.com" });
   await ok("POST", "/v1/account/terms", { token: ada.session, body: { version: terms } });
   const created = await ok("POST", "/v1/agents", { token: ada.session, body: { name: "Builder" } });
-  return { local, net, ok, ada, bot: { ...created.agent, key: created.secret }, agentCommands };
+  return { local, net, ok, ada, bot: { ...created.agent, key: created.secret }, agentCommands, box };
 }
 
 test("an agent's vault: set up on its computer, filled sealed from the browser, keys used without being seen", async t => {
-  const { local, ok, ada, bot, agentCommands } = await liveVault(t);
+  const { local, ok, ada, bot, agentCommands, box } = await liveVault(t);
   const vault = `/v1/agents/${bot.id}/vault`;
   assert.deepEqual((await ok("GET", vault, { token: ada.session })).vault, { computer: "none", ready: false, publicKey: null, test: false });
   const ownerKey = (await ok("POST", "/v1/keys", { token: ada.session, body: { name: "cli" } })).secret;
@@ -182,7 +209,7 @@ test("an agent's vault: set up on its computer, filled sealed from the browser, 
   const signIn = await ok("POST", `${vault}/items`, { token: ada.session, body: { label: "GitHub", envelope: seal(publicKey, { kind: "login", site: "https://github.com", username: "ada", password: "pw-github-long" }) } });
   assert.deepEqual([signIn.item.kind, signIn.item.site], ["login", "https://github.com"]);
   assert.equal((await local.call("POST", `${vault}/items`, { token: ownerKey, body: { label: "x", envelope: seal(publicKey, { kind: "key", value: "zzzz-1", hosts: ["a.example.com"] }) } })).body.error.code, "session_required", "Secrets go in from the website only.");
-  assert.equal((await local.call("POST", `${vault}/items`, { token: bot.key, body: {} })).status, 403, "Never by the agent.");
+  assert.equal((await local.call("POST", `${vault}/items`, { token: bot.key, body: {} })).status, 403, "Not through the owner's way in.");
 
   // Nothing Agent ID keeps holds a secret.
   const kept = JSON.stringify((await local.db.query("select * from agent_id_vault_items")).rows)
@@ -200,6 +227,27 @@ test("an agent's vault: set up on its computer, filled sealed from the browser, 
   const used = await ok("POST", "/v1/me/vault/request", { token: bot.key, body: { item: added.item.id, url: `${site.base}/user`, method: "GET" } });
   assert.equal(site.seen[0].headers.authorization, `Bearer ${secret}`);
   assert.doesNotMatch(JSON.stringify(used), /ghp_/);
+
+  // The agent saves a key it was given: sealed on its own computer (the CLI
+  // does this) to the key vault_list gives, never sent in the clear.
+  assert.equal(listed.publicKey, publicKey);
+  const plain = await local.call("POST", "/v1/me/vault/items", { token: bot.key, body: { label: "Resend", secret: "re_plainSecret123" } });
+  assert.deepEqual([plain.status, plain.body.error.code], [400, "seal_first"]);
+  const saved = await ok("POST", "/v1/me/vault/items", { token: bot.key, body: { label: "Resend", envelope: seal(listed.publicKey, { kind: "key", value: "re_sealedSecret456", hosts: ["api.resend.com"] }) } });
+  assert.deepEqual([saved.item.label, saved.item.hosts, saved.item.savedBy], ["Resend", ["api.resend.com"], "agent"]);
+  const ownersView = (await ok("GET", vault, { token: ada.session })).items.find(i => i.id === saved.item.id);
+  assert.equal(ownersView.savedBy, "agent", "The owner sees the agent saved it.");
+  assert.ok((await ok("GET", "/v1/audit", { token: ada.session })).entries.some(e => e.action === "vault.item_saved" && e.actor === "agent"));
+  await ok("POST", "/v1/me/vault/request", { token: bot.key, body: { item: saved.item.id, url: `${site.base}/emails` } });
+  assert.equal(site.seen.at(-1).headers.authorization, "Bearer re_sealedSecret456");
+  const keptNow = JSON.stringify((await local.db.query("select * from agent_id_vault_items")).rows) + JSON.stringify((await local.db.query("select * from agent_id_audit")).rows);
+  assert.ok(!keptNow.includes("re_sealedSecret456") && !keptNow.includes("re_plainSecret123"));
+
+  // On the computer, the vault's key is encrypted; Agent ID keeps only its own
+  // half, which never reaches the computer's disk.
+  const half = (await local.db.query("select half from agent_id_vault_unlock")).rows[0].half;
+  assert.equal(Buffer.from(half, "base64").length, 32);
+  assert.ok(!box.disk().includes(half) && !/PRIVATE KEY|ghp_|re_sealed/.test(box.disk()));
   const log = (await ok("GET", "/v1/audit", { token: ada.session })).entries.map(e => e.action);
   for (const action of ["vault.setup", "vault.item_added", "vault.request"]) assert.ok(log.includes(action), action);
 
@@ -215,7 +263,7 @@ test("an agent's vault: set up on its computer, filled sealed from the browser, 
 
   // Removed from the computer too.
   await ok("DELETE", `${vault}/items/${added.item.id}`, { token: ada.session });
-  assert.deepEqual((await ok("GET", vault, { token: ada.session })).items.map(i => i.label), ["GitHub"]);
+  assert.deepEqual((await ok("GET", vault, { token: ada.session })).items.map(i => i.label), ["GitHub", "Resend"]);
   assert.equal((await local.call("POST", "/v1/me/vault/request", { token: bot.key, body: { item: added.item.id, url: `${site.base}/user` } })).status, 404);
 
   // A computer the agent once had root on can't hold a vault: it's replaced first.

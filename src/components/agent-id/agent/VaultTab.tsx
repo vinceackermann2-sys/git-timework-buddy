@@ -1,7 +1,9 @@
-// An agent's vault: sign-ins and keys kept only on its computer. The owner
-// adds them here, sealed in this browser before they leave it, so neither
-// Timewarp nor the AI ever sees them. The agent uses a key by asking Agent ID
-// to make a request with it (vault_request), never reading it.
+// An agent's vault: sign-ins and keys kept only on its computer, encrypted
+// there too. The owner adds them here, sealed in this browser before they
+// leave it, so neither Timewarp nor the AI ever sees them; the agent saves
+// ones it's given, sealed on its own computer by the Agent ID CLI. The agent
+// uses a key by asking Agent ID to make a request with it (vault_request),
+// never reading it.
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -156,8 +158,9 @@ export function VaultTab({ agent }: { agent: Agent }) {
         flush
       >
         <p className="px-5 pt-4 text-sm text-[var(--muted-foreground)]">
-          Encrypted in your browser and kept only on {agent.name}'s computer. Timewarp and the AI
-          never see them, and every use shows in Activity.
+          Encrypted before they leave your browser, and kept encrypted only on {agent.name}'s
+          computer. Timewarp never sees them, the AI never sees what you add, and every use shows in
+          Activity.
         </p>
         {items.length === 0 ? (
           <p className="px-5 pb-6 pt-4 text-sm">Nothing saved yet.</p>
@@ -178,6 +181,7 @@ export function VaultTab({ agent }: { agent: Agent }) {
                     {item.kind === "login"
                       ? `Sign-in for ${item.site?.replace(/^https:\/\//, "")}${item.totp ? " · with 2FA" : ""}`
                       : `Key for ${item.hosts.join(", ")}`}
+                    {item.savedBy === "agent" ? ` · saved by ${agent.name}` : ""}
                     {item.lastUsedAt ? ` · used ${formatRelativeTime(item.lastUsedAt)}` : ""}
                   </span>
                 </span>

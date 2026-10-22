@@ -8,13 +8,39 @@
 // app (Claude Code) with MCP elicitation: it opens the approval page, the call
 // waits while they answer on Agent ID, and the agent gets the outcome. The
 // person approves on the website, signed in; the agent can never approve.
+//
+// vault_save is answered here, not by Agent ID: the key or password the agent
+// saves is sealed on this computer to its vault's public key, and only then
+// sent, so Timewarp never has it in the clear.
 import readline from 'node:readline';
 import { UsageError } from '../errors.js';
 import { userAgent } from '../api.js';
 import { appFromClient } from '../origin.js';
+import { seal, vaultItem } from '../vault.js';
 
 const isRequest = message => message && typeof message === 'object' && typeof message.method === 'string' && message.id !== undefined && message.id !== null;
 const rpcError = (id, code, message, data) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message, ...(data ? { data } : {}) } });
+
+const field = description => ({ type: 'string', description });
+export const VAULT_SAVE_TOOL = {
+  name: 'vault_save',
+  description: 'Save a key or a sign-in you were given into your vault, instead of keeping it in a file, a note or this conversation. It is sealed on this computer before it goes anywhere, so Timewarp never has it; afterwards use a key with vault_request (it only goes to the sites you name here).',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      label: field('A name for it, like "Resend API" or "GitHub".'),
+      kind: { type: 'string', enum: ['key', 'login'], description: 'key (an API key or token) or login (a website sign-in).' },
+      secret: field('The key, or the sign-in\'s password.'),
+      hosts: field('For a key: the sites it may be sent to, comma-separated, like api.resend.com.'),
+      send_as: field('For a key: how it is sent. bearer (default), header:<Name>, query:<name> or basic:<user>.'),
+      site: field('For a sign-in: the website, like https://github.com/login.'),
+      username: field('For a sign-in: the username or email.'),
+    },
+    required: ['label', 'kind', 'secret'],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+};
 
 // Messages in a text/event-stream body (Streamable HTTP may answer that way).
 function sseMessages(text) {
@@ -32,7 +58,7 @@ function sseMessages(text) {
 // Messages go through unchanged (the client's clientInfo included, which
 // Agent ID records); the user-agent names the tool, from TIMEWARP_ID_TOOL or
 // else the client's name.
-export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, log, tool = null, onTool = () => {}, approvals = null, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), approvalWaitMs = 180_000 }) {
+export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, log, tool = null, onTool = () => {}, approvals = null, vault = null, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), approvalWaitMs = 180_000 }) {
   let sessionId = null, protocolVersion = null, clientTool = tool, clientElicitation = null, nextAsk = 0;
   const asks = new Map();
 
@@ -93,8 +119,27 @@ export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, lo
     return respond({ ...data, message: `${data.message} No answer yet; check later with approval_status.` });
   }
 
+  // vault_save, here: sealed to the vault's key, then saved.
+  async function vaultSave(message) {
+    const args = message.params?.arguments && typeof message.params.arguments === 'object' ? message.params.arguments : {};
+    const answer = (body, isError = false) => ({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: typeof body === 'string' ? body : JSON.stringify(body) }], ...(isError ? { isError: true } : {}) } });
+    try {
+      const label = String(args.label ?? '').trim();
+      if (!label) return answer('label is required: a name for it, like "Resend API".', true);
+      const item = vaultItem({ kind: args.kind, secret: args.secret, hosts: args.hosts, as: args.send_as, site: args.site, username: args.username });
+      const listed = await vault.list();
+      if (!listed?.ready || !listed.publicKey) return answer(listed?.note || 'Your vault isn\'t set up yet. Your owner sets it up on the Agent ID website.', true);
+      const saved = await vault.save({ label, envelope: seal(listed.publicKey, item) });
+      log(`saved "${label}" in the vault, sealed on this computer`);
+      return answer({ item: saved.item, message: `Saved, sealed on this computer. ${saved.item.kind === 'key' ? 'Use it with vault_request. ' : ''}Delete any other copy you kept.` });
+    } catch (error) {
+      return answer(error?.message || 'It could not be saved.', true);
+    }
+  }
+
   async function forward(message) {
     const request = isRequest(message);
+    if (vault && request && message.method === 'tools/call' && message.params?.name === VAULT_SAVE_TOOL.name) return [await vaultSave(message)];
     if (message.method === 'initialize') {
       clientElicitation = message.params?.capabilities?.elicitation ?? null;
       if (!clientTool) {
@@ -146,6 +191,13 @@ export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, lo
     if (message.method === 'initialize') {
       const version = replies.find(r => r?.id === message.id)?.result?.protocolVersion;
       if (typeof version === 'string') protocolVersion = version;
+    }
+    // An agent with a vault can save into it, from here.
+    if (vault && message.method === 'tools/list') {
+      for (const reply of replies) {
+        const tools = reply?.id === message.id ? reply.result?.tools : null;
+        if (Array.isArray(tools) && tools.some(t => t?.name === 'vault_list') && !tools.some(t => t?.name === VAULT_SAVE_TOOL.name)) tools.push(VAULT_SAVE_TOOL);
+      }
     }
     if (request && message.method === 'tools/call' && approvals && clientElicitation) {
       replies = await Promise.all(replies.map(reply => reply?.id === message.id ? approvalFlow(reply) : reply));
@@ -213,7 +265,12 @@ export async function mcp(ctx) {
     status: id => ctx.self.get(`/v1/me/approvals/${encodeURIComponent(id)}`),
     withdraw: id => ctx.self.post(`/v1/me/approvals/${encodeURIComponent(id)}/withdraw`, {}),
   };
-  const proxy = createProxy({ url, auth, write, log, tool: ctx.tool, onTool: tool => { ctx.api.tool = tool; }, approvals });
+  // Saving into the vault goes to Agent ID itself, sealed here first.
+  const vault = remote ? null : {
+    list: () => ctx.self.get('/v1/me/vault'),
+    save: body => ctx.self.post('/v1/me/vault/items', body),
+  };
+  const proxy = createProxy({ url, auth, write, log, tool: ctx.tool, onTool: tool => { ctx.api.tool = tool; }, approvals, vault });
   const pending = new Set();
   const lines = readline.createInterface({ input: ctx.stdin, crlfDelay: Infinity, terminal: false });
   for await (const line of lines) {

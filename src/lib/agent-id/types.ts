@@ -460,6 +460,8 @@ export type VaultItem = {
   hosts: string[];
   send: "bearer" | "header" | "query" | "basic" | null;
   totp: boolean;
+  // The agent saves keys it's given too (sealed on its own computer).
+  savedBy?: "owner" | "agent";
   createdAt: string;
   lastUsedAt: string | null;
 };

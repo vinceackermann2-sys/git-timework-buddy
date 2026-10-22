@@ -1,5 +1,5 @@
 // What an agent does as itself, with its own key: mail, texts, calls,
-// contacts, wallet, card, machine and passports.
+// contacts, wallet, card, machine, vault and passports.
 import fs from 'node:fs';
 import path from 'node:path';
 import { dollarsString, dollarsToCents } from '../args.js';
@@ -7,6 +7,7 @@ import { CliError, UsageError } from '../errors.js';
 import { findProfile } from '../config.js';
 import { clip, fields, limits as limitText, money, table, usd, when } from '../output.js';
 import { describeResource } from './account.js';
+import { hostsOf, seal, vaultItem } from '../vault.js';
 
 const sub = (ctx, fallback) => ctx.args[0] || fallback;
 const need = (value, message) => { if (value === undefined || value === null || value === '' || value === true) throw new UsageError(message); return String(value); };
@@ -307,6 +308,56 @@ export async function vm(ctx) {
     ]) : 'No commands yet.');
   }
   unknown(ctx, 'vm');
+}
+
+// --- Vault ----------------------------------------------------------------------------------
+// Keys and sign-ins in the vault on the agent's own computer. A secret comes
+// from stdin or is typed (never a flag: shell history would keep it), and is
+// sealed here before it's sent.
+async function readSecret(ctx, what) {
+  if (ctx.stdin?.isTTY) return (await ctx.askSecret(`${what} (not shown): `)) ?? '';
+  return (await ctx.readStdin()).replace(/\r?\n$/, '');
+}
+
+export async function vault(ctx) {
+  const action = sub(ctx, 'list');
+  if (action === 'list' || action === 'ls') {
+    const data = await ctx.self.get('/v1/me/vault');
+    return ctx.print(data, ({ ready, items, note }) => !ready ? note || 'The vault isn\'t set up yet.' : items.length ? table(items, [
+      ['ID', i => i.id], ['KIND', i => (i.kind === 'login' ? 'sign-in' : 'key')], ['NAME', i => i.label],
+      ['FOR', i => (i.kind === 'login' ? i.site : (i.hosts || []).join(', '))], ['SAVED BY', i => (i.savedBy === 'agent' ? 'agent' : 'owner')],
+    ]) : 'The vault is empty.');
+  }
+  if (action === 'save' || action === 'add') {
+    for (const flag of ['secret', 'value', 'password', 'key']) {
+      if (ctx.flags[flag] !== undefined) throw new UsageError(`A secret isn't taken as --${flag}: your shell would keep it in its history. Pipe it in, or type it when asked.`);
+    }
+    const login = ctx.flags.site !== undefined;
+    const label = need(ctx.flags.label ?? ctx.args[1], `Give it a name: ${ctx.bin} vault save --label "Resend API" --for api.resend.com`);
+    if (!login) hostsOf(ctx.flags.for === true ? '' : ctx.flags.for);
+    const listed = await ctx.self.get('/v1/me/vault');
+    if (!listed.ready || !listed.publicKey) throw new CliError(listed.note || 'The vault isn\'t set up yet. Your owner sets it up on the Agent ID website.');
+    const secret = await readSecret(ctx, login ? 'Password' : 'Key');
+    const item = vaultItem({ kind: login ? 'login' : 'key', secret, hosts: ctx.flags.for, as: ctx.flags.as, username: ctx.flags.username, site: ctx.flags.site });
+    const data = await ctx.self.post('/v1/me/vault/items', { label, envelope: seal(listed.publicKey, item) });
+    return ctx.print(data, ({ item: saved }) => `Saved "${saved.label}" in the vault (${saved.id}), sealed on this computer.${saved.kind === 'key' ? `\nUse it with: ${ctx.bin} vault request ${saved.id} <https address>` : ''}`);
+  }
+  if (action === 'request' || action === 'use') {
+    const item = need(ctx.args[1], `Which item? ${ctx.bin} vault request <item> <https address>`);
+    const url = need(ctx.args[2] ?? ctx.flags.url, `Where to? ${ctx.bin} vault request ${item} https://api.example.com/…`);
+    const body = ctx.flags.data === undefined ? undefined : ctx.flags.data === '-' ? await ctx.readStdin() : String(ctx.flags.data);
+    const data = await ctx.self.post('/v1/me/vault/request', {
+      item, url,
+      ...(typeof ctx.flags.method === 'string' ? { method: ctx.flags.method } : {}),
+      ...(typeof ctx.flags.type === 'string' ? { headers: { 'Content-Type': ctx.flags.type } } : {}),
+      ...(body !== undefined ? { body } : {}),
+    });
+    if (ctx.json) { ctx.print(data); return data.status < 400 ? 0 : 1; }
+    ctx.err(`HTTP ${data.status}${data.truncated ? ' (cut short)' : ''}`);
+    if (data.body) ctx.stdout.write(data.body.endsWith('\n') ? data.body : `${data.body}\n`);
+    return data.status < 400 ? 0 : 1;
+  }
+  unknown(ctx, 'vault');
 }
 
 // --- Passport -------------------------------------------------------------------------------

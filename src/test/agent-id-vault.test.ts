@@ -8,15 +8,17 @@ import { parseHosts, sealForVault, siteOrigin } from "@/lib/agent-id/vault";
 import { VAULT_VM_SCRIPT } from "../../timewarp/supabase/functions/agent-id/vault/vm-script";
 
 // The vault program on a stand-in computer: sealed in the browser here,
-// opened by the same program the agent's computer runs.
+// opened by the same program the agent's computer runs (with Agent ID's half
+// of the key that unlocks it).
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tw-vault-web-"));
 const script = path.join(dir, "vault.js");
 fs.writeFileSync(script, VAULT_VM_SCRIPT);
+const unlock = Buffer.alloc(32, 7).toString("base64");
 const run = (op: string, input: object = {}) =>
   JSON.parse(
     execFileSync(
       process.execPath,
-      [script, op, Buffer.from(JSON.stringify(input)).toString("base64")],
+      [script, op, Buffer.from(JSON.stringify({ unlock, ...input })).toString("base64")],
       {
         env: { ...process.env, AGENT_ID_VAULT_HOME: path.join(dir, "home") },
         encoding: "utf8",

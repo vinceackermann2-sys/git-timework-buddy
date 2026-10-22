@@ -251,6 +251,23 @@ has them in the clear.
   not: `agent_id_vault_items` (migration 20261022100000) has the name, the
   kind, and the website or the sites a key may go to, so the vault lists
   without the computer.
+- **Encrypted on the computer too** (migration 20261022140000): the vault's
+  private key is kept as `key.enc`, AES-256-GCM with a key made (HKDF-SHA256)
+  from two halves: one in the vault's folder, one that Agent ID keeps in
+  `agent_id_vault_unlock` and sends with each operation. Neither half opens
+  anything alone, so a copy of the computer's disk holds nothing readable, and
+  Agent ID's half is no secret of anyone's. A vault from before is encrypted
+  the first time it's used, and its clear `key.pem` removed.
+- **The agent saves too** (`POST /v1/me/vault/items {label, envelope}`): a key
+  or sign-in it was given, so it isn't kept in a file or a conversation. The
+  Agent ID CLI seals it on the agent's own computer, to the public key
+  `vault_list` gives, before it's sent: `timewarp-id vault save` (the secret
+  from stdin or typed, never a flag) and the `vault_save` tool, which
+  `timewarp-id mcp` adds and answers itself, so the secret is never in an MCP
+  call to Agent ID. A secret sent in the clear is refused unread
+  (`seal_first`), and the cloud MCP server doesn't offer `vault_save`. Items
+  show who saved them (`savedBy`), and saves are audited
+  (`vault.item_saved`).
 - **Using a key** (`vault_list`, `vault_request`; `/v1/me/vault`,
   `/v1/me/vault/request`): the agent sees names and sites, never values. It
   asks for a request, and the vault adds the key on the computer (as a bearer
@@ -258,9 +275,10 @@ has them in the clear.
   https and only to the sites the owner bound to the key, which are sealed with
   it. Redirects aren't followed, and every form of the key is taken out of the
   reply. Each use is audited (`vault.request`) and counts as machine time.
-- **Owners only, from the website:** `GET/POST /v1/agents/:id/vault`,
+- **Owners, from the website:** `GET/POST /v1/agents/:id/vault`,
   `/vault/setup`, `/vault/items`, `DELETE /vault/items/:id` need a signed-in
-  session; agents and owner keys can't add or remove items. A computer made
+  session; owner keys can't add or remove items, and only the owner removes
+  them. A computer made
   before agents ran as an ordinary user (`state.rootFree` missing) is replaced
   before it gets a vault, since the agent once had root on it.
 - **Sign-ins** are stored the same way; using them needs a browser on the
@@ -268,8 +286,10 @@ has them in the clear.
 - Test computers (development) keep a test key pair in Agent ID instead and
   simulate requests; that key is never shown.
 - **Limits:** Timewarp operates the computer (through Azure), so this protects
-  secrets from the model, from leaks of Agent ID's data and from anyone with
-  the API, not from Timewarp changing its own code. A key bound to a site is
+  secrets from the model (for what the owner adds), from leaks of Agent ID's
+  data or of the computer's disk and from anyone with the API, not from
+  Timewarp changing its own code. A key the agent saves was in its hands
+  before; the vault keeps it from being written down or seen again. A key bound to a site is
   as powerful there as the owner made it.
 
 ## Safety

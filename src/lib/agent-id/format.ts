@@ -284,6 +284,11 @@ const AUDIT_ACTIONS: Record<string, string> = {
   "verification.business.submit": "Business submitted for review",
   "verification.business.verified": "Business verified",
   "verification.business.rejected": "Business rejected",
+  "vault.setup": "Vault set up",
+  "vault.item_added": "Added to the vault",
+  "vault.item_saved": "Saved to the vault",
+  "vault.item_removed": "Removed from the vault",
+  "vault.request": "Used a key from the vault",
 };
 export function auditActionLabel(action: string): string {
   const known = AUDIT_ACTIONS[action];

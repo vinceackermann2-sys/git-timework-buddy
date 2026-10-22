@@ -23,7 +23,7 @@ const ROUTES = {
   give: account.give, take: account.take, limits: account.limits, fund: account.fund,
   approvals: account.approvals, approve: account.approve, deny: account.deny, use: account.use,
   me: act.me, mail: act.mail, sms: act.sms, call: act.call, contacts: act.contacts,
-  wallet: act.wallet, card: act.card, vm: act.vm, passport: act.passport,
+  wallet: act.wallet, card: act.card, vm: act.vm, vault: act.vault, passport: act.passport,
   mcp, connect, git,
 };
 const ALIASES = { agent: 'agents', calls: 'call', contact: 'contacts', machine: 'vm', approval: 'approvals', apply: 'attach', unapply: 'detach' };
@@ -84,7 +84,19 @@ const askIn = (stdin, stderr) => question => new Promise(resolve => {
   rl.on('SIGINT', () => { stderr.write('\n'); process.exit(130); });
 });
 
-export function createContext({ env = process.env, cwd = process.cwd(), flags = {}, args = [], rest = [], stdout = process.stdout, stderr = process.stderr, stdin = process.stdin, fetch = globalThis.fetch, command = '', sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), openUrl = openInBrowser, ask = null } = {}) {
+// A secret typed in the terminal: the question shows, what's typed doesn't.
+const askHiddenIn = (stdin, stderr) => question => new Promise(resolve => {
+  const rl = readline.createInterface({ input: stdin, output: stderr, terminal: true });
+  let answered = false, muted = false;
+  const write = rl._writeToOutput.bind(rl);
+  rl._writeToOutput = text => { if (!muted) write(text); };
+  rl.question(question, answer => { answered = true; rl.close(); stderr.write('\n'); resolve(answer); });
+  muted = true;
+  rl.on('close', () => { if (!answered) resolve(null); });
+  rl.on('SIGINT', () => { stderr.write('\n'); process.exit(130); });
+});
+
+export function createContext({ env = process.env, cwd = process.cwd(), flags = {}, args = [], rest = [], stdout = process.stdout, stderr = process.stderr, stdin = process.stdin, fetch = globalThis.fetch, command = '', sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), openUrl = openInBrowser, ask = null, askSecret = null } = {}) {
   let config = null, api = null, selected = null;
   const out = text => { stdout.write(String(text).endsWith('\n') ? String(text) : `${text}\n`); };
   const err = text => { stderr.write(String(text).endsWith('\n') ? String(text) : `${text}\n`); };
@@ -102,6 +114,7 @@ export function createContext({ env = process.env, cwd = process.cwd(), flags = 
     // Questions only in a terminal; prompts go to stderr so stdout stays clean.
     interactive: !!(stdin?.isTTY && stderr?.isTTY) && flags.json !== true,
     ask: ask || askIn(stdin, stderr),
+    askSecret: askSecret || askHiddenIn(stdin, stderr),
     ownerUsed: false,
     sleep,
     // Only from a terminal: scripts and tests just get the printed link.

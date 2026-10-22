@@ -2,7 +2,8 @@
 // arrive as root; the agent's own commands are then run as an ordinary user
 // ("agent"), so they can't read the vault's folder or see its processes. The
 // vault runs as its own locked account ("vault"). Nothing secret is ever put
-// on a command line: vault items travel sealed.
+// on a command line: vault items travel sealed, and Agent ID's half of the
+// vault's key opens nothing without the half in the vault's own folder.
 import { toBase64, utf8 } from '../util.ts';
 import { VAULT_VM_SCRIPT } from './vm-script.ts';
 
@@ -42,8 +43,9 @@ export function installCommand(packages: string[]) {
 
 // Setting the vault up (again): its account and folder, Node for it (checked
 // against nodejs.org's published sums, downloaded where only root can write),
-// the vault program, and its key pair. Prints the public key as JSON.
-export function vaultSetupCommand() {
+// the vault program, and its key pair, encrypted with Agent ID's half and the
+// computer's. Prints the public key as JSON.
+export function vaultSetupCommand(unlock: string) {
   const node = [
     `if [ ! -x ${NODE} ]; then`,
     '  command -v curl >/dev/null && command -v xz >/dev/null || { apt-get update -qq && apt-get install -y -qq curl xz-utils ca-certificates >/dev/null; }',
@@ -63,7 +65,7 @@ export function vaultSetupCommand() {
     // No way into root with a password.
     'passwd -l root >/dev/null 2>&1 || true',
     ...node,
-    vaultOpCommand('init', {}),
+    vaultOpCommand('init', { unlock }),
   ].join('\n');
 }
 

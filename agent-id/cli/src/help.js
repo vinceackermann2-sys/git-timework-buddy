@@ -61,6 +61,7 @@ Your account (owner key from the Agent ID dashboard):
 
 Act as the agent:
   me, mail, sms, call, contacts, wallet, card, vm
+  vault list|save|request          Keys and sign-ins, sealed on this computer
   passport --audience <aud>        Prints a passport for a service
 
 Connect tools:
@@ -216,6 +217,19 @@ Developing locally, a test card tries payments against its limits:
 
 The agent's computer starts the first time it is used: there is nothing to
 set up first.`,
+  vault: `Usage:
+  timewarp-id vault list
+  timewarp-id vault save --label <name> --for <site,…> [--as bearer|header:<Name>|query:<name>|basic:<user>]
+  timewarp-id vault save --label <name> --site <https address> [--username <user>]
+  timewarp-id vault request <item> <https address> [--method POST] [--data <text>|-] [--type application/json]
+
+Keys and sign-ins in the vault on the agent's computer. save reads the key or
+password from stdin, or asks for it without showing it (never from a flag:
+shell history would keep it), and seals it on this computer before it's sent,
+so Timewarp never has it. A key goes only to the sites given with --for, and
+is taken back out of what comes back:
+  printf %s "$RESEND_KEY" | timewarp-id vault save --label "Resend" --for api.resend.com
+  timewarp-id vault request vlt_… https://api.resend.com/domains`,
   passport: `Usage: timewarp-id passport --audience <audience>
 
 Prints only a short-lived signed passport for the service, so you can write

@@ -1,9 +1,12 @@
 // An agent's vault: sign-ins and keys that live only on the agent's computer
-// (vault/vm-script.ts), sealed in the owner's browser to the computer's own key.
-// Agent ID keeps what's needed to list them (a name, the site or the sites a
-// key may go to) and passes sealed items through; it never has a secret in the
-// clear, and neither does the agent: it uses a key by asking the vault to make
-// a request with it, only to the sites the owner bound to the key.
+// (vault/vm-script.ts), sealed to the computer's own key in the owner's
+// browser, or by the Agent ID CLI on the agent's own computer when the agent
+// saves one it was given. Agent ID keeps what's needed to list them (a name,
+// the site or the sites a key may go to) and passes sealed items through; it
+// never has a secret in the clear, and the agent uses a key by asking the vault
+// to make a request with it, only to the sites the key is bound to. On the
+// computer, the vault's key is encrypted with two halves: one there, one here
+// (agent_id_vault_unlock), sent with each operation.
 // Test computers (development) keep a test key pair here instead, and say so.
 import { checked, fail, fromBase64, randomId, str, toBase64 } from './util.ts';
 import type { AgentCaller, Owner, Route } from './app.ts';
@@ -18,7 +21,7 @@ const iso = (ctx: Ctx) => new Date(ctx.now()).toISOString();
 
 const itemView = (row: any) => ({
   id: row.id, kind: row.kind, label: row.label, site: row.site || null, hosts: row.hosts || [], send: row.send || null,
-  totp: !!row.totp, createdAt: row.created_at, lastUsedAt: row.last_used_at || null,
+  totp: !!row.totp, savedBy: row.saved_by === 'agent' ? 'agent' : 'owner', createdAt: row.created_at, lastUsedAt: row.last_used_at || null,
 });
 const statusOf = (vm: ResourceRow | null) => ({
   // The vault needs a computer the agent never had root on.
@@ -40,10 +43,22 @@ function answer(stdout: string, stderr: string) {
   return parsed;
 }
 
+// Agent ID's half of the key that unlocks the vault on this computer, made the
+// first time. Alone it opens nothing: the other half never leaves the computer.
+async function unlockOf(ctx: Ctx, vm: ResourceRow) {
+  const kept = checked(await ctx.admin.from('agent_id_vault_unlock').select('half').eq('resource_id', vm.id).maybeSingle()) as any;
+  if (kept?.half) return String(kept.half);
+  const half = toBase64(crypto.getRandomValues(new Uint8Array(32)));
+  checked(await ctx.admin.from('agent_id_vault_unlock').upsert({ resource_id: vm.id, half }, { onConflict: 'resource_id', ignoreDuplicates: true }));
+  return String((checked(await ctx.admin.from('agent_id_vault_unlock').select('half').eq('resource_id', vm.id).single()) as any).half);
+}
+
 async function run(ctx: Ctx, who: AgentCaller, vm: ResourceRow, command: string, timeoutSeconds = 120) {
   const result = await metered(ctx, who, vm, command, { timeoutSeconds, history: false, as: 'system' });
   return answer(result.stdout, result.stderr);
 }
+const runOp = async (ctx: Ctx, who: AgentCaller, vm: ResourceRow, op: 'put' | 'remove' | 'request', input: Record<string, unknown>, timeoutSeconds = 120) =>
+  run(ctx, who, vm, vaultOpCommand(op, { ...input, unlock: await unlockOf(ctx, vm) }), timeoutSeconds);
 
 // --- Test computers: the same steps with a test key pair kept here -----------------
 
@@ -109,7 +124,7 @@ export async function setupVault(ctx: Ctx, owner: Owner, agentId: string) {
   } else {
     if (vm.status !== 'active') ({ resource: vm } = await machine(ctx, asOwner(owner, agent)));
     if (vm.status !== 'active') throw fail(409, 'machine_not_ready', 'The agent\'s computer is still being set up. Try again in a minute.');
-    publicKey = String((await run(ctx, asOwner(owner, agent), vm, vaultSetupCommand(), 600)).publicKey || '');
+    publicKey = String((await run(ctx, asOwner(owner, agent), vm, vaultSetupCommand(await unlockOf(ctx, vm)), 600)).publicKey || '');
     if (!/^-----BEGIN PUBLIC KEY-----/.test(publicKey)) throw fail(502, 'vault_failed', 'The vault did not set up. Try again.');
   }
   const state = { ...vm.state, vault: { publicKey, setUpAt: vm.state?.vault?.setUpAt || iso(ctx) } };
@@ -124,17 +139,16 @@ async function readyVault(ctx: Ctx, agent: AgentRow) {
   return vm;
 }
 
-// An item sealed in the owner's browser: the computer opens it to check it,
-// keeps it sealed, and says what it is (never what's in it).
-export async function addVaultItem(ctx: Ctx, owner: Owner, agentId: string, input: any) {
-  needSession(owner);
-  const agent = await ownerAgent(ctx, owner, agentId);
-  const vm = await readyVault(ctx, agent);
-  const label = str(input.label, 100, 'label', { required: true }).trim();
+function sealedOf(input: any) {
   const envelope = input.envelope;
   if (!envelope || typeof envelope !== 'object' || envelope.v !== 1 || [envelope.key, envelope.iv, envelope.data].some(part => typeof part !== 'string' || part.length > 40_000)) throw fail(400, 'invalid', 'envelope must be a sealed vault item.');
-  const sealed = { v: 1, key: envelope.key, iv: envelope.iv, data: envelope.data };
-  await rateLimit(ctx, owner.userId, 'vault-item', 20, 200, 'vault items');
+  return { v: 1, key: envelope.key, iv: envelope.iv, data: envelope.data };
+}
+
+// A sealed item into the vault: the computer opens it to check it, keeps it
+// sealed, and says what it is (never what's in it).
+async function storeItem(ctx: Ctx, who: AgentCaller, vm: ResourceRow, label: string, sealed: Record<string, unknown>, savedBy: 'owner' | 'agent') {
+  const agent = who.agent;
   const id = `vlt_${randomId(24)}`;
   let described: any;
   if (vm.mode === 'test') {
@@ -142,15 +156,26 @@ export async function addVaultItem(ctx: Ctx, owner: Owner, agentId: string, inpu
     const state = { ...vm.state, testVault: { ...vm.state.testVault, items: { ...vm.state.testVault.items, [id]: sealed } } };
     await ctx.admin.from('agent_id_resources').update({ state, updated_at: iso(ctx) }).eq('id', vm.id);
   } else {
-    described = await run(ctx, asOwner(owner, agent), vm, vaultOpCommand('put', { id, envelope: sealed }));
+    described = await runOp(ctx, who, vm, 'put', { id, envelope: sealed });
   }
   const row = checked(await ctx.admin.from('agent_id_vault_items').insert({
-    id, agent_id: agent.id, resource_id: vm.id, owner_user_id: owner.userId, kind: described.kind, label,
+    id, agent_id: agent.id, resource_id: vm.id, owner_user_id: agent.owner_user_id, kind: described.kind, label,
     site: described.kind === 'login' ? described.site : null, hosts: described.kind === 'key' ? described.hosts : [],
-    send: described.kind === 'key' ? described.send : null, totp: !!described.totp,
+    send: described.kind === 'key' ? described.send : null, totp: !!described.totp, saved_by: savedBy,
   }).select('*').single());
-  await audit(ctx, owner.userId, agent.id, 'owner', 'vault.item_added', { item: id, kind: described.kind, ...(described.site ? { site: described.site } : { hosts: described.hosts }) });
+  await audit(ctx, agent.owner_user_id, agent.id, savedBy, savedBy === 'agent' ? 'vault.item_saved' : 'vault.item_added', { item: id, kind: described.kind, ...(described.site ? { site: described.site } : { hosts: described.hosts }) });
   return { item: itemView(row) };
+}
+
+// An item sealed in the owner's browser.
+export async function addVaultItem(ctx: Ctx, owner: Owner, agentId: string, input: any) {
+  needSession(owner);
+  const agent = await ownerAgent(ctx, owner, agentId);
+  const vm = await readyVault(ctx, agent);
+  const label = str(input.label, 100, 'label', { required: true }).trim();
+  const sealed = sealedOf(input);
+  await rateLimit(ctx, owner.userId, 'vault-item', 20, 200, 'vault items');
+  return storeItem(ctx, asOwner(owner, agent), vm, label, sealed, 'owner');
 }
 
 export async function removeVaultItem(ctx: Ctx, owner: Owner, agentId: string, itemId: string) {
@@ -163,7 +188,7 @@ export async function removeVaultItem(ctx: Ctx, owner: Owner, agentId: string, i
     const { [row.id]: _gone, ...items } = vm.state?.testVault?.items || {};
     await ctx.admin.from('agent_id_resources').update({ state: { ...vm.state, testVault: { ...vm.state.testVault, items } }, updated_at: iso(ctx) }).eq('id', vm.id);
   } else if (vm) {
-    await run(ctx, asOwner(owner, agent), vm, vaultOpCommand('remove', { id: row.id }));
+    await runOp(ctx, asOwner(owner, agent), vm, 'remove', { id: row.id });
   }
   await ctx.admin.from('agent_id_vault_items').delete().eq('id', row.id);
   await audit(ctx, owner.userId, agent.id, 'owner', 'vault.item_removed', { item: row.id });
@@ -176,7 +201,26 @@ const vaultList: Op = async (ctx, who) => {
   const vm = await resourceFor(ctx, who.agent.id, 'vm', { required: false });
   if (!vm?.state?.vault?.publicKey) return { ready: false, items: [], note: 'The vault isn\'t set up yet. Your owner sets it up on the Agent ID website.' };
   const rows = (checked(await ctx.admin.from('agent_id_vault_items').select('*').eq('resource_id', vm.id).order('created_at')) || []) as any[];
-  return { ready: true, items: rows.map(row => ({ id: row.id, kind: row.kind, label: row.label, ...(row.kind === 'login' ? { site: row.site } : { hosts: row.hosts }) })) };
+  return {
+    ready: true,
+    // What the Agent ID CLI seals a secret to before saving it (public).
+    publicKey: vm.state.vault.publicKey,
+    items: rows.map(row => ({ id: row.id, kind: row.kind, label: row.label, ...(row.kind === 'login' ? { site: row.site } : { hosts: row.hosts }), savedBy: row.saved_by === 'agent' ? 'agent' : 'owner' })),
+  };
+};
+
+// The agent saves a key or a sign-in it was given, so it isn't kept in files
+// or a conversation. It arrives sealed: the Agent ID CLI seals it on the
+// agent's own computer, so a secret sent in the clear is refused unread.
+const vaultSave: Op = async (ctx, who, input) => {
+  if (!input?.envelope && ['secret', 'value', 'password', 'key'].some(field => input?.[field] !== undefined)) {
+    throw fail(400, 'seal_first', 'Secrets are sealed on your own computer before they go anywhere, so Timewarp never has them. Save it with the Agent ID CLI: `timewarp-id vault save`, or the vault_save tool of `timewarp-id mcp`.');
+  }
+  const vm = await readyVault(ctx, who.agent);
+  const label = str(input.label, 100, 'label', { required: true }).trim();
+  const sealed = sealedOf(input);
+  await rateLimit(ctx, who.userId, `vault-save:${who.agent.id}`, 20, 200, 'vault saves');
+  return storeItem(ctx, who, vm, label, sealed, 'agent');
 };
 
 // A request with a key from the vault added on the agent's computer. The key
@@ -201,7 +245,7 @@ const vaultRequest: Op = async (ctx, who, input) => {
     if (!hosts.some(h => h.startsWith('*.') ? host.endsWith(h.slice(1)) : host === h)) throw fail(409, 'host_not_allowed', `This key can only be sent to ${hosts.join(', ')}.`);
     result = { status: 200, contentType: 'text/plain', body: `Test computer: this ${method} would go to ${host} with the key added. Nothing was sent.`, truncated: false };
   } else {
-    result = await run(ctx, who, vm, vaultOpCommand('request', { id: row.id, url, method, headers, ...(body !== undefined ? { body } : {}) }), 90);
+    result = await runOp(ctx, who, vm, 'request', { id: row.id, url, method, headers, ...(body !== undefined ? { body } : {}) }, 90);
   }
   await ctx.admin.from('agent_id_vault_items').update({ last_used_at: iso(ctx) }).eq('id', row.id);
   await audit(ctx, who.userId, who.agent.id, who.via === 'owner' ? 'owner' : 'agent', 'vault.request', { item: row.id, host, method, status: result.status });
@@ -212,6 +256,7 @@ export const vaultOps: Record<string, Op> = { vaultList, vaultRequest };
 
 export const vaultAgentRoutes: Route<AgentCaller>[] = [
   ['GET', '/v1/me/vault', (ctx, who, input) => vaultList(ctx, who, input)],
+  ['POST', '/v1/me/vault/items', (ctx, who, input) => vaultSave(ctx, who, input)],
   ['POST', '/v1/me/vault/request', (ctx, who, input) => vaultRequest(ctx, who, input)],
 ];
 

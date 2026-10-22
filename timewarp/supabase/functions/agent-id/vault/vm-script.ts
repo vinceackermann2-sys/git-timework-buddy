@@ -1,10 +1,14 @@
 // The vault program that runs on an agent's computer, as the locked "vault"
 // account: only that account can read its folder, which holds the private key
-// and the sealed items. Items are sealed in the owner's browser to this
-// computer's public key (RSA-OAEP-256 wrapping an AES-256-GCM key), so neither
-// Timewarp nor the agent ever has them in the clear. The program never prints a
-// secret: it checks and stores sealed items, and uses a key in a request to the
-// sites the owner bound to it, removing the key from what comes back.
+// and the sealed items. Items are sealed before they leave the owner's browser
+// (or the agent's own computer, by the Agent ID CLI) to this computer's public
+// key (RSA-OAEP-256 wrapping an AES-256-GCM key), so neither Timewarp nor the
+// agent ever has them in the clear. The private key is encrypted too
+// (AES-256-GCM), with a key made from two halves: one in this folder, one that
+// Agent ID keeps and sends with each operation. Neither half opens anything
+// alone, so a copy of the disk holds nothing readable. The program never
+// prints a secret: it checks and stores sealed items, and uses a key in a
+// request to the sites it's bound to, removing the key from what comes back.
 // Plain Node (18 or later), no dependencies. Usage: node vault.js <op> <base64 JSON>.
 export const VAULT_VM_SCRIPT = String.raw`'use strict';
 const crypto = require('node:crypto');
@@ -12,7 +16,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const HOME = process.env.AGENT_ID_VAULT_HOME || '/var/lib/agent-id-vault';
+// key.pem is the private key as the first vaults kept it, in the clear; it's
+// encrypted into key.enc the first time Agent ID sends its half.
 const KEY = path.join(HOME, 'key.pem');
+const LOCKED = path.join(HOME, 'key.enc');
+const HALF = path.join(HOME, 'half');
 const ITEMS = path.join(HOME, 'items');
 const HIDDEN = '[hidden by vault]';
 
@@ -23,27 +31,59 @@ const ID = /^vlt_[a-z0-9]{24}$/;
 const HOST = /^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 const HEADER = /^[A-Za-z0-9-]{1,64}$/;
 
-function privateKey() {
-  if (!fs.existsSync(KEY)) stop('not_set_up', 'The vault is not set up on this computer.');
-  return fs.readFileSync(KEY, 'utf8');
+// The key that encrypts the private key: both halves, through HKDF-SHA256.
+function lockKey(input) {
+  const theirs = Buffer.from(String(input.unlock || ''), 'base64');
+  if (theirs.length !== 32) stop('locked', "The vault can't be unlocked without Agent ID's half of its key.");
+  if (!fs.existsSync(HALF)) fs.writeFileSync(HALF, crypto.randomBytes(32), { mode: 0o600 });
+  const ours = fs.readFileSync(HALF);
+  return Buffer.from(crypto.hkdfSync('sha256', Buffer.concat([theirs, ours]), Buffer.alloc(0), 'agent-id-vault-key', 32));
 }
 
-function init() {
-  fs.mkdirSync(ITEMS, { recursive: true, mode: 0o700 });
-  if (!fs.existsSync(KEY)) {
-    const pair = crypto.generateKeyPairSync('rsa', { modulusLength: 3072, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
-    fs.writeFileSync(KEY, pair.privateKey, { mode: 0o600 });
+function lock(pem, input) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', lockKey(input), iv);
+  const data = Buffer.concat([cipher.update(pem, 'utf8'), cipher.final(), cipher.getAuthTag()]);
+  fs.writeFileSync(LOCKED + '.new', JSON.stringify({ v: 1, iv: iv.toString('base64'), data: data.toString('base64') }), { mode: 0o600 });
+  fs.renameSync(LOCKED + '.new', LOCKED);
+}
+
+function privateKey(input) {
+  if (fs.existsSync(LOCKED)) {
+    try {
+      const locked = JSON.parse(fs.readFileSync(LOCKED, 'utf8'));
+      const data = Buffer.from(String(locked.data), 'base64');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', lockKey(input), Buffer.from(String(locked.iv), 'base64'));
+      decipher.setAuthTag(data.subarray(data.length - 16));
+      return Buffer.concat([decipher.update(data.subarray(0, data.length - 16)), decipher.final()]).toString('utf8');
+    } catch {
+      stop('locked', 'The vault could not be unlocked on this computer.');
+    }
   }
-  print({ publicKey: crypto.createPublicKey(privateKey()).export({ type: 'spki', format: 'pem' }) });
+  if (!fs.existsSync(KEY)) stop('not_set_up', 'The vault is not set up on this computer.');
+  // A vault from before its key was encrypted: encrypted now, the clear copy gone.
+  const pem = fs.readFileSync(KEY, 'utf8');
+  lock(pem, input);
+  fs.rmSync(KEY, { force: true });
+  return pem;
+}
+
+function init(input) {
+  fs.mkdirSync(ITEMS, { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(LOCKED) && !fs.existsSync(KEY)) {
+    const pair = crypto.generateKeyPairSync('rsa', { modulusLength: 3072, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+    lock(pair.privateKey, input);
+  }
+  print({ publicKey: crypto.createPublicKey(privateKey(input)).export({ type: 'spki', format: 'pem' }) });
 }
 
 // A sealed item opened in memory; what's inside is checked before it's used.
-function open(envelope) {
+function open(envelope, input) {
   let plain;
   try {
     const e = typeof envelope === 'string' ? JSON.parse(envelope) : envelope;
     if (!e || e.v !== 1) throw new Error('version');
-    const key = crypto.privateDecrypt({ key: privateKey(), padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' }, Buffer.from(String(e.key), 'base64'));
+    const key = crypto.privateDecrypt({ key: privateKey(input), padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: 'sha256' }, Buffer.from(String(e.key), 'base64'));
     const data = Buffer.from(String(e.data), 'base64');
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(String(e.iv), 'base64'));
     decipher.setAuthTag(data.subarray(data.length - 16));
@@ -78,14 +118,14 @@ function itemPath(id) {
   if (!ID.test(String(id))) stop('invalid', 'Not a vault item.');
   return path.join(ITEMS, id + '.json');
 }
-function load(id) {
+function load(id, input) {
   const file = itemPath(id);
   if (!fs.existsSync(file)) stop('not_found', 'That item is not in the vault on this computer.');
-  return open(JSON.parse(fs.readFileSync(file, 'utf8')).envelope);
+  return open(JSON.parse(fs.readFileSync(file, 'utf8')).envelope, input);
 }
 
 function put(input) {
-  const item = open(input.envelope);
+  const item = open(input.envelope, input);
   fs.mkdirSync(ITEMS, { recursive: true, mode: 0o700 });
   fs.writeFileSync(itemPath(input.id), JSON.stringify({ envelope: input.envelope }), { mode: 0o600 });
   print(describe(item));
@@ -110,7 +150,7 @@ function scrub(text, secrets) {
 }
 
 async function request(input) {
-  const item = load(input.id);
+  const item = load(input.id, input);
   if (item.kind !== 'key') stop('wrong_kind', 'That item is a sign-in: it signs in through the browser, not in requests.');
   let url;
   try { url = new URL(String(input.url)); } catch { stop('invalid', 'url is not a web address.'); }
