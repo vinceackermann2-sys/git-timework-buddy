@@ -121,9 +121,8 @@ const buyCredits: Handler = async (ctx, owner, input) => {
     // What stripe-webhook grants from: the purchase record.
     metadata: { kind: 'credits', pack_credits: String(pack.credits), workspace_id: '', supabase_user_id: owner.userId, source: 'agent-id' },
     allow_promotion_codes: true,
-    // Back to the app, with pricing open over it.
-    success_url: `${ctx.config.siteUrl}/agent-id/dashboard?pricing=added`,
-    cancel_url: `${ctx.config.siteUrl}/agent-id/dashboard?pricing=open`,
+    success_url: `${ctx.config.siteUrl}/agent-id/pricing?credits=added`,
+    cancel_url: `${ctx.config.siteUrl}/agent-id/pricing`,
   }, `agent-id-credits-${owner.userId}-${pack.credits}-${Math.floor(ctx.now() / 60_000)}`);
   await audit(ctx, owner.userId, null, 'owner', 'credits.checkout', { credits: pack.credits });
   return { url: String(session.url) };

@@ -140,7 +140,7 @@ on its own.
 | mail | Resend on `TIMEWARP_AGENT_MAIL_DOMAIN` (`agents.timewarpdev.com`), the domain the previous app's agent mail used | `<handle>@agents.timewarpdev.com`; send, receive, reply in thread; delivery status | — |
 | phone | Telnyx (or Twilio, `AGENT_ID_PHONE_PROVIDER`), on Timewarp's account. Telnyx: one messaging profile and one TeXML app made on first use, Ed25519-signed webhooks | A local number that can text and call; texts; calls that read a message aloud; incoming calls get a greeting and voicemail | an application for now; will use credits |
 | wallet | Privy server wallets on Base holding USDC and USDT, shown together as US dollars (`AGENT_ID_WALLET_CHAIN=base`, or `base_sepolia` to try it on testnet). Privy keeps the keys; with gas sponsorship on, sends need no ETH | An 0x address; a USD balance; deposits and sends in its history; transfers to addresses, other agents and contacts | given at once; money leaves it only once the owner is verified |
-| card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner; an application for now, will use credits |
+| card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner; an application for now, free |
 | vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A computer that resumes for each command, stops after it and keeps its files. Set up the first time the agent uses it (its `vm_*` tools are always listed). The agent's commands run as an ordinary user; it can hold the agent's vault | credits (time is charged) |
 
 **Ready on creation.** A new Agent ID, whether made on the dashboard, by
@@ -298,8 +298,8 @@ has them in the clear.
   machine time is paid in Timewarp credits. Each command first takes the most
   it can use from the free time, reserves the rest from credits, and gives
   back what it didn't use; credits are charged at the same 2.5 × provider cost
-  and 0.125 USD per credit as AI usage. Phone numbers and cards will use
-  credits when they open. `/agent-id/pricing` shows this, and owners buy
+  and 0.125 USD per credit as AI usage. Phone numbers will use credits when
+  they open; virtual cards will be free. `/agent-id/pricing` shows this, and owners buy
   credits there: `POST /v1/account/credits {credits}` opens Stripe Checkout for
   one of the Timewarp app's packs (`pricing.ts`, kept equal to
   `_shared/credits.ts` by a test, and its Stripe price), and the existing

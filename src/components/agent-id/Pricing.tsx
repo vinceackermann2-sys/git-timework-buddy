@@ -1,7 +1,7 @@
-// What Agent ID costs: no subscription, mail and wallets free, and Timewarp
-// credits for the rest. Shown on the public pricing page and, once signed in,
-// in a popup over the app (openPricing).
-import { useEffect, useState } from "react";
+// What Agent ID costs: no subscription; mail, wallets and cards free; phone
+// numbers and computer time in Timewarp credits. A page in the app, like
+// Settings, and on its own for people who aren't signed in.
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -12,8 +12,9 @@ import { errorMessage } from "@/lib/agent-id/client";
 import { formatTimeLeft } from "@/lib/agent-id/format";
 import { useAccount } from "@/lib/agent-id/queries";
 import { api, claimsApi } from "@/lib/agent-id/session";
+import { Brand, ThemeMenu } from "./Brand";
 import { ResourceArt, type ArtKind } from "./ResourceArt";
-import { Chip, Notice, Popup } from "./ui";
+import { Chip, Notice } from "./ui";
 
 // Used until the server says otherwise (older servers leave pricing out).
 const FALLBACK = {
@@ -32,17 +33,8 @@ const usd = (amount: number) =>
     maximumFractionDigits: 0,
   }).format(amount);
 
-// Opens the pricing popup from anywhere in the signed-in app.
-const OPEN_EVENT = "agent-id:pricing";
-export function openPricing() {
-  window.dispatchEvent(new Event(OPEN_EVENT));
-}
-export function useOpenPricing(open: () => void) {
-  useEffect(() => {
-    window.addEventListener(OPEN_EVENT, open);
-    return () => window.removeEventListener(OPEN_EVENT, open);
-  }, [open]);
-}
+export const SUMMARY =
+  "No subscription. Mail, wallets and cards are free; phone numbers and computer time use Timewarp credits.";
 
 export function PricingDetails({
   signedIn,
@@ -94,7 +86,7 @@ export function PricingDetails({
       kind: "card",
       name: "Virtual card",
       detail: "Pays online within the limits you set. Apply on an agent's Card tab.",
-      price: "Credits",
+      price: "Free",
       soon: true,
     },
   ];
@@ -156,23 +148,26 @@ export function PricingDetails({
   );
 }
 
-// Pricing over the app, without leaving the page.
-export function PricingPopup({
-  open,
-  onOpenChange,
-  returned,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  returned?: string | null | undefined;
-}) {
+// The pricing page for people who aren't signed in, on its own.
+export function PublicPricing() {
   return (
-    <Popup open={open} onOpenChange={onOpenChange} title="Pricing" wide>
-      <p className="mb-5 text-sm text-[var(--muted-foreground)]">
-        No subscription. Mail and wallets are free; the rest uses Timewarp credits.
-      </p>
-      <PricingDetails signedIn returned={returned} />
-    </Popup>
+    <div className="flex min-h-svh flex-col">
+      <header className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-3 px-4 sm:px-6">
+        <Brand to="/agent-id" />
+        <div className="flex items-center gap-1">
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/agent-id/sign-in">Sign in</Link>
+          </Button>
+          <ThemeMenu />
+        </div>
+      </header>
+
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 pb-16 pt-6 sm:px-6 sm:pt-12">
+        <h1 className="text-4xl font-semibold tracking-tight">Pricing</h1>
+        <p className="mb-8 mt-3 max-w-xl text-lg text-[var(--muted-foreground)]">{SUMMARY}</p>
+        <PricingDetails signedIn={false} />
+      </main>
+    </div>
   );
 }
 

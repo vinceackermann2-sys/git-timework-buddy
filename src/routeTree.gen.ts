@@ -13,7 +13,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentIdRouteRouteImport } from './routes/agent-id/route'
 import { Route as AgentIdIndexRouteImport } from './routes/agent-id/index'
 import { Route as AgentIdAppRouteImport } from './routes/agent-id/_app'
-import { Route as AgentIdPricingRouteImport } from './routes/agent-id/pricing'
 import { Route as AgentIdSignInRouteImport } from './routes/agent-id/sign-in'
 import { Route as AuthBridgeRouteImport } from './routes/auth.bridge'
 import { Route as AuthGoogleRouteImport } from './routes/auth.google'
@@ -24,6 +23,7 @@ import { Route as LegalTermsOfServiceRouteImport } from './routes/legal.terms-of
 import { Route as AgentIdAppApprovalsRouteImport } from './routes/agent-id/_app/approvals'
 import { Route as AgentIdAppDashboardRouteImport } from './routes/agent-id/_app/dashboard'
 import { Route as AgentIdAppDevelopersRouteImport } from './routes/agent-id/_app/developers'
+import { Route as AgentIdAppPricingRouteImport } from './routes/agent-id/_app/pricing'
 import { Route as AgentIdAppReviewsRouteImport } from './routes/agent-id/_app/reviews'
 import { Route as AgentIdAppSettingsRouteImport } from './routes/agent-id/_app/settings'
 import { Route as AgentIdAppVerifyRouteImport } from './routes/agent-id/_app/verify'
@@ -49,11 +49,6 @@ const AgentIdIndexRoute = AgentIdIndexRouteImport.update({
 } as any)
 const AgentIdAppRoute = AgentIdAppRouteImport.update({
   id: '/_app',
-  getParentRoute: () => AgentIdRouteRoute,
-} as any)
-const AgentIdPricingRoute = AgentIdPricingRouteImport.update({
-  id: '/pricing',
-  path: '/pricing',
   getParentRoute: () => AgentIdRouteRoute,
 } as any)
 const AgentIdSignInRoute = AgentIdSignInRouteImport.update({
@@ -106,6 +101,11 @@ const AgentIdAppDevelopersRoute = AgentIdAppDevelopersRouteImport.update({
   path: '/developers',
   getParentRoute: () => AgentIdAppRoute,
 } as any)
+const AgentIdAppPricingRoute = AgentIdAppPricingRouteImport.update({
+  id: '/pricing',
+  path: '/pricing',
+  getParentRoute: () => AgentIdAppRoute,
+} as any)
 const AgentIdAppReviewsRoute = AgentIdAppReviewsRouteImport.update({
   id: '/reviews',
   path: '/reviews',
@@ -145,7 +145,6 @@ const AgentIdAppAgentsAgentIdRoute = AgentIdAppAgentsAgentIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agent-id': typeof AgentIdRouteRouteWithChildren
-  '/agent-id/pricing': typeof AgentIdPricingRoute
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
@@ -157,6 +156,7 @@ export interface FileRoutesByFullPath {
   '/agent-id/approvals': typeof AgentIdAppApprovalsRoute
   '/agent-id/dashboard': typeof AgentIdAppDashboardRoute
   '/agent-id/developers': typeof AgentIdAppDevelopersRoute
+  '/agent-id/pricing': typeof AgentIdAppPricingRoute
   '/agent-id/reviews': typeof AgentIdAppReviewsRoute
   '/agent-id/settings': typeof AgentIdAppSettingsRoute
   '/agent-id/verify': typeof AgentIdAppVerifyRoute
@@ -168,7 +168,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agent-id': typeof AgentIdIndexRoute
-  '/agent-id/pricing': typeof AgentIdPricingRoute
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
@@ -179,6 +178,7 @@ export interface FileRoutesByTo {
   '/agent-id/approvals': typeof AgentIdAppApprovalsRoute
   '/agent-id/dashboard': typeof AgentIdAppDashboardRoute
   '/agent-id/developers': typeof AgentIdAppDevelopersRoute
+  '/agent-id/pricing': typeof AgentIdAppPricingRoute
   '/agent-id/reviews': typeof AgentIdAppReviewsRoute
   '/agent-id/settings': typeof AgentIdAppSettingsRoute
   '/agent-id/verify': typeof AgentIdAppVerifyRoute
@@ -192,7 +192,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agent-id': typeof AgentIdRouteRouteWithChildren
   '/agent-id/_app': typeof AgentIdAppRouteWithChildren
-  '/agent-id/pricing': typeof AgentIdPricingRoute
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
@@ -204,6 +203,7 @@ export interface FileRoutesById {
   '/agent-id/_app/approvals': typeof AgentIdAppApprovalsRoute
   '/agent-id/_app/dashboard': typeof AgentIdAppDashboardRoute
   '/agent-id/_app/developers': typeof AgentIdAppDevelopersRoute
+  '/agent-id/_app/pricing': typeof AgentIdAppPricingRoute
   '/agent-id/_app/reviews': typeof AgentIdAppReviewsRoute
   '/agent-id/_app/settings': typeof AgentIdAppSettingsRoute
   '/agent-id/_app/verify': typeof AgentIdAppVerifyRoute
@@ -217,7 +217,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/agent-id'
-    | '/agent-id/pricing'
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
@@ -229,6 +228,7 @@ export interface FileRouteTypes {
     | '/agent-id/approvals'
     | '/agent-id/dashboard'
     | '/agent-id/developers'
+    | '/agent-id/pricing'
     | '/agent-id/reviews'
     | '/agent-id/settings'
     | '/agent-id/verify'
@@ -240,7 +240,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/agent-id'
-    | '/agent-id/pricing'
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
@@ -251,6 +250,7 @@ export interface FileRouteTypes {
     | '/agent-id/approvals'
     | '/agent-id/dashboard'
     | '/agent-id/developers'
+    | '/agent-id/pricing'
     | '/agent-id/reviews'
     | '/agent-id/settings'
     | '/agent-id/verify'
@@ -263,7 +263,6 @@ export interface FileRouteTypes {
     | '/'
     | '/agent-id'
     | '/agent-id/_app'
-    | '/agent-id/pricing'
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
@@ -275,6 +274,7 @@ export interface FileRouteTypes {
     | '/agent-id/_app/approvals'
     | '/agent-id/_app/dashboard'
     | '/agent-id/_app/developers'
+    | '/agent-id/_app/pricing'
     | '/agent-id/_app/reviews'
     | '/agent-id/_app/settings'
     | '/agent-id/_app/verify'
@@ -324,13 +324,6 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/agent-id'
       preLoaderRoute: typeof AgentIdAppRouteImport
-      parentRoute: typeof AgentIdRouteRoute
-    }
-    '/agent-id/pricing': {
-      id: '/agent-id/pricing'
-      path: '/pricing'
-      fullPath: '/agent-id/pricing'
-      preLoaderRoute: typeof AgentIdPricingRouteImport
       parentRoute: typeof AgentIdRouteRoute
     }
     '/agent-id/sign-in': {
@@ -403,6 +396,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentIdAppDevelopersRouteImport
       parentRoute: typeof AgentIdAppRoute
     }
+    '/agent-id/_app/pricing': {
+      id: '/agent-id/_app/pricing'
+      path: '/pricing'
+      fullPath: '/agent-id/pricing'
+      preLoaderRoute: typeof AgentIdAppPricingRouteImport
+      parentRoute: typeof AgentIdAppRoute
+    }
     '/agent-id/_app/reviews': {
       id: '/agent-id/_app/reviews'
       path: '/reviews'
@@ -459,6 +459,7 @@ interface AgentIdAppRouteChildren {
   AgentIdAppApprovalsRoute: typeof AgentIdAppApprovalsRoute
   AgentIdAppDashboardRoute: typeof AgentIdAppDashboardRoute
   AgentIdAppDevelopersRoute: typeof AgentIdAppDevelopersRoute
+  AgentIdAppPricingRoute: typeof AgentIdAppPricingRoute
   AgentIdAppReviewsRoute: typeof AgentIdAppReviewsRoute
   AgentIdAppSettingsRoute: typeof AgentIdAppSettingsRoute
   AgentIdAppVerifyRoute: typeof AgentIdAppVerifyRoute
@@ -469,6 +470,7 @@ const AgentIdAppRouteChildren: AgentIdAppRouteChildren = {
   AgentIdAppApprovalsRoute: AgentIdAppApprovalsRoute,
   AgentIdAppDashboardRoute: AgentIdAppDashboardRoute,
   AgentIdAppDevelopersRoute: AgentIdAppDevelopersRoute,
+  AgentIdAppPricingRoute: AgentIdAppPricingRoute,
   AgentIdAppReviewsRoute: AgentIdAppReviewsRoute,
   AgentIdAppSettingsRoute: AgentIdAppSettingsRoute,
   AgentIdAppVerifyRoute: AgentIdAppVerifyRoute,
@@ -481,7 +483,6 @@ const AgentIdAppRouteWithChildren = AgentIdAppRoute._addFileChildren(
 
 interface AgentIdRouteRouteChildren {
   AgentIdAppRoute: typeof AgentIdAppRouteWithChildren
-  AgentIdPricingRoute: typeof AgentIdPricingRoute
   AgentIdSignInRoute: typeof AgentIdSignInRoute
   AgentIdIndexRoute: typeof AgentIdIndexRoute
   AgentIdClaimCodeRoute: typeof AgentIdClaimCodeRoute
@@ -490,7 +491,6 @@ interface AgentIdRouteRouteChildren {
 
 const AgentIdRouteRouteChildren: AgentIdRouteRouteChildren = {
   AgentIdAppRoute: AgentIdAppRouteWithChildren,
-  AgentIdPricingRoute: AgentIdPricingRoute,
   AgentIdSignInRoute: AgentIdSignInRoute,
   AgentIdIndexRoute: AgentIdIndexRoute,
   AgentIdClaimCodeRoute: AgentIdClaimCodeRoute,
