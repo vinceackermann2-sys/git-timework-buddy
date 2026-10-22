@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentIdRouteRouteImport } from './routes/agent-id/route'
 import { Route as AgentIdIndexRouteImport } from './routes/agent-id/index'
 import { Route as AgentIdAppRouteImport } from './routes/agent-id/_app'
+import { Route as AgentIdPricingRouteImport } from './routes/agent-id/pricing'
 import { Route as AgentIdSignInRouteImport } from './routes/agent-id/sign-in'
 import { Route as AuthBridgeRouteImport } from './routes/auth.bridge'
 import { Route as AuthGoogleRouteImport } from './routes/auth.google'
@@ -48,6 +49,11 @@ const AgentIdIndexRoute = AgentIdIndexRouteImport.update({
 } as any)
 const AgentIdAppRoute = AgentIdAppRouteImport.update({
   id: '/_app',
+  getParentRoute: () => AgentIdRouteRoute,
+} as any)
+const AgentIdPricingRoute = AgentIdPricingRouteImport.update({
+  id: '/pricing',
+  path: '/pricing',
   getParentRoute: () => AgentIdRouteRoute,
 } as any)
 const AgentIdSignInRoute = AgentIdSignInRouteImport.update({
@@ -139,6 +145,7 @@ const AgentIdAppAgentsAgentIdRoute = AgentIdAppAgentsAgentIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agent-id': typeof AgentIdRouteRouteWithChildren
+  '/agent-id/pricing': typeof AgentIdPricingRoute
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
@@ -161,6 +168,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agent-id': typeof AgentIdIndexRoute
+  '/agent-id/pricing': typeof AgentIdPricingRoute
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
@@ -184,6 +192,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agent-id': typeof AgentIdRouteRouteWithChildren
   '/agent-id/_app': typeof AgentIdAppRouteWithChildren
+  '/agent-id/pricing': typeof AgentIdPricingRoute
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
@@ -208,6 +217,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/agent-id'
+    | '/agent-id/pricing'
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
@@ -230,6 +240,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/agent-id'
+    | '/agent-id/pricing'
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
@@ -252,6 +263,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agent-id'
     | '/agent-id/_app'
+    | '/agent-id/pricing'
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
@@ -312,6 +324,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/agent-id'
       preLoaderRoute: typeof AgentIdAppRouteImport
+      parentRoute: typeof AgentIdRouteRoute
+    }
+    '/agent-id/pricing': {
+      id: '/agent-id/pricing'
+      path: '/pricing'
+      fullPath: '/agent-id/pricing'
+      preLoaderRoute: typeof AgentIdPricingRouteImport
       parentRoute: typeof AgentIdRouteRoute
     }
     '/agent-id/sign-in': {
@@ -462,6 +481,7 @@ const AgentIdAppRouteWithChildren = AgentIdAppRoute._addFileChildren(
 
 interface AgentIdRouteRouteChildren {
   AgentIdAppRoute: typeof AgentIdAppRouteWithChildren
+  AgentIdPricingRoute: typeof AgentIdPricingRoute
   AgentIdSignInRoute: typeof AgentIdSignInRoute
   AgentIdIndexRoute: typeof AgentIdIndexRoute
   AgentIdClaimCodeRoute: typeof AgentIdClaimCodeRoute
@@ -470,6 +490,7 @@ interface AgentIdRouteRouteChildren {
 
 const AgentIdRouteRouteChildren: AgentIdRouteRouteChildren = {
   AgentIdAppRoute: AgentIdAppRouteWithChildren,
+  AgentIdPricingRoute: AgentIdPricingRoute,
   AgentIdSignInRoute: AgentIdSignInRoute,
   AgentIdIndexRoute: AgentIdIndexRoute,
   AgentIdClaimCodeRoute: AgentIdClaimCodeRoute,

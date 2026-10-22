@@ -1,7 +1,7 @@
 // Money in and out of a live wallet, as a bank app does it: add money (a card,
 // one SEPA transfer of an amount you choose, or crypto to its address on Base)
 // and withdraw to your bank account or your own wallet or exchange.
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ExternalLink, Loader2 } from "lucide-react";
@@ -30,13 +30,17 @@ import { api } from "@/lib/agent-id/session";
 import type { AddMoneyInfo, Agent, Money } from "@/lib/agent-id/types";
 import { CopyButton, ErrorState, Field, LoadingRows, Muted, Notice, Segmented } from "../ui";
 import { BankDeposit, BankWithdraw } from "./BankMoney";
-import { useAgentIdTheme } from "../AgentIdShell";
 
 type AddMethod = "card" | "bank" | "crypto";
-// Privy's SDK is large: it loads only when someone opens Card.
-const PrivyCardPay = lazy(() => import("./PrivyCardPay"));
 
-export function AddMoney({ agent }: { agent: Agent }) {
+// `onPrivyPay`: Privy's card payment runs outside this pop-up (see PrivyCardPay).
+export function AddMoney({
+  agent,
+  onPrivyPay,
+}: {
+  agent: Agent;
+  onPrivyPay?: (appId: string) => void;
+}) {
   const info = useQuery({
     queryKey: [...queryKeys.agent(agent.id), "add-money"],
     queryFn: () => api.addMoneyInfo(agent.id),
@@ -44,12 +48,6 @@ export function AddMoney({ agent }: { agent: Agent }) {
     staleTime: 60_000,
   });
   const [chosen, setChosen] = useState<AddMethod | null>(null);
-  const { choice } = useAgentIdTheme();
-  const dark =
-    choice === "dark" ||
-    (choice === "system" &&
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches);
   const bankOn = info.data?.bank?.available === true;
   const bank = useBank(bankOn);
 
@@ -86,10 +84,8 @@ export function AddMoney({ agent }: { agent: Agent }) {
       {method === "bank" ? (
         <BankDeposit agent={agent} />
       ) : method === "card" ? (
-        info.data.card.provider === "privy" && info.data.card.privy ? (
-          <Suspense fallback={<LoadingRows rows={2} />}>
-            <PrivyCardPay agent={agent} appId={info.data.card.privy.appId} dark={dark} />
-          </Suspense>
+        info.data.card.provider === "privy" && info.data.card.privy && onPrivyPay ? (
+          <CardPayPrivy onPay={() => onPrivyPay(info.data.card.privy!.appId)} />
         ) : info.data.card.provider === "moonpay" ? (
           <CardPay agent={agent} />
         ) : (
@@ -154,6 +150,22 @@ export function QrCode({ value }: { value: string }) {
       <rect width={size} height={size} fill="#ffffff" />
       <path d={path} fill="#172033" />
     </svg>
+  );
+}
+
+// --- Paying by card (Privy's funding) ------------------------------------------------
+
+function CardPayPrivy({ onPay }: { onPay: () => void }) {
+  return (
+    <div className="grid gap-4 text-center">
+      <p className="text-sm">
+        Pay with a card, Apple Pay or Google Pay. The money goes straight to this wallet.
+      </p>
+      <Button size="lg" className="h-12 rounded-full" onClick={onPay}>
+        Pay with card
+      </Button>
+      <Muted>The first time, we send a code to your email to confirm it's you.</Muted>
+    </div>
   );
 }
 

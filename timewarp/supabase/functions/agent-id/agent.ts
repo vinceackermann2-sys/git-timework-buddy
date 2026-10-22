@@ -630,37 +630,55 @@ const vmFiles: Op = async (ctx, who, input) => {
   return { path: where, entries };
 };
 
-// Runs a command on a live machine: the most it can cost is reserved from
-// the owner's credits first, one command runs at a time, and what it used is
-// settled after.
+// Runs a command on a live machine. Its time comes out of the owner's free
+// machine hours first, then their credits: the most it can use is taken from
+// both up front, one command runs at a time, and what it didn't use goes back.
 async function metered(ctx: Ctx, who: AgentCaller, resource: ResourceRow, command: string, cwd: string | undefined, timeoutSeconds: number, history: boolean) {
   if (resource.mode === 'test') throw fail(409, 'test_machine', 'Test machines don\'t run commands. The owner can give this agent a live machine in Agent ID.');
   if (resource.status !== 'active') throw fail(409, 'machine_not_ready', 'The machine is still being set up. Try again in a minute.');
   await rateLimit(ctx, who.userId, `vm-exec:${who.agent.id}`, 30, 1000, 'commands');
-  // The longest this command can take, with starting and stopping the
-  // machine, is reserved from the owner's credits first.
+  // The longest this command can take, with starting and stopping the machine.
   const size = (resource.state?.size || 'medium') as Size;
-  const maxCost = machineCost(ctx, size, timeoutSeconds + 180);
-  const reservation = crypto.randomUUID();
-  const { data: reserved, error: reserveError } = await ctx.admin.rpc('timewarp_reserve_agent_ai', { p_id: reservation, p_user_id: who.userId, p_credits: maxCost * AI_COST_MARKUP / USD_PER_CREDIT });
-  if (reserveError || reserved !== true) throw fail(reserveError ? 503 : 402, reserveError ? 'unavailable' : 'credits_required', reserveError ? 'Machine time can\'t be reserved right now.' : 'Running commands uses the owner\'s Timewarp credits, and there aren\'t enough left. Add credits in Timewarp.');
+  const maxSeconds = timeoutSeconds + 180;
+  const allowance = Math.round(ctx.config.computeFreeHours * 3600);
+  const free = allowance > 0 ? Number(checked(await ctx.admin.rpc('agent_id_take_free_compute', { p_user: who.userId, p_seconds: maxSeconds, p_allowance: allowance }))) || 0 : 0;
+  const giveBack = (seconds: number) => seconds > 0 ? ctx.admin.rpc('agent_id_return_free_compute', { p_user: who.userId, p_seconds: seconds }) : null;
+  // Beyond the free time, the most the rest can cost is reserved from credits.
+  const maxCost = maxSeconds > free ? machineCost(ctx, size, maxSeconds - free) : 0;
+  const reservation = maxCost > 0 ? crypto.randomUUID() : null;
+  const release = () => reservation ? ctx.admin.rpc('timewarp_energy_complete_ai', { p_id: reservation, p_user_id: who.userId, p_model: 'agent-id-vm', p_input: 0, p_output: 0, p_cost: 0, p_outcome: 'released' }) : null;
+  if (reservation) {
+    const { data: reserved, error: reserveError } = await ctx.admin.rpc('timewarp_reserve_agent_ai', { p_id: reservation, p_user_id: who.userId, p_credits: maxCost * AI_COST_MARKUP / USD_PER_CREDIT });
+    if (reserveError || reserved !== true) {
+      await giveBack(free);
+      throw fail(reserveError ? 503 : 402, reserveError ? 'unavailable' : 'credits_required', reserveError ? 'Machine time can\'t be reserved right now.' : `The ${ctx.config.computeFreeHours} free machine hours are used up, and running commands now uses the owner's Timewarp credits. Add credits on the Agent ID website (Pricing).`);
+    }
+  }
   const holder = randomId(16);
   const leased = checked(await ctx.admin.rpc('agent_id_machine_lease', { p_resource: resource.id, p_holder: holder, p_seconds: timeoutSeconds + 240 }));
   if (leased !== true) {
-    await ctx.admin.rpc('timewarp_energy_complete_ai', { p_id: reservation, p_user_id: who.userId, p_model: 'agent-id-vm', p_input: 0, p_output: 0, p_cost: 0, p_outcome: 'released' });
+    await Promise.all([release(), giveBack(free)]);
     throw fail(409, 'machine_busy', 'The machine is running another command. Try again when it finishes.');
   }
   let result;
   try { result = await runCommand(ctx, resource, command, { cwd, timeoutSeconds }); }
+  catch (error) {
+    await Promise.all([release(), giveBack(free)]);
+    throw error;
+  }
   finally {
     await ctx.admin.rpc('agent_id_machine_release', { p_resource: resource.id, p_holder: holder });
   }
-  const cost = Math.min(maxCost, machineCost(ctx, size, result.seconds));
-  const { error: settleError } = await ctx.admin.rpc('timewarp_energy_complete_ai', { p_id: reservation, p_user_id: who.userId, p_model: 'agent-id-vm', p_input: 0, p_output: 0, p_cost: cost, p_outcome: 'settled' });
-  if (settleError) console.error('[agent-id] machine time settlement pending', reservation, cost);
+  const usedFree = Math.min(free, result.seconds);
+  await giveBack(free - usedFree);
+  const cost = reservation && result.seconds > usedFree ? Math.min(maxCost, machineCost(ctx, size, result.seconds - usedFree)) : 0;
+  if (reservation) {
+    const { error: settleError } = await ctx.admin.rpc('timewarp_energy_complete_ai', { p_id: reservation, p_user_id: who.userId, p_model: 'agent-id-vm', p_input: 0, p_output: 0, p_cost: cost, p_outcome: 'settled' });
+    if (settleError) console.error('[agent-id] machine time settlement pending', reservation, cost);
+  }
   if (history) {
-    await record(ctx, resource, { kind: 'vm', direction: 'none', status: result.failed ? 'failed' : result.exitCode === 0 ? 'completed' : 'exited', subject: command.slice(0, 1000), body: (result.stdout + (result.stderr ? `\n[stderr]\n${result.stderr}` : '')).slice(-20_000), data: { exitCode: result.exitCode, seconds: result.seconds, credits: Math.round(cost * AI_COST_MARKUP / USD_PER_CREDIT * 1000) / 1000 } });
-    await audit(ctx, who.userId, who.agent.id, actor(who), 'vm.exec', { seconds: result.seconds, exitCode: result.exitCode });
+    await record(ctx, resource, { kind: 'vm', direction: 'none', status: result.failed ? 'failed' : result.exitCode === 0 ? 'completed' : 'exited', subject: command.slice(0, 1000), body: (result.stdout + (result.stderr ? `\n[stderr]\n${result.stderr}` : '')).slice(-20_000), data: { exitCode: result.exitCode, seconds: result.seconds, freeSeconds: usedFree, credits: Math.round(cost * AI_COST_MARKUP / USD_PER_CREDIT * 1000) / 1000 } });
+    await audit(ctx, who.userId, who.agent.id, actor(who), 'vm.exec', { seconds: result.seconds, freeSeconds: usedFree, exitCode: result.exitCode });
   }
   return result;
 }

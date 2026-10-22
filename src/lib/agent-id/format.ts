@@ -554,6 +554,15 @@ export function formatDuration(seconds: number): string {
   return m ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
 }
 
+// Free machine time left, as people say it: "4 h 32 min", "45 min", "5 h".
+export function formatTimeLeft(seconds: number): string {
+  const minutes = Math.max(0, Math.floor(seconds / 60));
+  const h = Math.floor(minutes / 60),
+    m = minutes % 60;
+  if (!h) return `${m} min`;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
 // --- Phone ------------------------------------------------------------------------------
 
 export type CallKind = "missed" | "voicemail" | "incoming" | "outgoing";

@@ -19,6 +19,7 @@ import { stripe } from './providers/stripe.ts';
 import { adminRoutes } from './admin.ts';
 import { addBankAccount, bankDeposit, bankPayins, bankStatus, cancelBankPayin, refreshBridgeCheck, refreshBusinessCheck, refreshPayouts, removeBankAccount, startBankPayin, startBankVerification, withdrawToBank } from './bank.ts';
 import { cardCurrency, moonpayOn, moonpayUrl } from './providers/moonpay.ts';
+import { CREDIT_PACKS } from './pricing.ts';
 
 type Handler = Route<Owner>[2];
 const iso = (ctx: Ctx) => new Date(ctx.now()).toISOString();
@@ -48,11 +49,12 @@ const keyView = (row: any) => ({ id: row.id, name: row.name, prefix: row.prefix,
 const account: Handler = async (ctx, owner) => {
   // A check running at Bridge: look how it's going (at most every few seconds).
   await refreshBridgeCheck(ctx, owner.userId).catch(error => console.error('[agent-id] identity check', (error as Error).message));
-  const [person, members, plan, agents] = await Promise.all([
+  const [person, members, plan, agents, compute] = await Promise.all([
     personOf(ctx, owner.userId),
     ctx.admin.from('timewarp_workspace_members').select('workspace_id,role').eq('user_id', owner.userId).eq('status', 'active'),
     planOf(ctx, owner.userId),
     ctx.admin.from('agent_id_agents').select('id').eq('owner_user_id', owner.userId).neq('status', 'revoked'),
+    ctx.admin.from('agent_id_compute_allowance').select('used_seconds').eq('user_id', owner.userId).maybeSingle(),
   ]);
   const memberships = (checked(members) || []) as any[];
   const ids = memberships.map(m => m.workspace_id);
@@ -71,8 +73,40 @@ const account: Handler = async (ctx, owner) => {
     organizations: memberships.map(m => ({ id: m.workspace_id, name: names.get(m.workspace_id) || 'Organization', role: m.role, business: businessView(verified.get(m.workspace_id), links.get(m.workspace_id)) })),
     plan, reviewer: owner.via === 'session' && ctx.config.reviewers.has(owner.userId),
     agents: { count: (checked(agents) || []).length, max: ctx.config.maxAgents },
+    // Free machine time: how much of it this account has used.
+    compute: { freeSeconds: Math.round(ctx.config.computeFreeHours * 3600), usedSeconds: Math.max(0, Number((compute.data as any)?.used_seconds) || 0) },
     config: publicConfig(ctx.config),
   };
+};
+
+// --- Credits ---------------------------------------------------------------------
+// Timewarp credits pay for what isn't free (machine time after the free hours).
+// Bought here in the same packs and at the same Stripe prices as in the
+// Timewarp app; Stripe's webhook (stripe-webhook) adds them once paid.
+const buyCredits: Handler = async (ctx, owner, input) => {
+  if (owner.via !== 'session') throw fail(403, 'session_required', 'Buy credits on the Agent ID website.');
+  const pack = CREDIT_PACKS.find(p => p.credits === Number(input.credits));
+  if (!pack) throw fail(400, 'invalid', `Choose a pack of ${CREDIT_PACKS.map(p => p.credits.toLocaleString('en-US')).join(', ')} credits.`);
+  await rateLimit(ctx, owner.userId, 'credits-checkout', 5, 30, 'checkouts');
+  const lookup = `timewarp_energy_credits_${pack.credits}_${pack.priceCents}_v1`;
+  const found = (await stripe(ctx, 'GET', `/v1/prices?lookup_keys[]=${encodeURIComponent(lookup)}&active=true&limit=1`))?.data?.[0];
+  const price = found && found.currency === 'usd' && found.unit_amount === pack.priceCents && !found.recurring ? String(found.id) : null;
+  const customer = await ctx.admin.from('timewarp_billing_customers').select('stripe_customer_id').eq('user_id', owner.userId).maybeSingle();
+  const customerId = !customer.error && (customer.data as any)?.stripe_customer_id ? String((customer.data as any).stripe_customer_id) : null;
+  const email = customerId ? null : await ownerEmail(ctx, owner);
+  const session = await stripe(ctx, 'POST', '/v1/checkout/sessions', {
+    mode: 'payment',
+    line_items: [price ? { price, quantity: 1 } : { quantity: 1, price_data: { currency: 'usd', unit_amount: pack.priceCents, tax_behavior: 'inclusive', product_data: { name: `Timewarp ${pack.credits.toLocaleString('en-US')} credits`, metadata: { credits: String(pack.credits) } } } }],
+    ...(customerId ? { customer: customerId } : email ? { customer_email: email } : {}),
+    client_reference_id: owner.userId,
+    // What stripe-webhook grants from: the purchase record.
+    metadata: { kind: 'credits', pack_credits: String(pack.credits), workspace_id: '', supabase_user_id: owner.userId, source: 'agent-id' },
+    allow_promotion_codes: true,
+    success_url: `${ctx.config.siteUrl}/agent-id/pricing?credits=added`,
+    cancel_url: `${ctx.config.siteUrl}/agent-id/pricing`,
+  }, `agent-id-credits-${owner.userId}-${pack.credits}-${Math.floor(ctx.now() / 60_000)}`);
+  await audit(ctx, owner.userId, null, 'owner', 'credits.checkout', { credits: pack.credits });
+  return { url: String(session.url) };
 };
 
 // --- Terms -----------------------------------------------------------------------
@@ -540,6 +574,7 @@ export const ownerRoutes: Route<Owner>[] = [
   ['GET', '/v1/account', account],
   ['POST', '/v1/account/verification', (ctx, owner, input) => startVerification(ctx, owner, input)],
   ['POST', '/v1/account/terms', acceptTerms],
+  ['POST', '/v1/account/credits', buyCredits],
   ['GET', '/v1/agents', listAgents], ['POST', '/v1/agents', createAgent],
   ['GET', '/v1/agents/:id', getAgent], ['PATCH', '/v1/agents/:id', updateAgent], ['DELETE', '/v1/agents/:id', revokeAgent],
   ['POST', '/v1/agents/:id/keys', createAgentKey], ['DELETE', '/v1/agents/:id/keys/:keyId', revokeAgentKey],

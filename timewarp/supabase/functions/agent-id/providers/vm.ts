@@ -5,12 +5,11 @@
 // that time is charged in the owner's credits. Test machines have a state
 // but don't run commands.
 import { fail } from '../util.ts';
+import { MEMORY_GIB_USD_PER_SECOND, VCPU_USD_PER_SECOND } from '../pricing.ts';
 import type { AgentRow, Ctx, ResourceRow } from '../context.ts';
 
 const SCOPE = 'https://dynamicsessions.io/.default';
 const API_VERSION = '2026-02-01-preview';
-// Sweden Central retail rates (2026-08-23); overridable by secrets.
-const VCPU_USD_PER_SECOND = 0.000024, MEMORY_GIB_USD_PER_SECOND = 0.000003;
 export const SIZES = {
   small: { cpu: '500m', memory: '1024Mi', cores: 0.5, gib: 1 },
   medium: { cpu: '1000m', memory: '2048Mi', cores: 1, gib: 2 },

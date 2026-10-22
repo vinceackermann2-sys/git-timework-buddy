@@ -356,3 +356,30 @@ test("card payments through Privy's funding: the browser opens Privy's onramps f
   local.setEnv({ AGENT_ID_CARD_PAYMENTS: "off" });
   assert.equal((await ok("GET", addMoney, { token: ada.session })).card.available, false);
 });
+
+test("credits: a pack bought on the Agent ID website is a Stripe Checkout that Timewarp's webhook pays out", async t => {
+  const { local, net, ok, owner } = await setup(t, { ...LIVE, STRIPE_SECRET_KEY: "sk_test_x" });
+  const ada = await owner();
+  net.on("GET", /api\.stripe\.com\/v1\/prices\?/, () => ({ data: [{ id: "price_360", currency: "usd", unit_amount: 3000, recurring: null }] }));
+  net.on("POST", /api\.stripe\.com\/v1\/checkout\/sessions$/, () => ({ id: "cs_1", url: "https://checkout.stripe.com/c/pay/cs_1" }));
+  assert.equal((await local.call("POST", "/v1/account/credits", { token: ada.session, body: { credits: 100 } })).status, 400, "Only the packs.");
+  const ownerKey = (await ok("POST", "/v1/keys", { token: ada.session, body: { name: "cli" } })).secret;
+  assert.equal((await local.call("POST", "/v1/account/credits", { token: ownerKey, body: { credits: 360 } })).body.error.code, "session_required");
+  const { url } = await ok("POST", "/v1/account/credits", { token: ada.session, body: { credits: 360 } });
+  assert.equal(url, "https://checkout.stripe.com/c/pay/cs_1");
+  assert.match(net.find("GET", /\/v1\/prices\?/)[0].url, /lookup_keys%5B%5D=timewarp_energy_credits_360_3000_v1|lookup_keys\[\]=timewarp_energy_credits_360_3000_v1/, "The Timewarp app's own price for the pack.");
+  const sent = net.find("POST", /checkout\/sessions$/)[0];
+  const form = Object.fromEntries(new URLSearchParams(sent.body));
+  assert.deepEqual(
+    [form.mode, form["line_items[0][price]"], form["metadata[kind]"], form["metadata[pack_credits]"], form["metadata[supabase_user_id]"], form["metadata[workspace_id]"], form.client_reference_id, form.customer_email],
+    ["payment", "price_360", "credits", "360", ada.id, "", ada.id, "ada@example.com"],
+  );
+  assert.equal(form.success_url, "https://timewarpdev.com/agent-id/pricing?credits=added");
+  assert.ok(sent.headers.get("idempotency-key"), "A double click opens the same checkout.");
+  // Without the app's price, the same amount inline.
+  net.on("GET", /api\.stripe\.com\/v1\/prices\?/, () => ({ data: [] }));
+  await ok("POST", "/v1/account/credits", { token: ada.session, body: { credits: 180 } });
+  const inline = Object.fromEntries(new URLSearchParams(net.find("POST", /checkout\/sessions$/).at(-1).body));
+  assert.deepEqual([inline["line_items[0][price_data][unit_amount]"], inline["line_items[0][price_data][currency]"], inline["metadata[pack_credits]"]], ["1500", "usd", "180"]);
+  assert.ok((await ok("GET", "/v1/audit", { token: ada.session })).entries.some(e => e.action === "credits.checkout"));
+});

@@ -2,6 +2,8 @@
 // kind is listed in AGENT_ID_LIVE: before that, every resource is a test one
 // that only works inside Agent ID, so a deploy never starts spending money.
 
+import { AI_COST_MARKUP, CREDIT_PACKS, FREE_COMPUTE_HOURS, MEMORY_GIB_USD_PER_SECOND, USD_PER_CREDIT, VCPU_USD_PER_SECOND } from './pricing.ts';
+
 export type Kind = 'mail' | 'phone' | 'wallet' | 'card' | 'vm';
 export const KINDS: Kind[] = ['mail', 'phone', 'wallet', 'card', 'vm'];
 export type Env = (name: string) => string;
@@ -18,7 +20,10 @@ export function loadConfig(env: Env) {
   // Live wallets are given unverified (they can receive); money leaving one
   // needs a verified owner (verifyToMoveMoney). Cards need one up front.
   const required = new Set(list(get('AGENT_ID_REQUIRE_VERIFICATION') || 'card'));
-  const paid = new Set(list(get('AGENT_ID_PAID_PLAN_KINDS') || 'phone,card'));
+  // No subscription is needed for anything: what isn't free is paid in
+  // credits. AGENT_ID_PAID_PLAN_KINDS can still reserve kinds for paid plans.
+  const paid = new Set(list(get('AGENT_ID_PAID_PLAN_KINDS')));
+  const freeHours = get('AGENT_ID_FREE_COMPUTE_HOURS');
 
   // Each kind's live provider, and whether its secrets are present.
   // Phone numbers from Telnyx or Twilio: AGENT_ID_PHONE_PROVIDER, else
@@ -89,6 +94,8 @@ export function loadConfig(env: Env) {
     // agent already has stay.
     phonesWaitlist: get('AGENT_ID_PHONES') === 'waitlist' || (get('AGENT_ID_ALLOW_TEST') === 'false' && !(live.has('phone') && providers.phone.configured)),
     passportSeconds: Math.max(60, Math.min(3600, Number(get('AGENT_ID_PASSPORT_SECONDS')) || 300)),
+    // Free machine time per account before credits (AGENT_ID_FREE_COMPUTE_HOURS).
+    computeFreeHours: freeHours === '' ? FREE_COMPUTE_HOURS : Math.max(0, Number(freeHours) || 0),
     // What a new Agent ID comes with (provisioning.ts): 'none' for nothing.
     autoGive: get('AGENT_ID_AUTO_GIVE') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE') || 'mail,wallet'),
     // Machines aren't given up front: an agent gets one the first time it uses it.
@@ -131,5 +138,12 @@ export function publicConfig(config: Config) {
     legal: { termsVersion: config.termsVersion, termsUrl: `${config.siteUrl}/legal/agent-id-terms`, privacyUrl: `${config.siteUrl}/legal/privacy-policy` },
     passports: { available: !!config.signingKey, lifetimeSeconds: config.passportSeconds },
     bank: { available: bankAvailable(config) },
+    // No subscription: free mail and wallets, free machine hours, then credits.
+    pricing: {
+      computeFreeHours: config.computeFreeHours,
+      // The standard machine (1 vCPU, 2 GiB), as charged per hour.
+      computeCreditsPerHour: Math.round(3600 * ((Number(config.env('AZURE_SANDBOX_VCPU_USD_PER_SECOND')) || VCPU_USD_PER_SECOND) + 2 * (Number(config.env('AZURE_SANDBOX_MEMORY_GIB_USD_PER_SECOND')) || MEMORY_GIB_USD_PER_SECOND)) * AI_COST_MARKUP / USD_PER_CREDIT * 10) / 10,
+      creditPacks: CREDIT_PACKS.map(({ credits, priceUsd }) => ({ credits, priceUsd })),
+    },
   };
 }

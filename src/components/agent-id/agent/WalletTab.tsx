@@ -1,6 +1,6 @@
 // The agent's wallet, like a modern bank app: a dollar balance, round quick
 // actions, and transactions by day. Live wallets hold USDC and USDT 1:1.
-import { useId, useState } from "react";
+import { Suspense, lazy, useId, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -59,7 +59,7 @@ import {
   LoadingRows,
   Muted,
   Notice,
-  SidePanel,
+  Popup,
 } from "../ui";
 import { BlockedNotice, LoadMore, NoResource, blockedReason } from "./common";
 import { AddMoney, AmountField, Withdraw } from "./WalletMoney";
@@ -72,7 +72,11 @@ import {
   usePayins,
 } from "./BankMoney";
 import { PendingApprovals } from "../ApprovalList";
+import { useAgentIdTheme } from "../AgentIdShell";
 import { LimitsEditor } from "./LimitsEditor";
+
+// Privy's SDK is large: it loads only when someone pays by card.
+const PrivyCardFlow = lazy(() => import("./PrivyCardPay"));
 
 const NETWORK_LABELS: Record<string, string> = {
   base: "Base",
@@ -91,6 +95,14 @@ export function WalletTab({ agent }: { agent: Agent }) {
   const [panel, setPanel] = useState<"add" | "send" | "withdraw" | "details" | null>(null);
   const [openTx, setOpenTx] = useState<AgentEvent | null>(null);
   const [openPayin, setOpenPayin] = useState<string | null>(null);
+  // A card payment through Privy: its app, and a number that starts each one.
+  const [privy, setPrivy] = useState<{ appId: string; request: number } | null>(null);
+  const { choice } = useAgentIdTheme();
+  const dark =
+    choice === "dark" ||
+    (choice === "system" &&
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
   const testMode = useTestMode();
   const bankOn = useAccount().data?.config.bank?.available === true && wallet?.mode === "live";
   // SEPA transfers on their way in: shown above the transactions until they arrive.
@@ -207,68 +219,70 @@ export function WalletTab({ agent }: { agent: Agent }) {
         </div>
       </section>
 
-      <SidePanel
+      <Popup
         open={panel === "send"}
         onOpenChange={(open) => setPanel(open ? "send" : null)}
         title="Send"
-        trigger={<span className="hidden" />}
       >
         {mustVerify ? (
           <VerifyToMoveMoney inPanel />
         ) : (
           <SendForm agent={agent} onDone={() => setPanel(null)} />
         )}
-      </SidePanel>
-      <SidePanel
+      </Popup>
+      <Popup
         open={panel === "add"}
         onOpenChange={(open) => setPanel(open ? "add" : null)}
         title={test ? "Add test money" : "Add money"}
-        trigger={<span className="hidden" />}
       >
         {test ? (
           <TestMoney agent={agent} onDone={() => setPanel(null)} />
         ) : (
-          <AddMoney agent={agent} />
+          <AddMoney
+            agent={agent}
+            onPrivyPay={(appId) => {
+              // Privy's own windows take over from here.
+              setPanel(null);
+              setPrivy((current) => ({ appId, request: (current?.request ?? 0) + 1 }));
+            }}
+          />
         )}
-      </SidePanel>
-      <SidePanel
+      </Popup>
+      <Popup
         open={panel === "withdraw"}
         onOpenChange={(open) => setPanel(open ? "withdraw" : null)}
         title={test ? "Withdraw test money" : "Withdraw"}
-        trigger={<span className="hidden" />}
       >
         {mustVerify ? (
           <VerifyToMoveMoney inPanel />
         ) : (
           <Withdraw agent={agent} balance={balance} onDone={() => setPanel(null)} />
         )}
-      </SidePanel>
-      <SidePanel
+      </Popup>
+      <Popup
         open={panel === "details"}
         onOpenChange={(open) => setPanel(open ? "details" : null)}
         title="Wallet details"
-        trigger={<span className="hidden" />}
       >
         <Details agent={agent} summary={summary.data} network={network} />
-      </SidePanel>
-      <SidePanel
+      </Popup>
+      <Popup
         open={!!shownPayin}
         onOpenChange={(open) => !open && setOpenPayin(null)}
         title="Bank transfer"
-        trigger={<span className="hidden" />}
       >
         {shownPayin && (
           <PayinDetails agent={agent} payin={shownPayin} onBack={() => setOpenPayin(null)} />
         )}
-      </SidePanel>
-      <SidePanel
-        open={!!openTx}
-        onOpenChange={(open) => !open && setOpenTx(null)}
-        title="Transaction"
-        trigger={<span className="hidden" />}
-      >
+      </Popup>
+      <Popup open={!!openTx} onOpenChange={(open) => !open && setOpenTx(null)} title="Transaction">
         {openTx && <TransactionDetail event={openTx} network={network} />}
-      </SidePanel>
+      </Popup>
+      {privy && (
+        <Suspense fallback={null}>
+          <PrivyCardFlow agent={agent} appId={privy.appId} dark={dark} request={privy.request} />
+        </Suspense>
+      )}
     </div>
   );
 }

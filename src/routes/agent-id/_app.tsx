@@ -5,6 +5,7 @@ import {
   ChevronsUpDown,
   ClipboardList,
   Code2,
+  Coins,
   Loader2,
   LogOut,
   Menu,
@@ -53,6 +54,7 @@ type NavPath =
   | "/agent-id/approvals"
   | "/agent-id/verify"
   | "/agent-id/developers"
+  | "/agent-id/pricing"
   | "/agent-id/reviews";
 
 type NavItem = {
@@ -86,6 +88,12 @@ const NAV: NavItem[] = [
     label: "Developers",
     icon: Code2,
     match: (p) => p.startsWith("/agent-id/developers"),
+  },
+  {
+    to: "/agent-id/pricing",
+    label: "Pricing",
+    icon: Coins,
+    match: (p) => p.startsWith("/agent-id/pricing"),
   },
 ];
 
@@ -218,7 +226,6 @@ function SignedInLayout() {
             void navigate({ to: "/agent-id" });
           }}
         />
-        <LegalLinks termsUrl={account.data?.config.legal?.termsUrl} />
       </div>
     </div>
   );
@@ -289,6 +296,9 @@ function SignedInLayout() {
             <Outlet />
           )}
         </main>
+        <footer className="px-4 pb-6 pt-2 text-center">
+          <LegalLinks termsUrl={account.data?.config.legal?.termsUrl} />
+        </footer>
       </div>
     </div>
   );
@@ -304,7 +314,6 @@ function AccountMenu({ onSignOut }: { onSignOut: () => void }) {
   const email =
     account.data?.user.email ?? (session.status === "signed-in" ? session.email : null) ?? "";
   const name = account.data?.user.name || email.split("@")[0] || "Account";
-  const verified = account.data?.person.status === "verified";
 
   return (
     <DropdownMenu>
@@ -316,14 +325,9 @@ function AccountMenu({ onSignOut }: { onSignOut: () => void }) {
           <Avatar name={name} />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-medium">{name}</span>
-            <span className="mt-0.5 flex gap-1">
-              {account.data && <Chip>{planLabel(account.data.plan)}</Chip>}
-              {account.data && (
-                <Chip tone={verified ? "success" : "neutral"}>
-                  {verified ? "Verified" : "Not verified"}
-                </Chip>
-              )}
-            </span>
+            {email && (
+              <span className="block truncate text-xs text-[var(--muted-foreground)]">{email}</span>
+            )}
           </span>
           <ChevronsUpDown className="h-4 w-4 shrink-0 text-[var(--muted-foreground)]" />
         </button>
@@ -378,7 +382,7 @@ const AGENT_ID_TERMS = "/legal/agent-id-terms";
 
 function LegalLinks({ termsUrl }: { termsUrl?: string | undefined }) {
   return (
-    <p className="mt-2 px-2 text-[11px] text-[var(--muted-foreground)]">
+    <p className="text-[11px] text-[var(--muted-foreground)]">
       <a
         href="/legal/terms-of-service"
         target="_blank"

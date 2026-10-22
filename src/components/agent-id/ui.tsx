@@ -21,7 +21,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -685,8 +691,9 @@ export function Avatar({
   );
 }
 
-// A panel that slides in from the side for one task (send money, add money…).
-export function SidePanel({
+// A pop-up in the middle of the screen for one task (add money, send,
+// verify…): the page stays where it was behind it.
+export function Popup({
   open,
   onOpenChange,
   trigger,
@@ -695,23 +702,22 @@ export function SidePanel({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  trigger: ReactNode;
+  trigger?: ReactNode;
   title: string;
   children: ReactNode;
 }) {
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetTrigger asChild>{trigger}</SheetTrigger>
-      <SheetContent
-        side="right"
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
+      <DialogContent
         aria-describedby={undefined}
-        className="flex w-full flex-col gap-0 overflow-y-auto bg-[var(--background)] p-0 sm:max-w-md"
+        className="flex max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-2xl bg-[var(--background)] p-0 sm:max-w-md"
       >
-        <SheetHeader className="border-b border-[var(--border)] px-6 py-4 text-left">
-          <SheetTitle className="text-lg">{title}</SheetTitle>
-        </SheetHeader>
-        <div className="flex-1 p-6">{children}</div>
-      </SheetContent>
-    </Sheet>
+        <DialogHeader className="border-b border-[var(--border)] px-6 py-4 text-left">
+          <DialogTitle className="text-lg">{title}</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto p-6">{children}</div>
+      </DialogContent>
+    </Dialog>
   );
 }

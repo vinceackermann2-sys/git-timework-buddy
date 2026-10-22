@@ -29,7 +29,7 @@ import {
   Field,
   LoadingRows,
   Notice,
-  SidePanel,
+  Popup,
   toastError,
 } from "../ui";
 
@@ -153,12 +153,7 @@ export function ContactsBook({
         </div>
       )}
 
-      <SidePanel
-        open={!!open}
-        onOpenChange={(next) => !next && setOpenId(null)}
-        title="Contact"
-        trigger={<span className="hidden" />}
-      >
+      <Popup open={!!open} onOpenChange={(next) => !next && setOpenId(null)} title="Contact">
         {open && (
           <div className="flex flex-col items-center text-center">
             <Avatar name={open.name} size="xl" colorful />
@@ -251,7 +246,7 @@ export function ContactsBook({
             )}
           </div>
         )}
-      </SidePanel>
+      </Popup>
 
       {draft && <ContactDialog agent={agent} draft={draft} onClose={() => setDraft(null)} />}
     </section>

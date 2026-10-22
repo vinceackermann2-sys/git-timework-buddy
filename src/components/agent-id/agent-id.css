@@ -123,8 +123,8 @@
 }
 .agent-id[data-theme="dark"] {
   --background: #171b23;
-    --aid-canvas: #171b23;
-    --aid-glow: rgb(233 210 255 / 0.07);
+  --aid-canvas: #171b23;
+  --aid-glow: rgb(233 210 255 / 0.07);
   --foreground: #f3f5fa;
   --card: #1c212a;
   --card-foreground: #f3f5fa;

@@ -175,6 +175,12 @@ export type PublicConfig = {
   passports: { available: boolean; lifetimeSeconds: number };
   // Bank transfers in and out of live wallets (Bridge); older servers leave it out.
   bank?: { available: boolean };
+  // No subscription: free machine hours, then Timewarp credits (bought in packs).
+  pricing?: {
+    computeFreeHours: number;
+    computeCreditsPerHour: number;
+    creditPacks: { credits: number; priceUsd: number }[];
+  };
   // True on development deployments: test resources, test money.
   testMode?: boolean;
   legal?: { termsVersion: string; termsUrl: string; privacyUrl: string };
@@ -225,6 +231,8 @@ export type Account = {
   plan: string;
   reviewer: boolean;
   agents: { count: number; max: number };
+  // Free machine time, in seconds: the allowance and what's been used.
+  compute?: { freeSeconds: number; usedSeconds: number };
   config: PublicConfig;
   // version/acceptedAt: what the user last accepted; current: the version in force.
   terms?: {

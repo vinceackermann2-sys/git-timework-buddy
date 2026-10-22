@@ -560,7 +560,7 @@ function Done({ claim, secret }: { claim: Claim; secret: string | null }) {
           Then try asking it: “What's my Agent ID email address?”
         </NextStep>
       ) : showCommand && secret ? (
-        <ConnectApp command={claimCommand(secret)} />
+        <ConnectModel command={claimCommand(secret)} />
       ) : claim.keyCollected ? (
         <NextStep title={`${name} is connected`}>
           You'll find everything it does in Agent ID.
@@ -574,10 +574,10 @@ function Done({ claim, secret }: { claim: Claim; secret: string | null }) {
   );
 }
 
-// Connecting the new Agent ID to the AI apps on this computer: one button that
+// Connecting the new Agent ID to the AI models on this computer: one button that
 // copies the setup line, and plain words on where to paste it. The line itself
 // stays out of the way until someone wants to see it.
-function ConnectApp({ command }: { command: string }) {
+function ConnectModel({ command }: { command: string }) {
   const [copied, setCopied] = useState(false);
   const [shown, setShown] = useState(false);
   const copy = async () => {
@@ -593,14 +593,14 @@ function ConnectApp({ command }: { command: string }) {
   return (
     <section className="rounded-2xl border border-[var(--border)] p-5 text-center">
       <div className="flex justify-center gap-2" aria-hidden="true">
-        {["claude-code", "codex", "cursor"].map((app) => (
+        {["claude", "chatgpt", "gemini", "grok"].map((app) => (
           <AppIcon key={app} app={app} size="lg" tooltip={false} />
         ))}
       </div>
-      <h2 className="mt-3 text-lg font-semibold">Connect it to your AI app</h2>
+      <h2 className="mt-3 text-lg font-semibold">Connect it to your AI model</h2>
       <p className="mx-auto mt-1 max-w-sm text-sm text-[var(--muted-foreground)]">
-        Copy this, paste it in Terminal on your computer and press Enter. It finds Claude Code,
-        Codex, Cursor and others by itself.
+        Copy this, paste it in Terminal on your computer and press Enter. It connects to Claude,
+        ChatGPT, Gemini, Grok and others on your computer by itself.
       </p>
       <Button
         size="lg"

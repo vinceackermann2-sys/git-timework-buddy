@@ -2,16 +2,18 @@
 // stops after. A terminal to run commands, and its files.
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, File, Folder, Loader2, Play, Square, SquareTerminal } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { AgentIdError } from "@/lib/agent-id/client";
-import { formatBytes, formatListTime } from "@/lib/agent-id/format";
+import { formatBytes, formatListTime, formatTimeLeft } from "@/lib/agent-id/format";
 import {
   queryKeys,
   shouldRetry,
+  useAccount,
   useEventPages,
   useMachineFiles,
   useRefreshAgent,
@@ -83,6 +85,7 @@ export function MachineTab({ agent }: { agent: Agent }) {
             {SIZE_LABELS[vm.details.size ?? ""] ?? vm.details.size ?? "Machine"} · Your agent's
             files stay on this computer.
           </p>
+          {live && <FreeTime />}
         </div>
         <Button
           variant="outline"
@@ -340,5 +343,31 @@ function History({ agent }: { agent: Agent }) {
         </>
       )}
     </Section>
+  );
+}
+
+// The account's free machine time, and where credits take over.
+function FreeTime() {
+  const account = useAccount();
+  const compute = account.data?.compute;
+  if (!compute) return null;
+  const left = Math.max(0, compute.freeSeconds - compute.usedSeconds);
+  return (
+    <p className="mt-1 text-sm">
+      {left > 0 ? (
+        <>
+          <span className="font-medium">{formatTimeLeft(left)}</span>
+          <span className="text-[var(--muted-foreground)]"> of free time left, then credits.</span>
+        </>
+      ) : (
+        <span className="text-[var(--muted-foreground)]">
+          The free hours are used. It runs on your credits:{" "}
+          <Link to="/agent-id/pricing" className="aid-link">
+            add credits
+          </Link>
+          .
+        </span>
+      )}
+    </p>
   );
 }

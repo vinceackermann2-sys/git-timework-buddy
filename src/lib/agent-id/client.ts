@@ -370,6 +370,9 @@ export function createAgentIdClient(options: ClientOptions) {
         `/v1/agents/${id(agentId)}/wallet/bank-payins/${id(payinId)}`,
         { method: "DELETE" },
       ),
+    // A pack of Timewarp credits: Stripe Checkout's page to pay on.
+    buyCredits: (credits: number) =>
+      request<{ url: string }>("/v1/account/credits", { body: { credits } }),
     bank: () => request<BankStatus>("/v1/account/bank"),
     startBankVerification: () => request<BankStatus>("/v1/account/bank/verify", { body: {} }),
     addBankAccount: (input: NewBankAccount) =>

@@ -267,7 +267,11 @@ test("live resources are opt-in per kind and gated by verification and plan", as
   assert.equal((await live("mail")).body.error.code, "provider_unavailable", "Listed but without its secrets.");
   local.setEnv({ RESEND_API_KEY: "re_test", TWILIO_ACCOUNT_SID: "AC1", TWILIO_AUTH_TOKEN: "t", PRIVY_APP_ID: "p", PRIVY_APP_SECRET: "s", STRIPE_SECRET_KEY: "sk_test_x" });
   assert.equal((await live("card")).body.error.code, "verification_required", "A live card needs a verified owner up front.");
-  assert.equal((await live("phone")).body.error.code, "plan_required", "A live number needs a paid plan.");
+  // No subscription is needed by default; a deployment can still reserve kinds for paid plans.
+  local.setEnv({ AGENT_ID_PAID_PLAN_KINDS: "phone" });
+  assert.equal((await live("phone")).body.error.code, "plan_required", "A live number needs a paid plan where one is set.");
+  local.setEnv({ AGENT_ID_PAID_PLAN_KINDS: "" });
+  assert.equal((await ok("GET", "/v1/config", {})).resources.phone.paidPlanRequired, false);
   const config = await ok("GET", "/v1/config", {});
   assert.equal(config.resources.wallet.verificationRequired, false, "Wallets come unverified; money leaving one needs a verified owner.");
   assert.equal(config.resources.card.verificationRequired, true);
@@ -472,6 +476,15 @@ test("MCP: an agent's own tools, only for what it has", async t => {
   assert.equal((await rpc({ id: 7, method: "tools/list" }, alice.session)).status, 403, "MCP acts as an agent.");
   assert.equal((await local.call("POST", "/mcp", { token: alice.session, headers: { "timewarp-agent": bot.id }, body: { jsonrpc: "2.0", id: 8, method: "ping" } })).status, 200);
   assert.equal((await local.call("GET", "/mcp", { token: bot.key })).status, 405);
+});
+
+test("Agent ID sells the Timewarp app's credit packs", () => {
+  const pricing = fs.readFileSync(path.join(__dirname, "../supabase/functions/agent-id/pricing.ts"), "utf8");
+  const credits = fs.readFileSync(path.join(__dirname, "../supabase/functions/_shared/credits.ts"), "utf8");
+  assert.equal(/PACK_CREDITS_PER_USD = (\d+)/.exec(pricing)?.[1], /PACK_CREDITS_PER_USD = (\d+)/.exec(credits)?.[1]);
+  const prices = source => /\[([\d,\s]+)\]\.map\(\(?priceUsd/.exec(source)?.[1] ?? /PACK_PRICES_USD = \[([\d,\s]+)\]/.exec(source)?.[1];
+  assert.ok(prices(credits));
+  assert.equal(prices(pricing).replace(/\s/g, ""), prices(credits).replace(/\s/g, ""), "The same packs at the same prices.");
 });
 
 test("machine time is charged in credits like AI usage", () => {

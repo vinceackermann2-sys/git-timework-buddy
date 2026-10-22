@@ -157,8 +157,10 @@ test("a live machine lists its files, which stay between commands", async t => {
   await ok("GET", `/v1/me/vm/files?path=${encodeURIComponent("/tmp/it's here")}`, { token: bot.key });
   assert.match(JSON.parse(net.find("POST", /executeShellCommand/)[1].body).command, /^p='\/tmp\/it'\\''s here';/, "Paths are quoted for the shell.");
   assert.equal((await ok("GET", "/v1/me/vm/commands", { token: bot.key })).commands.length, 0, "Listing files isn't a command in the history.");
-  const { rows } = await local.db.query("select status from test_reservations");
-  assert.ok(rows.length === 2 && rows.every(r => r.status === "settled"), "Each listing is paid like a command.");
+  // Each listing is machine time like a command: here from the free hours, so no credits.
+  const { rows: [allowance] } = await local.db.query("select used_seconds from agent_id_compute_allowance where user_id=$1", [alice.id]);
+  assert.ok(allowance.used_seconds >= 2, "Each listing counts as machine time.");
+  assert.equal((await local.db.query("select count(*)::int as n from test_reservations")).rows[0].n, 0);
 });
 
 test("operators register Stripe and Resend webhooks in one step", async t => {

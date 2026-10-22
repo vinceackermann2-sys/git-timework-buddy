@@ -321,7 +321,8 @@ test("live wallets: Privy server wallets holding USDC and USDT, shown as US doll
 test("live machines: Azure sandboxes started for each command and charged in credits", async t => {
   let state = "Creating";
   const azure = { AZURE_TENANT_ID: "tenant", AZURE_CLIENT_ID: "client", AZURE_CLIENT_SECRET: "secret", AZURE_SUBSCRIPTION_ID: "sub", AZURE_SANDBOX_RESOURCE_GROUP: "rg", AZURE_SANDBOX_GROUP: "agents" };
-  const { local, net, ok, agent } = await setup(t, { AGENT_ID_LIVE: "vm", ...azure });
+  // Credits from the first second here (the free hours are their own test).
+  const { local, net, ok, agent } = await setup(t, { AGENT_ID_LIVE: "vm", AGENT_ID_FREE_COMPUTE_HOURS: "0", ...azure });
   net.on("POST", /login\.microsoftonline\.com\/tenant\/oauth2\/v2\.0\/token$/, () => ({ access_token: "azure-token", expires_in: 3600 }));
   net.on("PUT", /\/sandboxGroups\/agents\/sandboxes\?api-version=/, () => ({ id: "sbx-1", state }));
   net.on("GET", /\/sandboxes\/sbx-1\?api-version=/, () => ({ id: "sbx-1", state }));
@@ -366,4 +367,51 @@ test("live machines: Azure sandboxes started for each command and charged in cre
   net.on("DELETE", /\/sandboxes\/sbx-1\?/, () => new Response(null, { status: 204 }));
   await ok("DELETE", `/v1/agents/${bot.id}/resources/vm`, { token: alice.session });
   assert.equal(net.find("DELETE", /sandboxes\/sbx-1/).length, 1);
+});
+
+test("free machine hours: an account's first hours are free, then machine time is paid in credits", async t => {
+  let state = "Suspended";
+  const azure = { AZURE_TENANT_ID: "tenant", AZURE_CLIENT_ID: "client", AZURE_CLIENT_SECRET: "secret", AZURE_SUBSCRIPTION_ID: "sub", AZURE_SANDBOX_RESOURCE_GROUP: "rg", AZURE_SANDBOX_GROUP: "agents" };
+  const { local, net, ok, agent } = await setup(t, { AGENT_ID_LIVE: "vm", ...azure });
+  net.on("POST", /login\.microsoftonline\.com\/tenant\/oauth2\/v2\.0\/token$/, () => ({ access_token: "azure-token", expires_in: 3600 }));
+  net.on("PUT", /\/sandboxes\?api-version=/, () => ({ id: "sbx-1", state: "Suspended" }));
+  net.on("GET", /\/sandboxes\/sbx-1\?api-version=/, () => ({ id: "sbx-1", state }));
+  net.on("POST", /\/sandboxes\/sbx-1\/resume\?/, () => { state = "Running"; return {}; });
+  net.on("POST", /\/sandboxes\/sbx-1\/stop\?/, () => { state = "Suspended"; return {}; });
+  net.on("POST", /\/sandboxes\/sbx-1\/executeShellCommand\?/, () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }));
+  const config = await ok("GET", "/v1/config");
+  assert.equal(config.pricing.computeFreeHours, 5, "Five free hours by default.");
+  assert.ok(config.pricing.computeCreditsPerHour > 0);
+  assert.deepEqual(config.pricing.creditPacks[0], { credits: 180, priceUsd: 15 });
+  const alice = await local.user({ credits: 0 });
+  const bot = await agent(alice, "Builder");
+  await ok("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "vm", mode: "live" } });
+  await ok("GET", "/v1/me/vm", { token: bot.key });
+  // No credits at all, and the command still runs: it's free time.
+  const run = await ok("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "echo ok" } });
+  assert.equal(run.stdout, "ok\n");
+  assert.equal((await local.db.query("select count(*)::int as n from test_reservations")).rows[0].n, 0, "Nothing reserved from credits.");
+  const used = async () => (await local.db.query("select used_seconds from agent_id_compute_allowance where user_id=$1", [alice.id])).rows[0].used_seconds;
+  const afterOne = await used();
+  assert.ok(afterOne >= 1 && afterOne < 60, `Only the time used counts (${afterOne} s), not the most it could have taken.`);
+  const account = await ok("GET", "/v1/account", { token: alice.session });
+  assert.deepEqual(account.compute, { freeSeconds: 5 * 3600, usedSeconds: afterOne });
+  const history = (await ok("GET", "/v1/me/vm/commands", { token: bot.key })).commands[0];
+  assert.deepEqual([history.data.freeSeconds > 0, history.data.credits], [true, 0]);
+  // The free hours used up: without credits nothing runs, and nothing is taken.
+  await local.db.query("update agent_id_compute_allowance set used_seconds = $2 where user_id=$1", [alice.id, 5 * 3600]);
+  const refused = await local.call("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "ls" } });
+  assert.equal(refused.body.error.code, "credits_required");
+  assert.match(refused.body.error.message, /5 free machine hours are used up/);
+  assert.equal(await used(), 5 * 3600);
+  // With credits, the time beyond the free hours is charged.
+  await local.db.query("update test_credits set credits=100 where user_id=$1", [alice.id]);
+  await ok("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "ls" } });
+  const { rows: [reservation] } = await local.db.query("select status, cost from test_reservations");
+  assert.equal(reservation.status, "settled");
+  assert.ok(Number(reservation.cost) > 0);
+  // The last free seconds go first, then credits; what isn't used goes back.
+  await local.db.query("update agent_id_compute_allowance set used_seconds = $2 where user_id=$1", [alice.id, 5 * 3600 - 2]);
+  await ok("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "ls" } });
+  assert.ok(await used() <= 5 * 3600 && await used() >= 5 * 3600 - 2);
 });

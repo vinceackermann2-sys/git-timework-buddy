@@ -121,7 +121,7 @@ export function ReadyList({
       {rows.map(({ kind, label, value, mono, copy, quiet }) => {
         return (
           <li key={kind} className="flex min-h-16 items-center gap-3.5 px-4 py-3">
-            <ResourceArt kind={kind === "card" ? "wallet" : kind} />
+            <ResourceArt kind={kind} />
             <span className="min-w-0 flex-1">
               <span className="block text-xs text-[var(--muted-foreground)]">{label}</span>
               <span

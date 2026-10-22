@@ -127,9 +127,9 @@ on its own.
 | Kind | Live provider | What the agent gets | Gates (defaults) |
 | --- | --- | --- | --- |
 | mail | Resend on `TIMEWARP_AGENT_MAIL_DOMAIN` (`agents.timewarpdev.com`), the domain the previous app's agent mail used | `<handle>@agents.timewarpdev.com`; send, receive, reply in thread; delivery status | — |
-| phone | Telnyx (or Twilio, `AGENT_ID_PHONE_PROVIDER`), on Timewarp's account. Telnyx: one messaging profile and one TeXML app made on first use, Ed25519-signed webhooks | A local number that can text and call; texts; calls that read a message aloud; incoming calls get a greeting and voicemail | paid plan |
+| phone | Telnyx (or Twilio, `AGENT_ID_PHONE_PROVIDER`), on Timewarp's account. Telnyx: one messaging profile and one TeXML app made on first use, Ed25519-signed webhooks | A local number that can text and call; texts; calls that read a message aloud; incoming calls get a greeting and voicemail | an application for now; will use credits |
 | wallet | Privy server wallets on Base holding USDC and USDT, shown together as US dollars (`AGENT_ID_WALLET_CHAIN=base`, or `base_sepolia` to try it on testnet). Privy keeps the keys; with gas sponsorship on, sends need no ETH | An 0x address; a USD balance; deposits and sends in its history; transfers to addresses, other agents and contacts | given at once; money leaves it only once the owner is verified |
-| card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner, paid plan |
+| card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner; an application for now, will use credits |
 | vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A computer that resumes for each command, stops after it and keeps its files. Set up the first time the agent uses it (its `vm_*` tools are always listed) | credits (time is charged) |
 
 **Ready on creation.** A new Agent ID, whether made on the dashboard, by
@@ -140,8 +140,8 @@ on its own.
   `none` turns either list off;
 - no computer: the agent gets one the first time it uses it.
 
-The usual checks still apply: the provider is live, and phone numbers need a
-paid plan. Wallets come before the owner is verified; money leaves one only
+The usual checks still apply: the provider is live (and a paid plan, for kinds
+a deployment lists in `AGENT_ID_PAID_PLAN_KINDS`; none by default). Wallets come before the owner is verified; money leaves one only
 after (`AGENT_ID_VERIFY_TO_SEND`, on by default). A kind that can't be given now is
 listed in the response's `setup.skipped` with its reason, and never stops the
 agent being made. Providers answer in the background (`EdgeRuntime.waitUntil`).
@@ -236,9 +236,20 @@ cards and machines go back to their provider.
   released.
 - **Rate limits** apply to mail, texts, calls, transfers, card reveals, machine
   commands and passports. They use the shared `timewarp_consume_rate_limit`.
-- **Machine time is paid in credits.** Each command reserves the most it can
-  cost before it runs, at the same 2.5 × provider cost and 0.125 USD per credit
-  as AI usage, then settles what it actually used.
+- **Pricing: no subscription.** Mail and wallets are free; wallet top-ups and
+  bank withdrawals carry the payment provider's fee. Every account gets
+  `AGENT_ID_FREE_COMPUTE_HOURS` (5) hours of machine time free
+  (`agent_id_compute_allowance`, taken and given back atomically), then
+  machine time is paid in Timewarp credits. Each command first takes the most
+  it can use from the free time, reserves the rest from credits, and gives
+  back what it didn't use; credits are charged at the same 2.5 × provider cost
+  and 0.125 USD per credit as AI usage. Phone numbers and cards will use
+  credits when they open. `/agent-id/pricing` shows this, and owners buy
+  credits there: `POST /v1/account/credits {credits}` opens Stripe Checkout for
+  one of the Timewarp app's packs (`pricing.ts`, kept equal to
+  `_shared/credits.ts` by a test, and its Stripe price), and the existing
+  `stripe-webhook` adds the credits once paid. `/v1/config` has `pricing`, and
+  `/v1/account` has the account's `compute` use.
 - **Verification (KYC/KYB).**
   - A person verifies once, the first time they move money out of a wallet:
     a document and a matching live selfie. Where Bridge moves money to and
@@ -390,7 +401,8 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | `AGENT_ID_LIVE` | Comma list of the kinds that are live, e.g. `mail,vm`. Empty means everything is test. |
 | `AGENT_ID_REQUIRE_VERIFICATION` | Kinds whose live resources need a verified owner up front (default `card`). Add `agent` to require verification before any agent at all. `all` means everything. |
 | `AGENT_ID_VERIFY_TO_SEND` | `false` lets money leave live wallets before the owner is verified (on by default) |
-| `AGENT_ID_PAID_PLAN_KINDS` | Live kinds that need Pro/Max/Ultra (default `phone,card`) |
+| `AGENT_ID_PAID_PLAN_KINDS` | Live kinds that need Pro/Max/Ultra (none by default: Agent ID has no subscription) |
+| `AGENT_ID_FREE_COMPUTE_HOURS` | Free machine hours per account before credits (default 5) |
 | `AGENT_ID_KYC` | Bridge's check wherever bank transfers are on; otherwise `stripe_identity` (recommended), else manual review. `test` verifies at once: development only. |
 | `AGENT_ID_KYB` | Bridge's business check wherever bank transfers are on; otherwise manual review. `manual` keeps manual review. `test` is for development only. |
 | `AGENT_ID_REVIEWERS` | User ids of Timewarp staff who review verifications |
@@ -528,9 +540,9 @@ Then, once, in the browser:
   providers named above (Resend, Twilio, Privy, Stripe, Microsoft). Update
   `/legal/privacy-policy` before launch.
 - **Costs.**
-  - Live phone numbers have monthly fees and are gated to paid plans; there is
-    no per-number charge in credits yet.
-  - Machine time is charged in credits.
+  - Live phone numbers have monthly fees; they're an application for now and
+    will be charged in credits.
+  - Machine time is free for the first hours, then charged in credits.
   - Mail and texts are rate limited but not charged.
 - **Abuse.** Live outbound mail and texts can be misused for spam. Consider
   requiring verification for `mail` and `phone` too, which is one setting.

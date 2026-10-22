@@ -24,6 +24,9 @@ function AgentIdLanding() {
       <header className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
         <Brand />
         <div className="flex items-center gap-1">
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/agent-id/pricing">Pricing</Link>
+          </Button>
           {!signedIn && (
             <Button asChild variant="ghost" size="sm">
               <Link to="/agent-id/sign-in">Sign in</Link>

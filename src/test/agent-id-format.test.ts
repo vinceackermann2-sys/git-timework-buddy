@@ -12,6 +12,7 @@ import {
   formatCents,
   formatMoney,
   formatRelativeTime,
+  formatTimeLeft,
   liveAvailability,
   parseAmount,
   parseList,
@@ -262,5 +263,14 @@ describe("balance history", () => {
     });
     expect(points).toEqual([null, null, 500, 700, 700]);
     expect(balanceTrend(points)).toBe("up");
+  });
+});
+
+describe("free machine time left", () => {
+  it("reads as hours and minutes", () => {
+    expect(formatTimeLeft(5 * 3600)).toBe("5 h");
+    expect(formatTimeLeft(4 * 3600 + 32 * 60 + 59)).toBe("4 h 32 min");
+    expect(formatTimeLeft(45 * 60)).toBe("45 min");
+    expect(formatTimeLeft(-10)).toBe("0 min");
   });
 });
