@@ -21,6 +21,7 @@ import { agentCommand, installCommand, PACKAGE } from './vault/shell.ts';
 
 type Op = (ctx: Ctx, who: AgentCaller, input: any) => Promise<unknown>;
 const actor = (who: AgentCaller) => who.via === 'owner' ? 'owner' as const : 'agent' as const;
+import { approvalUrl, askFirst, mailOwner } from './ask.ts';
 
 async function seen(ctx: Ctx, agent: AgentRow) {
   if (agent.last_seen_at && ctx.now() - Date.parse(agent.last_seen_at) < 60_000) return;
@@ -159,6 +160,8 @@ const mailSend: Op = async (ctx, who, input) => {
   const body = str(input.text, 100_000, 'text', { required: true, multiline: true });
   const html = input.html ? str(input.html, 200_000, 'html', { multiline: true }) : undefined;
   const files = await ownFiles(ctx, who.agent.id, input.attachments);
+  const waiting = await askFirst(ctx, who, 'mail', 'mailSend', input, { to, cc, subject, preview: body.slice(0, 500), attachments: files.length }, resource.mode);
+  if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `mail:${who.agent.id}`, 10, 200, 'emails');
   let status = 'sent', providerRef: string | null = null;
   const delivered: string[] = [];
@@ -193,6 +196,8 @@ const callList: Op = async (ctx, who, input) => { await resourceFor(ctx, who.age
 const smsSend: Op = async (ctx, who, input) => {
   const resource = await resourceFor(ctx, who.agent.id, 'phone');
   const to = phoneNumber(input.to), body = str(input.text, 1600, 'text', { required: true, multiline: true });
+  const waiting = await askFirst(ctx, who, 'sms', 'smsSend', input, { to, text: body }, resource.mode);
+  if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `sms:${who.agent.id}`, 10, 100, 'texts');
   let status: string, providerRef: string | null = null;
   if (resource.mode === 'live') ({ status, providerRef } = await sendSms(ctx, resource, to, body));
@@ -209,6 +214,8 @@ const smsSend: Op = async (ctx, who, input) => {
 const callPlace: Op = async (ctx, who, input) => {
   const resource = await resourceFor(ctx, who.agent.id, 'phone');
   const to = phoneNumber(input.to), say = str(input.say, 1000, 'say', { required: true, multiline: true });
+  const waiting = await askFirst(ctx, who, 'call', 'callPlace', input, { to, say }, resource.mode);
+  if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `call:${who.agent.id}`, 3, 30, 'calls');
   let status: string, providerRef: string | null = null;
   if (resource.mode === 'live') ({ status, providerRef } = await placeCall(ctx, resource, to, say));
@@ -239,6 +246,8 @@ const contactSave: Op = async (ctx, who, input) => {
     note: input.note ? str(input.note, 1000, 'note', { multiline: true }) : null,
     updated_at: new Date(ctx.now()).toISOString(),
   };
+  const waiting = await askFirst(ctx, who, 'contacts', 'contactSave', input, { change: input.id ? 'update' : 'add', name: fields.name || null, email: fields.email, phone: fields.phone, wallet: fields.wallet });
+  if (waiting) return waiting;
   if (input.id) {
     const patch = Object.fromEntries(Object.entries(fields).filter(([key]) => key === 'updated_at' || input[key] !== undefined));
     const row = checked(await ctx.admin.from('agent_id_contacts').update(patch).eq('id', str(input.id, 60, 'id')).eq('agent_id', who.agent.id).select('*').maybeSingle());
@@ -250,7 +259,12 @@ const contactSave: Op = async (ctx, who, input) => {
   return { contact: contactView(checked(await ctx.admin.from('agent_id_contacts').insert({ agent_id: who.agent.id, ...fields }).select('*').single())) };
 };
 const contactDelete: Op = async (ctx, who, input) => {
-  const rows = checked(await ctx.admin.from('agent_id_contacts').delete().eq('id', str(input.id, 60, 'id', { required: true })).eq('agent_id', who.agent.id).select('id')) as any[];
+  const id = str(input.id, 60, 'id', { required: true });
+  const contact = checked(await ctx.admin.from('agent_id_contacts').select('*').eq('id', id).eq('agent_id', who.agent.id).maybeSingle()) as any;
+  if (!contact) throw fail(404, 'not_found', 'No contact with that id.');
+  const waiting = await askFirst(ctx, who, 'contacts', 'contactDelete', { id }, { change: 'delete', name: contact.name });
+  if (waiting) return waiting;
+  const rows = checked(await ctx.admin.from('agent_id_contacts').delete().eq('id', id).eq('agent_id', who.agent.id).select('id')) as any[];
   if (!rows?.length) throw fail(404, 'not_found', 'No contact with that id.');
   return { deleted: true };
 };
@@ -479,39 +493,27 @@ export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; a
 // --- Approvals ------------------------------------------------------------------
 // Payments above the approval amount wait for the owner, who answers on the
 // signed-in website (or from the email link), never from the agent's side.
-const approvalUrl = (ctx: Ctx, id: string) => `${ctx.config.siteUrl}/agent-id/approvals?id=${id}`;
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
-const escapeHtml = (value: string) => value.replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]!));
 
-async function notifyApproval(ctx: Ctx, who: AgentCaller, amount: number, to: string, memo: string | null, url: string) {
-  const key = ctx.config.env('RESEND_API_KEY');
-  if (!key) return;
-  const { data } = await ctx.admin.auth.admin.getUserById(who.userId);
-  const email = data?.user?.email;
-  if (!email) return;
-  const what = `${who.agent.name} wants to send ${dollars(amount)} to ${to}`;
-  const response = await ctx.fetch('https://api.resend.com/emails', {
-    method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: `Timewarp Agent ID <no-reply@${ctx.config.mailDomain}>`, to: [email],
-      subject: `Approve ${dollars(amount)} from ${who.agent.name}?`,
-      text: `${what}${memo ? ` (${memo})` : ''}.\n\nApprove or decline it: ${url}\n\nIt expires in 24 hours. Nothing is sent unless you approve.`,
-      html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:440px;margin:0 auto;padding:24px;color:#1c1b22"><p style="font-size:15px;margin:0 0 6px">${escapeHtml(what)}</p>${memo ? `<p style="font-size:13px;color:#6b6878;margin:0 0 18px">"${escapeHtml(memo)}"</p>` : ''}<a href="${escapeHtml(url)}" style="display:inline-block;background:#6d4bd8;color:#fff;text-decoration:none;font-weight:600;padding:11px 20px;border-radius:10px">Review payment</a><p style="font-size:12px;color:#6b6878;margin-top:18px">It expires in 24 hours. Nothing is sent unless you approve.</p></div>`,
-      tags: [{ name: 'agent_id', value: 'approval' }],
-    }),
-    signal: AbortSignal.timeout(20_000),
+function notifyApproval(ctx: Ctx, who: AgentCaller, amount: number, to: string, memo: string | null, url: string) {
+  return mailOwner(ctx, who, {
+    subject: `Approve ${dollars(amount)} from ${who.agent.name}?`,
+    line: `${who.agent.name} wants to send ${dollars(amount)} to ${to}.`,
+    quote: memo, button: 'Review payment', url, note: 'It expires in 24 hours. Nothing is sent unless you approve.',
   });
-  if (!response.ok) console.error('[agent-id] approval mail', response.status);
 }
 
 const approvalView = async (ctx: Ctx, row: any) => {
   const expired = row.status === 'pending' && Date.parse(row.expires_at) <= ctx.now();
   const transfer = row.result?.event ? await eventById(ctx, row.result.event).catch(() => null) : null;
+  const action = row.kind === 'action';
   return {
     approval: {
-      id: row.id, status: expired ? 'expired' : row.status, amount: usd(Number(row.request?.amount) || 0), to: row.request?.to || null,
-      memo: row.request?.memo || null, reason: row.reason, createdAt: row.created_at, decidedAt: row.decided_at, expiresAt: row.expires_at,
+      id: row.id, status: expired ? 'expired' : row.status, kind: action ? row.request?.kind : 'payment',
+      ...(action ? { summary: row.request?.summary || {} } : { amount: usd(Number(row.request?.amount) || 0), to: row.request?.to || null, memo: row.request?.memo || null }),
+      reason: row.reason, createdAt: row.created_at, decidedAt: row.decided_at, expiresAt: row.expires_at,
     },
+    ...(action && row.result ? { result: row.result } : {}),
     approveUrl: approvalUrl(ctx, row.id),
     ...(transfer ? { transfer } : {}),
   };
@@ -529,7 +531,7 @@ const approvalWithdraw: Op = async (ctx, who, input) => {
   const row = await ownApproval(ctx, who, input.id ?? input.approval);
   const rows = checked(await ctx.admin.from('agent_id_approvals').update({ status: 'denied', reason: 'Withdrawn by the agent', decided_at: new Date(ctx.now()).toISOString() }).eq('id', row.id).eq('status', 'pending').select('*')) as any[];
   if (!rows?.length) throw fail(409, 'not_pending', 'This request was already answered.');
-  await audit(ctx, who.userId, who.agent.id, actor(who), 'wallet.approval_withdrawn', { approval: row.id });
+  await audit(ctx, who.userId, who.agent.id, actor(who), row.kind === 'action' ? 'approval.withdrawn' : 'wallet.approval_withdrawn', { approval: row.id });
   return approvalView(ctx, rows[0]);
 };
 

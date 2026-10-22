@@ -41,7 +41,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { api } from "@/lib/agent-id/session";
 import { planLabel } from "@/lib/agent-id/format";
 import { queryKeys, useAccount, useApprovals } from "@/lib/agent-id/queries";
-import { approvalAmount } from "@/components/agent-id/ApprovalList";
+import { approvalText } from "@/components/agent-id/ApprovalList";
 import { counterpartyLabel } from "@/lib/agent-id/format";
 import { toast } from "sonner";
 import { useSession } from "@/lib/agent-id/session";
@@ -185,8 +185,8 @@ function SignedInLayout() {
     for (const a of list) {
       if (seenApprovals.current.has(a.id)) continue;
       seenApprovals.current.add(a.id);
-      toast(`${a.agentName ?? "Your agent"} wants to send ${approvalAmount(a)}`, {
-        description: `To ${counterpartyLabel(a.request.to)}`,
+      toast(`${a.agentName ?? "Your agent"} wants to ${approvalText(a)}`, {
+        ...(a.kind === "action" ? {} : { description: `To ${counterpartyLabel(a.request.to)}` }),
         duration: 20_000,
         action: {
           label: "Review",

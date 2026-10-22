@@ -76,6 +76,10 @@ test("live phone through Telnyx: a number with texts and calls both ways, voicem
   assert.equal(texts.messages.length, 1, "Retries are recorded once.");
   assert.deepEqual([texts.messages[0].text, texts.messages[0].counterparty], ["Is the shop open?", "+46701234567"]);
 
+  // Real texts and calls wait for the owner unless they say otherwise.
+  assert.equal((await ok("POST", "/v1/me/sms", { token: bot.key, body: { to: "+46701234567", text: "Yes, until 6." } })).status, "needs_approval");
+  await ok("PATCH", `/v1/agents/${bot.id}`, { token: alice.session, body: { askFirst: { sms: false, call: false } } });
+
   // Outgoing text and its delivery report.
   net.on("POST", /api\.telnyx\.com\/v2\/messages$/, () => ({ data: { id: "msg_out_1", to: [{ phone_number: "+46701234567", status: "queued" }] } }));
   await ok("POST", "/v1/me/sms", { token: bot.key, body: { to: "+46701234567", text: "Yes, until 6." } });

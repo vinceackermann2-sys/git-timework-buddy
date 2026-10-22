@@ -13,6 +13,7 @@
 // tool's config, and tells Agent ID where the agent comes from (origin).
 // What it wrote is recorded in ~/.timewarp-id/attachments.json so `detach`
 // undoes exactly that, and running attach again updates in place.
+import { offerMemory } from './memory.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -1013,6 +1014,8 @@ export async function attach(ctx) {
   const dashboard = ctx.json ? null : dashboardOf(await siteOf(ctx));
   ctx.print({ attached: results.map(r => ({ ref: r.target.ref, tool: r.target.tool, label: r.target.label, origin: { app: r.target.app, detail: r.target.detail ?? null }, agent: r.agent, has: r.has, given: r.given, wrote: r.wrote.map(([file, what]) => ({ file, what })), notes: [...r.notes, ...(r.restart ? [r.restart] : [])] })) },
     () => finished(results, { dashboard }));
+  // The first time, in a terminal: the memory already on this computer, offered once.
+  if (results.length) await offerMemory(ctx, results[0].agent);
 }
 
 // --- Detach -------------------------------------------------------------------------------

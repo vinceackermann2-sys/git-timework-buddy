@@ -2,7 +2,7 @@ import { createFileRoute, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ShieldCheck } from "lucide-react";
 
-import { PendingApprovals, approvalAmount } from "@/components/agent-id/ApprovalList";
+import { PendingApprovals, approvalAmount, approvalText } from "@/components/agent-id/ApprovalList";
 import {
   Chip,
   Empty,
@@ -50,7 +50,7 @@ function ApprovalsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Approvals"
-        meta="Payments your agents want to make above the limit you set."
+        meta="Payments above the limits you set, and what you asked your agents to check with you first."
       />
       <Section title="Waiting for you" flush>
         {pending.isPending ? (
@@ -59,8 +59,8 @@ function ApprovalsPage() {
           <ErrorState error={pending.error} onRetry={() => void pending.refetch()} />
         ) : pending.data.length === 0 ? (
           <Empty icon={ShieldCheck}>
-            Nothing waiting for you. When an agent wants to pay more than its limit, it shows up
-            here.
+            Nothing waiting for you. When an agent wants to pay more than its limit, or do something
+            you asked it to check with you first, it shows up here.
           </Empty>
         ) : (
           <PendingApprovals approvals={pending.data} highlight={highlight} />
@@ -80,15 +80,24 @@ function ApprovalsPage() {
                   key={a.id}
                   {...(a.id === highlight ? { className: "bg-[var(--accent)]" } : {})}
                 >
-                  <p className="min-w-0 break-words text-sm">
-                    <span className="font-semibold">{approvalAmount(a)}</span>
-                    <span className="text-[var(--muted-foreground)]"> from </span>
-                    {a.agentName ?? a.agentId}
-                    <span className="text-[var(--muted-foreground)]"> to </span>
-                    {counterpartyLabel(a.request.to)}
-                  </p>
+                  {a.kind === "action" ? (
+                    <p className="min-w-0 break-words text-sm">
+                      {a.agentName ?? a.agentId}
+                      <span className="text-[var(--muted-foreground)]">: {approvalText(a)}</span>
+                    </p>
+                  ) : (
+                    <p className="min-w-0 break-words text-sm">
+                      <span className="font-semibold">{approvalAmount(a)}</span>
+                      <span className="text-[var(--muted-foreground)]"> from </span>
+                      {a.agentName ?? a.agentId}
+                      <span className="text-[var(--muted-foreground)]"> to </span>
+                      {counterpartyLabel(a.request.to)}
+                    </p>
+                  )}
                   <span className="flex shrink-0 items-center gap-2 text-xs text-[var(--muted-foreground)]">
-                    <Chip tone={tone}>{label}</Chip>
+                    <Chip tone={tone}>
+                      {a.kind === "action" && a.status === "completed" ? "Done" : label}
+                    </Chip>
                     <TimeAgo iso={a.decidedAt ?? a.createdAt} />
                   </span>
                 </Row>

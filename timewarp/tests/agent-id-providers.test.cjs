@@ -153,6 +153,11 @@ test("live phone: a Twilio number with forge-proof webhooks for texts, calls and
   assert.equal(texts.messages.length, 1, "Twilio's retries are recorded once.");
   assert.equal(texts.messages[0].text, "Is the shop open?");
 
+  // Real texts and calls wait for the owner unless they say otherwise.
+  const asked = await ok("POST", "/v1/me/sms", { token: bot.key, body: { to: "+46701234567", text: "Yes, until 6." } });
+  assert.equal(asked.status, "needs_approval");
+  assert.equal(net.find("POST", /Messages\.json$/).length, 0, "Nothing sent while it waits.");
+  await ok("PATCH", `/v1/agents/${bot.id}`, { token: alice.session, body: { askFirst: { sms: false, call: false } } });
   net.on("POST", /Messages\.json$/, () => ({ sid: "SMout1", status: "queued" }));
   await ok("POST", "/v1/me/sms", { token: bot.key, body: { to: "+46701234567", text: "Yes, until 6." } });
   const message = formOf(net.find("POST", /Messages\.json$/)[0].body);

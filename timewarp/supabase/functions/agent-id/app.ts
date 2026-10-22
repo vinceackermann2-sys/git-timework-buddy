@@ -15,6 +15,7 @@ import type { AgentRow, Ctx } from './context.ts';
 import { ownerRoutes } from './owner.ts';
 import { agentRoutes, RAW_ROUTES } from './agent.ts';
 import { vaultAgentRoutes } from './vault.ts';
+import { memoryAgentRoutes } from './memory.ts';
 import { publicAllowedSigners, publicVerify, relyingPartyRoutes } from './relying.ts';
 import { handleMcp } from './mcp.ts';
 import { handleWebhook } from './webhooks.ts';
@@ -126,9 +127,12 @@ async function claimRoute(ctx: Ctx, req: Request, path: string) {
 
 export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch; now?: () => number; sleep?: (ms: number) => Promise<void>; signIn?: Ctx['signIn']; background?: Ctx['background'] }) {
   const config = loadConfig(deps.env);
-  const ctx: Ctx = { admin: deps.admin, config, fetch: deps.fetch || fetch, now: deps.now || Date.now, sleep: deps.sleep || (ms => new Promise(r => setTimeout(r, ms))), signIn: deps.signIn, background: deps.background || (work => { work.catch(error => console.error('[agent-id] background', error?.message)); }) };
+  const shared: Ctx = { admin: deps.admin, config, fetch: deps.fetch || fetch, now: deps.now || Date.now, sleep: deps.sleep || (ms => new Promise(r => setTimeout(r, ms))), signIn: deps.signIn, background: deps.background || (work => { work.catch(error => console.error('[agent-id] background', error?.message)); }) };
   let setupStarted = false;
   return async (req: Request): Promise<Response> => {
+    // Each request gets its own context: what one sets (the app and model it
+    // came through, an approval it carries out) never reaches another.
+    const ctx: Ctx = { ...shared };
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
     // Registers the deployment's own webhooks once, so mail and identity
     // results arrive without anyone setting them up by hand.
@@ -153,7 +157,7 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
         return await handleMcp(ctx, caller, req);
       }
       const caller = await authenticate(ctx, req);
-      const routes: Route<any>[] = caller.kind === 'agent' ? [...agentRoutes, ...vaultAgentRoutes] : caller.kind === 'owner' ? ownerRoutes : relyingPartyRoutes;
+      const routes: Route<any>[] = caller.kind === 'agent' ? [...agentRoutes, ...vaultAgentRoutes, ...memoryAgentRoutes] : caller.kind === 'owner' ? ownerRoutes : relyingPartyRoutes;
       for (const [method, pattern, handler] of routes) {
         if (method !== req.method) continue;
         const params = match(pattern, path);
@@ -162,7 +166,7 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
         const result = await handler(ctx, caller, input, params, req);
         return result instanceof Response ? result : json(result);
       }
-      const other = [ownerRoutes, agentRoutes, vaultAgentRoutes, relyingPartyRoutes].some(list => list.some(([, pattern]) => match(pattern, path)));
+      const other = [ownerRoutes, agentRoutes, vaultAgentRoutes, memoryAgentRoutes, relyingPartyRoutes].some(list => list.some(([, pattern]) => match(pattern, path)));
       throw other ? fail(403, 'wrong_credential', caller.kind === 'agent' ? 'Agents can\'t use this endpoint; it needs the owner.' : caller.kind === 'owner' ? 'This endpoint acts as an agent: use an agent key or a Timewarp-Agent header.' : 'Company secrets can only check passports and signing keys.') : fail(404, 'not_found', 'This endpoint does not exist.');
     } catch (error) {
       if (error instanceof ApiError) return json({ error: { code: error.code, message: error.message, ...error.extra } }, error.status);

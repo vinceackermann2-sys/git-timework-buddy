@@ -12,6 +12,7 @@ import { checked, fail, fromBase64, randomId, str, toBase64 } from './util.ts';
 import type { AgentCaller, Owner, Route } from './app.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
 import { audit, rateLimit, resourceFor } from './shared.ts';
+import { askFirst } from './ask.ts';
 import { machine, metered } from './agent.ts';
 import { giveResource } from './provisioning.ts';
 import { vaultOpCommand, vaultSetupCommand } from './vault/shell.ts';
@@ -49,8 +50,10 @@ async function unlockOf(ctx: Ctx, vm: ResourceRow) {
   const kept = checked(await ctx.admin.from('agent_id_vault_unlock').select('half').eq('resource_id', vm.id).maybeSingle()) as any;
   if (kept?.half) return String(kept.half);
   const half = toBase64(crypto.getRandomValues(new Uint8Array(32)));
-  checked(await ctx.admin.from('agent_id_vault_unlock').upsert({ resource_id: vm.id, half }, { onConflict: 'resource_id', ignoreDuplicates: true }));
-  return String((checked(await ctx.admin.from('agent_id_vault_unlock').select('half').eq('resource_id', vm.id).single()) as any).half);
+  const made = await ctx.admin.from('agent_id_vault_unlock').insert({ resource_id: vm.id, half }).select('half').single();
+  // Made at the same moment by another request: that one stands.
+  if (made.error?.code === '23505') return String((checked(await ctx.admin.from('agent_id_vault_unlock').select('half').eq('resource_id', vm.id).single()) as any).half);
+  return String((checked(made) as any).half);
 }
 
 async function run(ctx: Ctx, who: AgentCaller, vm: ResourceRow, command: string, timeoutSeconds = 120) {
@@ -219,6 +222,8 @@ const vaultSave: Op = async (ctx, who, input) => {
   const vm = await readyVault(ctx, who.agent);
   const label = str(input.label, 100, 'label', { required: true }).trim();
   const sealed = sealedOf(input);
+  const waiting = await askFirst(ctx, who, 'vault', 'vaultSave', { label, envelope: sealed }, { label });
+  if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `vault-save:${who.agent.id}`, 20, 200, 'vault saves');
   return storeItem(ctx, who, vm, label, sealed, 'agent');
 };
@@ -252,7 +257,7 @@ const vaultRequest: Op = async (ctx, who, input) => {
   return result;
 };
 
-export const vaultOps: Record<string, Op> = { vaultList, vaultRequest };
+export const vaultOps: Record<string, Op> = { vaultList, vaultRequest, vaultSave };
 
 export const vaultAgentRoutes: Route<AgentCaller>[] = [
   ['GET', '/v1/me/vault', (ctx, who, input) => vaultList(ctx, who, input)],

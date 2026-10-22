@@ -107,12 +107,28 @@ export function mascotOf(key: string) {
   return MASCOTS[hash % MASCOTS.length];
 }
 
+// Which of an agent's actions wait for its owner's yes (ask.ts). Unless the
+// owner chose otherwise, texts and calls to real numbers ask first.
+export const ASK_KINDS = ['mail', 'sms', 'call', 'contacts', 'vault'] as const;
+export type AskKind = typeof ASK_KINDS[number];
+export function asksFirst(agent: AgentRow, kind: AskKind, mode?: string) {
+  const chosen = agent.ask_first?.[kind];
+  if (typeof chosen === 'boolean') return chosen;
+  return (kind === 'sms' || kind === 'call') && mode === 'live';
+}
+// Each kind as it applies now (texts and calls with the phone's mode).
+export function askFirstView(agent: AgentRow, resources: ResourceRow[]) {
+  const phone = resources.find(r => r.agent_id === agent.id && r.kind === 'phone' && r.status !== 'released');
+  return Object.fromEntries(ASK_KINDS.map(kind => [kind, asksFirst(agent, kind, kind === 'sms' || kind === 'call' ? phone?.mode : undefined)])) as Record<AskKind, boolean>;
+}
+
 export function agentView(ctx: Ctx, agent: AgentRow, resources: ResourceRow[] = [], apps?: Map<string, any[]>) {
   return {
     id: agent.id, name: agent.name, handle: agent.handle, mascot: agent.mascot || mascotOf(agent.id), runtime: agent.runtime, origin: originView(agent), apps: appsView(agent, apps?.get(agent.id)), status: agent.status,
     organizationId: agent.workspace_id, desktopAgentId: agent.desktop_agent_id,
     gitPrincipal: principalOf(ctx, agent),
     createdAt: agent.created_at, lastSeenAt: agent.last_seen_at,
+    askFirst: askFirstView(agent, resources),
     resources: Object.fromEntries(resources.filter(r => r.agent_id === agent.id).map(r => [r.kind, resourceView(r)])),
   };
 }

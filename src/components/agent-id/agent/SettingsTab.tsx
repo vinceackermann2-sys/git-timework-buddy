@@ -1,5 +1,5 @@
-// One agent's settings: its details, how to add it to an app, its keys, what
-// it has, and pausing or revoking it.
+// One agent's settings: its details, what waits for the owner's yes, how to
+// add it to an app, its keys, what it has, and pausing or revoking it.
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -33,7 +34,13 @@ import {
 } from "@/lib/agent-id/format";
 import { useAccount, useRefreshAgent } from "@/lib/agent-id/queries";
 import { API_BASE, api } from "@/lib/agent-id/session";
-import { KINDS, type AgentDetail, type Kind, type Mascot } from "@/lib/agent-id/types";
+import {
+  KINDS,
+  type AgentDetail,
+  type AskKind,
+  type Kind,
+  type Mascot,
+} from "@/lib/agent-id/types";
 import { cn } from "@/lib/utils";
 import {
   AgentAvatar,
@@ -63,10 +70,60 @@ export function SettingsTab({ detail }: { detail: AgentDetail }) {
   return (
     <div className="space-y-6">
       <Details detail={detail} />
+      {!revoked && <AskFirst detail={detail} />}
       {!revoked && <AddToApp detail={detail} />}
       <Resources detail={detail} />
       {!revoked && <Access detail={detail} />}
     </div>
+  );
+}
+
+// Which of its actions wait for the owner's yes. Payments follow the wallet's
+// approval amount instead.
+const ASKS: { kind: AskKind; label: string }[] = [
+  { kind: "mail", label: "Sending email" },
+  { kind: "sms", label: "Sending texts" },
+  { kind: "call", label: "Making calls" },
+  { kind: "contacts", label: "Changing contacts" },
+  { kind: "vault", label: "Saving to its vault" },
+];
+
+function AskFirst({ detail }: { detail: AgentDetail }) {
+  const { agent } = detail;
+  const refresh = useRefreshAgent();
+  const set = useMutation({
+    mutationFn: ({ kind, value }: { kind: AskKind; value: boolean }) =>
+      api.updateAgent(agent.id, { askFirst: { [kind]: value } }),
+    onSuccess: async (_result, { value }) => {
+      toast.success(value ? "It asks you first now" : "It no longer asks first");
+      await refresh(agent.id);
+    },
+    onError: (error) => toastError(error),
+  });
+  // Older servers don't have it.
+  if (!agent.askFirst) return null;
+  return (
+    <Section title="Ask me first">
+      <Muted>
+        Before {agent.name} does these, it waits for your yes: you're emailed, and you answer under
+        Approvals. Payments follow the wallet's approval amount.
+      </Muted>
+      <ul className="mt-2 divide-y divide-[var(--border)]">
+        {ASKS.map(({ kind, label }) => (
+          <li key={kind} className="flex items-center justify-between gap-3 py-2.5">
+            <label htmlFor={`ask-${kind}`} className="text-sm">
+              {label}
+            </label>
+            <Switch
+              id={`ask-${kind}`}
+              checked={agent.askFirst?.[kind] ?? false}
+              disabled={set.isPending}
+              onCheckedChange={(value) => set.mutate({ kind, value })}
+            />
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 

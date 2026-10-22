@@ -242,7 +242,7 @@ describe('timewarp-id CLI', () => {
     assert.equal(pending.approvals.length, 1);
     assert.equal(pending.approvals[0].id, approvalId);
     assert.equal(pending.approvals[0].request.amount, 3000);
-    assert.match((await ok(['approvals'])).stdout, /Alice\s+\$30\.00\s+Bob Builder \(agt_/);
+    assert.match((await ok(['approvals'])).stdout, /Alice\s+\$30\.00 to Bob Builder \(agt_/);
     assert.match((await ok(['deny', approvalId])).stdout, /Denied/);
     assert.equal((await json(['approvals'])).approvals.length, 0);
 

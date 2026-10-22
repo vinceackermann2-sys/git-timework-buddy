@@ -62,6 +62,7 @@ Your account (owner key from the Agent ID dashboard):
 Act as the agent:
   me, mail, sms, call, contacts, wallet, card, vm
   vault list|save|request          Keys and sign-ins, sealed on this computer
+  memory list|search|save|import   What the agent remembers, in every app
   passport --audience <aud>        Prints a passport for a service
 
 Connect tools:
@@ -230,6 +231,19 @@ so Timewarp never has it. A key goes only to the sites given with --for, and
 is taken back out of what comes back:
   printf %s "$RESEND_KEY" | timewarp-id vault save --label "Resend" --for api.resend.com
   timewarp-id vault request vlt_… https://api.resend.com/domains`,
+  memory: `Usage:
+  timewarp-id memory list
+  timewarp-id memory search <words…>
+  timewarp-id memory save <text…> [--topic <topic>]   (or --text - to read it from stdin)
+  timewarp-id memory forget <id>
+  timewarp-id memory import [--from claude-code,codex,cursor,antigravity,windsurf] [--dry-run] [--yes]
+
+What the agent remembers, in every app it works in, kept encrypted by Agent ID.
+import brings the memory already on this computer (Claude Code's memory
+folders and CLAUDE.md, Codex's memories and AGENTS.md, Cursor's User Rules,
+Antigravity's GEMINI.md and knowledge, Windsurf's memories). It says what it
+found and asks first (--yes skips the question, for scripts); lines that look
+like keys or passwords are left out. The first setup offers it once.`,
   passport: `Usage: timewarp-id passport --audience <audience>
 
 Prints only a short-lived signed passport for the service, so you can write

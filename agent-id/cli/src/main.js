@@ -12,6 +12,7 @@ import { hostTool } from './origin.js';
 import * as account from './commands/account.js';
 import * as act from './commands/act.js';
 import { mcp } from './commands/mcp.js';
+import { memory } from './commands/memory.js';
 import { connect } from './commands/connect.js';
 import { git } from './commands/git.js';
 import * as attaching from './commands/attach.js';
@@ -23,10 +24,10 @@ const ROUTES = {
   give: account.give, take: account.take, limits: account.limits, fund: account.fund,
   approvals: account.approvals, approve: account.approve, deny: account.deny, use: account.use,
   me: act.me, mail: act.mail, sms: act.sms, call: act.call, contacts: act.contacts,
-  wallet: act.wallet, card: act.card, vm: act.vm, vault: act.vault, passport: act.passport,
+  wallet: act.wallet, card: act.card, vm: act.vm, vault: act.vault, memory, passport: act.passport,
   mcp, connect, git,
 };
-const ALIASES = { agent: 'agents', calls: 'call', contact: 'contacts', machine: 'vm', approval: 'approvals', apply: 'attach', unapply: 'detach' };
+const ALIASES = { agent: 'agents', calls: 'call', contact: 'contacts', machine: 'vm', approval: 'approvals', apply: 'attach', unapply: 'detach', memories: 'memory' };
 // After these, a one-line notice says when transfers wait for the owner.
 const NO_NOTICE = new Set(['approvals', 'logout', 'mcp', 'passport']);
 const AGENT_ID = /^agt_[a-z0-9]{24}$/;

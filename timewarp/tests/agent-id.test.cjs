@@ -507,6 +507,11 @@ test("MCP: each connection's app and the model the agent says it is are kept wit
   const other = await local.call("POST", "/mcp", { token: friend.key, headers: { "mcp-session-id": session }, body: { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "whoami", arguments: { model: "gpt-6" } } } });
   assert.equal(other.status, 200);
   assert.deepEqual((await ok("GET", `/v1/agents/${bot.id}`, { token: alice.session })).agent.apps.find(a => a.app === "claude-code").model, "claude-sonnet-5-5");
+  // What one request came through never sticks to the next one (another agent's, here).
+  await ok("POST", `/v1/agents/${friend.id}/wallet/test-funds`, { token: alice.session, body: { amount: 500 } });
+  await ok("POST", "/v1/me/wallet/transfers", { token: friend.key, body: { to: bot.id, value: "1.00" } });
+  const friendsSend = (await ok("GET", `/v1/audit?agent=${friend.id}`, { token: alice.session })).entries.find(e => e.action === "wallet.send");
+  assert.equal(friendsSend.detail.via, undefined);
 });
 
 test("Agent ID sells the Timewarp app's credit packs", () => {

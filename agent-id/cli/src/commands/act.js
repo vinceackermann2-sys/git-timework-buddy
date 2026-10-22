@@ -14,6 +14,17 @@ const need = (value, message) => { if (value === undefined || value === null || 
 const list = value => typeof value === 'string' ? value.split(',').map(s => s.trim()).filter(Boolean) : undefined;
 const unknown = (ctx, name) => { throw new UsageError(`${name} has no "${ctx.args[0]}" command.`); };
 
+// The owner asked to approve this kind of action first: what waits, and where
+// they answer. Nothing happened yet.
+const waits = data => data?.status === 'needs_approval';
+function waiting(ctx, data) {
+  return ctx.print(data, () => [
+    'Waiting for the owner: they asked to approve this first. Nothing was done yet.',
+    `Approval id: ${data.approval}`,
+    data.approveUrl ? `They approve or decline it here: ${data.approveUrl}` : 'They approve it on the Agent ID website.',
+  ].join('\n'));
+}
+
 async function text(ctx, flag = 'text') {
   const value = ctx.flags[flag];
   if (value === '-') return (await ctx.readStdin()).replace(/\r\n/g, '\n');
@@ -92,12 +103,14 @@ export async function mail(ctx) {
     const body = { to, subject, text: await text(ctx), ...(list(ctx.flags.cc)?.length ? { cc: list(ctx.flags.cc) } : {}) };
     const files = await attachments(ctx);
     const data = await ctx.self.post('/v1/me/mail', { ...body, ...(files.length ? { attachments: files } : {}) });
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, sent => `Sent "${sent.message.subject}" to ${sent.message.counterparty} (${sent.message.status})${files.length ? ` with ${files.length} attachment${files.length === 1 ? '' : 's'}` : ''}. Id ${sent.message.id}${sent.note ? `\n${sent.note}` : ''}`);
   }
   if (action === 'reply') {
     const id = need(ctx.args[1], 'Which message? timewarp-id mail reply <id> --text "…"');
     const files = await attachments(ctx);
     const data = await ctx.self.post('/v1/me/mail', { replyTo: id, text: await text(ctx), ...(list(ctx.flags.to)?.length ? { to: list(ctx.flags.to) } : {}), ...(typeof ctx.flags.subject === 'string' ? { subject: ctx.flags.subject } : {}), ...(files.length ? { attachments: files } : {}) });
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, sent => `Replied to ${sent.message.counterparty}: "${sent.message.subject}" (${sent.message.status}). Id ${sent.message.id}${sent.note ? `\n${sent.note}` : ''}`);
   }
   unknown(ctx, 'mail');
@@ -116,6 +129,7 @@ export async function sms(ctx) {
     const to = need(ctx.args[1], 'timewarp-id sms send <+14155550123> <text…>');
     const message = ctx.args.slice(2).join(' ') || (ctx.flags.text !== undefined ? await text(ctx) : '');
     const data = await ctx.self.post('/v1/me/sms', { to, text: need(message, 'What should the text say? timewarp-id sms send <number> <text…>') });
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, ({ message: m }) => `Texted ${m.counterparty} (${m.status}).`);
   }
   unknown(ctx, 'sms');
@@ -133,6 +147,7 @@ export async function call(ctx) {
     const to = need(ctx.args[1], 'timewarp-id call place <+14155550123> --say "…"');
     const say = need(ctx.flags.say ?? ctx.args.slice(2).join(' '), '--say is required: what should the call say?');
     const data = await ctx.self.post('/v1/me/calls', { to, say });
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, ({ call: c }) => `Called ${c.counterparty} (${c.status}).`);
   }
   unknown(ctx, 'call');
@@ -152,16 +167,19 @@ export async function contacts(ctx) {
     const body = { ...contactFields(), ...(ctx.args.length > 1 ? { name: ctx.args.slice(1).join(' ') } : {}) };
     need(body.name, 'Name the contact: timewarp-id contacts add <name> [--email …] [--phone …]');
     const data = await ctx.self.post('/v1/me/contacts', body);
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, ({ contact }) => `Saved ${contact.name} (${contact.id}).`);
   }
   if (action === 'update' || action === 'edit') {
     const id = need(ctx.args[1], 'Which contact? timewarp-id contacts update <id> --email …');
     const data = await ctx.self.patch(`/v1/me/contacts/${encodeURIComponent(id)}`, contactFields());
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, ({ contact }) => `Updated ${contact.name}.`);
   }
   if (action === 'rm' || action === 'remove' || action === 'delete') {
     const id = need(ctx.args[1], 'Which contact? timewarp-id contacts rm <id>');
     const data = await ctx.self.delete(`/v1/me/contacts/${encodeURIComponent(id)}`);
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, () => 'Removed.');
   }
   unknown(ctx, 'contacts');
@@ -340,6 +358,7 @@ export async function vault(ctx) {
     const secret = await readSecret(ctx, login ? 'Password' : 'Key');
     const item = vaultItem({ kind: login ? 'login' : 'key', secret, hosts: ctx.flags.for, as: ctx.flags.as, username: ctx.flags.username, site: ctx.flags.site });
     const data = await ctx.self.post('/v1/me/vault/items', { label, envelope: seal(listed.publicKey, item) });
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, ({ item: saved }) => `Saved "${saved.label}" in the vault (${saved.id}), sealed on this computer.${saved.kind === 'key' ? `\nUse it with: ${ctx.bin} vault request ${saved.id} <https address>` : ''}`);
   }
   if (action === 'request' || action === 'use') {

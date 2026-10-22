@@ -80,6 +80,26 @@ export type Agent = {
   origin?: AgentOrigin | null;
   // Every app this one Agent ID is used in, most recent first.
   apps?: AgentApp[];
+  // Which of its actions wait for the owner's yes (older servers leave it out).
+  askFirst?: Record<AskKind, boolean>;
+};
+
+// The actions an owner can ask to approve first.
+export type AskKind = "mail" | "sms" | "call" | "contacts" | "vault";
+
+// One thing an agent remembers, in every app it works in.
+export type Memory = {
+  id: string;
+  // null when it can't be read (encrypted with another key).
+  text: string | null;
+  topic: string | null;
+  // The app it was saved in or imported from (claude-code, codex…).
+  from: string | null;
+  source: "agent" | "owner" | "import";
+  model: string | null;
+  createdAt: string;
+  updatedAt: string;
+  note?: string;
 };
 
 export type AgentApp = {
@@ -250,8 +270,17 @@ export type Approval = {
   id: string;
   agentId: string;
   agentName: string | null;
-  kind: "wallet_transfer";
-  request: { to?: string; amount?: number; currency?: string; memo?: string | null };
+  kind: "wallet_transfer" | "action";
+  // A payment, or an action the owner asked to approve first (`action` set).
+  request: {
+    to?: string;
+    amount?: number;
+    currency?: string;
+    memo?: string | null;
+    action?: string;
+    kind?: AskKind;
+    summary?: Record<string, unknown>;
+  };
   status: "pending" | "approved" | "denied" | "completed" | "failed";
   reason: string | null;
   result: Record<string, unknown> | null;

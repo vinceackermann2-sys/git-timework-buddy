@@ -73,6 +73,16 @@ export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, lo
   }
 
   const dollars = money => money && typeof money.amount === 'number' ? `$${(money.amount / 100).toFixed(2)}` : 'money';
+  // An action the owner asked to approve first, in a few words.
+  const actionText = (kind, s) => {
+    const to = Array.isArray(s.to) ? s.to.join(', ') : s.to;
+    if (kind === 'mail') return `email ${to}: "${s.subject}"`;
+    if (kind === 'sms') return `text ${to}: "${String(s.text || '').slice(0, 120)}"`;
+    if (kind === 'call') return `call ${to} and say "${String(s.say || '').slice(0, 120)}"`;
+    if (kind === 'contacts') return `${s.change} the contact ${s.name || ''}`.trim();
+    if (kind === 'vault') return `save "${s.label}" to its vault`;
+    return 'do something you asked to approve first';
+  };
   const OUTCOMES = {
     completed: 'Your owner approved it, and the money was sent.',
     denied: 'It was declined, so nothing was sent.',
@@ -87,7 +97,8 @@ export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, lo
     if (data?.status !== 'needs_approval' || !data.approval || !data.approveUrl) return reply;
     let details = null;
     try { details = (await approvals.status(data.approval)).approval; } catch { /* the link still works */ }
-    const what = details ? `send ${dollars(details.amount)} to ${details.to}${details.memo ? ` ("${details.memo}")` : ''}` : 'make a payment above your approval amount';
+    const what = details && details.kind !== 'payment' && details.summary ? actionText(details.kind, details.summary)
+      : details ? `send ${dollars(details.amount)} to ${details.to}${details.memo ? ` ("${details.memo}")` : ''}` : data.summary ? 'do something you asked to approve first' : 'make a payment above your approval amount';
     const message = `Your agent wants to ${what}. Approve or decline it on Agent ID.`;
     const urlMode = !!clientElicitation?.url && String(protocolVersion || '') >= '2025-11-25';
     const params = urlMode
@@ -112,7 +123,8 @@ export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, lo
       // "approved" is a live transfer still on its way: wait for it.
       if (state && state !== 'pending' && state !== 'approved') {
         if (urlMode) write({ jsonrpc: '2.0', method: 'notifications/elicitation/complete', params: { elicitationId: data.approval } });
-        return respond({ ...status, status: state, message: OUTCOMES[state] || `It is ${state}.` });
+        const done = state === 'completed' && details?.kind && details.kind !== 'payment' ? 'Your owner approved it, and it was done.' : null;
+        return respond({ ...status, status: state, message: done || OUTCOMES[state] || `It is ${state}.` });
       }
       await sleep(2000);
     }

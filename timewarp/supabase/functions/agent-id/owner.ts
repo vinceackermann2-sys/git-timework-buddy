@@ -7,9 +7,9 @@ import { autoGive, giveResource, kindsFor, settingsFor } from './provisioning.ts
 import { bankAvailable, KINDS, type Kind, publicConfig } from './config.ts';
 import type { AgentCaller, Owner, Route } from './app.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
-import { agentView, audit, MASCOTS, mascotOf, listEvents, membership, personOf, planOf, rateLimit, resourcesOf, resourceView, verificationOf } from './shared.ts';
+import { agentView, ASK_KINDS, askFirstView, type AskKind, audit, MASCOTS, mascotOf, listEvents, membership, personOf, planOf, rateLimit, resourcesOf, resourceView, verificationOf } from './shared.ts';
 import { businessView, decideReview, listReviews, personView, reviewDocument, startVerification, uploadBusinessDocument } from './verification.ts';
-import { transfer, withdraw } from './agent.ts';
+import { ops as agentOps, transfer, withdraw } from './agent.ts';
 import { releasePhone } from './providers/phone.ts';
 import { liveBalance } from './providers/wallet.ts';
 import { updateCard } from './providers/card.ts';
@@ -20,7 +20,8 @@ import { adminRoutes } from './admin.ts';
 import { addBankAccount, bankDeposit, bankPayins, bankStatus, cancelBankPayin, refreshBridgeCheck, refreshBusinessCheck, refreshPayouts, removeBankAccount, startBankPayin, startBankVerification, withdrawToBank } from './bank.ts';
 import { cardCurrency, moonpayOn, moonpayUrl } from './providers/moonpay.ts';
 import { CREDIT_PACKS } from './pricing.ts';
-import { vaultOwnerRoutes } from './vault.ts';
+import { vaultOps, vaultOwnerRoutes } from './vault.ts';
+import { memoryOwnerRoutes } from './memory.ts';
 
 type Handler = Route<Owner>[2];
 const iso = (ctx: Ctx) => new Date(ctx.now()).toISOString();
@@ -223,6 +224,19 @@ const updateAgent: Handler = async (ctx, owner, input, params) => {
   if (input.status !== undefined) { if (!['active', 'suspended'].includes(input.status)) throw fail(400, 'invalid', 'status is active or suspended. Revoke with DELETE.'); patch.status = input.status; }
   if (input.desktopAgentId !== undefined) patch.desktop_agent_id = input.desktopAgentId ? str(input.desktopAgentId, 100, 'desktopAgentId') : null;
   if (input.organizationId !== undefined) patch.workspace_id = await organizationFor(ctx, owner, input.organizationId);
+  if (input.askFirst !== undefined) {
+    if (!input.askFirst || typeof input.askFirst !== 'object' || Array.isArray(input.askFirst)) throw fail(400, 'invalid', `askFirst is an object of ${ASK_KINDS.join(', ')}: true or false.`);
+    const next: Record<string, boolean> = { ...(agent.ask_first || {}) };
+    const resources = await resourcesOf(ctx, [agent.id]);
+    const now = askFirstView(agent, resources);
+    for (const [kind, value] of Object.entries(input.askFirst)) {
+      if (!(ASK_KINDS as readonly string[]).includes(kind) || typeof value !== 'boolean') throw fail(400, 'invalid', `askFirst.${kind} isn't one of ${ASK_KINDS.join(', ')} as true or false.`);
+      // Letting an agent act without asking takes the signed-in website: a leaked key can't.
+      if (!value && now[kind as AskKind] && owner.via !== 'session') throw fail(403, 'session_required', 'Stop asking first on the Agent ID website.');
+      next[kind] = value;
+    }
+    patch.ask_first = next;
+  }
   const row = checked(await ctx.admin.from('agent_id_agents').update(patch).eq('id', agent.id).select('*').single()) as AgentRow;
   await audit(ctx, owner.userId, agent.id, 'owner', 'agent.update', Object.fromEntries(Object.keys(patch).filter(k => k !== 'updated_at').map(k => [k, patch[k]])));
   return { agent: agentView(ctx, row, await resourcesOf(ctx, [agent.id]), await appsOf(ctx, [agent.id])) };
@@ -482,6 +496,11 @@ const applyForPhone: Handler = async (ctx, owner, input, params) => {
 };
 
 // --- Approvals -------------------------------------------------------------------
+// The actions an owner can be asked to approve first (ask.ts), run as asked.
+const APPROVABLE: Record<string, (ctx: Ctx, who: AgentCaller, input: any) => Promise<unknown>> = {
+  mailSend: agentOps.mailSend, smsSend: agentOps.smsSend, callPlace: agentOps.callPlace,
+  contactSave: agentOps.contactSave, contactDelete: agentOps.contactDelete, vaultSave: vaultOps.vaultSave,
+};
 const approvalView = (row: any, names: Map<string, string>) => ({ id: row.id, agentId: row.agent_id, agentName: names.get(row.agent_id) || null, kind: row.kind, request: row.request, status: row.status, reason: row.reason, result: row.result, createdAt: row.created_at, expiresAt: row.expires_at, decidedAt: row.decided_at });
 const listApprovals: Handler = async (ctx, owner, input) => {
   let query = ctx.admin.from('agent_id_approvals').select('*').eq('owner_user_id', owner.userId);
@@ -502,6 +521,20 @@ const decideApproval: Handler = async (ctx, owner, input, params) => {
   await audit(ctx, owner.userId, result.agent, 'owner', `approval.${decision}`, { approval: params.id });
   if (decision === 'deny') return { status: 'denied' };
   const agent = activeAgent(await ownedAgent(ctx, owner, result.agent));
+  // An action that asked first runs as the agent asked it, once.
+  if (result.request?.action) {
+    const run = APPROVABLE[String(result.request.action)];
+    if (!run) throw fail(400, 'invalid', 'This approval can\'t be carried out.');
+    ctx.approved = params.id;
+    try {
+      const done = await run(ctx, { kind: 'agent', userId: owner.userId, agent, via: 'key' }, result.request.input || {}) as Record<string, unknown>;
+      await ctx.admin.from('agent_id_approvals').update({ status: 'completed', result: { done: true } }).eq('id', params.id).eq('status', 'approved');
+      return { decision: 'approved', status: 'completed', ...done };
+    } catch (error) {
+      await ctx.admin.from('agent_id_approvals').update({ status: 'failed', reason: String((error as Error).message || 'failed').slice(0, 500) }).eq('id', params.id).eq('status', 'approved');
+      throw error;
+    }
+  }
   const who: AgentCaller = { kind: 'agent', userId: owner.userId, agent, via: 'owner' };
   try {
     const done = await transfer(ctx, who, { to: String(result.request.input || result.request.to), amount: Number(result.request.amount), memo: result.request.memo || undefined }, params.id);
@@ -594,6 +627,7 @@ export const ownerRoutes: Route<Owner>[] = [
   ['POST', '/v1/account/verification', (ctx, owner, input) => startVerification(ctx, owner, input)],
   ['POST', '/v1/account/terms', acceptTerms],
   ...vaultOwnerRoutes,
+  ...memoryOwnerRoutes,
   ['POST', '/v1/account/credits', buyCredits],
   ['GET', '/v1/agents', listAgents], ['POST', '/v1/agents', createAgent],
   ['GET', '/v1/recipients', lookupRecipient],

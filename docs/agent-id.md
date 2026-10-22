@@ -292,6 +292,57 @@ has them in the clear.
   before; the vault keeps it from being written down or seen again. A key bound to a site is
   as powerful there as the owner made it.
 
+## Memory: what an agent remembers, in every app
+
+Each Agent ID has a memory that follows it into every app it works in
+(Claude Code, Codex, Cursor, Antigravity…), which its owner sees and edits on
+the agent's Memory page (`memory.ts`, migration 20261022160000).
+
+- **Encrypted before it's stored:** AES-256-GCM under a key made per agent
+  (HKDF-SHA256) from `AGENT_ID_DATA_KEY`, a secret of the function (32 random
+  bytes, made once by `agent-id-update.ps1`, never shown or replaced). Each
+  memory is bound to its agent and id, so `agent_id_memories` holds nothing
+  readable and a row copied elsewhere can't be opened. `digest`, a keyed hash,
+  spots duplicates. Without the secret, a real deployment refuses memory
+  (`memory_off`); test mode uses a fixed development key.
+- **Never secrets:** text that looks like a key, token or password is refused
+  (`secret_in_memory`) and pointed to the vault. Memories are notes, never
+  instructions.
+- **The agent:** `memory_search` (best matches: words in the text, more in the
+  topic), `memory_save`, `memory_list`, `memory_forget`; `/v1/me/memories`,
+  `/search`, `/import`. The MCP instructions tell it to search at the start of
+  a task. What it saves keeps the app and model it saved it in.
+- **The owner:** `GET/POST /v1/agents/:id/memories`, `PATCH/DELETE …/:memoryId`,
+  `DELETE …/memories` (forget all). At most 1000 memories of 4000 characters.
+- **Brought from the apps on a computer:** `timewarp-id memory import` reads,
+  on that computer, Claude Code (CLAUDE.md and every project's `memory`
+  folder), Codex (AGENTS.md and `memories/MEMORY.md`, else its summary),
+  Cursor (its User Rules, from its settings database, with Node 22.13+),
+  Antigravity and Gemini CLI (GEMINI.md and knowledge items) and Windsurf
+  (memories). Each section, bullet under a memories heading, or memory file is
+  one memory; lines that look like secrets and Agent ID's own identity block
+  are left out. It says what it found and asks (`--yes` for scripts,
+  `--dry-run` to look first); the first setup in a terminal offers it once per
+  agent, and the server checks each memory again.
+
+## Asking the owner first
+
+The owner chooses, per agent, which actions wait for their yes (`ask.ts`,
+`agent_id_agents.ask_first`): sending mail, texting, calling, changing
+contacts and saving to the vault. Payments keep the wallet's approval amount.
+Unless the owner chooses, texts and calls to real numbers ask; nothing else
+does. An action that waits becomes an approval (`kind: 'action'`) holding
+exactly what the agent asked for; the agent gets `needs_approval` with a link,
+the owner is emailed and answers under Approvals, and it runs as asked, once
+(`agentOps`/`vaultOps` through `APPROVABLE` in owner.ts). The agent can
+withdraw it or check it (`approval_status`); `timewarp-id mcp` asks the person
+in the app with MCP elicitation, as for payments. Turning asking off takes the
+signed-in website: an owner key can only turn it on.
+
+Each request gets its own context in `createHandler`, so what one request
+sets (the app and model it came through, an approval it carries out) never
+reaches another.
+
 ## Safety
 
 - **Owner limits, enforced in the database.**

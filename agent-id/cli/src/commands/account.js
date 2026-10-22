@@ -237,7 +237,19 @@ export async function fund(ctx) {
 }
 
 // --- Approvals ------------------------------------------------------------------------
-const describeRequest = r => `${cents(r?.amount)}${r?.to ? ` to ${r.to}` : ''}${r?.memo ? ` (${r.memo})` : ''}`;
+// A payment, or an action the owner asked to approve first.
+const ACTIONS = { mail: 'email', sms: 'text', call: 'call', contacts: 'contacts', vault: 'vault' };
+function describeRequest(r) {
+  if (!r?.action) return `${cents(r?.amount)}${r?.to ? ` to ${r.to}` : ''}${r?.memo ? ` (${r.memo})` : ''}`;
+  const s = r.summary || {};
+  const to = Array.isArray(s.to) ? s.to.join(', ') : s.to;
+  if (r.kind === 'mail') return `email to ${to}: "${s.subject}"`;
+  if (r.kind === 'sms') return `text to ${to}: "${String(s.text || '').slice(0, 80)}"`;
+  if (r.kind === 'call') return `call to ${to}: "${String(s.say || '').slice(0, 80)}"`;
+  if (r.kind === 'contacts') return `${s.change} contact ${s.name || ''}`.trim();
+  if (r.kind === 'vault') return `save "${s.label}" to its vault`;
+  return ACTIONS[r.kind] || r.kind;
+}
 
 // Waiting transfers; in a terminal, answered one by one.
 export async function approvals(ctx) {
@@ -246,8 +258,8 @@ export async function approvals(ctx) {
   const data = await ctx.owner.get('/v1/approvals', { query: { status: ctx.flags.all ? 'all' : undefined } });
   const rows = data.approvals || [];
   ctx.print(data, () => rows.length ? `${rows.length} waiting for your approval:\n${table(rows, [
-    ['AGENT', a => a.agentName || a.agentId], ['AMOUNT', a => cents(a.request?.amount)], ['TO', a => a.request?.to],
-    ['MEMO', a => a.request?.memo], ...(ctx.flags.all ? [['STATUS', a => a.status]] : []), ['EXPIRES', a => when(a.expiresAt)], ['ID', a => a.id],
+    ['AGENT', a => a.agentName || a.agentId], ['WHAT', a => describeRequest(a.request)],
+    ...(ctx.flags.all ? [['STATUS', a => a.status]] : []), ['EXPIRES', a => when(a.expiresAt)], ['ID', a => a.id],
   ])}${ctx.interactive ? '' : '\n\nAnswer with `timewarp-id approve <id>` or `timewarp-id deny <id>`.'}` : 'Nothing is waiting for your approval.');
   if (ctx.json || !ctx.interactive) return;
   for (const row of rows.filter(r => r.status === 'pending')) {
@@ -272,8 +284,9 @@ async function decide(ctx, decision, id, { confirmed = false } = {}) {
     }
   }
   const data = await ctx.owner.post(`/v1/approvals/${encodeURIComponent(id)}`, { decision });
-  ctx.print(data, result => decision === 'deny' ? 'Denied. The agent is told the transfer was not approved.'
-    : result.status === 'completed' ? `Approved and sent${result.transfer?.amount ? ` ${money(result.transfer.amount)}` : ''}${result.transfer?.counterparty ? ` to ${result.transfer.counterparty}` : ''}.` : `Approved (${result.status}).`);
+  ctx.print(data, result => decision === 'deny' ? 'Denied. The agent is told it was not approved.'
+    : result.transfer && result.status === 'completed' ? `Approved and sent${result.transfer?.amount ? ` ${money(result.transfer.amount)}` : ''}${result.transfer?.counterparty ? ` to ${result.transfer.counterparty}` : ''}.`
+    : result.status === 'completed' ? 'Approved and done.' : `Approved (${result.status}).`);
 }
 
 export const approve = ctx => decide(ctx, 'approve', ctx.args[0]);
