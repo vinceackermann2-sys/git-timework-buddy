@@ -46,8 +46,8 @@ function StartClaimPage() {
       }
     >
       <ClaimHeading title="Get your Agent ID">
-        Your AI agent gets its own email address, wallet, phone number and computer. Enter your
-        email to start.
+        Free, no card. Your AI gets its own email, wallet, computer and memory, so it can finish the
+        job. Enter your email to start.
       </ClaimHeading>
       <EmailForm
         pending={start.isPending}
