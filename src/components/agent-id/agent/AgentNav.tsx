@@ -83,8 +83,8 @@ export function AgentNav({ detail }: { detail: AgentDetail }) {
             ? vm.details.machine.charAt(0).toUpperCase() + vm.details.machine.slice(1)
             : "Ready",
     },
-    { tab: "activity", label: "Activity", icon: <Plain icon={<Activity className="h-4 w-4" />} /> },
-    { tab: "settings", label: "Settings", icon: <Plain icon={<Settings className="h-4 w-4" />} /> },
+    { tab: "activity", label: "Activity", icon: <Plain icon={<Activity className="h-5 w-5" />} /> },
+    { tab: "settings", label: "Settings", icon: <Plain icon={<Settings className="h-5 w-5" />} /> },
   ];
 
   return (
@@ -122,12 +122,12 @@ export function AgentNav({ detail }: { detail: AgentDetail }) {
   );
 }
 
-// Activity and settings: a plain tile the size of the others.
+// Activity and settings: a plain icon the size of the others.
 function Plain({ icon }: { icon: ReactNode }) {
   return (
     <span
       aria-hidden="true"
-      className="grid h-8 w-8 shrink-0 place-items-center rounded-[0.6rem] bg-[var(--muted)] text-[var(--muted-foreground)]"
+      className="grid h-8 w-8 shrink-0 place-items-center text-[var(--muted-foreground)]"
     >
       {icon}
     </span>
