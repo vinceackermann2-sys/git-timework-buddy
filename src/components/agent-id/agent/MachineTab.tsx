@@ -2,7 +2,6 @@
 // stops after. A terminal to run commands, and its files.
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, File, Folder, Loader2, Play, Square, SquareTerminal } from "lucide-react";
 
@@ -21,6 +20,7 @@ import {
 import { api } from "@/lib/agent-id/session";
 import type { Agent, CommandResult } from "@/lib/agent-id/types";
 import { Chip, Empty, ErrorState, LoadingRows, ModeBadge, Muted, Section, toastError } from "../ui";
+import { openPricing } from "../Pricing";
 import { BlockedNotice, LoadMore, NoResource, blockedReason } from "./common";
 
 const SIZE_LABELS: Record<string, string> = {
@@ -362,9 +362,9 @@ function FreeTime() {
       ) : (
         <span className="text-[var(--muted-foreground)]">
           The free hours are used. It runs on your credits:{" "}
-          <Link to="/agent-id/pricing" className="aid-link">
+          <button type="button" onClick={openPricing} className="aid-link">
             add credits
-          </Link>
+          </button>
           .
         </span>
       )}

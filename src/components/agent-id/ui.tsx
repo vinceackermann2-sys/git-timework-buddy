@@ -698,12 +698,15 @@ export function Popup({
   onOpenChange,
   trigger,
   title,
+  wide,
   children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   trigger?: ReactNode;
   title: string;
+  // For pages of content (pricing), not forms.
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -711,7 +714,10 @@ export function Popup({
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
       <DialogContent
         aria-describedby={undefined}
-        className="flex max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-2xl bg-[var(--background)] p-0 sm:max-w-md"
+        className={cn(
+          "flex max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-2xl bg-[var(--background)] p-0",
+          wide ? "sm:max-w-2xl" : "sm:max-w-md",
+        )}
       >
         <DialogHeader className="border-b border-[var(--border)] px-6 py-4 text-left">
           <DialogTitle className="text-lg">{title}</DialogTitle>

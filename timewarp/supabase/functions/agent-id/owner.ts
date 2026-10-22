@@ -80,6 +80,24 @@ const account: Handler = async (ctx, owner) => {
   };
 };
 
+// --- Who a payment goes to -------------------------------------------------------
+// Before sending: the agent an id or handle names (anyone's), with its name,
+// mascot, and whether its owner is verified, as payment apps show who you pay.
+const lookupRecipient: Handler = async (ctx, owner, input) => {
+  const to = str(input.to, 100, 'to', { required: true }).trim();
+  await rateLimit(ctx, owner.userId, 'recipient-lookup', 60, 2000, 'lookups');
+  const query = ctx.admin.from('agent_id_agents').select('*');
+  const agent = /^agt_[a-z0-9]{24}$/.test(to) ? checked(await query.eq('id', to).maybeSingle())
+    : /^[a-z0-9][a-z0-9-]{0,39}$/.test(to) ? checked(await query.eq('handle', to).maybeSingle()) : null;
+  if (!agent || agent.status !== 'active') return { found: false };
+  const [resources, verification] = await Promise.all([resourcesOf(ctx, [agent.id]), verificationOf(ctx, agent)]);
+  const wallet = resources.find(r => r.kind === 'wallet' && r.status === 'active');
+  return {
+    found: true,
+    agent: { id: agent.id, name: agent.name, handle: agent.handle, mascot: agent.mascot || mascotOf(agent.id), verified: verification.verified, yours: agent.owner_user_id === owner.userId, wallet: wallet ? wallet.mode : null },
+  };
+};
+
 // --- Credits ---------------------------------------------------------------------
 // Timewarp credits pay for what isn't free (machine time after the free hours).
 // Bought here in the same packs and at the same Stripe prices as in the
@@ -103,8 +121,9 @@ const buyCredits: Handler = async (ctx, owner, input) => {
     // What stripe-webhook grants from: the purchase record.
     metadata: { kind: 'credits', pack_credits: String(pack.credits), workspace_id: '', supabase_user_id: owner.userId, source: 'agent-id' },
     allow_promotion_codes: true,
-    success_url: `${ctx.config.siteUrl}/agent-id/pricing?credits=added`,
-    cancel_url: `${ctx.config.siteUrl}/agent-id/pricing`,
+    // Back to the app, with pricing open over it.
+    success_url: `${ctx.config.siteUrl}/agent-id/dashboard?pricing=added`,
+    cancel_url: `${ctx.config.siteUrl}/agent-id/dashboard?pricing=open`,
   }, `agent-id-credits-${owner.userId}-${pack.credits}-${Math.floor(ctx.now() / 60_000)}`);
   await audit(ctx, owner.userId, null, 'owner', 'credits.checkout', { credits: pack.credits });
   return { url: String(session.url) };
@@ -578,6 +597,7 @@ export const ownerRoutes: Route<Owner>[] = [
   ...vaultOwnerRoutes,
   ['POST', '/v1/account/credits', buyCredits],
   ['GET', '/v1/agents', listAgents], ['POST', '/v1/agents', createAgent],
+  ['GET', '/v1/recipients', lookupRecipient],
   ['GET', '/v1/agents/:id', getAgent], ['PATCH', '/v1/agents/:id', updateAgent], ['DELETE', '/v1/agents/:id', revokeAgent],
   ['POST', '/v1/agents/:id/keys', createAgentKey], ['DELETE', '/v1/agents/:id/keys/:keyId', revokeAgentKey],
   ['POST', '/v1/agents/:id/resources', provision], ['PATCH', '/v1/agents/:id/resources/:kind', updateResource], ['DELETE', '/v1/agents/:id/resources/:kind', removeResource],

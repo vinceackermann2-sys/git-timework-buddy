@@ -64,6 +64,20 @@ export async function recordApp(ctx: Ctx, agentId: string, app: string, client: 
   }, { onConflict: 'agent_id,app' });
 }
 
+// The model an agent says it is ("claude-opus-5-5", "gpt-6"…), as given.
+export function modelOf(value: unknown) {
+  const model = String(value ?? '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9.:/_-]/g, '').slice(0, 80);
+  return model.length >= 2 ? model : null;
+}
+
+// Remembered for the app it runs in: the latest, and the list of all (up to 20).
+export async function recordModel(ctx: Ctx, agentId: string, app: string | null, model: string) {
+  if (!app) return;
+  const row = (await ctx.admin.from('agent_id_agent_clients').select('models').eq('agent_id', agentId).eq('app', app).maybeSingle()).data as any;
+  const models = [model, ...((row?.models as string[]) || []).filter(m => m !== model)].slice(0, 20);
+  await ctx.admin.from('agent_id_agent_clients').upsert({ agent_id: agentId, app, model, models, last_seen_at: new Date(ctx.now()).toISOString() }, { onConflict: 'agent_id,app' });
+}
+
 export async function appsOf(ctx: Ctx, agentIds: string[]) {
   const map = new Map<string, any[]>();
   if (!agentIds.length) return map;
@@ -75,9 +89,13 @@ export async function appsOf(ctx: Ctx, agentIds: string[]) {
 
 export function appsView(agent: { runtime: string; created_at?: string }, rows: any[] = []) {
   const label = (app: string) => APPS[app] || app.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  const list = rows.map(row => ({ app: row.app, label: label(row.app), clientName: row.client_name || null, lastSeenAt: row.last_seen_at, firstSeenAt: row.first_seen_at }));
+  const list = rows.map(row => ({
+    app: row.app, label: label(row.app), clientName: row.client_name || null, lastSeenAt: row.last_seen_at, firstSeenAt: row.first_seen_at,
+    // The model it last ran with in this app, and every one it has.
+    model: row.model || null, models: Array.isArray(row.models) ? row.models : [],
+  }));
   if (agent.runtime && !['custom', 'any', 'other'].includes(agent.runtime) && !list.some(item => item.app === agent.runtime)) {
-    list.push({ app: agent.runtime, label: label(agent.runtime), clientName: null, lastSeenAt: null, firstSeenAt: agent.created_at || null });
+    list.push({ app: agent.runtime, label: label(agent.runtime), clientName: null, lastSeenAt: null, firstSeenAt: agent.created_at || null, model: null, models: [] });
   }
   return list;
 }

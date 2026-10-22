@@ -88,6 +88,9 @@ export type AgentApp = {
   clientName?: string | null;
   lastSeenAt?: string | null;
   firstSeenAt?: string | null;
+  // The model the agent last said it was in this app, and every one it has.
+  model?: string | null;
+  models?: string[];
 };
 
 export type AgentOrigin = {
@@ -301,6 +304,23 @@ export type BusinessReview = Business & {
 };
 
 // What the agent ("me") routes return when the owner acts as an agent.
+// Who a payment would go to, before sending: the agent an id or handle names.
+export type RecipientLookup =
+  | { found: false }
+  | {
+      found: true;
+      agent: {
+        id: string;
+        name: string;
+        handle: string;
+        mascot?: Mascot;
+        verified: boolean;
+        yours: boolean;
+        // The kind of wallet it has (test or live), or none.
+        wallet: Mode | null;
+      };
+    };
+
 export type WalletSummary = {
   address: string | null;
   mode: Mode;

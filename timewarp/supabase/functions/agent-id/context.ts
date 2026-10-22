@@ -12,6 +12,8 @@ export type Ctx = {
   background: (work: Promise<unknown>) => void;
   // Signs a person in (as a magic link would) once they've proved their email.
   signIn?: (email: string) => Promise<{ access_token: string; refresh_token: string; expires_in: number } | null>;
+  // The app and model an agent acts through (its MCP session), recorded with what it does.
+  via?: { app: string | null; model: string | null };
 };
 
 export type AgentRow = {

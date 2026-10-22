@@ -9,6 +9,7 @@ import type {
   BankDeposit,
   BankPayin,
   Mascot,
+  RecipientLookup,
   VaultItem,
   VaultStatus,
   BankStatus,
@@ -232,6 +233,8 @@ export function createAgentIdClient(options: ClientOptions) {
     // Deployment and account
     config: () => request<PublicConfig>("/v1/config"),
     account: () => request<Account>("/v1/account"),
+    // The agent an id or handle names (anyone's), before sending it money.
+    recipient: (to: string) => request<RecipientLookup>("/v1/recipients", { query: { to } }),
     acceptTerms: (version: string) =>
       request<{ terms: { accepted: boolean; version: string; acceptedAt: string } }>(
         "/v1/account/terms",

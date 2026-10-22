@@ -13,6 +13,8 @@ import {
   formatMoney,
   formatRelativeTime,
   formatTimeLeft,
+  modelLabel,
+  auditVia,
   liveAvailability,
   parseAmount,
   parseList,
@@ -272,5 +274,26 @@ describe("free machine time left", () => {
     expect(formatTimeLeft(4 * 3600 + 32 * 60 + 59)).toBe("4 h 32 min");
     expect(formatTimeLeft(45 * 60)).toBe("45 min");
     expect(formatTimeLeft(-10)).toBe("0 min");
+  });
+});
+
+describe("model names", () => {
+  it("reads model ids as people say them", () => {
+    expect(modelLabel("claude-opus-5-5")).toBe("Claude Opus 5.5");
+    expect(modelLabel("claude-opus-5.5")).toBe("Claude Opus 5.5");
+    expect(modelLabel("gpt-6")).toBe("GPT-6");
+    expect(modelLabel("openai/gpt-5-codex")).toBe("GPT-5 Codex");
+    expect(modelLabel("gemini-3-pro")).toBe("Gemini 3 Pro");
+    expect(modelLabel("claude-3-5-sonnet-20241022")).toBe("Claude 3.5 Sonnet 20241022");
+  });
+
+  it("says which app and model an agent acted through", () => {
+    const via = { app: "claude-code", model: "claude-opus-5-5" };
+    expect(auditVia({ actor: "agent", detail: { via } })).toBe("Claude Code · Claude Opus 5.5");
+    expect(auditVia({ actor: "agent", detail: { via: { app: "codex", model: null } } })).toBe(
+      "Codex",
+    );
+    expect(auditVia({ actor: "owner", detail: { via } })).toBeNull();
+    expect(auditVia({ actor: "agent", detail: {} })).toBeNull();
   });
 });

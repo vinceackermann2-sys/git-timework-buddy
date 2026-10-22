@@ -38,7 +38,13 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
             <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
               <span className="mr-0.5 text-xs text-[var(--muted-foreground)]">Used in</span>
               {apps.map((item) => (
-                <AppChip key={item.app} app={item.app} label={item.label} />
+                <AppChip
+                  key={item.app}
+                  app={item.app}
+                  label={item.label}
+                  model={item.model}
+                  models={item.models}
+                />
               ))}
             </div>
           )}

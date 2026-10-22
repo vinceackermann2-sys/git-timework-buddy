@@ -1,14 +1,15 @@
 // The agent's wallet, like a modern bank app: a dollar balance, round quick
 // actions, and transactions by day. Live wallets hold USDC and USDT 1:1.
-import { Suspense, lazy, useId, useState } from "react";
+import { Suspense, lazy, useDeferredValue, useId, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownLeft,
   ArrowLeftRight,
   ArrowDownToLine,
   ArrowUpRight,
+  BadgeCheck,
   ExternalLink,
   Info,
   Landmark,
@@ -34,6 +35,7 @@ import {
   groupByDay,
   parseAmount,
   shortAddress,
+  walletHolds,
 } from "@/lib/agent-id/format";
 import {
   queryKeys,
@@ -50,6 +52,7 @@ import {
 import { api } from "@/lib/agent-id/session";
 import type { Agent, AgentEvent, BankPayin, WalletSummary } from "@/lib/agent-id/types";
 import {
+  AgentAvatar,
   Avatar,
   Chip,
   CopyButton,
@@ -561,6 +564,18 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
       .map((c) => ({ value: c.name, label: c.wallet ?? "" })),
   ];
 
+  // An agent's id or handle: who it is, as payment apps show who you pay.
+  const named = useDeferredValue(to.trim().toLowerCase());
+  const lookup = useQuery({
+    queryKey: ["agent-id", "recipient", named],
+    queryFn: () => api.recipient(named),
+    enabled: /^agt_[a-z0-9]{24}$/.test(named) || /^[a-z0-9][a-z0-9-]{1,39}$/.test(named),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const payee = lookup.data?.found ? lookup.data.agent : null;
+  const noWallet = payee && payee.wallet !== wallet?.mode;
+
   const send = useMutation({
     mutationFn: () =>
       api.asAgent(agent.id).sendMoney({
@@ -600,7 +615,7 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
           id="send-to"
           list="send-suggestions"
           autoComplete="off"
-          placeholder="Agent, contact or wallet address"
+          placeholder="Agent ID, handle, contact or 0x address"
           value={to}
           onChange={(e) => setTo(e.target.value)}
         />
@@ -611,6 +626,30 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
             </option>
           ))}
         </datalist>
+        {payee && (
+          <div className="mt-2 flex items-center gap-2.5 rounded-xl border border-[var(--border)] p-2.5">
+            <AgentAvatar mascot={payee.mascot} id={payee.id} size="sm" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">
+                {payee.name}
+                {payee.yours && (
+                  <span className="font-normal text-[var(--muted-foreground)]"> · yours</span>
+                )}
+              </p>
+              <p className="aid-mono truncate text-xs text-[var(--muted-foreground)]">{payee.id}</p>
+            </div>
+            {noWallet ? (
+              <Chip tone="danger">No {wallet?.mode === "test" ? "test " : ""}wallet</Chip>
+            ) : payee.verified ? (
+              <Chip tone="success">
+                <BadgeCheck className="h-3 w-3" aria-hidden="true" />
+                Verified owner
+              </Chip>
+            ) : (
+              <Chip>Owner not verified</Chip>
+            )}
+          </div>
+        )}
       </Field>
       <Field id="send-note" label="What's it for?">
         <Input
@@ -628,7 +667,7 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
         type="submit"
         size="lg"
         className="h-12 rounded-full"
-        disabled={!to.trim() || !value || send.isPending}
+        disabled={!to.trim() || !value || !!noWallet || send.isPending}
       >
         {send.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
         Send{value ? ` ${formatUsd(cents)}` : ""}
@@ -663,6 +702,7 @@ function Details({
             }
           />
         )}
+        <Row term="Holds" value={walletHolds(wallet.mode)} />
         {network && network !== "test" && (
           <Row term="Network" value={NETWORK_LABELS[network] ?? network} />
         )}
@@ -684,6 +724,12 @@ function Details({
         )}
         {testMode && <Row term="Mode" value={wallet.mode === "test" ? "Test" : "Live"} />}
       </dl>
+      {wallet.mode === "live" && (
+        <Muted>
+          This address only takes USDC and USDT on Base. Bitcoin, ETH or coins sent on another
+          network can't be received and may be lost.
+        </Muted>
+      )}
       <div>
         <h4 className="mb-3 text-sm font-semibold">Spending limits</h4>
         <LimitsEditor

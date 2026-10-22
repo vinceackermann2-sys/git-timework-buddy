@@ -16,7 +16,9 @@ export async function putSetting(ctx: Ctx, key: string, value: unknown) {
 }
 
 export async function audit(ctx: Ctx, ownerId: string, agentId: string | null, actor: 'owner' | 'agent' | 'system' | 'provider' | 'relying_party', action: string, detail: Record<string, unknown> = {}, { required = false } = {}) {
-  const { error } = await ctx.admin.from('agent_id_audit').insert({ owner_user_id: ownerId, agent_id: agentId, actor, action, detail });
+  // What an agent does is recorded with the app and model it did it through.
+  const via = actor === 'agent' && ctx.via ? { via: ctx.via } : {};
+  const { error } = await ctx.admin.from('agent_id_audit').insert({ owner_user_id: ownerId, agent_id: agentId, actor, action, detail: { ...detail, ...via } });
   if (error) {
     console.error('[agent-id] audit failed', action, error.message);
     if (required) throw fail(503, 'unavailable', 'Agent ID could not record this action, so it was not done.');

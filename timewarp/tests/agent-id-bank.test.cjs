@@ -374,7 +374,7 @@ test("credits: a pack bought on the Agent ID website is a Stripe Checkout that T
     [form.mode, form["line_items[0][price]"], form["metadata[kind]"], form["metadata[pack_credits]"], form["metadata[supabase_user_id]"], form["metadata[workspace_id]"], form.client_reference_id, form.customer_email],
     ["payment", "price_360", "credits", "360", ada.id, "", ada.id, "ada@example.com"],
   );
-  assert.equal(form.success_url, "https://timewarpdev.com/agent-id/pricing?credits=added");
+  assert.equal(form.success_url, "https://timewarpdev.com/agent-id/dashboard?pricing=added");
   assert.ok(sent.headers.get("idempotency-key"), "A double click opens the same checkout.");
   // Without the app's price, the same amount inline.
   net.on("GET", /api\.stripe\.com\/v1\/prices\?/, () => ({ data: [] }));

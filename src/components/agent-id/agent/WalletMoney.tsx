@@ -28,7 +28,7 @@ import {
 } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
 import type { AddMoneyInfo, Agent, Money } from "@/lib/agent-id/types";
-import { CopyButton, ErrorState, Field, LoadingRows, Muted, Notice, Segmented } from "../ui";
+import { Chip, CopyButton, ErrorState, Field, LoadingRows, Muted, Notice, Segmented } from "../ui";
 import { BankDeposit, BankWithdraw } from "./BankMoney";
 
 type AddMethod = "card" | "bank" | "crypto";
@@ -106,6 +106,15 @@ function CryptoDeposit({ info }: { info: AddMoneyInfo }) {
       {address ? (
         <div className="grid justify-items-center gap-4 text-center">
           <QrCode value={address} />
+          {/* What this address takes, before anything else. */}
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {(assets.length ? assets : ["USDC"]).map((asset) => (
+              <Chip key={asset} tone="ink">
+                {asset}
+              </Chip>
+            ))}
+            <Chip>on {networkName}</Chip>
+          </div>
           <p className="text-sm">
             Send {assets.length ? assets.join(" or ") : "USDC"} on{" "}
             <strong className="font-semibold">{networkName}</strong> from Coinbase, a wallet or any
@@ -126,8 +135,9 @@ function CryptoDeposit({ info }: { info: AddMoneyInfo }) {
             </div>
           </div>
           <Muted>
-            Only send on {networkName}. Money sent on another network can be lost. It shows here
-            within a few minutes.
+            Only {assets.length ? assets.join(" and ") : "USDC"} on {networkName}. Bitcoin, ETH or
+            coins sent on another network can't be received and may be lost. It shows here within a
+            few minutes.
           </Muted>
         </div>
       ) : (

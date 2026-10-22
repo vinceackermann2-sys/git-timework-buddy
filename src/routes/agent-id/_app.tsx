@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, createFileRoute, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BadgeCheck,
@@ -35,6 +35,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Brand, THEME_OPTIONS } from "@/components/agent-id/Brand";
 import { useAgentIdTheme, type ThemeChoice } from "@/components/agent-id/AgentIdShell";
 import { AgentsIcon } from "@/components/agent-id/icons";
+import { PricingPopup, useOpenPricing } from "@/components/agent-id/Pricing";
 import { Avatar, Chip, Empty } from "@/components/agent-id/ui";
 import { AgentIdError, errorMessage } from "@/lib/agent-id/client";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -54,7 +55,6 @@ type NavPath =
   | "/agent-id/approvals"
   | "/agent-id/verify"
   | "/agent-id/developers"
-  | "/agent-id/pricing"
   | "/agent-id/reviews";
 
 type NavItem = {
@@ -88,12 +88,6 @@ const NAV: NavItem[] = [
     label: "Developers",
     icon: Code2,
     match: (p) => p.startsWith("/agent-id/developers"),
-  },
-  {
-    to: "/agent-id/pricing",
-    label: "Pricing",
-    icon: Coins,
-    match: (p) => p.startsWith("/agent-id/pricing"),
   },
 ];
 
@@ -160,9 +154,32 @@ function SignedInLayout() {
   const account = useAccount();
   const approvals = useApprovals({ poll: true });
   const path = useRouterState({ select: (s) => s.location.pathname });
+  const searchStr = useRouterState({ select: (s) => s.location.searchStr });
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => setMenuOpen(false), [path]);
+
+  // Pricing opens over whatever page is open; Stripe comes back with
+  // ?pricing=added (paid) or ?pricing=open (cancelled).
+  const pricingParam = new URLSearchParams(searchStr).get("pricing");
+  const [pricingOpen, setPricingOpen] = useState(false);
+  useEffect(() => {
+    if (pricingParam) setPricingOpen(true);
+  }, [pricingParam]);
+  useOpenPricing(
+    useCallback(() => {
+      setMenuOpen(false);
+      setPricingOpen(true);
+    }, []),
+  );
+  const closePricing = (open: boolean) => {
+    setPricingOpen(open);
+    if (open || !pricingParam) return;
+    const params = new URLSearchParams(searchStr);
+    params.delete("pricing");
+    const rest = params.toString();
+    void navigate({ href: rest ? `${path}?${rest}` : path, replace: true });
+  };
 
   // A payment an agent asks to make shows up wherever the owner is.
   const seenApprovals = useRef<Set<string> | null>(null);
@@ -205,6 +222,23 @@ function SignedInLayout() {
             {...(item.to === "/agent-id/approvals" ? { badge: pending } : {})}
           />
         ))}
+        <button
+          type="button"
+          onClick={() => {
+            setMenuOpen(false);
+            setPricingOpen(true);
+          }}
+          aria-haspopup="dialog"
+          className={cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
+            pricingOpen
+              ? "bg-[var(--accent)]"
+              : "text-[var(--foreground)]/80 hover:bg-[var(--accent)]",
+          )}
+        >
+          <Coins className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+          <span className="flex-1">Pricing</span>
+        </button>
         {reviewer && (
           <Link
             to="/agent-id/reviews"
@@ -296,6 +330,7 @@ function SignedInLayout() {
             <Outlet />
           )}
         </main>
+        <PricingPopup open={pricingOpen} onOpenChange={closePricing} returned={pricingParam} />
         <footer className="px-4 pb-6 pt-2 text-center">
           <LegalLinks termsUrl={account.data?.config.legal?.termsUrl} />
         </footer>

@@ -7,12 +7,14 @@ import { Link } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { formatPhone, shortAddress } from "@/lib/agent-id/format";
+import { formatPhone, shortAddress, walletHolds } from "@/lib/agent-id/format";
 import type { AgentSetup, Kind } from "@/lib/agent-id/types";
 import { CopyButton } from "./ui";
 import { ResourceArt } from "./ResourceArt";
 
-type Ready = Partial<Record<string, { status: string; address: string | null } | undefined>>;
+type Ready = Partial<
+  Record<string, { status: string; address: string | null; mode?: string } | undefined>
+>;
 
 // Why a kind wasn't given, as the owner can act on it.
 function skippedReason(code: string): { text: string; verify?: boolean } {
@@ -93,7 +95,8 @@ export function ReadyList({
     },
     {
       kind: "wallet",
-      label: "Wallet",
+      // What the address takes, so no one sends it Bitcoin.
+      label: at("wallet") ? `Wallet · ${walletHolds(at("wallet")?.mode)}` : "Wallet",
       value: valueOf("wallet", (a) => shortAddress(a)) ?? missing("wallet", "Not available yet"),
       mono: !!at("wallet")?.address,
       copy: copyOf("wallet"),

@@ -478,6 +478,37 @@ test("MCP: an agent's own tools, only for what it has", async t => {
   assert.equal((await local.call("GET", "/mcp", { token: bot.key })).status, 405);
 });
 
+test("MCP: each connection's app and the model the agent says it is are kept with what it does", async t => {
+  const { local, ok, agent, give } = await setup(t);
+  const alice = await local.user();
+  const bot = await agent(alice, "Bot"), friend = await agent(alice, "Friend");
+  await give(alice, bot, "wallet", { settings: { approvalAbove: null } });
+  await give(alice, friend, "wallet");
+  await ok("POST", `/v1/agents/${bot.id}/wallet/test-funds`, { token: alice.session, body: { amount: 1000 } });
+  const rpc = (body, session) => local.call("POST", "/mcp", { token: bot.key, headers: session ? { "mcp-session-id": session } : {}, body: { jsonrpc: "2.0", ...body } });
+  const init = await rpc({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", clientInfo: { name: "claude-code", version: "2.9.1" } } });
+  const session = init.headers.get("mcp-session-id");
+  assert.match(session, /^mcs_[a-z0-9]{24}$/, "A session for this connection.");
+  assert.match(init.body.result.instructions, /call whoami once with model/);
+  const whoami = (await rpc({ id: 2, method: "tools/list" }, session)).body.result.tools.find(tool => tool.name === "whoami");
+  assert.ok(whoami.inputSchema.properties.model);
+  // The agent says its model, then pays: both are recorded with the payment.
+  await rpc({ id: 3, method: "tools/call", params: { name: "whoami", arguments: { model: "Claude Opus 5.5" } } }, session);
+  const paid = await rpc({ id: 4, method: "tools/call", params: { name: "wallet_send", arguments: { to: friend.id, amount: "1.00" } } }, session);
+  assert.equal(paid.body.result.isError, undefined);
+  const entry = (await ok("GET", "/v1/audit", { token: alice.session })).entries.find(e => e.action === "wallet.send" || e.action === "wallet.transfer");
+  assert.deepEqual(entry?.detail.via, { app: "claude-code", model: "claude-opus-5.5" });
+  // The page shows the app with its model, and every model it has run with.
+  await rpc({ id: 5, method: "tools/call", params: { name: "whoami", arguments: { model: "claude-sonnet-5-5" } } }, session);
+  const apps = (await ok("GET", `/v1/agents/${bot.id}`, { token: alice.session })).agent.apps;
+  const claude = apps.find(a => a.app === "claude-code");
+  assert.deepEqual([claude.model, claude.models], ["claude-sonnet-5-5", ["claude-sonnet-5-5", "claude-opus-5.5"]]);
+  // A session is the agent's own: another agent's id isn't taken.
+  const other = await local.call("POST", "/mcp", { token: friend.key, headers: { "mcp-session-id": session }, body: { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "whoami", arguments: { model: "gpt-6" } } } });
+  assert.equal(other.status, 200);
+  assert.deepEqual((await ok("GET", `/v1/agents/${bot.id}`, { token: alice.session })).agent.apps.find(a => a.app === "claude-code").model, "claude-sonnet-5-5");
+});
+
 test("Agent ID sells the Timewarp app's credit packs", () => {
   const pricing = fs.readFileSync(path.join(__dirname, "../supabase/functions/agent-id/pricing.ts"), "utf8");
   const credits = fs.readFileSync(path.join(__dirname, "../supabase/functions/_shared/credits.ts"), "utf8");

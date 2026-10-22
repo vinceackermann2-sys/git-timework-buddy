@@ -81,6 +81,17 @@ client's name) or is set up in (`attach`, `POST /v1/me/apps`) is recorded in
 `agent_id_agent_clients`, and agents carry `apps` (most recent first) for the
 dashboard.
 
+**Which model, in which app.** Each MCP connection gets a session
+(`Mcp-Session-Id: mcs_…`, table `agent_id_mcp_sessions`, migration
+20261022120000) that remembers its app. The server's instructions ask the agent
+to call `whoami` once with `model` (any tool call may carry `model`); the
+session keeps it, the app's row keeps the latest model and every one it has
+run as (`apps[].model`, `apps[].models`), and everything the agent does in that
+session is audited with `detail.via = { app, model }`. The page shows "Used in
+Claude Code · Claude Opus 5.5" and each action as "Agent in Claude Code ·
+Claude Opus 5.5". The model is what the agent says it is: MCP clients don't
+send it, so it can't be proven.
+
 `attach` finds the agents already on the computer: Claude Code (the main
 agent, user or project scope, and its subagents), Codex, Cursor, Claude
 Desktop, Timewarp's desktop agents, and any project folder (`--here`). It
@@ -384,6 +395,7 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | `POST /v1/agents/:id/wallet/test-funds` | test money |
 | `GET /v1/agents/:id/events?kind=` · `GET …/contacts` | everything the agent did |
 | `GET /v1/approvals` · `POST /v1/approvals/:id {decision}` | approve or deny transfers |
+| `GET /v1/recipients?to=` | the agent an id or handle names (anyone's), before paying it: name, mascot, owner verified, whether it's yours, and its wallet's mode (or none) |
 | `GET /v1/audit?agent=` | audit log |
 | `GET/POST /v1/keys` · `DELETE /v1/keys/:id` | owner keys for the CLI (created with a session only) |
 | `GET/POST /v1/relying-parties` · `PATCH/DELETE …/:id` · `POST …/:id/secret` | companies: audience, policy, secret (shown once; rotate replaces it at once). An audience is not owned: several companies may use the same one |

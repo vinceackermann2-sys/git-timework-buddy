@@ -4,6 +4,7 @@ import type {
   AgentStatus,
   AuditEntry,
   Kind,
+  Mode,
   Money,
   PublicConfig,
   Runtime,
@@ -325,6 +326,26 @@ export function auditDetail(entry: Pick<AuditEntry, "action" | "detail">): strin
   return parts.join(" · ");
 }
 
+// What a wallet's address takes, said plainly: Agent ID wallets hold dollar
+// stablecoins on Base, never Bitcoin or coins on other networks.
+export function walletHolds(mode: Mode | string | undefined): string {
+  return mode === "test" ? "Test dollars (not real money)" : "USDC and USDT on Base";
+}
+
+// The app and model an agent did something through: "Claude Code · Claude Opus 5.5".
+export function auditVia(entry: Pick<AuditEntry, "actor" | "detail">): string | null {
+  const via = entry.actor === "agent" ? entry.detail?.["via"] : null;
+  if (!via || typeof via !== "object") return null;
+  const { app, model } = via as { app?: unknown; model?: unknown };
+  const parts: string[] = [];
+  if (typeof app === "string" && app)
+    parts.push(
+      ORIGIN_LABELS[app] ?? app.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    );
+  if (typeof model === "string" && model) parts.push(modelLabel(model));
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export const ACTOR_LABELS: Record<AuditEntry["actor"], string> = {
   owner: "You",
   agent: "Agent",
@@ -552,6 +573,32 @@ export function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
   return m ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
+}
+
+// A model's id as people say it: "claude-opus-5-5" → "Claude Opus 5.5",
+// "gpt-6" → "GPT-6", "openai/gpt-5-codex" → "GPT-5 Codex".
+export function modelLabel(model: string): string {
+  const parts: string[] = [];
+  for (const part of model
+    .replace(/^.*\//, "")
+    .split(/[-_\s]+/)
+    .filter(Boolean)) {
+    const last = parts[parts.length - 1];
+    // "5", "5" → "5.5" (a version written with dashes), not a date.
+    if (/^\d{1,2}$/.test(part) && last && /^\d{1,2}$/.test(last))
+      parts[parts.length - 1] = `${last}.${part}`;
+    else parts.push(part);
+  }
+  return parts
+    .map((p) =>
+      p.toLowerCase() === "gpt"
+        ? "GPT"
+        : /^\d/.test(p)
+          ? p
+          : p.charAt(0).toUpperCase() + p.slice(1),
+    )
+    .join(" ")
+    .replace(/^GPT (\d)/, "GPT-$1");
 }
 
 // Free machine time left, as people say it: "4 h 32 min", "45 min", "5 h".

@@ -10,7 +10,8 @@ import { vaultOps } from './vault.ts';
 
 const ops = { ...agentOps, ...vaultOps };
 import { resourcesOf, verificationOf } from './shared.ts';
-import { appForClient, appOfClient, recordApp } from './origin.ts';
+import { appForClient, appOfClient, modelOf, recordApp, recordModel } from './origin.ts';
+import { randomId } from './util.ts';
 
 const PROTOCOLS = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
 type Schema = Record<string, unknown>;
@@ -21,7 +22,7 @@ const n = (description: string): Schema => ({ type: 'integer', description });
 const b = (description: string): Schema => ({ type: 'boolean', description });
 
 const TOOLS: Tool[] = [
-  { name: 'whoami', op: 'me', readOnly: true, description: 'Your Agent ID: your id, name, Git identity, your owner\'s verification and everything you have (mail address, phone number, wallet, card, machine).' },
+  { name: 'whoami', op: 'me', readOnly: true, description: 'Your Agent ID: your id, name, Git identity, your owner\'s verification and everything you have (mail address, phone number, wallet, card, machine). Give your model so your owner sees which model acts as you.', properties: { model: s('The model you are, like claude-opus-5-5 or gpt-6.') } },
   { name: 'mail_list', op: 'mailList', needs: 'mail', readOnly: true, description: 'Messages in your mailbox, newest first.', properties: { folder: s('inbox (default), sent or all', { enum: ['inbox', 'sent', 'all'] }), unread: b('Only unread messages.'), limit: n('At most this many (1–100, default 25).'), before: s('Only messages before this ISO time, for the next page.') } },
   { name: 'mail_read', op: 'mailRead', needs: 'mail', description: 'One message in full. Reading marks it read.', properties: { id: s('The message id from mail_list.') }, required: ['id'] },
   { name: 'mail_send', op: 'mailSend', needs: 'mail', description: 'Send an email from your own address. To reply, give reply_to with the message id: the recipient and subject are filled in and it stays in the thread.', properties: { to: { description: 'One address or a list.', anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, cc: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, subject: s('Subject line.'), text: s('The message, as plain text.'), reply_to: s('Id of the message you are replying to.'), attachments: { type: 'array', items: { type: 'string' }, description: 'File ids from file_upload, up to 10.' } }, required: ['text'], map: a => ({ to: a.to, cc: a.cc, subject: a.subject, text: a.text, replyTo: a.reply_to, attachments: a.attachments }) },
@@ -68,6 +69,20 @@ function toolList(kinds: Set<string>) {
 
 // The app an agent connects from, as its MCP client names itself. It fills in
 // the agent's origin when nobody set one.
+// Each connection gets a session that remembers its app, and later its model.
+async function startSession(ctx: Ctx, who: AgentCaller, info: any) {
+  const name = String(info?.name || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 100);
+  const id = `mcs_${randomId(24)}`;
+  const { error } = await ctx.admin.from('agent_id_mcp_sessions').insert({ id, agent_id: who.agent.id, app: name ? appForClient(name) : null, client_name: name || null });
+  return error ? null : id;
+}
+async function sessionOf(ctx: Ctx, who: AgentCaller, req: Request) {
+  const id = req.headers.get('mcp-session-id') || '';
+  if (!/^mcs_[a-z0-9]{24}$/.test(id)) return null;
+  const { data } = await ctx.admin.from('agent_id_mcp_sessions').select('*').eq('id', id).eq('agent_id', who.agent.id).maybeSingle();
+  return data as any;
+}
+
 async function recordClient(ctx: Ctx, who: AgentCaller, info: any) {
   const name = String(info?.name || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 100);
   if (!name) return;
@@ -88,17 +103,21 @@ export async function handleMcp(ctx: Ctx, who: AgentCaller, req: Request) {
   try { message = JSON.parse(raw); } catch { return json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error.' } }); }
   if (Array.isArray(message) || message?.jsonrpc !== '2.0' || typeof message.method !== 'string') return json({ jsonrpc: '2.0', id: message?.id ?? null, error: { code: -32600, message: 'Invalid request.' } });
   if (message.id === undefined) return new Response(null, { status: 202 });
-  const reply = (body: Record<string, unknown>) => json({ jsonrpc: '2.0', id: message.id, ...body });
+  const reply = (body: Record<string, unknown>, headers: Record<string, string> = {}) => json({ jsonrpc: '2.0', id: message.id, ...body }, 200, headers);
+  // The app and model of this connection, kept with whatever the agent does.
+  const session = message.method === 'initialize' ? null : await sessionOf(ctx, who, req).catch(() => null);
+  if (session) ctx.via = { app: session.app || null, model: session.model || null };
   switch (message.method) {
     case 'initialize': {
       await recordClient(ctx, who, message.params?.clientInfo).catch(error => console.error('[agent-id] client record', error?.message));
+      const sessionId = await startSession(ctx, who, message.params?.clientInfo).catch(() => null);
       const verification = await verificationOf(ctx, who.agent);
       return reply({ result: {
         protocolVersion: PROTOCOLS.includes(message.params?.protocolVersion) ? message.params.protocolVersion : '2025-06-18',
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'timewarp-agent-id', title: 'Timewarp Agent ID', version: '1.0.0' },
-        instructions: `You are ${who.agent.name} (${who.agent.id}), an AI agent with a Timewarp Agent ID. ${verification.verified ? 'Your owner is verified, so you can be traced to a responsible person.' : 'Your owner has not verified their identity yet.'} These tools are your own mail, phone, wallet, card and machine: use them for your owner's tasks. Your owner sets your spending limits; transfers above the approval amount wait for their OK: show them the approve link wallet_send gives you, and check with approval_status. You can never approve your own payments. Never paste card details, keys or passports into chat.`,
-      } });
+        instructions: `You are ${who.agent.name} (${who.agent.id}), an AI agent with a Timewarp Agent ID. ${verification.verified ? 'Your owner is verified, so you can be traced to a responsible person.' : 'Your owner has not verified their identity yet.'} These tools are your own mail, phone, wallet, card and machine: use them for your owner's tasks. Your owner sets your spending limits; transfers above the approval amount wait for their OK: show them the approve link wallet_send gives you, and check with approval_status. You can never approve your own payments. Never paste card details, keys or passports into chat. At the start of each conversation, call whoami once with model set to the model you are (for example claude-opus-5-5 or gpt-6): your owner sees which model acts as you.`,
+      } }, sessionId ? { 'Mcp-Session-Id': sessionId } : {});
     }
     case 'ping': return reply({ result: {} });
     case 'tools/list': {
@@ -110,7 +129,16 @@ export async function handleMcp(ctx: Ctx, who: AgentCaller, req: Request) {
     case 'tools/call': {
       const tool = TOOLS.find(item => item.name === message.params?.name);
       if (!tool) return reply({ error: { code: -32602, message: `Unknown tool: ${message.params?.name}` } });
-      const args = message.params?.arguments && typeof message.params.arguments === 'object' ? message.params.arguments : {};
+      const { model: said, ...args } = message.params?.arguments && typeof message.params.arguments === 'object' ? message.params.arguments : {} as Record<string, unknown>;
+      // The model the agent says it is, for this session and its app.
+      const model = modelOf(said);
+      if (model && model !== session?.model) {
+        // Clients that don't keep the session: the app it last connected from.
+        const app = session?.app || (who.agent.client_name ? appForClient(who.agent.client_name) : null);
+        ctx.via = { app, model };
+        if (session) await ctx.admin.from('agent_id_mcp_sessions').update({ model, last_seen_at: new Date(ctx.now()).toISOString() }).eq('id', session.id);
+        await recordModel(ctx, who.agent.id, app, model).catch(error => console.error('[agent-id] model record', error?.message));
+      }
       try {
         const result = await ops[tool.op](ctx, who, tool.map ? tool.map(args) : args);
         return reply({ result: { content: [{ type: 'text', text: JSON.stringify(result) }] } });
