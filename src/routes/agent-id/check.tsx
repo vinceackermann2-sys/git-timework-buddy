@@ -7,14 +7,17 @@ import { BadgeCheck, FileUp, Loader2, SearchCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { NeedList } from "@/components/agent-id/site/angles";
+import { OtherNeeds } from "@/components/agent-id/site/angles";
+import { ReceiptMini, TracedMini } from "@/components/agent-id/site/demos";
 import {
-  Band,
-  Eyebrow,
-  Offer,
+  Closing,
+  Hero,
   Questions,
+  Scenario,
+  Section,
   SitePage,
-  StartRow,
+  Tile,
+  Tiles,
 } from "@/components/agent-id/site/Site";
 import { AgentAvatar, Notice, Segmented } from "@/components/agent-id/ui";
 import { errorMessage } from "@/lib/agent-id/client";
@@ -38,110 +41,98 @@ export const Route = createFileRoute("/agent-id/check")({
 });
 
 // Angle A2 (docs/agent-id-ladder.md): people who must tell AI work from human
-// work. The answer comes first (the checker), then how the mark works, its
-// honest limits, and marking your own agents' work.
+// work. The answer comes first (the checker is the hero), then the moment
+// they know, how the mark works and its honest limits, and marking your own
+// agents' work.
 function CheckPage() {
   return (
     <SitePage>
-      <section className="mx-auto grid w-full max-w-6xl grid-cols-[minmax(0,1fr)] items-start gap-12 px-4 pb-16 pt-10 sm:px-6 sm:pt-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
-        <div className="lg:pt-6">
-          <Eyebrow>AI or real?</Eyebrow>
-          <h1 className="mt-3 text-4xl font-semibold leading-[1.06] tracking-tight sm:text-6xl">
-            Check if a picture, voice or text was made by AI.
-          </h1>
-          <p className="mt-6 max-w-xl text-lg text-[var(--muted-foreground)]">
-            Everything made through Agent ID carries{" "}
-            <strong className="font-semibold text-[var(--foreground)]">a hidden mark</strong>. Drop
-            a file or paste text to see which AI made it, and who answers for it.
-          </p>
-        </div>
-        <Checker />
-      </section>
+      <Hero
+        eyebrow="AI or real?"
+        title="Was this made by AI?"
+        lead={
+          <>
+            Drop a picture or a voice, or paste text. If an AI with an Agent ID made it, you'll see{" "}
+            <strong className="font-semibold text-[var(--foreground)]">
+              which one, and who answers for it
+            </strong>
+            .
+          </>
+        }
+        action={<Checker />}
+      />
 
-      <Band tinted label="How the mark works">
-        <h2 className="max-w-3xl text-3xl font-semibold tracking-tight sm:text-4xl">
-          Detectors guess. A mark knows.
-        </h2>
-        <p className="mt-5 max-w-3xl text-lg text-[var(--muted-foreground)]">
-          AI detectors look at finished work and guess, and they flag real people. Agent ID puts a
-          mark in when the work is made, so a check finds it, or doesn't.
-        </p>
-        <ol className="mt-10 grid gap-8 md:grid-cols-3">
-          {[
-            [
-              "Marked when it's made.",
-              "Pictures and sound get a mark you can't see or hear. Text gets an invisible one. Code is left as it is.",
-            ],
-            [
-              "Kept as a signed record.",
-              "Which agent made it, what kind of AI, when, and who answers for it. Text and code are also kept as a fingerprint.",
-            ],
-            [
-              "Checked by anyone.",
-              "Here, or with the API. Your file isn't kept: only the result of the check.",
-            ],
-          ].map(([title, line], index) => (
-            <li key={title}>
-              <span className="grid h-9 w-9 place-items-center rounded-full bg-[var(--aid-ink)] text-sm font-semibold text-[var(--background)]">
-                {index + 1}
-              </span>
-              <p className="mt-4 text-lg font-semibold">{title}</p>
-              <p className="mt-2 text-[var(--muted-foreground)]">{line}</p>
-            </li>
-          ))}
-        </ol>
-      </Band>
+      <Section title="Detectors guess. A mark knows." label="The moment">
+        <Scenario
+          lines={[
+            "A logo that was meant to be hand-drawn. A voice note from “the boss”.",
+            "AI detectors look at the finished work and guess.",
+            "Sometimes they flag real people.",
+          ]}
+          turn="Agent ID marks work when it's made, so a check finds the mark, or doesn't."
+        />
+      </Section>
 
-      <Band label="Mark your agents' work">
-        <div className="grid gap-12 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-16">
-          <div>
-            <h2 className="text-3xl font-semibold tracking-tight">
-              Make your agents' work traceable.
-            </h2>
-            <p className="mt-4 text-[var(--muted-foreground)]">
-              Give your agents an Agent ID, and what they send through it is marked: email, texts,
-              attachments, pictures and sound. Nobody can pass it off as made by a person.
-            </p>
-            <StartRow className="mt-8" />
-          </div>
-          <Questions
-            items={[
-              [
-                "No mark found. Did a person make it?",
-                "Not necessarily. Only work made through Agent ID, or by a model maker who marks through it, carries a mark.",
-              ],
-              [
-                "Can the mark be removed?",
-                "A picture's mark survives saving as JPEG, resizing, brightness and blur. A sound's survives MP3, volume and noise, from about 10 seconds. Cropping or turning a picture, or speeding up a sound, removes it, and so can someone determined. Text marks are easy to strip, so text is also matched by its fingerprint.",
-              ],
-              [
-                "What about video?",
-                "Video is recorded and matched exactly for now. A mark inside the picture comes next.",
-              ],
-              [
-                "Is it like Google's SynthID?",
-                "The idea is the same: a mark put in when it's made. SynthID finds Google's models. Agent ID finds any AI with an Agent ID, and who answers for it.",
-              ],
-            ]}
+      <Section title="Every mark leads back to an agent." label="How it works">
+        <Tiles>
+          <Tile
+            title="Marked when it's made"
+            line="Pictures and sound get a mark you can't see or hear. Text gets an invisible one."
+            visual={<TracedMini />}
           />
-        </div>
-      </Band>
+          <Tile
+            title="Signed and dated"
+            line="Each mark has a receipt: which AI made it, and when."
+            visual={<ReceiptMini />}
+          />
+          <Tile
+            title="Honest about what it can't see"
+            line="No mark doesn't mean a person made it. Only work made through Agent ID carries one."
+            visual={<NoMark />}
+          />
+        </Tiles>
+      </Section>
 
-      <Band tinted label="Pricing">
-        <div className="mx-auto max-w-xl">
-          <Offer />
-        </div>
-      </Band>
+      <Section title="Good questions." label="Questions" narrow>
+        <Questions
+          items={[
+            [
+              "Can the mark be removed?",
+              "A picture's mark survives JPEG, resizing, brightness and blur. A sound's survives MP3, volume and noise, from about 10 seconds. Cropping or turning a picture, or speeding up a sound, removes it, and so can someone determined. Text marks are easy to strip, so text is also matched by its fingerprint.",
+            ],
+            [
+              "Is my file kept?",
+              "No. Your browser sends a small copy, it's checked, and only the answer comes back.",
+            ],
+            [
+              "What about video?",
+              "Video is recorded and matched exactly for now. A mark inside the picture comes next.",
+            ],
+            [
+              "Is it like Google's SynthID?",
+              "The idea is the same: a mark put in when it's made. SynthID finds Google's models. Agent ID finds any AI with an Agent ID, and who answers for it.",
+            ],
+          ]}
+        />
+      </Section>
 
-      <Band label="Other reasons">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-          Also with Agent ID
-        </h2>
-        <div className="mt-4">
-          <NeedList current="check" />
-        </div>
-      </Band>
+      <Closing
+        title="Make your agents' work traceable."
+        lead="Give your agents an Agent ID, and what they send through it is marked. Free, no card."
+      />
+      <OtherNeeds current="check" />
     </SitePage>
+  );
+}
+
+function NoMark() {
+  return (
+    <div className="mx-auto max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 text-left text-sm shadow-[0_12px_30px_-18px_rgba(23,32,51,0.35)]">
+      <p className="font-medium">No Agent ID mark found</p>
+      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+        That doesn't prove a person made it.
+      </p>
+    </div>
   );
 }
 
@@ -179,11 +170,23 @@ function Checker() {
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (ready && !check.isPending) check.mutate();
+    if (check.isPending) return;
+    // Nothing to check yet: open the file picker, or go to the text box.
+    if (!ready) {
+      const form = event.currentTarget as HTMLFormElement;
+      if (mode === "file") form.querySelector<HTMLInputElement>("input[type=file]")?.click();
+      else form.querySelector("textarea")?.focus();
+      return;
+    }
+    check.mutate();
   };
 
   return (
-    <form onSubmit={submit} className="aid-card grid gap-4 p-5 sm:p-6" aria-label="Check">
+    <form
+      onSubmit={submit}
+      aria-label="Check"
+      className="grid gap-4 rounded-[1.75rem] border border-[var(--border)] bg-[var(--card)] p-4 text-left shadow-[0_20px_50px_-20px_rgba(76,29,149,0.35)] sm:p-5"
+    >
       <Segmented
         label="What to check"
         value={mode}
@@ -206,7 +209,7 @@ function Checker() {
           onDragLeave={() => setDragging(false)}
           onDrop={drop}
           className={cn(
-            "grid min-h-48 cursor-pointer place-items-center rounded-xl border-2 border-dashed p-5 text-center transition-colors",
+            "grid min-h-44 cursor-pointer place-items-center rounded-2xl border-2 border-dashed p-5 text-center transition-colors",
             dragging
               ? "border-[var(--aid-ink)] bg-[var(--accent)]"
               : "border-[var(--border)] hover:border-[var(--aid-ink)]",
@@ -251,7 +254,12 @@ function Checker() {
           placeholder="Paste an email, a message, an essay or code."
         />
       )}
-      <Button type="submit" size="lg" disabled={!ready || check.isPending}>
+      <Button
+        type="submit"
+        size="lg"
+        disabled={check.isPending}
+        className="h-11 rounded-full bg-[var(--aid-ink)] text-[var(--background)] hover:bg-[var(--aid-ink)] hover:opacity-90 disabled:opacity-60"
+      >
         {check.isPending ? (
           <Loader2 className="animate-spin" aria-hidden="true" />
         ) : (

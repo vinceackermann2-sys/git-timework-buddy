@@ -1,148 +1,146 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { ArrowRight } from "lucide-react";
+import type { ReactNode } from "react";
 
-import { AppIcon } from "@/components/agent-id/AppIcons";
-import { NeedList } from "@/components/agent-id/site/angles";
-import { IdCardArt, TraceDemo } from "@/components/agent-id/site/demos";
-import { Band, Offer, SitePage, StartRow } from "@/components/agent-id/site/Site";
+import { NeedLink, type AngleSlug } from "@/components/agent-id/site/angles";
+import {
+  CommitsMini,
+  GateMini,
+  HomeShot,
+  SwitchMini,
+  Terminal,
+  TracedMini,
+  WhoMini,
+} from "@/components/agent-id/site/demos";
+import {
+  Closing,
+  Hero,
+  Scenario,
+  Section,
+  SitePage,
+  Tile,
+  Tiles,
+  Window,
+  WorksIn,
+} from "@/components/agent-id/site/Site";
 
 export const Route = createFileRoute("/agent-id/")({
   head: () => ({
-    meta: [{ title: "Timewarp Agent ID · Know which AI did it, and who answers for it" }],
+    meta: [{ title: "Timewarp Agent ID · Trust your AI agents with real work" }],
   }),
   component: AgentIdHome,
 });
 
-// The front door (library layout "homepage", docs/agent-id-ladder.md): who
-// it's for and the destination, the scenario, every need with its own page,
-// how it works, and the offer. Every promise here works today.
+// The front door (Deus's homepage layout and Copywriting Formula; plan in
+// docs/agent-id-ladder.md): who it's for and the destination, the moment
+// everyone knows, every need as a tile to its own page, how to start, and
+// the offer. Every promise here works today.
 
-const WORKS_WITH: [string, string][] = [
-  ["claude-code", "Claude"],
-  ["codex", "Codex"],
-  ["cursor", "Cursor"],
-  ["gemini", "Gemini"],
-  ["grok", "Grok"],
-  ["copilot", "Copilot"],
-];
+function More({ angle, children }: { angle: AngleSlug | "check"; children: ReactNode }) {
+  return (
+    <NeedLink
+      angle={angle}
+      className="group inline-flex items-center gap-1 font-medium text-[var(--aid-ink)]"
+    >
+      {children}
+      <ArrowRight
+        className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5"
+        aria-hidden="true"
+      />
+    </NeedLink>
+  );
+}
 
 function AgentIdHome() {
   return (
     <SitePage>
-      <section className="mx-auto grid w-full max-w-6xl grid-cols-[minmax(0,1fr)] items-center gap-14 px-4 pb-20 pt-10 sm:px-6 sm:pt-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div>
-          <h1 className="text-5xl font-semibold leading-[1.04] tracking-tight sm:text-7xl">
-            Know which AI did it, and who answers for it.
-          </h1>
-          <p className="mt-6 max-w-xl text-lg text-[var(--muted-foreground)]">
-            Agent ID gives every AI agent and model{" "}
+      <Hero
+        title="Trust your AI agents with real work."
+        lead={
+          <>
+            Give every agent{" "}
             <strong className="font-semibold text-[var(--foreground)]">
-              its own ID, tied to a verified person or business
+              its own ID, tied to you
             </strong>
-            . What it does, and what it makes, can be traced back.
-          </p>
-          <StartRow className="mt-8" />
-        </div>
-        <div className="relative isolate mx-auto w-full max-w-md lg:max-w-none">
-          <div
-            aria-hidden="true"
-            className="absolute -inset-8 -z-10 rounded-[3rem] bg-[var(--aid-glow)] blur-3xl"
+            . Everything it does, and everything it makes, traces back to it.
+          </>
+        }
+      >
+        <Window title="timewarpdev.com/agent-id">
+          <HomeShot />
+        </Window>
+      </Hero>
+
+      <WorksIn />
+
+      <Section title="Your agents already work for you." label="The moment">
+        <Scenario
+          lines={[
+            "One answers the email. One pays the invoice.",
+            "One pushes a fix at 3 a.m.",
+            "Great, until one gets it wrong and nobody can say which one it was.",
+          ]}
+          turn="Agent ID gives each one a name, an owner and a trail."
+        />
+      </Section>
+
+      <Section
+        title="One ID keeps every agent accountable."
+        lead="Pick what you need. It all comes with the same free ID."
+        label="What it does"
+      >
+        <Tiles>
+          <Tile
+            span={3}
+            title="Only your agents touch your code"
+            line="Every commit is signed. Ones from agents you don't know are blocked."
+            visual={<CommitsMini />}
+            to={<More angle="code">For codebases</More>}
           />
-          <IdCardArt />
-        </div>
-      </section>
+          <Tile
+            span={3}
+            title="Tell AI from real"
+            line="Pictures, voices and text carry a hidden mark. Anyone can check it."
+            visual={<TracedMini />}
+            to={<More angle="check">Check something</More>}
+          />
+          <Tile
+            title="Know whose agent it was"
+            line="Every action shows the person, the app and the computer."
+            visual={<WhoMini />}
+            to={<More angle="accountability">When an agent goes rogue</More>}
+          />
+          <Tile
+            title="Let only verified agents in"
+            line="One line keeps unknown agents off your API and MCP server."
+            visual={<GateMini />}
+            to={<More angle="apis">For APIs</More>}
+          />
+          <Tile
+            title="One ID in Claude and Codex"
+            line="Switch apps. Keep the email, wallet, computer and keys."
+            visual={<SwitchMini />}
+            to={<More angle="claude-and-codex">For Claude and Codex</More>}
+          />
+        </Tiles>
+      </Section>
 
-      {/* The scenario every need shares. */}
-      <section className="border-y border-[var(--border)] bg-[var(--card)]/60">
-        <p className="mx-auto max-w-3xl px-4 py-16 text-center text-2xl font-medium leading-snug tracking-tight sm:px-6 sm:text-3xl">
-          A commit nobody wrote. A voice you can't place. 3,000 emails nobody sent.{" "}
-          <span className="text-[var(--muted-foreground)]">
-            AI now acts with your keys and makes work under no name of its own.
-          </span>
-        </p>
-      </section>
+      <Section
+        title="Ready in a minute."
+        lead="Start with your email. Then paste one line, and every agent on your computer gets its ID."
+        label="How to start"
+        narrow
+      >
+        <Terminal
+          command="npx @timewarp/agent-id attach"
+          note="Finds Claude Code, Codex, Cursor and more"
+        />
+      </Section>
 
-      <Band label="What do you need?">
-        <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">What do you need?</h2>
-        <div className="mt-8">
-          <NeedList />
-        </div>
-      </Band>
-
-      <Band tinted label="How it works">
-        <div className="grid grid-cols-[minmax(0,1fr)] items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
-          <div>
-            <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-              One ID. One passport. One mark.
-            </h2>
-            <ol className="mt-8 grid gap-6">
-              {[
-                [
-                  "An ID for every agent and model.",
-                  "Tied to a verified person or business, with its own email, wallet, phone and computer. Agents, and language, image, voice, video, code and decision models.",
-                ],
-                [
-                  "A passport for every request.",
-                  "APIs, MCP servers and repositories check it in one line, and see who stands behind the agent.",
-                ],
-                [
-                  "A mark on everything it makes.",
-                  "Pictures, voices and text carry a hidden mark that leads back to the agent. Anyone can check it.",
-                ],
-              ].map(([title, line], index) => (
-                <li key={title} className="flex gap-4">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--aid-ink)] text-sm font-semibold text-[var(--background)]">
-                    {index + 1}
-                  </span>
-                  <p className="pt-1">
-                    <span className="font-semibold">{title}</span>{" "}
-                    <span className="text-[var(--muted-foreground)]">{line}</span>
-                  </p>
-                </li>
-              ))}
-            </ol>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <span className="text-xs font-medium text-[var(--muted-foreground)]">Works with</span>
-              {WORKS_WITH.map(([app, name]) => (
-                <AppIcon key={app} app={app} label={name} size="md" />
-              ))}
-            </div>
-          </div>
-          <div className="mx-auto w-full max-w-md">
-            <TraceDemo />
-          </div>
-        </div>
-      </Band>
-
-      <Band label="Start">
-        <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-center">
-          <div>
-            <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-              Ready in a few minutes.
-            </h2>
-            <ol className="mt-8 grid gap-5">
-              {[
-                ["Sign up with your email.", "A code, and you're in."],
-                [
-                  "Give each agent its ID.",
-                  "Paste one line on your computer, or open the link your agent shows you.",
-                ],
-                ["Verify once.", "Only when money first leaves a wallet."],
-              ].map(([title, line], index) => (
-                <li key={title} className="flex gap-4">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[var(--border)] text-sm font-semibold">
-                    {index + 1}
-                  </span>
-                  <p className="pt-1">
-                    <span className="font-medium">{title}</span>{" "}
-                    <span className="text-[var(--muted-foreground)]">{line}</span>
-                  </p>
-                </li>
-              ))}
-            </ol>
-          </div>
-          <Offer />
-        </div>
-      </Band>
+      <Closing
+        title="Say yes to agents. Keep the last word."
+        lead="Free to start: an ID, email, wallet and 5 hours of computer time. No card. Pause or revoke any agent in one click."
+      />
     </SitePage>
   );
 }

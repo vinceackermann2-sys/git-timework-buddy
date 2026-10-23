@@ -269,3 +269,15 @@ html.agent-id [role="alertdialog"]:focus {
 .agent-id input[list]::-webkit-calendar-picker-indicator {
   display: none !important;
 }
+
+/* The public site: a soft dotted backdrop, fading out from the top, behind
+   heroes and inside tiles. */
+.agent-id .aid-dots {
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--aid-ink) 16%, transparent) 1px,
+    transparent 1.3px
+  );
+  background-size: 18px 18px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 35%, transparent 80%);
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 35%, transparent 80%);
+}

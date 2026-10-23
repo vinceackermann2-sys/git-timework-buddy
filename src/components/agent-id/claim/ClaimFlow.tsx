@@ -65,6 +65,26 @@ export function useTermsVersion() {
   return config.data?.legal?.termsVersion ?? null;
 }
 
+// Starting a claim from an email: the link and the code at once. Terms not
+// ticked yet are asked for with the code. Resolves to the claim's code.
+export function useStartClaim() {
+  const termsVersion = useTermsVersion();
+  return useMutation({
+    mutationFn: async ({ email, agreed }: { email: string; agreed: boolean }) => {
+      const started = await claimsApi.start();
+      const sent = await claimsApi.sendCode(started.claim.code, email);
+      writeClaimMemory(started.claim.code, {
+        secret: started.secret,
+        sentEmail: sent.email,
+        sentAt: String(Date.now()),
+        terms: agreed ? termsVersion : null,
+        devCode: sent.devCode ?? null,
+      });
+      return started.claim.code;
+    },
+  });
+}
+
 export function ClaimFlow({ code }: { code: string }) {
   const queryClient = useQueryClient();
   // Read after mounting: the server has no sessionStorage.

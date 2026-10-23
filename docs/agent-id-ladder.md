@@ -350,31 +350,48 @@ identity that leads back to the person or business who answers for it.**
 
 | Page | Type (library) | Audience and stage | Promise kept |
 | --- | --- | --- | --- |
-| `/agent-id` | Homepage | Everyone, warm | Identity for every AI agent; the five needs, each to its own page. |
+| `/agent-id` | Homepage | Everyone, warm | Trust your AI agents with real work; the five needs, each to its own page. |
 | `/agent-id/for/code` | Mini sales letter | Maya, problem aware | A1 |
 | `/agent-id/check` | The tool, then the case | Sofia, solution aware | A2: the answer first (the checker). |
 | `/agent-id/for/accountability` | Mini sales letter | Erik, unaware | A3 |
 | `/agent-id/for/apis` | Comparison | Priya, product aware | A4 |
 | `/agent-id/for/claude-and-codex` | Mini sales letter | Leo, solution aware | A5 |
 
-**Homepage (library: homepage).** Hero: who it's for and the destination in
-one line, the ID card, "Get started for free". The scenario, in their words.
-The range by need: five rows, each to its page. The mechanism (the ID, the
-passport, the mark). Proof: what works today, as the product itself. The
-offer, then the closing action.
+**The look (2026-10-23).** Same branding (lilac and ink, the gradient, the
+mascots, Segoe), laid out like the sites the owner likes: lovable.dev,
+claude.ai and Strawberry. A centered hero on a soft dotted, glowing backdrop.
+One rounded box to start in: an email, like their prompt box; it sends the
+code at once. The product below, in an app window, with the mascots peeking
+over its top edge. Then a few airy sections: the moment, tiles (a product
+picture on a soft stage, a title and one line), answers, and the close with
+the same box.
 
-**Mini sales letter (library: mini-sales-letter).** Hook in the page's own
-words; the problem and what it costs; the real cause and why the usual fixes
-fail; the mechanism; proof (the product doing it); the offer and the action;
-objections answered; the action again.
+**Copy: Deus's Copywriting Formula on every page.** Make them feel
+understood, not sold to:
+1. **The promise** the visitor came for (Keep the Promise), 6–12 words.
+2. **A relatable moment** in their words, with the questions they ask
+   themselves ("Whose agent was it?"), then the turn.
+3. **Features as benefits and scenarios,** one per tile.
+4. **Logical reinforcement:** objections answered, with one sourced fact.
+5. **The dream, made believable,** and the offer (free, no card, pause or
+   revoke any time), with the box to start.
 
-**Comparison (library: comparison).** The comparison in the headline; the
-criteria buyers care about; side by side, each with proof; who each option
-fits; the offer and the action.
+**Homepage (library: homepage).** Hero: who it's for and the destination
+("Trust your AI agents with real work.") with the dashboard of an agent's ID
+and what agents just did. The apps it works in. The moment ("Your agents
+already work for you."). The range by need: five tiles, each to its page.
+How to start. The dream and the offer.
 
-Copy rules on every page: opening sentence of 6–12 words; grade 5–8; bold
-the pitch; subheads state facts; no filler words; never fabricate;
-illustrative people are named as illustrative.
+**Reason pages (library: mini sales letter; `/for/apis` adds the comparison).**
+The same five steps, one reason each.
+
+**Checker (`/agent-id/check`).** The answer first: the checker is the hero's
+box. Then the moment (detectors guess), how a mark works and its limits,
+answers, and making your own agents' work traceable.
+
+Copy rules on every page: grade 5–8; bold the pitch; subheads state facts;
+no filler words; never fabricate; illustrative people are named as
+illustrative.
 
 ## What to learn first
 

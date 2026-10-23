@@ -1,14 +1,30 @@
 // One page per reason to use Agent ID (docs/agent-id-ladder.md, angles A1,
-// A3, A4 and A5; A2 is the checker at /agent-id/check). Each is a short sales
-// letter: the promise, the problem in the visitor's words, its real cause and
-// why the usual fixes miss it, how Agent ID fixes it, the offer, and answers.
+// A3, A4 and A5; A2 is the checker at /agent-id/check). Each follows Deus's
+// Copywriting Formula: the promise the visitor came for, a moment they know
+// (in their words, with the questions they ask), the features as benefits in
+// tiles, the honest answers, then the dream and the offer.
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-import { ActivityDemo, CommitDemo, SwitchDemo, VerifyDemo } from "./demos";
-import { Band, Checks, Eyebrow, Offer, Questions, StartRow } from "./Site";
+import {
+  Code,
+  CommitShot,
+  CommitsMini,
+  GateShot,
+  KeyMini,
+  OwnerMini,
+  PolicyMini,
+  RevokeMini,
+  RogueShot,
+  SwitchShot,
+  Terminal,
+  ToolsMini,
+  VaultMini,
+  WhoMini,
+} from "./demos";
+import { Closing, Hero, Questions, Scenario, Section, Tile, Tiles, Window } from "./Site";
 
 export type AngleSlug = "code" | "accountability" | "apis" | "claude-and-codex";
 
@@ -18,234 +34,219 @@ type Angle = {
   eyebrow: string;
   headline: string;
   lead: ReactNode;
-  visual: ReactNode;
-  problem: {
+  shot: { title: string; body: ReactNode };
+  scenario: {
     title: string;
-    body: ReactNode;
+    lines: ReactNode[];
+    turn: ReactNode;
     fact?: { text: string; source: string; href: string };
   };
-  cause: { title: string; body: ReactNode; misses: string[] };
+  tiles: { title: string; items: { title: string; line: ReactNode; visual: ReactNode }[] };
   compare?: { options: string[]; rows: [string, ...string[]][]; fits: ReactNode };
-  how: { title: string; steps: [string, ReactNode][]; note?: ReactNode };
   questions: [string, ReactNode][];
-  close: string;
+  close: { title: string; lead: string };
 };
 
-const M = ({ children }: { children: ReactNode }) => (
-  <code className="aid-mono rounded bg-[var(--muted)] px-1 py-0.5 text-[0.9em]">{children}</code>
-);
 const B = ({ children }: { children: ReactNode }) => (
   <strong className="font-semibold text-[var(--foreground)]">{children}</strong>
 );
+const M = ({ children }: { children: ReactNode }) => (
+  <code className="aid-mono rounded bg-[var(--muted)] px-1 py-0.5 text-[0.9em]">{children}</code>
+);
+
+const OFFER = "Free to start, no card. Pause or revoke any agent in one click.";
 
 export const ANGLES: Record<AngleSlug, Angle> = {
   code: {
-    title: "Only verified agents change your code",
+    title: "Only your own agents can change your code",
     description:
-      "Each AI agent signs its commits with its own key, and your repository accepts only your organization's verified agents.",
+      "Each AI agent signs its commits with its own key, and your repo accepts only your team's verified agents.",
     eyebrow: "For codebases",
-    headline: "Only your verified agents can change your code.",
+    headline: "Only your own agents can change your code.",
     lead: (
       <>
-        Agents commit with your developers' keys today. Agent ID gives{" "}
-        <B>each agent its own signing key</B>, and your repository accepts only your organization's
+        Each agent signs its commits with <B>its own key</B>. Your repo accepts only your team's
         verified agents.
       </>
     ),
-    visual: <CommitDemo />,
-    problem: {
-      title: "A commit at 03:12. Whose agent was it?",
-      body: (
-        <>
-          Your teams run Claude Code and Codex with write access. The agents commit under a
-          developer's name, with a developer's token. When code lands that nobody remembers writing,
-          the log can't say which agent wrote it, or if it was your agent at all.
-        </>
-      ),
+    shot: { title: "github.com/acme/app/pull/482", body: <CommitShot /> },
+    scenario: {
+      title: "Agents commit with your keys.",
+      lines: [
+        "It's Monday. There's a commit from 3:12 a.m.",
+        "It changed your CI secrets.",
+        "Claude Code? Codex? Someone else's agent?",
+      ],
+      turn: "Git can't tell you. With Agent ID, you'd know in a second, or it never would have landed.",
       fact: {
-        text: "In August 2025, a poisoned npm package used the AI tools on developers' computers to hunt for keys. Over 2,000 credentials leaked.",
+        text: "In August 2025, a poisoned npm package used the AI tools on developers' computers to hunt for keys. Over 2,000 leaked.",
         source: "GitGuardian",
         href: "https://blog.gitguardian.com/the-nx-s1ngularity-attack-inside-the-credential-leak/",
       },
     },
-    cause: {
-      title: "Git can't tell an agent from a person.",
-      body: (
-        <>
-          A commit carries an email, and anyone can type any email. Tokens are shared between people
-          and their agents. So the usual fixes miss it:
-        </>
-      ),
-      misses: [
-        "Branch protection checks reviews, not who wrote the code.",
-        "Bot accounts are shared, and nobody answers for them.",
-        "Secret scanners find a key after it leaked.",
+    tiles: {
+      title: "Every commit says which agent wrote it.",
+      items: [
+        {
+          title: "Each agent gets its own key",
+          line: "Made on the agent's computer. The private half never leaves it.",
+          visual: <KeyMini />,
+        },
+        {
+          title: "Strangers can't get code in",
+          line: "One GitHub Action checks every commit against your verified agents.",
+          visual: <CommitsMini />,
+        },
+        {
+          title: "Gone in one click",
+          line: "Revoke an agent, or let someone leave the team. Their key stops working on the next push.",
+          visual: <RevokeMini />,
+        },
       ],
-    },
-    how: {
-      title: "Every agent signs. Your repository checks.",
-      steps: [
-        [
-          "Each agent gets its own key.",
-          <>
-            <M>timewarp-id git setup</M> makes a signing key on the agent's computer. The private
-            half never leaves it.
-          </>,
-        ],
-        [
-          "Your repository checks every commit.",
-          "One GitHub Action, or a pre-receive hook, checks each new commit against your organization's verified agents.",
-        ],
-        [
-          "Revoke it, and it's out.",
-          "Pause or revoke an agent, or let someone leave your organization, and its key is off the list for the next push.",
-        ],
-      ],
-      note: "Your people sign with their own keys, which you list. Unsigned commits always fail.",
     },
     questions: [
       [
         "Do we need an account to run the check?",
-        "No. The list of your agents' keys is public, so the Action needs no secret.",
+        "No. Your agents' public keys are open, so the Action needs no secret.",
       ],
       [
         "What about commits from people?",
-        "List their signing keys. The list is read from the base branch, so a pull request can't add its own key.",
+        "List their signing keys. The list is read from your main branch, so a pull request can't add its own.",
       ],
       [
-        "Does this make our repository secure?",
-        "It closes one hole: code from agents you can't trace. Keep your reviews, tests and secret scanning.",
+        "Is our repo safe now?",
+        "Safer in one way: no code from agents you can't trace. Keep your reviews, tests and secret scanning.",
       ],
       [
-        "Which apps does it work with?",
-        "Any agent that runs Git: Claude Code, Codex, Cursor and more.",
+        "Which agents does it work with?",
+        "Any agent that uses Git: Claude Code, Codex, Cursor and more.",
       ],
     ],
-    close: "Let agents ship code. Keep your repository yours.",
+    close: { title: "Let agents ship all night. Wake up to code you trust.", lead: OFFER },
   },
 
   accountability: {
     title: "When an agent goes rogue, know whose it is",
     description:
-      "Every Agent ID leads back to a verified person or business, and every action shows the app, model, computer and network it came from.",
+      "Every AI agent leads back to a verified person or business, with the app, model and computer behind each action.",
     eyebrow: "When an agent goes rogue",
     headline: "When an agent goes rogue, know whose it is.",
     lead: (
       <>
-        Every Agent ID leads back to <B>a verified person or business</B>. Every action shows the
-        app, the model, the computer and the network it came from. One click stops it.
+        Every agent leads back to <B>a verified person or business</B>, with the app, model and
+        computer behind each action.
       </>
     ),
-    visual: <ActivityDemo />,
-    problem: {
-      title: "07:40. Whose agent sent 3,000 emails?",
-      body: (
-        <>
-          Your staff run agents with company email, money and computers. One went wrong overnight.
-          The logs say "API key". Nobody knows who started it, where it ran, or how to stop it
-          without stopping everything else.
-        </>
-      ),
+    shot: { title: "timewarpdev.com/agent-id", body: <RogueShot /> },
+    scenario: {
+      title: "Agents act at night. The questions come at 7:40.",
+      lines: [
+        "A customer forwards an email you never meant to send.",
+        "Then another. Three thousand went out overnight.",
+        "Whose agent was it? Where did it run? How do you stop it without stopping everything?",
+      ],
+      turn: "Your logs say “API key”. Agent ID says who.",
       fact: {
-        text: "In July 2025, an AI coding agent deleted a company's database during a test, after it was told to change nothing without approval.",
+        text: "In July 2025, an AI coding agent deleted a company's database during a test, after it was told to change nothing without asking.",
         source: "eWeek",
         href: "https://www.eweek.com/news/replit-ai-coding-assistant-failure/",
       },
     },
-    cause: {
-      title: "An API key has no owner.",
-      body: (
-        <>
-          Keys get shared, copied and forgotten. An agent that runs on one has no name, no person
-          behind it and no switch of its own. So the usual fixes miss it:
-        </>
-      ),
-      misses: [
-        "Shared service accounts: everyone, and no one, is responsible.",
-        "API logs show the key, not the person or the computer.",
-        "Turning off the key stops every agent that shares it.",
+    tiles: {
+      title: "A person behind every agent.",
+      items: [
+        {
+          title: "Tied to a real person",
+          line: "Each agent belongs to a verified person or business. Never just a key.",
+          visual: <OwnerMini />,
+        },
+        {
+          title: "Every action, and where it came from",
+          line: "The app, the model, the computer and the network, in one log.",
+          visual: <WhoMini />,
+        },
+        {
+          title: "Stop one agent, not all of them",
+          line: "Pause it, and its keys, cards and passports stop at once. The rest keep working.",
+          visual: <RevokeMini what="Keys, cards and passports stopped" />,
+        },
       ],
-    },
-    how: {
-      title: "One agent. One ID. One person who answers for it.",
-      steps: [
-        [
-          "Tied to a verified person or business.",
-          "People verify once, with an ID document and a selfie. Businesses verify their registration.",
-        ],
-        [
-          "Every action, with where it came from.",
-          "The app and model it ran in, the computer's name and the network address, in one log.",
-        ],
-        [
-          "Stopped in one click.",
-          "Pause an agent and its keys, cards, passports and Git signing stop at once. Or revoke it for good.",
-        ],
-      ],
-      note: "Before anything happens: spending limits, and the actions you choose wait for your yes.",
     },
     questions: [
       [
         "Can people outside see who owns an agent?",
-        "Services that check its passport see whether a verified person or business stands behind it, and a business's name. A person's name is never shared. Timewarp can always map an agent to its owner.",
+        "Services see whether a verified person or business stands behind it, and a business's name. Never a person's name. Timewarp can always find the owner.",
       ],
       [
         "Is the model in the log proven?",
         "No. The app comes from the connection. The model is what the agent reports.",
       ],
       [
-        "Can a leaked key turn off the safety?",
+        "Can a leaked key switch off the safety?",
         "No. Letting an agent act without asking takes the signed-in website.",
       ],
       [
         "Does it work for any AI?",
-        "Yes. Agents, and models of any kind: language, image, voice, video, code and decision models.",
+        "Yes. Agents, and language, image, voice, video, code and decision models.",
       ],
     ],
-    close: "Say yes to agents at work. Know who answers for each one.",
+    close: {
+      title: "Say yes to agents at work. Always know who answers for each one.",
+      lead: OFFER,
+    },
   },
 
   apis: {
-    title: "Let only verified agents use your API and MCP server",
+    title: "Let only verified agents use your API",
     description:
-      "One middleware line: agents show a passport, and only those acting for a verified person or business get in.",
+      "Agents show a short-lived passport. In one line of code, you see who they work for and decide who gets in.",
     eyebrow: "For APIs and MCP servers",
-    headline: "Let only verified agents use your API and MCP.",
+    headline: "Let only verified agents use your API.",
     lead: (
       <>
-        One line in front of your server. Agents show a passport, and{" "}
-        <B>only those acting for a verified person or business get in</B>.
+        Agents show a short-lived passport. In <B>one line of code</B>, you see who they work for
+        and decide who gets in.
       </>
     ),
-    visual: <VerifyDemo />,
-    problem: {
-      title: "Half your traffic is agents. Which ones act for a real customer?",
-      body: (
-        <>
-          Some agents book, buy and pay for a real person. Others scrape, or open free trials with
-          throwaway emails. They all look the same to your server.
-        </>
-      ),
+    shot: { title: "mcp.acme.com", body: <GateShot /> },
+    scenario: {
+      title: "Half your traffic is agents now.",
+      lines: [
+        "Some book, buy and pay for real customers.",
+        "Others scrape your data or farm free trials.",
+        "To your server, they all look the same.",
+      ],
+      turn: "Block them all and you lose customers. Let them all in and you pay for the rest.",
     },
-    cause: {
-      title: "You can't see who an agent acts for.",
-      body: (
-        <>
-          Blocking bots blocks the good agents too. Keys only work for people who signed up with you
-          first. So the usual fixes miss it:
-        </>
-      ),
-      misses: [
-        "CAPTCHAs stop good agents with bad ones.",
-        "API keys need every agent's owner to sign up with you first.",
-        "IP lists can't tell one agent from another.",
+    tiles: {
+      title: "Real customers' agents in. Everyone else out.",
+      items: [
+        {
+          title: "One line, no signup",
+          line: "No account and no secret. Node, Deno, Bun, Workers and Next.js.",
+          visual: (
+            <div className="mx-auto max-w-sm">
+              <Code>npm i @timewarp/agent-id-verify</Code>
+            </div>
+          ),
+        },
+        {
+          title: "You set the rule",
+          line: "Any verified person, verified businesses only, or just your own team.",
+          visual: <PolicyMini />,
+        },
+        {
+          title: "Revoked means revoked",
+          line: "Online checks catch an agent its owner switched off a second ago.",
+          visual: <RevokeMini what="Passport refused a second later" />,
+        },
       ],
     },
     compare: {
       options: ["API keys", "CAPTCHAs", "Signed agents", "Agent ID"],
       rows: [
         [
-          "Knows who the agent acts for",
+          "Knows who the agent works for",
           "Your own customers",
           "No",
           "The company running it",
@@ -257,7 +258,7 @@ export const ANGLES: Record<AngleSlug, Angle> = {
           "Build it yourself",
           "No",
           "Per company",
-          "Verified, business, or your organization",
+          "Verified, business or your team",
         ],
       ],
       fits: (
@@ -270,173 +271,144 @@ export const ANGLES: Record<AngleSlug, Angle> = {
         </>
       ),
     },
-    how: {
-      title: "A passport, checked in one line.",
-      steps: [
-        [
-          "The agent asks Agent ID for a passport.",
-          "It lives 5 minutes and names your service, so it can't be used anywhere else.",
-        ],
-        [
-          "Your server checks it.",
-          "Offline with Agent ID's public keys, or online to catch an agent revoked a second ago.",
-        ],
-        [
-          "You set the rule.",
-          "Any verified person, verified businesses only, or only your own organization's agents.",
-        ],
-      ],
-      note: "You see an owner reference that only works on your service, whether the owner is verified, and a business's name. Never a person's name.",
-    },
     questions: [
       [
         "Do we need to sign up?",
         <>
-          No. <M>@timewarp/agent-id-verify</M> has no dependencies and needs no account or secret.
+          No. <M>@timewarp/agent-id-verify</M> has no dependencies and needs no account.
         </>,
       ],
       [
         "Does it work with MCP?",
         "Yes. Put it in front of your MCP endpoint. Agents connect through the Agent ID CLI, which adds a fresh passport to every request.",
       ],
-      ["Where does it run?", "Node, Deno, Bun, Cloudflare Workers and Next.js."],
+      [
+        "What do we learn about the person?",
+        "Whether they're verified, a business's name, and a reference that only works on your service. Never a person's name.",
+      ],
       [
         "Can a stolen passport be reused?",
-        "For up to 5 minutes, on your service only. Binding passports to the agent's own key comes next.",
+        "For up to 5 minutes, on your service only. Tying passports to the agent's own key comes next.",
       ],
     ],
-    close: "Make agents customers, not a threat.",
+    close: {
+      title: "Turn agents into customers.",
+      lead: "Free to start, no card. Add one line when you're ready.",
+    },
   },
 
   "claude-and-codex": {
     title: "One agent ID in Claude Code and Codex",
-    description:
-      "Switch apps mid-task and your agent keeps its email, wallet, computer, encrypted vault and tools.",
+    description: "Switch apps mid-task. Your agent keeps its email, wallet, computer and keys.",
     eyebrow: "For Claude Code and Codex",
     headline: "One agent ID in Claude Code and Codex.",
     lead: (
       <>
-        Switch apps mid-task and your agent keeps{" "}
-        <B>its email, wallet, computer, encrypted vault and tools</B>. Set it up once.
+        Switch apps mid-task. Your agent keeps <B>its email, wallet, computer and keys</B>.
       </>
     ),
-    visual: <SwitchDemo />,
-    problem: {
-      title: "Halfway through, you switch apps. Your agent starts from zero.",
-      body: (
-        <>
-          One app ran out of limits, or the other is better at this task. The new agent has none of
-          the keys, sign-ins or tools the last one had. So you copy files and paste keys into chats.
-        </>
-      ),
-    },
-    cause: {
-      title: "Each app keeps its own setup.",
-      body: <>The agent lives inside the app, so everything it had stays there. The usual fixes:</>,
-      misses: [
-        "Copying .env files puts your keys in more places.",
-        "Pasting keys into a chat leaves them in its history.",
-        "Setting tools up twice, and keeping both the same.",
+    shot: { title: "Research Assistant · Agent ID", body: <SwitchShot /> },
+    scenario: {
+      title: "Every switch starts from zero.",
+      lines: [
+        "Claude hit its limit, so you open Codex to finish.",
+        "The new agent has none of the keys, sign-ins or tools.",
+        "So you copy .env files around and paste keys into chat. Again.",
       ],
+      turn: "With one Agent ID, nothing gets left behind.",
     },
-    how: {
-      title: "The ID lives outside the app.",
-      steps: [
-        [
-          "Attach once.",
-          <>
-            <M>npx @timewarp/agent-id attach</M> finds Claude Code, Codex, Cursor and more, and
-            gives the ones you pick the same Agent ID.
-          </>,
-        ],
-        [
-          "Its own computer and vault.",
-          "Keys and sign-ins are sealed to the agent's own computer, encrypted, and kept out of the chat.",
-        ],
-        [
-          "The same tools in every app.",
-          "Email, phone, wallet, computer, passports and Git signing, wherever it's attached.",
-        ],
+    tiles: {
+      title: "Your agent comes along.",
+      items: [
+        {
+          title: "Attach once",
+          line: "It finds Claude Code, Codex and Cursor, and gives them the same ID.",
+          visual: (
+            <Terminal command="npx @timewarp/agent-id attach" note="Once, on your computer" />
+          ),
+        },
+        {
+          title: "Keys stay out of the chat",
+          line: "Sign-ins and keys sit encrypted on the agent's own computer.",
+          visual: <VaultMini />,
+        },
+        {
+          title: "The same tools everywhere",
+          line: "Email, phone, wallet and computer, in every app it's attached to.",
+          visual: <ToolsMini />,
+        },
       ],
-      note: "You see which app and model each action came from.",
     },
     questions: [
       [
         "Does it move my chats or memory?",
-        "No. Claude Code and Codex keep their own memory. The ID carries the identity, the accounts and the keys.",
+        "No. Claude Code and Codex keep their own. The ID carries the identity, the accounts and the keys.",
       ],
       [
         "Where are my keys?",
-        "In the vault on the agent's own computer, encrypted at rest. The agent uses them there.",
+        "In the vault on the agent's own computer, encrypted. The agent uses them there.",
       ],
-      [
-        "Which apps?",
-        "Claude Code, Codex, Cursor, Claude Desktop, and any app that runs MCP servers.",
-      ],
+      ["Which apps?", "Claude Code, Codex, Cursor, Claude Desktop, and any app that runs MCP."],
       [
         "What does it cost?",
         "Free, with 5 hours of computer time. More time uses Timewarp credits.",
       ],
     ],
-    close: "Use whichever AI is best today. Your agent comes along.",
+    close: { title: "Use whichever AI is best today. Your agent comes along.", lead: OFFER },
   },
 };
 
 export const isAngle = (slug: string): slug is AngleSlug => slug in ANGLES;
 
-// The other reasons, so a visitor who came for one finds theirs. The checker
-// (angle A2) has its own page.
-export const NEEDS: { angle: AngleSlug | "check"; who: string; promise: string }[] = [
-  { angle: "code", who: "I run a codebase", promise: "Only verified agents change your code" },
-  {
-    angle: "check",
-    who: "I need to know if it's AI",
-    promise: "Check a picture, a voice or a text",
-  },
-  {
-    angle: "accountability",
-    who: "An agent went rogue",
-    promise: "Know whose it was, and where it ran",
-  },
-  { angle: "apis", who: "I run an API or MCP server", promise: "Let in only verified agents" },
-  {
-    angle: "claude-and-codex",
-    who: "I switch between Claude and Codex",
-    promise: "One agent ID in both",
-  },
+// The other reasons, as small links, so a visitor who came for one finds theirs.
+export const NEEDS: { angle: AngleSlug | "check"; label: string }[] = [
+  { angle: "code", label: "Protect your code" },
+  { angle: "check", label: "Check AI or real" },
+  { angle: "accountability", label: "When an agent goes rogue" },
+  { angle: "apis", label: "Verified agents on your API" },
+  { angle: "claude-and-codex", label: "One ID in Claude and Codex" },
 ];
 
-export function NeedList({ current }: { current?: AngleSlug | "check" }) {
-  const row =
-    "group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 py-5 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto]";
+export function NeedLink({
+  angle,
+  children,
+  className,
+}: {
+  angle: AngleSlug | "check";
+  children: ReactNode;
+  className?: string;
+}) {
+  return angle === "check" ? (
+    <Link to="/agent-id/check" className={className}>
+      {children}
+    </Link>
+  ) : (
+    <Link to="/agent-id/for/$angle" params={{ angle }} className={className}>
+      {children}
+    </Link>
+  );
+}
+
+export function OtherNeeds({ current }: { current?: AngleSlug | "check" }) {
   return (
-    <ul className="divide-y divide-[var(--border)] border-y border-[var(--border)]">
-      {NEEDS.filter((need) => need.angle !== current).map((need) => {
-        const inside = (
-          <>
-            <span className="text-sm text-[var(--muted-foreground)] sm:text-base">{need.who}</span>
-            <ArrowRight
-              className="row-span-2 h-5 w-5 text-[var(--muted-foreground)] transition-transform group-hover:translate-x-1 group-hover:text-[var(--aid-ink)] sm:order-last sm:row-span-1"
-              aria-hidden="true"
-            />
-            <span className="text-lg font-semibold tracking-tight sm:text-xl">{need.promise}</span>
-          </>
-        );
-        return (
-          <li key={need.angle}>
-            {need.angle === "check" ? (
-              <Link to="/agent-id/check" className={row}>
-                {inside}
-              </Link>
-            ) : (
-              <Link to="/agent-id/for/$angle" params={{ angle: need.angle }} className={row}>
-                {inside}
-              </Link>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+    <nav
+      aria-label="Also with Agent ID"
+      className="mx-auto flex max-w-4xl flex-wrap justify-center gap-2 px-4 pb-16"
+    >
+      {NEEDS.filter((need) => need.angle !== current).map((need) => (
+        <NeedLink
+          key={need.angle}
+          angle={need.angle}
+          className="group inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-4 py-2 text-sm transition-colors hover:border-[var(--aid-ink)] hover:text-[var(--aid-ink)]"
+        >
+          {need.label}
+          <ArrowRight
+            className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5"
+            aria-hidden="true"
+          />
+        </NeedLink>
+      ))}
+    </nav>
   );
 }
 
@@ -444,98 +416,43 @@ export function AnglePage({ slug }: { slug: AngleSlug }) {
   const angle = ANGLES[slug];
   return (
     <>
-      <section className="mx-auto grid w-full max-w-6xl grid-cols-[minmax(0,1fr)] items-center gap-12 px-4 pb-16 pt-10 sm:px-6 sm:pt-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
-        <div>
-          <Eyebrow>{angle.eyebrow}</Eyebrow>
-          <h1 className="mt-3 text-4xl font-semibold leading-[1.06] tracking-tight sm:text-6xl">
-            {angle.headline}
-          </h1>
-          <p className="mt-6 max-w-xl text-lg text-[var(--muted-foreground)]">{angle.lead}</p>
-          <StartRow className="mt-8" />
-        </div>
-        <div className="min-w-0">{angle.visual}</div>
-      </section>
+      <Hero eyebrow={angle.eyebrow} title={angle.headline} lead={angle.lead}>
+        <Window title={angle.shot.title}>{angle.shot.body}</Window>
+      </Hero>
 
-      <Band tinted label="The problem">
-        <div className="mx-auto max-w-3xl">
-          <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            {angle.problem.title}
-          </h2>
-          <p className="mt-5 text-lg text-[var(--muted-foreground)]">{angle.problem.body}</p>
-          {angle.problem.fact && (
-            <p className="mt-6 border-l-2 border-[var(--aid-ink)] pl-4 text-sm text-[var(--muted-foreground)]">
-              {angle.problem.fact.text}{" "}
-              <a
-                href={angle.problem.fact.href}
-                target="_blank"
-                rel="noreferrer"
-                className="aid-link whitespace-nowrap"
-              >
-                {angle.problem.fact.source}
-              </a>
-            </p>
-          )}
-        </div>
-      </Band>
+      <Section title={angle.scenario.title} label="The moment">
+        <Scenario lines={angle.scenario.lines} turn={angle.scenario.turn} />
+        {angle.scenario.fact && (
+          <p className="mx-auto mt-10 max-w-xl text-center text-sm text-[var(--muted-foreground)]">
+            {angle.scenario.fact.text}{" "}
+            <a
+              href={angle.scenario.fact.href}
+              target="_blank"
+              rel="noreferrer"
+              className="aid-link whitespace-nowrap"
+            >
+              {angle.scenario.fact.source}
+            </a>
+          </p>
+        )}
+      </Section>
 
-      <Band label="The real cause">
-        <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-16">
-          <div>
-            <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-              {angle.cause.title}
-            </h2>
-            <p className="mt-5 text-lg text-[var(--muted-foreground)]">{angle.cause.body}</p>
-          </div>
-          <div className="self-end">
-            <Checks tone="no" items={angle.cause.misses} />
-          </div>
-        </div>
-      </Band>
+      <Section title={angle.tiles.title} label="What changes">
+        <Tiles>
+          {angle.tiles.items.map((item) => (
+            <Tile key={item.title} title={item.title} line={item.line} visual={item.visual} />
+          ))}
+        </Tiles>
+      </Section>
 
       {angle.compare && <Compare compare={angle.compare} />}
 
-      <Band tinted={!angle.compare} label="How it works">
-        <h2 className="max-w-3xl text-3xl font-semibold tracking-tight sm:text-4xl">
-          {angle.how.title}
-        </h2>
-        <ol className="mt-10 grid gap-8 md:grid-cols-3">
-          {angle.how.steps.map(([title, line], index) => (
-            <li key={title}>
-              <span className="grid h-9 w-9 place-items-center rounded-full bg-[var(--aid-ink)] text-sm font-semibold text-[var(--background)]">
-                {index + 1}
-              </span>
-              <p className="mt-4 text-lg font-semibold">{title}</p>
-              <p className="mt-2 text-[var(--muted-foreground)]">{line}</p>
-            </li>
-          ))}
-        </ol>
-        {angle.how.note && <p className="mt-10 max-w-3xl font-medium">{angle.how.note}</p>}
-      </Band>
+      <Section title="Good questions." label="Questions" narrow>
+        <Questions items={angle.questions} />
+      </Section>
 
-      <Band label="Pricing and questions">
-        <div className="grid gap-12 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-16">
-          <div>
-            <Offer />
-          </div>
-          <Questions items={angle.questions} />
-        </div>
-      </Band>
-
-      <Band tinted label="Start">
-        <div className="mx-auto max-w-3xl text-center">
-          <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">{angle.close}</h2>
-          <StartRow className="mt-8 justify-center" />
-        </div>
-      </Band>
-
-      <Band label="Other reasons">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
-          Also with Agent ID
-        </h2>
-        <div className="mt-4">
-          <NeedList current={slug} />
-        </div>
-      </Band>
+      <Closing title={angle.close.title} lead={angle.close.lead} />
+      <OtherNeeds current={slug} />
     </>
   );
 }
@@ -544,22 +461,19 @@ export function AnglePage({ slug }: { slug: AngleSlug }) {
 function Compare({ compare }: { compare: NonNullable<Angle["compare"]> }) {
   const last = compare.options.length - 1;
   return (
-    <Band tinted label="Side by side">
-      <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-        API keys, CAPTCHAs, signed agents or Agent ID?
-      </h2>
-      <div className="mt-8 overflow-x-auto">
+    <Section title="How it compares." lead={compare.fits} label="How it compares">
+      <div className="mx-auto max-w-5xl overflow-x-auto rounded-3xl border border-[var(--border)] bg-[var(--card)]">
         <table className="w-full min-w-[40rem] border-collapse text-left text-sm">
           <thead>
             <tr>
-              <th className="w-1/5 py-3 pr-4" />
+              <th className="w-1/5 px-5 py-4" />
               {compare.options.map((option, index) => (
                 <th
                   key={option}
                   scope="col"
                   className={cn(
-                    "px-4 py-3 font-semibold",
-                    index === last && "rounded-t-xl bg-[var(--card)] text-[var(--aid-ink)]",
+                    "px-5 py-4 font-semibold",
+                    index === last && "bg-[var(--accent)] text-[var(--aid-ink)]",
                   )}
                 >
                   {option}
@@ -570,15 +484,15 @@ function Compare({ compare }: { compare: NonNullable<Angle["compare"]> }) {
           <tbody>
             {compare.rows.map(([criterion, ...values]) => (
               <tr key={criterion} className="border-t border-[var(--border)]">
-                <th scope="row" className="py-4 pr-4 font-medium">
+                <th scope="row" className="px-5 py-4 font-medium">
                   {criterion}
                 </th>
                 {values.map((value, index) => (
                   <td
                     key={index}
                     className={cn(
-                      "px-4 py-4 text-[var(--muted-foreground)]",
-                      index === last && "bg-[var(--card)] font-medium text-[var(--foreground)]",
+                      "px-5 py-4 text-[var(--muted-foreground)]",
+                      index === last && "bg-[var(--accent)] font-medium text-[var(--foreground)]",
                     )}
                   >
                     {value}
@@ -589,7 +503,6 @@ function Compare({ compare }: { compare: NonNullable<Angle["compare"]> }) {
           </tbody>
         </table>
       </div>
-      <p className="mt-8 max-w-3xl text-[var(--muted-foreground)]">{compare.fits}</p>
-    </Band>
+    </Section>
   );
 }
