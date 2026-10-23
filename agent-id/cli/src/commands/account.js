@@ -89,6 +89,16 @@ export function saveProfile(ctx, agent, secret) {
   ctx.save();
 }
 
+// What kind of AI an agent is, and whose model (--kind, --provider, --model).
+export const MODEL_KINDS = ['agent', 'llm', 'image', 'voice', 'video', 'code', 'text', 'decision', 'other'];
+function modelFlags(ctx) {
+  const { kind, provider, model: name } = ctx.flags;
+  if (kind !== undefined && !MODEL_KINDS.includes(kind)) throw new UsageError(`--kind is one of ${MODEL_KINDS.join(', ')}.`);
+  const model = Object.fromEntries(Object.entries({ kind, provider, name }).filter(([, v]) => typeof v === 'string'));
+  return Object.keys(model).length ? { model } : {};
+}
+const modelText = m => m ? [m.label, [m.provider, m.name].filter(Boolean).join(' ')].filter(Boolean).join(' · ') : null;
+
 const confirm = async (ctx, question) => ctx.interactive && /^y(es)?$/i.test((await ctx.ask(`${question} [y/N] `) ?? '').trim());
 
 export async function agents(ctx) {
@@ -100,7 +110,7 @@ export async function agents(ctx) {
     const data = await ctx.owner.get('/v1/agents', { query: { status: ctx.flags.all ? 'all' : undefined } });
     return ctx.print(data, ({ agents }) => agents.length ? table(agents, [
       ['', a => a.handle === ctx.config.default ? '*' : ''],
-      ['HANDLE', a => a.handle], ['NAME', a => a.name], ['STATUS', a => a.status], ['RUNTIME', a => a.runtime],
+      ['HANDLE', a => a.handle], ['NAME', a => a.name], ['STATUS', a => a.status], ['KIND', a => a.model?.kind || 'agent'], ['RUNTIME', a => a.runtime],
       ['HAS', a => Object.keys(a.resources || {}).join(' ')],
       ['KEY HERE', a => (Object.values(ctx.config.profiles).some(p => p.agentId === a.id) ? 'yes' : 'no')],
       ['ID', a => a.id],
@@ -115,7 +125,8 @@ export async function agents(ctx) {
     const app = typeof ctx.flags.origin === 'string' ? ctx.flags.origin : APPS.includes(runtime) ? runtime : ctx.tool && APPS.includes(ctx.tool) ? ctx.tool : 'custom';
     if (!APPS.includes(app)) throw new UsageError(`--origin is one of ${APPS.join(', ')}.`);
     const origin = { app, detail: typeof ctx.flags['origin-detail'] === 'string' ? ctx.flags['origin-detail'] : null };
-    const created = await withTerms(ctx, () => sendWithOrigin(body => ctx.owner.post('/v1/agents', body), { name, ...(runtime || app !== 'custom' ? { runtime: runtime || app } : {}), origin,...(ctx.flags.org ? { organizationId: ctx.flags.org } : {}), keyName: ctx.hostname() }));
+    const model = modelFlags(ctx);
+    const created = await withTerms(ctx, () => sendWithOrigin(body => ctx.owner.post('/v1/agents', body), { name, ...(runtime || app !== 'custom' ? { runtime: runtime || app } : {}), origin, ...model, ...(ctx.flags.org ? { organizationId: ctx.flags.org } : {}), keyName: ctx.hostname() }));
     if (created.secret) saveProfile(ctx, created.agent, created.secret);
     const { secret: _secret, ...shown } = created;
     return ctx.print({ ...shown, profile: created.agent.handle, default: ctx.config.default === created.agent.handle }, () => [
@@ -131,7 +142,7 @@ export async function agents(ctx) {
     const data = await ctx.owner.get(`/v1/agents/${id}`);
     return ctx.print(data, ({ agent, keys, signingKeys, verification }) => [
       fields([
-        ['Agent', `${agent.name} (${agent.handle})`], ['Id', agent.id], ['Status', agent.status], ['Runtime', agent.runtime],
+        ['Agent', `${agent.name} (${agent.handle})`], ['Id', agent.id], ['Status', agent.status], ['Kind', modelText(agent.model)], ['Runtime', agent.runtime],
         ['Organization', agent.organizationId], ['Git identity', agent.gitPrincipal], ['Owner verified', verification ? `${verification.verified ? 'yes' : 'no'} (${verification.level})` : null],
         ['Created', when(agent.createdAt)], ['Last seen', when(agent.lastSeenAt)],
         ['Keys', `${keys.length} active${Object.values(ctx.config.profiles).some(p => p.agentId === agent.id) ? ', one saved on this computer' : ''}`],
@@ -139,6 +150,14 @@ export async function agents(ctx) {
       ]),
       ...Object.values(agent.resources || {}).map(r => `  ${describeResource(r)}`),
     ].join('\n'));
+  }
+
+  if (sub === 'model' || sub === 'kind') {
+    const id = await ctx.agentIdFor(needRef());
+    const model = modelFlags(ctx);
+    if (!model.model) throw new UsageError(`Say what it is: timewarp-id agents model <agent> --kind ${MODEL_KINDS.join('|')} [--provider "…"] [--model "…"].`);
+    const data = await ctx.owner.patch(`/v1/agents/${id}`, model);
+    return ctx.print(data, ({ agent }) => `${agent.name} is now: ${modelText(agent.model)}.`);
   }
 
   if (sub === 'key') {

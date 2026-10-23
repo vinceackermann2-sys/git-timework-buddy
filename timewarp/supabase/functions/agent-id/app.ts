@@ -20,6 +20,7 @@ import { handleMcp } from './mcp.ts';
 import { handleWebhook } from './webhooks.ts';
 import { acceptClaimTerms, collectClaim, confirmClaimEmail, getClaim, sendClaimCode, startClaim } from './claims.ts';
 import { autoSetup } from './admin.ts';
+import { providerMark, publicCheck, publicTrace, traceAgentRoutes } from './tracing.ts';
 
 export type Owner = { kind: 'owner'; userId: string; email: string | null; via: 'session' | 'key'; keyId?: string };
 export type AgentCaller = { kind: 'agent'; userId: string; agent: AgentRow; via: 'key' | 'owner'; keyId?: string };
@@ -54,6 +55,14 @@ function match(pattern: string, path: string) {
 }
 
 const bearer = (req: Request) => (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+
+// Where an agent's request came from: the network address it reached us from
+// and the computer's name the CLI sends (Timewarp-Device).
+export function whereFrom(req: Request) {
+  const ip = (req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '').split(',')[0].trim().slice(0, 45);
+  const device = (req.headers.get('timewarp-device') || '').replace(/[^\w .@()-]/g, '').trim().slice(0, 64);
+  return { ip: ip || null, device: device || null };
+}
 
 async function touchKey(ctx: Ctx, key: { id: string; last_used_at: string | null }) {
   if (key.last_used_at && ctx.now() - Date.parse(key.last_used_at) < 60_000) return;
@@ -147,16 +156,24 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
       // passport shown to you, and an organization's Git signers.
       if (path === '/v1/verify' && req.method === 'POST' && !bearer(req)) return json(await publicVerify(ctx, await readBody(req)));
       if (path.startsWith('/v1/claims')) { const result = await claimRoute(ctx, req, path); if (result) return json(result); }
+      // Open too: checking whether a picture, sound or text was made by an
+      // agent, one trace by its id, and model makers marking for an agent.
+      if (path === '/v1/trace/check' && req.method === 'POST') return json(await publicCheck(ctx, req));
+      if (path === '/v1/trace/mark' && req.method === 'POST') return await providerMark(ctx, req, url.searchParams);
+      const traced = /^\/v1\/trace\/(tr_[0-9a-f]{16})$/.exec(path);
+      if (traced && req.method === 'GET') return json(await publicTrace(ctx, traced[1]), 200, { 'cache-control': 'public, max-age=60' });
       const signers = /^\/v1\/orgs\/([0-9a-f-]{36})\/allowed-signers$/.exec(path);
       if (signers && req.method === 'GET') { const result = await publicAllowedSigners(ctx, signers[1], Object.fromEntries(url.searchParams)); return result instanceof Response ? result : json(result); }
       if (path === '/mcp') {
         if (req.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST for MCP.' } }, 405, { allow: 'POST' });
         const caller = await authenticate(ctx, req);
         if (caller.kind !== 'agent') throw fail(403, 'agent_only', 'The MCP server acts as an agent: use an agent key, or name the agent in a Timewarp-Agent header.');
+        ctx.where = whereFrom(req);
         return await handleMcp(ctx, caller, req);
       }
       const caller = await authenticate(ctx, req);
-      const routes: Route<any>[] = caller.kind === 'agent' ? [...agentRoutes, ...vaultAgentRoutes] : caller.kind === 'owner' ? ownerRoutes : relyingPartyRoutes;
+      if (caller.kind === 'agent') ctx.where = whereFrom(req);
+      const routes: Route<any>[] = caller.kind === 'agent' ? [...agentRoutes, ...vaultAgentRoutes, ...traceAgentRoutes] : caller.kind === 'owner' ? ownerRoutes : relyingPartyRoutes;
       for (const [method, pattern, handler] of routes) {
         if (method !== req.method) continue;
         const params = match(pattern, path);
@@ -165,7 +182,7 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
         const result = await handler(ctx, caller, input, params, req);
         return result instanceof Response ? result : json(result);
       }
-      const other = [ownerRoutes, agentRoutes, vaultAgentRoutes, relyingPartyRoutes].some(list => list.some(([, pattern]) => match(pattern, path)));
+      const other = [ownerRoutes, agentRoutes, vaultAgentRoutes, traceAgentRoutes, relyingPartyRoutes].some(list => list.some(([, pattern]) => match(pattern, path)));
       throw other ? fail(403, 'wrong_credential', caller.kind === 'agent' ? 'Agents can\'t use this endpoint; it needs the owner.' : caller.kind === 'owner' ? 'This endpoint acts as an agent: use an agent key or a Timewarp-Agent header.' : 'Company secrets can only check passports and signing keys.') : fail(404, 'not_found', 'This endpoint does not exist.');
     } catch (error) {
       if (error instanceof ApiError) return json({ error: { code: error.code, message: error.message, ...error.extra } }, error.status);

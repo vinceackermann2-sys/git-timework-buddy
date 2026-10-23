@@ -1,9 +1,11 @@
 // How Agent ID values read on the dashboard. Pure functions, unit tested.
 import type {
   Account,
+  AgentModel,
   AgentStatus,
   AuditEntry,
   Kind,
+  ModelKind,
   Mode,
   Money,
   PublicConfig,
@@ -270,6 +272,7 @@ const AUDIT_ACTIONS: Record<string, string> = {
   "vm.stop": "Computer stopped",
   "vm.exec": "Command run",
   "passport.issue": "Passport issued",
+  "trace.mark": "Marked its work",
   "passport.checked": "Passport checked by a company",
   "signing_key.add": "Signing key added",
   "signing_key.remove": "Signing key removed",
@@ -300,11 +303,28 @@ export function auditActionLabel(action: string): string {
 }
 
 // A short line of the details that matter, never secrets.
+// What was marked so it traces back to the agent.
+const TRACE_KINDS: Record<string, string> = {
+  image: "A picture",
+  audio: "A sound",
+  text: "A text",
+  code: "Code",
+  video: "A video",
+  other: "A file",
+};
+
 export function auditDetail(entry: Pick<AuditEntry, "action" | "detail">): string {
   const d = entry.detail || {};
   const parts: string[] = [];
   const kind = d["kind"];
-  if (typeof kind === "string") parts.push(KIND_LABELS[kind as Kind] ?? kind);
+  if (typeof kind === "string")
+    parts.push(
+      entry.action === "trace.mark"
+        ? (TRACE_KINDS[kind] ?? kind)
+        : (KIND_LABELS[kind as Kind] ?? kind),
+    );
+  const provider = d["provider"];
+  if (typeof provider === "string" && entry.action === "trace.mark") parts.push(`by ${provider}`);
   const mode = d["mode"];
   if (typeof mode === "string") parts.push(mode === "live" ? "Live" : "Test");
   const amount = d["amount"];
@@ -350,6 +370,18 @@ export function auditVia(entry: Pick<AuditEntry, "actor" | "detail">): string | 
       ORIGIN_LABELS[app] ?? app.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
     );
   if (typeof model === "string" && model) parts.push(modelLabel(model));
+  return parts.length ? parts.join(" · ") : null;
+}
+
+// Where it was done from: "on vince-laptop · 81.2.3.4".
+export function auditWhere(entry: Pick<AuditEntry, "actor" | "detail">): string | null {
+  const where = entry.actor === "agent" ? entry.detail?.["where"] : null;
+  if (!where || typeof where !== "object") return null;
+  const { device, ip } = where as { device?: unknown; ip?: unknown };
+  const parts = [
+    typeof device === "string" && device ? `on ${device}` : null,
+    typeof ip === "string" && ip ? ip : null,
+  ].filter(Boolean);
   return parts.length ? parts.join(" · ") : null;
 }
 
@@ -826,3 +858,28 @@ export const NOT_LIVE_YET: Record<Kind, string> = {
   card: "Cards are coming soon",
   vm: "Machines are being set up",
 };
+
+// --- What kind of AI -----------------------------------------------------------
+
+// Any AI can have an Agent ID: an agent that acts with tools, or a model that
+// makes one kind of output.
+export const MODEL_KINDS: { kind: ModelKind; label: string; hint: string }[] = [
+  { kind: "agent", label: "AI agent", hint: "Acts with tools: Claude Code, Codex, Cursor…" },
+  { kind: "llm", label: "Language model", hint: "Chats and answers" },
+  { kind: "image", label: "Image model", hint: "Makes pictures" },
+  { kind: "voice", label: "Voice and audio model", hint: "Speaks, sings or makes sound" },
+  { kind: "video", label: "Video model", hint: "Makes video" },
+  { kind: "code", label: "Code model", hint: "Writes code" },
+  { kind: "text", label: "Text model", hint: "Writes text" },
+  { kind: "decision", label: "Decision model", hint: "Scores, approves or ranks" },
+  { kind: "other", label: "Other AI", hint: "Anything else" },
+];
+
+// "Image model · Google Imagen 4"; an agent with no model named says nothing.
+export function modelKindText(model: AgentModel | undefined): string | null {
+  if (!model) return null;
+  const made = [model.provider, model.name].filter(Boolean).join(" ");
+  if (model.kind === "agent" && !made) return null;
+  const label = MODEL_KINDS.find((k) => k.kind === model.kind)?.label ?? model.label;
+  return made ? `${label} · ${made}` : label;
+}

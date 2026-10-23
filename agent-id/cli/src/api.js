@@ -1,10 +1,14 @@
 // Agent ID's HTTP API: JSON in, JSON out, errors as { error: { code, message } }.
+import { hostname } from 'node:os';
 import { ApiError, CliError } from './errors.js';
 import { VERSION } from './version.js';
 import { DEFAULT_API } from './config.js';
 
 // "timewarp-id/1.2.3 (claude-code)" when the tool it runs in is known.
 export const userAgent = tool => `timewarp-id/${VERSION}${tool ? ` (${tool})` : ''}`;
+
+// This computer's name, so the owner's activity log says where an agent ran.
+const device = () => { try { return hostname().replace(/[^\w .@()-]/g, '').slice(0, 64); } catch { return ''; } };
 
 export class Api {
   constructor(base, fetchImpl = globalThis.fetch, { tool = null } = {}) {
@@ -26,6 +30,7 @@ export class Api {
           ...(body !== undefined && raw === undefined ? { 'content-type': 'application/json' } : {}),
           accept: 'application/json',
           'user-agent': userAgent(this.tool),
+          ...(device() ? { 'timewarp-device': device() } : {}),
           ...headers,
         },
         ...(raw !== undefined ? { body: raw } : body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -46,6 +51,21 @@ export class Api {
       throw new ApiError(response.status, error?.code || `http_${response.status}`, message, data);
     }
     return data;
+  }
+
+  // A file's bytes as they are (GET /v1/me/files/:id).
+  async bytes(path, { token } = {}) {
+    let response;
+    try {
+      response = await this.fetch(`${this.base}${path}`, { headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'user-agent': userAgent(this.tool), ...(device() ? { 'timewarp-device': device() } : {}) } });
+    } catch {
+      throw new CliError("Can't reach Agent ID. Check your internet connection and try again.", { code: 'network' });
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new ApiError(response.status, data?.error?.code || `http_${response.status}`, data?.error?.message || `Agent ID answered HTTP ${response.status}.`, data);
+    }
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   get(path, options) { return this.request('GET', path, options); }

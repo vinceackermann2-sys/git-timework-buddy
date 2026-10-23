@@ -92,6 +92,21 @@ Claude Code · Claude Opus 5.5" and each action as "Agent in Claude Code ·
 Claude Opus 5.5". The model is what the agent says it is: MCP clients don't
 send it, so it can't be proven.
 
+**Any kind of AI.** An Agent ID can stand for an agent that acts with tools
+(the default) or for a model that makes one kind of output: `model.kind` is
+`agent`, `llm`, `image`, `voice`, `video`, `code`, `text`, `decision` or
+`other`, with `model.provider` and `model.name` as the owner says (migration
+20261023100000). Owners set it when creating an agent or later
+(`PATCH /v1/agents/:id {model}`, `timewarp-id agents model <agent> --kind
+image --provider Google --model "Imagen 4"`, the agent's Settings). Agents
+carry `model: { kind, label, provider, name }`, and passports and online
+checks carry `agent.model: { kind, provider?, name? }`.
+
+**Where each action came from.** Everything an agent does is audited with
+`detail.where = { ip, device }`: the request's network address and, from the
+CLI, the computer's name (the `Timewarp-Device` header). The activity log
+shows it beside the app and model.
+
 `attach` finds the agents already on the computer: Claude Code (the main
 agent, user or project scope, and its subagents), Codex, Cursor, Claude
 Desktop, Timewarp's desktop agents, and any project folder (`--here`). It
@@ -416,6 +431,58 @@ minutes:
    organization drops the key from the list immediately. A swarm of agents
    that aren't the company's own can't produce a commit that passes.
 
+## Tracing what agents make
+
+Everything an agent makes can carry a mark that leads back to it, like
+Google's SynthID, but for any AI with an Agent ID. `tracing.ts` records one
+row per output in `agent_id_traces` (migration 20261023120000); the row's id
+(`tr_` + 16 hex) is the mark itself. The output is never kept.
+
+| Output | How it's marked | Survives | Doesn't survive |
+| --- | --- | --- | --- |
+| Pictures (PNG, up to 2048×2048) | 80 bits (a 64-bit id and a CRC) spread over mid frequencies of the brightness, keyed, scaled to how busy each area is (`trace/image.ts`). PSNR 46–47 dB on photos, never under 38.5 dB | JPEG 75/60/40, WebP 75, resizing to 25–200%, brightness +10%, blur, grayscale, a changed shape, JPEG then resize | Cropping (even 1% from each side), flips and rotations, pictures under about 192 px |
+| Sound (WAV, up to 60 s at 48 kHz) | Paired loudness nudges in 32 ms × 125 Hz cells, keyed (`trace/audio.ts`). SNR 33–36 dB on music, never under 30.5 dB | Resampling, volume, noise at −35 dB, a 7 kHz low-pass, 16-bit, MP3/AAC 128k and Opus 64k (10 s and more), excerpts of 15 s and more, trimmed starts | Clips under about 10 s, MP3 64k on short clips, speed, pitch or time changes |
+| Text | Invisible characters after the first word (`trace/text.ts`), plus a fingerprint | Copying as is; edited copies match by the fingerprint (3 words changed: 0.83, 5 phrases: 0.64) | Anything that strips invisible characters or retypes it (the fingerprint still matches). No mark goes in code-like lines, a line starting with a link, or text without spaces |
+| Code | Left exactly as it is; a fingerprint only | Reformatted copies and renamed variables (0.69) | Rewrites |
+| Other pictures, sound, video, files | Recorded by their SHA-256 | Exact copies only | Any change |
+
+A mark counts as found only when its CRC holds and its 80 bit scores are
+strong enough together (1.05; unmarked content averages 0.80). Over 1,500
+readings of unmarked pictures and wrong keys, and 600 of sound, none was
+found. `tests/agent-id-trace-core.test.cjs` measures all of this.
+
+Marks are made and found with `AGENT_ID_TRACE_KEY`, or a key derived from
+`AGENT_ID_WEBHOOK_SECRET`. Neither may ever change, or marks made before
+can't be found.
+
+- **Agents mark their work:** `POST /v1/me/trace {text, kind?}` returns the
+  marked text; `{fileId}` (an upload) saves a marked copy and returns it. MCP:
+  `trace_mark`; through the CLI's MCP server also `trace_mark_file`, which
+  marks a file on the agent's computer in place. CLI: `timewarp-id mark
+  <file>` or `--text`.
+- **Everything Agent ID sends is traced:** mail (an `Agent-Trace: tr_…`
+  header, the text's fingerprint, and marked copies of PNG and WAV
+  attachments, which go instead), texts and calls (the fingerprint only:
+  hidden characters would make a text longer and pricier). A failed trace
+  never stops a message.
+- **Model makers mark for an agent:** the agent gives them a passport for
+  the audience `<issuer>/trace` (`/v1/config` → `trace.audience`), and they
+  send the output to `POST /v1/trace/mark` with it in `Agent-Passport`
+  (`?provider=&model=&kind=code`). They get the marked bytes back, with the
+  id in `Agent-Trace`.
+- **Anyone checks:** `POST /v1/trace/check` with the output as the body
+  (`image/png`, `audio/wav` or `text/plain`) answers `{found, kind, match:
+  'mark'|'exact'|'fingerprint', similarity?, trace}`, where `trace` names the
+  agent, its kind of AI, when, the app and model, and who answers for it (a
+  verified business by name, a person never by name). `GET /v1/trace/:id` is
+  one record. The website's checker (`/agent-id/check`) turns other picture
+  and sound formats into a PNG (at most 1024 px) or 30 seconds of 16 kHz
+  mono WAV in the browser first. MCP: `trace_check`; CLI: `timewarp-id
+  check`.
+- **Limits:** a missing mark proves nothing; only work made through Agent ID
+  (or a model maker who marks through it) carries one. Video is recorded,
+  not marked, for now.
+
 ## API reference
 
 Base: `https://mrqoeywofslgnquvzhuf.supabase.co/functions/v1/agent-id`. JSON
@@ -450,6 +517,7 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | `GET /v1/me/card` · `POST …/reveal` · `GET …/transactions` · `POST …/test-charge` | card |
 | `GET /v1/me/vm` · `POST …/start|stop|exec` · `GET …/commands` | machine |
 | `POST /v1/me/passport` | passport for an audience |
+| `POST /v1/me/trace` | mark text (`{text, kind?}`) or an upload (`{fileId}`) so it traces back to the agent |
 | `GET/POST /v1/me/signing-keys` · `DELETE …/:id` | Git signing keys |
 | `POST /mcp` | MCP (Streamable HTTP). Lists only the tools for what the agent has |
 
@@ -457,6 +525,9 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | --- | --- |
 | `POST /v1/verify {passport, audience, require?, organizations?}` | `valid`, `allowed`, `reasons`, agent, owner verification: any service can check a passport an agent showed it, including whether the agent was revoked a second ago |
 | `GET /v1/orgs/:orgId/allowed-signers[?format=json&require=kyb]` | Git `allowed_signers` for an organization's verified agents (agent ids and public keys only) |
+| `POST /v1/trace/check` | was this picture (PNG), sound (WAV) or text made by an agent with an Agent ID, and who answers for it |
+| `GET /v1/trace/:id` | one trace record |
+| `POST /v1/trace/mark` (with `Agent-Passport` for `<issuer>/trace`) | a model maker marks an output for the agent; the marked bytes come back |
 | `GET /.well-known/jwks.json` · `GET /v1/config` | public keys and what this deployment offers |
 
 Developers use the SDK (`@timewarp/agent-id-verify`): `verifyPassport` checks

@@ -23,10 +23,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { errorMessage } from "@/lib/agent-id/client";
-import { ORIGIN_CHOICES, ORIGIN_LABELS, runtimeForOrigin } from "@/lib/agent-id/format";
+import {
+  MODEL_KINDS,
+  ORIGIN_CHOICES,
+  ORIGIN_LABELS,
+  runtimeForOrigin,
+} from "@/lib/agent-id/format";
 import { queryKeys, useAccount, useAgent } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
-import type { CreatedAgent } from "@/lib/agent-id/types";
+import type { CreatedAgent, ModelKind } from "@/lib/agent-id/types";
 import { Field, Notice, SecretOnce } from "./ui";
 import { ReadyList } from "./ReadyList";
 
@@ -36,6 +41,8 @@ export function CreateAgentDialog({ variant = "default" }: { variant?: "default"
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [app, setApp] = useState<string>("claude-code");
+  const [kind, setKind] = useState<ModelKind>("agent");
+  const [model, setModel] = useState("");
   const [org, setOrg] = useState(PERSONAL);
   const [created, setCreated] = useState<CreatedAgent | null>(null);
   const account = useAccount();
@@ -47,6 +54,9 @@ export function CreateAgentDialog({ variant = "default" }: { variant?: "default"
         name: name.trim(),
         runtime: runtimeForOrigin(app),
         origin: { app },
+        ...(kind !== "agent" || model.trim()
+          ? { model: { kind, ...(model.trim() ? { name: model.trim() } : {}) } }
+          : {}),
         ...(org !== PERSONAL ? { organizationId: org } : {}),
       });
       // Older deployments take the app only through an update.
@@ -68,6 +78,8 @@ export function CreateAgentDialog({ variant = "default" }: { variant?: "default"
   function reset() {
     setName("");
     setApp("claude-code");
+    setKind("agent");
+    setModel("");
     setOrg(PERSONAL);
     setCreated(null);
     create.reset();
@@ -142,6 +154,31 @@ export function CreateAgentDialog({ variant = "default" }: { variant?: "default"
                 onChange={(e) => setName(e.target.value)}
               />
             </Field>
+            <Field id="agent-kind" label="What kind of AI is it?">
+              <Select value={kind} onValueChange={(value) => setKind(value as ModelKind)}>
+                <SelectTrigger id="agent-kind">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {MODEL_KINDS.map((k) => (
+                    <SelectItem key={k.kind} value={k.kind}>
+                      {k.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            {kind !== "agent" && (
+              <Field id="agent-model" label="Which model? (optional)">
+                <Input
+                  id="agent-model"
+                  value={model}
+                  maxLength={80}
+                  placeholder="Imagen 4, ElevenLabs v3…"
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              </Field>
+            )}
             <Field id="agent-origin" label="Where do you use it?">
               <Select value={app} onValueChange={setApp}>
                 <SelectTrigger id="agent-origin">

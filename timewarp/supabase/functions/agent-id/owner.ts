@@ -14,7 +14,7 @@ import { releasePhone } from './providers/phone.ts';
 import { liveBalance } from './providers/wallet.ts';
 import { updateCard } from './providers/card.ts';
 import { releaseMachine } from './providers/vm.ts';
-import { appsOf, originInput } from './origin.ts';
+import { appsOf, modelInput, originInput } from './origin.ts';
 import { stripe } from './providers/stripe.ts';
 import { adminRoutes } from './admin.ts';
 import { addBankAccount, bankDeposit, bankPayins, bankStatus, cancelBankPayin, refreshBridgeCheck, refreshBusinessCheck, refreshPayouts, removeBankAccount, startBankPayin, startBankVerification, withdrawToBank } from './bank.ts';
@@ -169,6 +169,7 @@ const createAgent: Handler = async (ctx, owner, input) => {
   const name = str(input.name, 60, 'name', { required: true });
   const origin = originInput(input);
   const runtime = String(origin.runtime || 'custom');
+  const model = modelInput(input);
   const workspaceId = (await organizationFor(ctx, owner, input.organizationId)) ?? null;
   const desktopAgentId = input.desktopAgentId ? str(input.desktopAgentId, 100, 'desktopAgentId') : null;
   await kindsFor(ctx, owner.userId, input.resources);
@@ -182,12 +183,12 @@ const createAgent: Handler = async (ctx, owner, input) => {
   let agent: AgentRow | null = null;
   for (let attempt = 0; attempt < 3 && !agent; attempt++) {
     const id = agentId();
-    const { data, error } = await ctx.admin.from('agent_id_agents').insert({ id, owner_user_id: owner.userId, workspace_id: workspaceId, name, handle: handleFor(name), mascot: mascotOf(id), ...origin, runtime, desktop_agent_id: desktopAgentId }).select('*').single();
+    const { data, error } = await ctx.admin.from('agent_id_agents').insert({ id, owner_user_id: owner.userId, workspace_id: workspaceId, name, handle: handleFor(name), mascot: mascotOf(id), ...origin, ...model, runtime, desktop_agent_id: desktopAgentId }).select('*').single();
     if (error?.code === '23505') continue;
     agent = checked({ data, error });
   }
   if (!agent) throw fail(503, 'unavailable', 'Could not create the agent. Try again.');
-  await audit(ctx, owner.userId, agent.id, 'owner', 'agent.create', { name, runtime, organization: workspaceId });
+  await audit(ctx, owner.userId, agent.id, 'owner', 'agent.create', { name, runtime, organization: workspaceId, ...(model.model_kind ? { model: model.model_kind } : {}) });
   const key = input.key === false ? null : await createKey(ctx, owner, agent, str(input.keyName, 60, 'keyName') || 'Default key');
   // Ready to use at once: its mail, wallet and (on paid plans) number and machine.
   const setup = await autoGive(ctx, agent, input.resources);
@@ -219,7 +220,7 @@ const updateAgent: Handler = async (ctx, owner, input, params) => {
     if (!(MASCOTS as readonly string[]).includes(input.mascot)) throw fail(400, 'invalid', `mascot is one of ${MASCOTS.join(', ')}.`);
     patch.mascot = input.mascot;
   }
-  Object.assign(patch, originInput(input));
+  Object.assign(patch, originInput(input), modelInput(input));
   if (input.status !== undefined) { if (!['active', 'suspended'].includes(input.status)) throw fail(400, 'invalid', 'status is active or suspended. Revoke with DELETE.'); patch.status = input.status; }
   if (input.desktopAgentId !== undefined) patch.desktop_agent_id = input.desktopAgentId ? str(input.desktopAgentId, 100, 'desktopAgentId') : null;
   if (input.organizationId !== undefined) patch.workspace_id = await organizationFor(ctx, owner, input.organizationId);

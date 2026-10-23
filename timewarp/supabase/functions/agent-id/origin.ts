@@ -64,6 +64,41 @@ export async function recordApp(ctx: Ctx, agentId: string, app: string, client: 
   }, { onConflict: 'agent_id,app' });
 }
 
+// What kind of AI an Agent ID stands for: an agent that acts with tools, or a
+// model that makes one kind of output (pictures, voices, code, decisions…).
+// The owner says which, and who makes the model; it shows with the agent, in
+// its passports and on everything it marks.
+export const MODEL_KINDS: Record<string, string> = {
+  agent: 'AI agent', llm: 'Language model', image: 'Image model', voice: 'Voice and audio model', video: 'Video model',
+  code: 'Code model', text: 'Text model', decision: 'Decision model', other: 'Other AI',
+};
+const kinds = Object.keys(MODEL_KINDS);
+
+// The fields `model: { kind, provider, name }` sets.
+export function modelInput(input: any) {
+  const patch: Record<string, unknown> = {};
+  const model = input?.model;
+  if (model === undefined || model === null) return patch;
+  if (typeof model !== 'object' || Array.isArray(model)) throw fail(400, 'invalid', 'model is { kind, provider, name }.');
+  if (model.kind !== undefined) {
+    if (!kinds.includes(model.kind)) throw fail(400, 'invalid', `model.kind is one of ${kinds.join(', ')}.`);
+    patch.model_kind = model.kind;
+  }
+  if (model.provider !== undefined) patch.model_provider = str(model.provider, 60, 'model.provider') || null;
+  if (model.name !== undefined) patch.model_name = str(model.name, 80, 'model.name') || null;
+  return patch;
+}
+
+export function modelView(agent: { model_kind?: string | null; model_provider?: string | null; model_name?: string | null }) {
+  const kind = agent.model_kind && kinds.includes(agent.model_kind) ? agent.model_kind : 'agent';
+  return { kind, label: MODEL_KINDS[kind], provider: agent.model_provider || null, name: agent.model_name || null };
+}
+// The same, as passports and checks carry it: what the owner says it is.
+export function passportModel(agent: Parameters<typeof modelView>[0]) {
+  const { kind, provider, name } = modelView(agent);
+  return { kind, ...(provider ? { provider } : {}), ...(name ? { name } : {}) };
+}
+
 // The model an agent says it is ("claude-opus-5-5", "gpt-6"…), as given.
 export function modelOf(value: unknown) {
   const model = String(value ?? '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9.:/_-]/g, '').slice(0, 80);

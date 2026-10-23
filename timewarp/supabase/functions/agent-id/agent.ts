@@ -15,13 +15,14 @@ import { actionStatus, ASSETS, type Asset, EVM_ADDRESS, explorerUrl, liveBalance
 import { revealCard } from './providers/card.ts';
 import { machineCost, machineState, runCommand, startMachine, stopMachine, type Size } from './providers/vm.ts';
 import { parseSshKey } from './ssh.ts';
-import { appOf, recordApp } from './origin.ts';
+import { appOf, passportModel, recordApp } from './origin.ts';
 import { giveResource } from './provisioning.ts';
 import { agentCommand, installCommand, PACKAGE } from './vault/shell.ts';
 
 type Op = (ctx: Ctx, who: AgentCaller, input: any) => Promise<unknown>;
 const actor = (who: AgentCaller) => who.via === 'owner' ? 'owner' as const : 'agent' as const;
 import { approvalUrl, askFirst, mailOwner } from './ask.ts';
+import { traceOutgoing } from './tracing.ts';
 
 async function seen(ctx: Ctx, agent: AgentRow) {
   if (agent.last_seen_at && ctx.now() - Date.parse(agent.last_seen_at) < 60_000) return;
@@ -159,33 +160,37 @@ const mailSend: Op = async (ctx, who, input) => {
   if (!subject) throw fail(400, 'invalid', 'subject is required.');
   const body = str(input.text, 100_000, 'text', { required: true, multiline: true });
   const html = input.html ? str(input.html, 200_000, 'html', { multiline: true }) : undefined;
-  const files = await ownFiles(ctx, who.agent.id, input.attachments);
+  let files = await ownFiles(ctx, who.agent.id, input.attachments);
   const waiting = await askFirst(ctx, who, 'mail', 'mailSend', input, { to, cc, subject, preview: body.slice(0, 500), attachments: files.length }, resource.mode);
   if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `mail:${who.agent.id}`, 10, 200, 'emails');
+  // Traced to this agent as it goes (tracing.ts): the text by its
+  // fingerprint, and attached pictures and sound as marked copies.
+  const traced = await traceOutgoing(ctx, who, 'mail', body, files);
+  files = traced.files;
   let status = 'sent', providerRef: string | null = null;
   const delivered: string[] = [];
   if (resource.mode === 'live') {
     const attachments = [];
     for (const file of files) attachments.push({ filename: file.filename, content: toBase64(await fileBytes(ctx, file)), content_type: file.content_type });
-    providerRef = await sendResend(ctx, resource, who.agent, { to, cc, subject, text: body, html, inReplyTo, attachments }, `agent-id/${who.agent.id}/${crypto.randomUUID()}`);
+    providerRef = await sendResend(ctx, resource, who.agent, { to, cc, subject, text: body, html, inReplyTo, attachments, trace: traced.trace }, `agent-id/${who.agent.id}/${crypto.randomUUID()}`);
   } else {
     // Test mail reaches other test inboxes only.
     for (const address of [...to, ...cc]) {
       const inbox = await internalResource(ctx, 'mail', 'test', address);
       if (!inbox) continue;
-      const received = await record(ctx, inbox, { kind: 'mail', direction: 'in', status: 'received', counterparty: resource.address, subject, body, data: { to, cc, fromAgent: who.agent.id } });
+      const received = await record(ctx, inbox, { kind: 'mail', direction: 'in', status: 'received', counterparty: resource.address, subject, body, data: { to, cc, fromAgent: who.agent.id, ...(traced.trace ? { trace: traced.trace } : {}) } });
       await shareFiles(ctx, files, inbox, received);
       delivered.push(address);
     }
     status = delivered.length === to.length + cc.length ? 'delivered' : 'simulated';
   }
-  const id = await record(ctx, resource, { kind: 'mail', direction: 'out', status, counterparty: to.join(', '), subject, body, providerRef, thread, data: { to, cc, ...(html ? { html: html.slice(0, 50_000) } : {}), ...(resource.mode === 'test' ? { deliveredTo: delivered } : {}) } });
+  const id = await record(ctx, resource, { kind: 'mail', direction: 'out', status, counterparty: to.join(', '), subject, body, providerRef, thread, data: { to, cc, ...(html ? { html: html.slice(0, 50_000) } : {}), ...(resource.mode === 'test' ? { deliveredTo: delivered } : {}), ...(traced.trace ? { trace: traced.trace } : {}) } });
   // An upload belongs to the first message it goes out with; sending it again makes a copy.
   const fresh = files.filter(file => !file.event_id);
   if (fresh.length) await ctx.admin.from('agent_id_files').update({ event_id: id }).in('id', fresh.map(file => file.id));
   await shareFiles(ctx, files.filter(file => file.event_id), { agent_id: who.agent.id, owner_user_id: who.agent.owner_user_id }, id);
-  await audit(ctx, who.userId, who.agent.id, actor(who), 'mail.send', { to: to.length + cc.length, mode: resource.mode, attachments: files.length });
+  await audit(ctx, who.userId, who.agent.id, actor(who), 'mail.send', { to: to.length + cc.length, mode: resource.mode, attachments: files.length, ...(traced.trace ? { trace: traced.trace } : {}) });
   return { message: { ...(await eventById(ctx, id)), attachments: (await filesOf(ctx, [id])).get(id) || [] }, ...(status === 'simulated' ? { note: 'Test inboxes only deliver to other Agent ID test inboxes; this message was recorded but not sent.' } : {}) };
 };
 
@@ -199,15 +204,16 @@ const smsSend: Op = async (ctx, who, input) => {
   const waiting = await askFirst(ctx, who, 'sms', 'smsSend', input, { to, text: body }, resource.mode);
   if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `sms:${who.agent.id}`, 10, 100, 'texts');
+  const traced = await traceOutgoing(ctx, who, 'sms', body);
   let status: string, providerRef: string | null = null;
   if (resource.mode === 'live') ({ status, providerRef } = await sendSms(ctx, resource, to, body));
   else {
     const phone = await internalResource(ctx, 'phone', 'test', to);
-    if (phone) await record(ctx, phone, { kind: 'sms', direction: 'in', status: 'received', counterparty: resource.address, body, data: { fromAgent: who.agent.id } });
+    if (phone) await record(ctx, phone, { kind: 'sms', direction: 'in', status: 'received', counterparty: resource.address, body, data: { fromAgent: who.agent.id, ...(traced.trace ? { trace: traced.trace } : {}) } });
     status = phone ? 'delivered' : 'simulated';
   }
-  const id = await record(ctx, resource, { kind: 'sms', direction: 'out', status, counterparty: to, body, providerRef });
-  await audit(ctx, who.userId, who.agent.id, actor(who), 'sms.send', { mode: resource.mode });
+  const id = await record(ctx, resource, { kind: 'sms', direction: 'out', status, counterparty: to, body, providerRef, ...(traced.trace ? { data: { trace: traced.trace } } : {}) });
+  await audit(ctx, who.userId, who.agent.id, actor(who), 'sms.send', { mode: resource.mode, ...(traced.trace ? { trace: traced.trace } : {}) });
   return { message: await eventById(ctx, id) };
 };
 
@@ -217,6 +223,7 @@ const callPlace: Op = async (ctx, who, input) => {
   const waiting = await askFirst(ctx, who, 'call', 'callPlace', input, { to, say }, resource.mode);
   if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `call:${who.agent.id}`, 3, 30, 'calls');
+  const traced = await traceOutgoing(ctx, who, 'call', say);
   let status: string, providerRef: string | null = null;
   if (resource.mode === 'live') ({ status, providerRef } = await placeCall(ctx, resource, to, say));
   else {
@@ -224,8 +231,8 @@ const callPlace: Op = async (ctx, who, input) => {
     if (phone) await record(ctx, phone, { kind: 'call', direction: 'in', status: 'completed', counterparty: resource.address, body: say, data: { fromAgent: who.agent.id } });
     status = phone ? 'completed' : 'simulated';
   }
-  const id = await record(ctx, resource, { kind: 'call', direction: 'out', status, counterparty: to, body: say, providerRef });
-  await audit(ctx, who.userId, who.agent.id, actor(who), 'call.place', { mode: resource.mode });
+  const id = await record(ctx, resource, { kind: 'call', direction: 'out', status, counterparty: to, body: say, providerRef, ...(traced.trace ? { data: { trace: traced.trace } } : {}) });
+  await audit(ctx, who.userId, who.agent.id, actor(who), 'call.place', { mode: resource.mode, ...(traced.trace ? { trace: traced.trace } : {}) });
   return { call: await eventById(ctx, id) };
 };
 
@@ -723,7 +730,7 @@ const passport: Op = async (ctx, who, input) => {
   const now = Math.floor(ctx.now() / 1000), jti = randomId(20);
   const claims = {
     iss: ctx.config.issuer, sub: who.agent.id, aud: audience, iat: now, nbf: now, exp: now + ctx.config.passportSeconds, jti,
-    agent: { name: who.agent.name, handle: who.agent.handle, runtime: who.agent.runtime, principal: principalOf(ctx, who.agent) },
+    agent: { name: who.agent.name, handle: who.agent.handle, runtime: who.agent.runtime, principal: principalOf(ctx, who.agent), model: passportModel(who.agent) },
     owner: {
       ref: await pairwiseOwner(ctx.config, who.agent.owner_user_id, audience),
       type: verification.level === 'kyb' ? 'business' : 'person', verified: verification.verified, level: verification.level,

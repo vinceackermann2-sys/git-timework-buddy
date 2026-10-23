@@ -82,6 +82,17 @@ export type Agent = {
   apps?: AgentApp[];
   // Which of its actions wait for the owner's yes (older servers leave it out).
   askFirst?: Record<AskKind, boolean>;
+  // What kind of AI it is and whose model, as the owner says (older servers leave it out).
+  model?: AgentModel;
+};
+
+export type ModelKind =
+  "agent" | "llm" | "image" | "voice" | "video" | "code" | "text" | "decision" | "other";
+export type AgentModel = {
+  kind: ModelKind;
+  label: string;
+  provider: string | null;
+  name: string | null;
 };
 
 // The actions an owner can ask to approve first.

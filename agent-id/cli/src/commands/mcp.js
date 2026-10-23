@@ -17,6 +17,7 @@ import { UsageError } from '../errors.js';
 import { userAgent } from '../api.js';
 import { appFromClient } from '../origin.js';
 import { seal, vaultItem } from '../vault.js';
+import { markFile } from './trace.js';
 
 const isRequest = message => message && typeof message === 'object' && typeof message.method === 'string' && message.id !== undefined && message.id !== null;
 const rpcError = (id, code, message, data) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message, ...(data ? { data } : {}) } });
@@ -42,6 +43,23 @@ export const VAULT_SAVE_TOOL = {
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 };
 
+// Marking a file on this computer, answered here too: the file is read and
+// written here, and Agent ID makes the marked copy.
+export const TRACE_FILE_TOOL = {
+  name: 'trace_mark_file',
+  description: 'Mark a file you made on this computer so anyone can trace it back to you, like a watermark: a PNG picture or WAV sound gets a mark no one can see or hear, a text file an invisible one, and code is left as it is and kept as a fingerprint. The file is changed in place unless you give out_path.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'The file, absolute or relative to the folder this runs in.' },
+      out_path: { type: 'string', description: 'Write the marked file here instead of changing the original.' },
+    },
+    required: ['path'],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+};
+
 // Messages in a text/event-stream body (Streamable HTTP may answer that way).
 function sseMessages(text) {
   const messages = [];
@@ -58,7 +76,7 @@ function sseMessages(text) {
 // Messages go through unchanged (the client's clientInfo included, which
 // Agent ID records); the user-agent names the tool, from TIMEWARP_ID_TOOL or
 // else the client's name.
-export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, log, tool = null, onTool = () => {}, approvals = null, vault = null, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), approvalWaitMs = 180_000 }) {
+export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, log, tool = null, onTool = () => {}, approvals = null, vault = null, marker = null, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), approvalWaitMs = 180_000 }) {
   let sessionId = null, protocolVersion = null, clientTool = tool, clientElicitation = null, nextAsk = 0;
   const asks = new Map();
 
@@ -149,9 +167,23 @@ export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, lo
     }
   }
 
+  async function markHere(message) {
+    const args = message.params?.arguments && typeof message.params.arguments === 'object' ? message.params.arguments : {};
+    const answer = (body, isError = false) => ({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: typeof body === 'string' ? body : JSON.stringify(body) }], ...(isError ? { isError: true } : {}) } });
+    try {
+      if (typeof args.path !== 'string' || !args.path.trim()) return answer('path is required: the file to mark.', true);
+      const { data, out } = await marker.mark(args.path, typeof args.out_path === 'string' && args.out_path.trim() ? args.out_path : null);
+      log(`marked ${out} (${data.trace.id})`);
+      return answer({ ...data, path: out });
+    } catch (error) {
+      return answer(error?.message || 'It could not be marked.', true);
+    }
+  }
+
   async function forward(message) {
     const request = isRequest(message);
     if (vault && request && message.method === 'tools/call' && message.params?.name === VAULT_SAVE_TOOL.name) return [await vaultSave(message)];
+    if (marker && request && message.method === 'tools/call' && message.params?.name === TRACE_FILE_TOOL.name) return [await markHere(message)];
     if (message.method === 'initialize') {
       clientElicitation = message.params?.capabilities?.elicitation ?? null;
       if (!clientTool) {
@@ -209,6 +241,13 @@ export function createProxy({ url, auth, fetchImpl = globalThis.fetch, write, lo
       for (const reply of replies) {
         const tools = reply?.id === message.id ? reply.result?.tools : null;
         if (Array.isArray(tools) && tools.some(t => t?.name === 'vault_list') && !tools.some(t => t?.name === VAULT_SAVE_TOOL.name)) tools.push(VAULT_SAVE_TOOL);
+      }
+    }
+    // And mark the files it makes here.
+    if (marker && message.method === 'tools/list') {
+      for (const reply of replies) {
+        const tools = reply?.id === message.id ? reply.result?.tools : null;
+        if (Array.isArray(tools) && tools.some(t => t?.name === 'trace_mark') && !tools.some(t => t?.name === TRACE_FILE_TOOL.name)) tools.push(TRACE_FILE_TOOL);
       }
     }
     if (request && message.method === 'tools/call' && approvals && clientElicitation) {
@@ -282,7 +321,9 @@ export async function mcp(ctx) {
     list: () => ctx.self.get('/v1/me/vault'),
     save: body => ctx.self.post('/v1/me/vault/items', body),
   };
-  const proxy = createProxy({ url, auth, write, log, tool: ctx.tool, onTool: tool => { ctx.api.tool = tool; }, approvals, vault });
+  // Marking files on this computer goes to Agent ID itself too.
+  const marker = remote ? null : { mark: (file, out) => markFile(ctx, file, out) };
+  const proxy = createProxy({ url, auth, write, log, tool: ctx.tool, onTool: tool => { ctx.api.tool = tool; }, approvals, vault, marker });
   const pending = new Set();
   const lines = readline.createInterface({ input: ctx.stdin, crlfDelay: Infinity, terminal: false });
   for await (const line of lines) {

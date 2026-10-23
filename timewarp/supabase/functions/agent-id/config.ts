@@ -137,6 +137,9 @@ export function publicConfig(config: Config) {
     testMode: config.testMode,
     legal: { termsVersion: config.termsVersion, termsUrl: `${config.siteUrl}/legal/agent-id-terms`, privacyUrl: `${config.siteUrl}/legal/privacy-policy` },
     passports: { available: !!config.signingKey, lifetimeSeconds: config.passportSeconds },
+    // Tracing what agents make: anyone checks; model makers mark for an agent
+    // that gives them a passport for this audience.
+    trace: { audience: `${config.issuer}/trace`, check: `${config.publicUrl}/v1/trace/check`, mark: `${config.publicUrl}/v1/trace/mark` },
     bank: { available: bankAvailable(config) },
     // No subscription: free mail and wallets, free machine hours, then credits.
     pricing: {

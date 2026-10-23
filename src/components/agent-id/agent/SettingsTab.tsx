@@ -26,6 +26,7 @@ import {
 import {
   KIND_LABELS,
   MASCOTS,
+  MODEL_KINDS,
   ORIGIN_CHOICES,
   ORIGIN_LABELS,
   mascotOf,
@@ -40,6 +41,7 @@ import {
   type AskKind,
   type Kind,
   type Mascot,
+  type ModelKind,
 } from "@/lib/agent-id/types";
 import { cn } from "@/lib/utils";
 import {
@@ -137,9 +139,15 @@ function Details({ detail }: { detail: AgentDetail }) {
   const [org, setOrg] = useState(agent.organizationId ?? PERSONAL);
   const current = agent.mascot ?? mascotOf(agent.id);
   const [mascot, setMascot] = useState<Mascot>(current);
+  const [kind, setKind] = useState<ModelKind>(agent.model?.kind ?? "agent");
+  const [provider, setProvider] = useState(agent.model?.provider ?? "");
+  const [modelName, setModelName] = useState(agent.model?.name ?? "");
   const revoked = agent.status === "revoked";
 
   useEffect(() => {
+    setKind(agent.model?.kind ?? "agent");
+    setProvider(agent.model?.provider ?? "");
+    setModelName(agent.model?.name ?? "");
     setName(agent.name);
     setApp(originOf(agent).app);
     setOrg(agent.organizationId ?? PERSONAL);
@@ -156,6 +164,15 @@ function Details({ detail }: { detail: AgentDetail }) {
     const nextOrg = org === PERSONAL ? null : org;
     if (nextOrg !== agent.organizationId) p.organizationId = nextOrg;
     if (mascot !== current) p.mascot = mascot;
+    // Older servers don't say what kind of AI it is: nothing to change then.
+    if (agent.model) {
+      const model: NonNullable<typeof p.model> = {};
+      if (kind !== agent.model.kind) model.kind = kind;
+      if (provider.trim() !== (agent.model.provider ?? ""))
+        model.provider = provider.trim() || null;
+      if (modelName.trim() !== (agent.model.name ?? "")) model.name = modelName.trim() || null;
+      if (Object.keys(model).length) p.model = model;
+    }
     return p;
   };
   const dirty = Object.keys(patch()).length > 0;
@@ -204,6 +221,48 @@ function Details({ detail }: { detail: AgentDetail }) {
               </SelectContent>
             </Select>
           </Field>
+          {agent.model && (
+            <>
+              <Field id="settings-kind" label="What kind of AI">
+                <Select
+                  value={kind}
+                  onValueChange={(value) => setKind(value as ModelKind)}
+                  disabled={revoked}
+                >
+                  <SelectTrigger id="settings-kind">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODEL_KINDS.map((k) => (
+                      <SelectItem key={k.kind} value={k.kind}>
+                        {k.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field id="settings-provider" label="Made by">
+                <Input
+                  id="settings-provider"
+                  value={provider}
+                  maxLength={60}
+                  placeholder="Anthropic, OpenAI, Google…"
+                  disabled={revoked}
+                  onChange={(e) => setProvider(e.target.value)}
+                />
+              </Field>
+              <Field id="settings-model" label="Model">
+                <Input
+                  id="settings-model"
+                  value={modelName}
+                  maxLength={80}
+                  placeholder="Claude Opus 5.5, Imagen 4…"
+                  disabled={revoked}
+                  onChange={(e) => setModelName(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
           {(orgs.length > 0 || agent.organizationId) && (
             <Field id="settings-org" label="Belongs to">
               <Select value={org} onValueChange={setOrg} disabled={revoked}>

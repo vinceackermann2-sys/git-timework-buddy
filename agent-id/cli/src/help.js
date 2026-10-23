@@ -51,7 +51,7 @@ Your account (owner key from the Agent ID dashboard):
   terms                            Read and accept Agent ID's terms (needed once)
   logout [--all]                   Forget it (--all: and every agent key)
   whoami                           Your account and the agent you act as
-  agents list|create|show|key|pause|resume|revoke
+  agents list|create|show|model|key|pause|resume|revoke
   give <mail|phone|wallet|vm>      Give an agent a mail inbox, number, wallet or machine
   card apply                       Apply for a virtual card for an agent
   take <kind>                      Take it away again
@@ -63,6 +63,8 @@ Act as the agent:
   me, mail, sms, call, contacts, wallet, card, vm
   vault list|save|request          Keys and sign-ins, sealed on this computer
   passport --audience <aud>        Prints a passport for a service
+  mark <file> | --text "…"         Mark what it made, so it traces back to it
+  check <file> | --text "…"        Was it made by an agent with an Agent ID?
 
 Connect tools:
   mcp                              Agent ID as a stdio MCP server
@@ -154,6 +156,12 @@ Forgets the owner key. --all also forgets every agent key on this computer.`,
                                                   Creates an agent and saves its key here; --origin
                                                   is the app it lives in (claude-code, codex, cursor,
                                                   gemini, grok, openclaw, strawberry, custom, …)
+         [--kind <kind>] [--provider "…"] [--model "…"]
+                                                  What kind of AI it is: agent, llm, image, voice,
+                                                  video, code, text, decision or other, and whose
+                                                  model (e.g. --kind image --provider Google)
+  timewarp-id agents model <agent> --kind <kind> [--provider "…"] [--model "…"]
+                                                  Changes what kind of AI it is
   timewarp-id agents show <agent>                 Everything about one agent
   timewarp-id agents key <agent>                  A new key for an agent (e.g. on another computer)
   timewarp-id agents pause|resume <agent>         Stop or allow everything it does
@@ -230,6 +238,21 @@ so Timewarp never has it. A key goes only to the sites given with --for, and
 is taken back out of what comes back:
   printf %s "$RESEND_KEY" | timewarp-id vault save --label "Resend" --for api.resend.com
   timewarp-id vault request vlt_… https://api.resend.com/domains`,
+  mark: `Usage: timewarp-id mark <file> [--out <file>]
+       timewarp-id mark --text "…" [--code]       (--text - reads stdin)
+
+Marks something the agent made so anyone can trace it back to the agent and
+who answers for it, like a watermark. A PNG picture or a WAV sound gets a
+mark you can't see or hear, written to the file (or --out). A text file gets
+an invisible mark. Code is left exactly as it is and kept as a fingerprint.
+Other files are recorded by their exact bytes. Mail, texts and calls the
+agent sends through Agent ID are marked for it.`,
+  check: `Usage: timewarp-id check <file>
+       timewarp-id check --text "…"               (--text - reads stdin)
+
+Asks Agent ID whether a picture (PNG), a sound (WAV), a text or code was made
+by an agent with an Agent ID, and who answers for it. Finding no mark doesn't
+prove a person made it. No key needed.`,
   passport: `Usage: timewarp-id passport --audience <audience>
 
 Prints only a short-lived signed passport for the service, so you can write

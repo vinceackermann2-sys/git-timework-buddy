@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { BadgeCheck } from "lucide-react";
 
 import { agentApps } from "@/lib/agent-id/apps";
+import { modelKindText } from "@/lib/agent-id/format";
 import type { AgentDetail } from "@/lib/agent-id/types";
 import { AppChip } from "../AppIcons";
 import { AgentAvatar, Chip, StatusBadge } from "../ui";
@@ -11,6 +12,7 @@ import { AgentAvatar, Chip, StatusBadge } from "../ui";
 export function IdCard({ detail }: { detail: AgentDetail }) {
   const { agent, verification } = detail;
   const apps = agentApps(agent);
+  const kind = modelKindText(agent.model);
 
   return (
     <section className="aid-card overflow-hidden" aria-label={`${agent.name}'s identity`}>
@@ -34,6 +36,7 @@ export function IdCard({ detail }: { detail: AgentDetail }) {
             )}
             {agent.status !== "active" && <StatusBadge status={agent.status} />}
           </div>
+          {kind && <p className="mt-1 text-sm text-[var(--muted-foreground)]">{kind}</p>}
           {apps.length > 0 && (
             <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
               <span className="mr-0.5 text-xs text-[var(--muted-foreground)]">Used in</span>

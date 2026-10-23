@@ -8,6 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { createClaimsClient, type ConfirmedEmail } from "./claims";
 import { createAgentIdClient, resolveApiBase, resolveDevToken, resolveGatewayKey } from "./client";
+import { createTraceClient } from "./trace";
 
 const env = import.meta.env as unknown as Record<string, string | boolean | undefined>;
 
@@ -34,6 +35,12 @@ export const api = createAgentIdClient({
 
 // The open claim routes: getting an Agent ID without an account.
 export const claimsApi = createClaimsClient({
+  baseUrl: API_BASE,
+  gatewayKey: resolveGatewayKey(env),
+});
+
+// The open check: was a picture, voice or text made by an agent with an Agent ID?
+export const traceApi = createTraceClient({
   baseUrl: API_BASE,
   gatewayKey: resolveGatewayKey(env),
 });

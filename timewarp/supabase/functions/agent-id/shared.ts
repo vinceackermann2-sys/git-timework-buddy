@@ -3,7 +3,7 @@
 import { checked, fail, money } from './util.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
 import type { Kind } from './config.ts';
-import { appsView, originView } from './origin.ts';
+import { appsView, modelView, originView } from './origin.ts';
 
 // The service's own stored values (agent_id_settings), such as the signing
 // secrets of webhooks it registered itself.
@@ -16,8 +16,9 @@ export async function putSetting(ctx: Ctx, key: string, value: unknown) {
 }
 
 export async function audit(ctx: Ctx, ownerId: string, agentId: string | null, actor: 'owner' | 'agent' | 'system' | 'provider' | 'relying_party', action: string, detail: Record<string, unknown> = {}, { required = false } = {}) {
-  // What an agent does is recorded with the app and model it did it through.
-  const via = actor === 'agent' && ctx.via ? { via: ctx.via } : {};
+  // What an agent does is recorded with the app and model it did it through,
+  // and where from: so whoever answers for it can see what ran, and where.
+  const via = actor === 'agent' ? { ...(ctx.via ? { via: ctx.via } : {}), ...(ctx.where ? { where: ctx.where } : {}) } : {};
   const { error } = await ctx.admin.from('agent_id_audit').insert({ owner_user_id: ownerId, agent_id: agentId, actor, action, detail: { ...detail, ...via } });
   if (error) {
     console.error('[agent-id] audit failed', action, error.message);
@@ -125,6 +126,7 @@ export function askFirstView(agent: AgentRow, resources: ResourceRow[]) {
 export function agentView(ctx: Ctx, agent: AgentRow, resources: ResourceRow[] = [], apps?: Map<string, any[]>) {
   return {
     id: agent.id, name: agent.name, handle: agent.handle, mascot: agent.mascot || mascotOf(agent.id), runtime: agent.runtime, origin: originView(agent), apps: appsView(agent, apps?.get(agent.id)), status: agent.status,
+    model: modelView(agent),
     organizationId: agent.workspace_id, desktopAgentId: agent.desktop_agent_id,
     gitPrincipal: principalOf(ctx, agent),
     createdAt: agent.created_at, lastSeenAt: agent.last_seen_at,

@@ -14,6 +14,7 @@ import * as act from './commands/act.js';
 import { mcp } from './commands/mcp.js';
 import { connect } from './commands/connect.js';
 import { git } from './commands/git.js';
+import { check, mark } from './commands/trace.js';
 import * as attaching from './commands/attach.js';
 import { terms } from './terms.js';
 
@@ -24,7 +25,7 @@ const ROUTES = {
   approvals: account.approvals, approve: account.approve, deny: account.deny, use: account.use,
   me: act.me, mail: act.mail, sms: act.sms, call: act.call, contacts: act.contacts,
   wallet: act.wallet, card: act.card, vm: act.vm, vault: act.vault, passport: act.passport,
-  mcp, connect, git,
+  mcp, connect, git, mark, check,
 };
 const ALIASES = { agent: 'agents', calls: 'call', contact: 'contacts', machine: 'vm', approval: 'approvals', apply: 'attach', unapply: 'detach' };
 // After these, a one-line notice says when transfers wait for the owner.
@@ -144,6 +145,7 @@ export function createContext({ env = process.env, cwd = process.cwd(), flags = 
       patch: (path, body, options = {}) => { ctx.as = 'agent'; return ctx.api.patch(path, body, { ...options, token: ctx.agent().key }); },
       delete: (path, options = {}) => { ctx.as = 'agent'; return ctx.api.delete(path, { ...options, token: ctx.agent().key }); },
       upload: (path, raw, headers) => { ctx.as = 'agent'; return ctx.api.request('POST', path, { raw, headers, token: ctx.agent().key }); },
+      download: path => { ctx.as = 'agent'; return ctx.api.bytes(path, { token: ctx.agent().key }); },
     },
 
     // An owner command's agent: the one named (handle, id, name, or a unique

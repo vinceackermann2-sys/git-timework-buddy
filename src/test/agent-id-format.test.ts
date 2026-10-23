@@ -15,7 +15,9 @@ import {
   formatTimeLeft,
   modelLabel,
   auditVia,
+  auditWhere,
   liveAvailability,
+  modelKindText,
   parseAmount,
   parseList,
   runtimeLabel,
@@ -295,5 +297,35 @@ describe("model names", () => {
     );
     expect(auditVia({ actor: "owner", detail: { via } })).toBeNull();
     expect(auditVia({ actor: "agent", detail: {} })).toBeNull();
+  });
+
+  it("says where an agent acted from", () => {
+    const where = { ip: "203.0.113.7", device: "alice-laptop" };
+    expect(auditWhere({ actor: "agent", detail: { where } })).toBe("on alice-laptop · 203.0.113.7");
+    expect(
+      auditWhere({ actor: "agent", detail: { where: { ip: "203.0.113.7", device: null } } }),
+    ).toBe("203.0.113.7");
+    expect(auditWhere({ actor: "owner", detail: { where } })).toBeNull();
+  });
+
+  it("says what kind of AI an agent is, and what it marked", () => {
+    const model = {
+      kind: "image" as const,
+      label: "Image model",
+      provider: "Google",
+      name: "Imagen 4",
+    };
+    expect(modelKindText(model)).toBe("Image model · Google Imagen 4");
+    expect(modelKindText({ ...model, kind: "decision", provider: null, name: null })).toBe(
+      "Decision model",
+    );
+    expect(
+      modelKindText({ kind: "agent", label: "AI agent", provider: null, name: null }),
+    ).toBeNull();
+    expect(modelKindText(undefined)).toBeNull();
+    expect(auditActionLabel("trace.mark")).toBe("Marked its work");
+    expect(auditDetail({ action: "trace.mark", detail: { kind: "image", provider: "Acme" } })).toBe(
+      "A picture · by Acme",
+    );
   });
 });

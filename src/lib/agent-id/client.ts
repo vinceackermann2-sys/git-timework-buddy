@@ -10,6 +10,7 @@ import type {
   AskKind,
   BankPayin,
   Mascot,
+  ModelKind,
   RecipientLookup,
   VaultItem,
   VaultStatus,
@@ -279,6 +280,7 @@ export function createAgentIdClient(options: ClientOptions) {
       name: string;
       runtime?: Runtime;
       origin?: { app: string; detail?: string | null };
+      model?: { kind?: ModelKind; provider?: string | null; name?: string | null };
       organizationId?: string | null;
       desktopAgentId?: string;
     }) => request<CreatedAgent>("/v1/agents", { body: input }),
@@ -294,6 +296,7 @@ export function createAgentIdClient(options: ClientOptions) {
         origin?: { app: string; detail?: string | null };
         mascot?: Mascot;
         askFirst?: Partial<Record<AskKind, boolean>>;
+        model?: { kind?: ModelKind; provider?: string | null; name?: string | null };
       },
     ) => request<{ agent: Agent }>(`/v1/agents/${id(agentId)}`, { method: "PATCH", body: patch }),
     cardApplication: (agentId: string) =>

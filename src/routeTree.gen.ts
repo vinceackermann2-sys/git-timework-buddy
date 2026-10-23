@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AgentIdRouteRouteImport } from './routes/agent-id/route'
 import { Route as AgentIdIndexRouteImport } from './routes/agent-id/index'
 import { Route as AgentIdAppRouteImport } from './routes/agent-id/_app'
+import { Route as AgentIdCheckRouteImport } from './routes/agent-id/check'
 import { Route as AgentIdSignInRouteImport } from './routes/agent-id/sign-in'
 import { Route as AuthBridgeRouteImport } from './routes/auth.bridge'
 import { Route as AuthGoogleRouteImport } from './routes/auth.google'
@@ -29,6 +30,7 @@ import { Route as AgentIdAppSettingsRouteImport } from './routes/agent-id/_app/s
 import { Route as AgentIdAppVerifyRouteImport } from './routes/agent-id/_app/verify'
 import { Route as AgentIdClaimIndexRouteImport } from './routes/agent-id/claim/index'
 import { Route as AgentIdClaimCodeRouteImport } from './routes/agent-id/claim/$code'
+import { Route as AgentIdForAngleRouteImport } from './routes/agent-id/for/$angle'
 import { Route as AuthV1CallbackRouteImport } from './routes/auth.v1.callback'
 import { Route as AgentIdAppAgentsAgentIdRouteImport } from './routes/agent-id/_app/agents.$agentId'
 
@@ -49,6 +51,11 @@ const AgentIdIndexRoute = AgentIdIndexRouteImport.update({
 } as any)
 const AgentIdAppRoute = AgentIdAppRouteImport.update({
   id: '/_app',
+  getParentRoute: () => AgentIdRouteRoute,
+} as any)
+const AgentIdCheckRoute = AgentIdCheckRouteImport.update({
+  id: '/check',
+  path: '/check',
   getParentRoute: () => AgentIdRouteRoute,
 } as any)
 const AgentIdSignInRoute = AgentIdSignInRouteImport.update({
@@ -131,6 +138,11 @@ const AgentIdClaimCodeRoute = AgentIdClaimCodeRouteImport.update({
   path: '/claim/$code',
   getParentRoute: () => AgentIdRouteRoute,
 } as any)
+const AgentIdForAngleRoute = AgentIdForAngleRouteImport.update({
+  id: '/for/$angle',
+  path: '/for/$angle',
+  getParentRoute: () => AgentIdRouteRoute,
+} as any)
 const AuthV1CallbackRoute = AuthV1CallbackRouteImport.update({
   id: '/auth/v1/callback',
   path: '/auth/v1/callback',
@@ -145,6 +157,7 @@ const AgentIdAppAgentsAgentIdRoute = AgentIdAppAgentsAgentIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agent-id': typeof AgentIdRouteRouteWithChildren
+  '/agent-id/check': typeof AgentIdCheckRoute
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
@@ -161,6 +174,7 @@ export interface FileRoutesByFullPath {
   '/agent-id/settings': typeof AgentIdAppSettingsRoute
   '/agent-id/verify': typeof AgentIdAppVerifyRoute
   '/agent-id/claim/$code': typeof AgentIdClaimCodeRoute
+  '/agent-id/for/$angle': typeof AgentIdForAngleRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
   '/agent-id/claim/': typeof AgentIdClaimIndexRoute
   '/agent-id/agents/$agentId': typeof AgentIdAppAgentsAgentIdRoute
@@ -168,6 +182,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agent-id': typeof AgentIdIndexRoute
+  '/agent-id/check': typeof AgentIdCheckRoute
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
@@ -183,6 +198,7 @@ export interface FileRoutesByTo {
   '/agent-id/settings': typeof AgentIdAppSettingsRoute
   '/agent-id/verify': typeof AgentIdAppVerifyRoute
   '/agent-id/claim/$code': typeof AgentIdClaimCodeRoute
+  '/agent-id/for/$angle': typeof AgentIdForAngleRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
   '/agent-id/claim': typeof AgentIdClaimIndexRoute
   '/agent-id/agents/$agentId': typeof AgentIdAppAgentsAgentIdRoute
@@ -192,6 +208,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agent-id': typeof AgentIdRouteRouteWithChildren
   '/agent-id/_app': typeof AgentIdAppRouteWithChildren
+  '/agent-id/check': typeof AgentIdCheckRoute
   '/agent-id/sign-in': typeof AgentIdSignInRoute
   '/auth/bridge': typeof AuthBridgeRoute
   '/auth/google': typeof AuthGoogleRoute
@@ -208,6 +225,7 @@ export interface FileRoutesById {
   '/agent-id/_app/settings': typeof AgentIdAppSettingsRoute
   '/agent-id/_app/verify': typeof AgentIdAppVerifyRoute
   '/agent-id/claim/$code': typeof AgentIdClaimCodeRoute
+  '/agent-id/for/$angle': typeof AgentIdForAngleRoute
   '/auth/v1/callback': typeof AuthV1CallbackRoute
   '/agent-id/claim/': typeof AgentIdClaimIndexRoute
   '/agent-id/_app/agents/$agentId': typeof AgentIdAppAgentsAgentIdRoute
@@ -217,6 +235,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/agent-id'
+    | '/agent-id/check'
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
@@ -233,6 +252,7 @@ export interface FileRouteTypes {
     | '/agent-id/settings'
     | '/agent-id/verify'
     | '/agent-id/claim/$code'
+    | '/agent-id/for/$angle'
     | '/auth/v1/callback'
     | '/agent-id/claim/'
     | '/agent-id/agents/$agentId'
@@ -240,6 +260,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/agent-id'
+    | '/agent-id/check'
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
@@ -255,6 +276,7 @@ export interface FileRouteTypes {
     | '/agent-id/settings'
     | '/agent-id/verify'
     | '/agent-id/claim/$code'
+    | '/agent-id/for/$angle'
     | '/auth/v1/callback'
     | '/agent-id/claim'
     | '/agent-id/agents/$agentId'
@@ -263,6 +285,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agent-id'
     | '/agent-id/_app'
+    | '/agent-id/check'
     | '/agent-id/sign-in'
     | '/auth/bridge'
     | '/auth/google'
@@ -279,6 +302,7 @@ export interface FileRouteTypes {
     | '/agent-id/_app/settings'
     | '/agent-id/_app/verify'
     | '/agent-id/claim/$code'
+    | '/agent-id/for/$angle'
     | '/auth/v1/callback'
     | '/agent-id/claim/'
     | '/agent-id/_app/agents/$agentId'
@@ -324,6 +348,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/agent-id'
       preLoaderRoute: typeof AgentIdAppRouteImport
+      parentRoute: typeof AgentIdRouteRoute
+    }
+    '/agent-id/check': {
+      id: '/agent-id/check'
+      path: '/check'
+      fullPath: '/agent-id/check'
+      preLoaderRoute: typeof AgentIdCheckRouteImport
       parentRoute: typeof AgentIdRouteRoute
     }
     '/agent-id/sign-in': {
@@ -438,6 +469,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentIdClaimCodeRouteImport
       parentRoute: typeof AgentIdRouteRoute
     }
+    '/agent-id/for/$angle': {
+      id: '/agent-id/for/$angle'
+      path: '/for/$angle'
+      fullPath: '/agent-id/for/$angle'
+      preLoaderRoute: typeof AgentIdForAngleRouteImport
+      parentRoute: typeof AgentIdRouteRoute
+    }
     '/auth/v1/callback': {
       id: '/auth/v1/callback'
       path: '/auth/v1/callback'
@@ -483,17 +521,21 @@ const AgentIdAppRouteWithChildren = AgentIdAppRoute._addFileChildren(
 
 interface AgentIdRouteRouteChildren {
   AgentIdAppRoute: typeof AgentIdAppRouteWithChildren
+  AgentIdCheckRoute: typeof AgentIdCheckRoute
   AgentIdSignInRoute: typeof AgentIdSignInRoute
   AgentIdIndexRoute: typeof AgentIdIndexRoute
   AgentIdClaimCodeRoute: typeof AgentIdClaimCodeRoute
+  AgentIdForAngleRoute: typeof AgentIdForAngleRoute
   AgentIdClaimIndexRoute: typeof AgentIdClaimIndexRoute
 }
 
 const AgentIdRouteRouteChildren: AgentIdRouteRouteChildren = {
   AgentIdAppRoute: AgentIdAppRouteWithChildren,
+  AgentIdCheckRoute: AgentIdCheckRoute,
   AgentIdSignInRoute: AgentIdSignInRoute,
   AgentIdIndexRoute: AgentIdIndexRoute,
   AgentIdClaimCodeRoute: AgentIdClaimCodeRoute,
+  AgentIdForAngleRoute: AgentIdForAngleRoute,
   AgentIdClaimIndexRoute: AgentIdClaimIndexRoute,
 }
 
