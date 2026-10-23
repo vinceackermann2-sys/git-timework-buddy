@@ -10,7 +10,6 @@ import type {
   AskKind,
   BankPayin,
   Mascot,
-  Memory,
   RecipientLookup,
   VaultItem,
   VaultStatus,
@@ -297,22 +296,6 @@ export function createAgentIdClient(options: ClientOptions) {
         askFirst?: Partial<Record<AskKind, boolean>>;
       },
     ) => request<{ agent: Agent }>(`/v1/agents/${id(agentId)}`, { method: "PATCH", body: patch }),
-    // What an agent remembers, kept encrypted by Agent ID.
-    memories: (agentId: string) =>
-      request<{ memories: Memory[] }>(`/v1/agents/${id(agentId)}/memories`),
-    addMemory: (agentId: string, input: { text: string; topic?: string }) =>
-      request<{ memory: Memory }>(`/v1/agents/${id(agentId)}/memories`, { body: input }),
-    editMemory: (agentId: string, memoryId: string, input: { text?: string; topic?: string }) =>
-      request<{ memory: Memory }>(`/v1/agents/${id(agentId)}/memories/${id(memoryId)}`, {
-        method: "PATCH",
-        body: input,
-      }),
-    forgetMemory: (agentId: string, memoryId: string) =>
-      request<{ forgotten: boolean }>(`/v1/agents/${id(agentId)}/memories/${id(memoryId)}`, {
-        method: "DELETE",
-      }),
-    forgetAllMemories: (agentId: string) =>
-      request<{ forgotten: number }>(`/v1/agents/${id(agentId)}/memories`, { method: "DELETE" }),
     cardApplication: (agentId: string) =>
       request<{ application: CardApplication | null }>(
         `/v1/agents/${id(agentId)}/card-application`,

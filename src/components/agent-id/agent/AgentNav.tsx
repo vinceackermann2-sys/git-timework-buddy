@@ -17,7 +17,6 @@ import type { AgentDetail } from "@/lib/agent-id/types";
 import { ResourceArt } from "../ResourceArt";
 import type { AgentTab } from "./tabs";
 import { useVault } from "./VaultTab";
-import { useMemories } from "./MemoryTab";
 
 export function AgentNav({ detail }: { detail: AgentDetail }) {
   const { agent } = detail;
@@ -29,7 +28,6 @@ export function AgentNav({ detail }: { detail: AgentDetail }) {
   const phoneApplication = usePhoneApplication(agent.id, phonesWaitlist && !phone);
   const balance = summary.data?.balance ?? wallet?.balance ?? null;
   const vault = useVault(agent.id);
-  const memories = useMemories(agent.id);
   const settingUp = (
     <span className="inline-flex items-center gap-1">
       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> Setting up
@@ -98,18 +96,6 @@ export function AgentNav({ detail }: { detail: AgentDetail }) {
           : vault.data.items.length === 1
             ? "1 saved"
             : `${vault.data.items.length} saved`,
-    },
-    {
-      tab: "memory",
-      label: "Memory",
-      icon: <ResourceArt kind="memory" size={32} />,
-      value: !memories.data
-        ? ""
-        : memories.data.memories.length === 0
-          ? "Nothing yet"
-          : memories.data.memories.length === 1
-            ? "1 memory"
-            : `${memories.data.memories.length} memories`,
     },
     { tab: "activity", label: "Activity", icon: <Plain icon={<Activity className="h-5 w-5" />} /> },
     { tab: "settings", label: "Settings", icon: <Plain icon={<Settings className="h-5 w-5" />} /> },

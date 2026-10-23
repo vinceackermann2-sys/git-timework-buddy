@@ -54,8 +54,6 @@ export function loadConfig(env: Env) {
     principalDomain: get('AGENT_ID_PRINCIPAL_DOMAIN') || mailDomain,
     webhookSecret: get('AGENT_ID_WEBHOOK_SECRET'),
     signingKey: get('AGENT_ID_SIGNING_KEY'),
-    // Encrypts agents' memories (memory.ts): 32 random bytes in base64.
-    dataKey: get('AGENT_ID_DATA_KEY'),
     previousSigningKeys: get('AGENT_ID_PREVIOUS_PUBLIC_KEYS'),
     providers,
     // Live only when listed and configured.

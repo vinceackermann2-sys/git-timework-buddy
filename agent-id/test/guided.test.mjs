@@ -34,7 +34,6 @@ function standIn(collect) {
       case 'POST /v1/claims/collect': { const [status, data] = collect.shift(); return send(status, data); }
       case 'GET /v1/me': return send(200, { agent: { ...AGENT, resources: RESOURCES }, owner: { verified: false } });
       case 'POST /v1/me/apps': return send(200, { app: body.app });
-      case 'POST /v1/me/memories/import': return send(200, { added: body.items.length, duplicates: 0, skipped: 0 });
       case 'GET /v1/config': return send(200, { legal: { termsUrl: 'https://site.test/legal/agent-id-terms' } });
       default: return send(404, { error: { code: 'not_found', message: `No ${route} here.` } });
     }
@@ -123,28 +122,6 @@ describe('a person new to Agent ID', () => {
     assert.ok(!api.seen.some(r => r.route === 'POST /v1/claims'), 'no second claim');
     assert.match(result.stdout, /^✓ Cursor is set up\. Restart Cursor to use it\.$/m);
     assert.match(result.stdout, /Ask Cursor: /);
-  });
-
-  it('offers the memory already on this computer once, after setting up', async () => {
-    freshHome('memory');
-    write(path.join(home, '.claude.json'), '{}\n');
-    write(path.join(home, '.claude', 'projects', 'C--work', 'memory', 'role.md'), '---\nname: role\n---\nThe user runs a small design studio.\n');
-    write(path.join(home, '.claude', 'projects', 'C--work', 'memory', 'keys.md'), // A made-up key, put together here so it never appears whole in the code.
-      `---\nname: keys\n---\nSTRIPE=${'sk_' + 'live_'}abcdefghijklmnopqrstuvwx\n`);
-    const api = standIn([WAITING, CLAIMED]);
-    const result = await inTerminal([], { env, cwd: home, fetch: api.fetch, answers: ['', ''] });
-    assert.equal(result.code, 0, result.stderr);
-    assert.equal(result.asked.length, 2, result.asked.join('\n'));
-    assert.match(result.asked[1], /^Bring it into My agent's memory, so it knows you in every app\?/);
-    assert.match(result.stderr, /Memory found on this computer:\n {2}Claude Code: 1 memory\n {2}\(1 line that looked like keys or passwords left out/);
-    const sent = api.seen.find(r => r.route === 'POST /v1/me/memories/import');
-    assert.deepEqual(sent.body.items, [{ text: 'The user runs a small design studio.', topic: 'role', from: 'claude-code' }]);
-    assert.match(result.stdout, /Imported 1 memory into My agent's memory\./);
-    // Offered once: the next run doesn't ask again.
-    write(path.join(home, '.cursor', 'mcp.json'), '{}\n');
-    const again = await inTerminal(['attach', 'cursor'], { env, cwd: home, fetch: standIn([]).fetch });
-    assert.equal(again.code, 0, again.stderr);
-    assert.ok(!again.asked.some(question => /memory/.test(question)));
   });
 
   it('asks again when the number typed isn\'t in the list', async () => {

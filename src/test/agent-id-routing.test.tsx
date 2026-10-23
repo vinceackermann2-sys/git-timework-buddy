@@ -66,26 +66,24 @@ describe("Agent ID routing", () => {
       "card",
       "machine",
       "vault",
-      "memory",
       "activity",
       "settings",
     ]);
   });
 
-  it("shows resource tabs once the agent has them, and the card application, vault and memory always", () => {
+  it("shows resource tabs once the agent has them, and the card application and vault always", () => {
     const ids = (resources: object, current?: Parameters<typeof visibleTabs>[1]) =>
       visibleTabs({ resources } as Parameters<typeof visibleTabs>[0], current).map(([id]) => id);
-    expect(ids({})).toEqual(["card", "vault", "memory", "activity", "settings"]);
+    expect(ids({})).toEqual(["card", "vault", "activity", "settings"]);
     expect(ids({ wallet: {}, vm: {} })).toEqual([
       "wallet",
       "card",
       "machine",
       "vault",
-      "memory",
       "activity",
       "settings",
     ]);
-    expect(ids({}, "mail")).toEqual(["mail", "card", "vault", "memory", "activity", "settings"]);
+    expect(ids({}, "mail")).toEqual(["mail", "card", "vault", "activity", "settings"]);
   });
 
   it("opens an agent on its first resource, else its activity", () => {

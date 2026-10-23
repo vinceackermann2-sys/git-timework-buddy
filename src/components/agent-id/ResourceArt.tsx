@@ -1,12 +1,11 @@
 // What an agent has, drawn for Agent ID in a phone's style but without tiles
 // behind them: a message bubble and a phone in Timewarp's purple-to-pink, a
-// wallet with cards in it, a desktop computer, a card, a vault and a note
-// (memory).
+// wallet with cards in it, a desktop computer, a card and a vault.
 import { useId } from "react";
 
 import { cn } from "@/lib/utils";
 
-export type ArtKind = "mail" | "wallet" | "phone" | "vm" | "card" | "vault" | "memory";
+export type ArtKind = "mail" | "wallet" | "phone" | "vm" | "card" | "vault";
 
 // Drawn a little larger than the 40px box's middle, now that no tile frames them.
 const GROW = "translate(20 20) scale(1.22) translate(-20 -20)";
@@ -100,19 +99,6 @@ export function ResourceArt({
             <rect x="9.5" y="17" width="21" height="15.5" rx="3.5" fill={brand} />
             <circle cx="20" cy="23.5" r="2.2" fill="#fff" />
             <rect x="19" y="24.5" width="2" height="4.2" rx="1" fill="#fff" />
-          </g>
-        )}
-        {kind === "memory" && (
-          <g>
-            {/* A note with lines, its corner folded. */}
-            <path
-              d="M11 8.5h13.5L30 14v15.5a2.5 2.5 0 0 1-2.5 2.5h-16A2.5 2.5 0 0 1 9 29.5V11a2.5 2.5 0 0 1 2-2.5Z"
-              fill={brand}
-            />
-            <path d="M24.5 8.5V12a2 2 0 0 0 2 2H30" fill="#fff" opacity="0.45" />
-            <rect x="13" y="17" width="13" height="1.8" rx="0.9" fill="#fff" />
-            <rect x="13" y="21.5" width="13" height="1.8" rx="0.9" fill="#fff" opacity="0.85" />
-            <rect x="13" y="26" width="8" height="1.8" rx="0.9" fill="#fff" opacity="0.7" />
           </g>
         )}
         {kind === "card" && (

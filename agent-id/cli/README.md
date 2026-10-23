@@ -227,7 +227,6 @@ prefix only one agent has); without it they use the current agent.
 | `card show`, `card reveal`, `card transactions` | `reveal` is logged; never paste card details into a chat |
 | `vm status\|start\|stop\|history`, `vm files [path]`, `vm exec [--cwd] [--timeout 120] -- <command…>` | `exec` prints the output and exits with the command's exit code |
 | `vault list`, `vault save --label <name> --for <sites> [--as …]` or `--site <url> [--username]`, `vault request <item> <url> [--method] [--data]` | `save` reads the key or password from stdin or asks for it (never a flag), seals it on this computer to the vault's key, and only then sends it; `request` uses a key without showing it |
-| `memory list`, `memory search <words…>`, `memory save <text…> [--topic]`, `memory forget <id>`, `memory import [--from …] [--dry-run] [--yes]` | What the agent remembers in every app, kept encrypted. `import` brings Claude Code, Codex, Cursor, Antigravity and Windsurf memory from this computer, asked first, without lines that look like secrets |
 | `passport --audience <aud>` | Prints only the token: `curl -H "Agent-Passport: $(timewarp-id passport --audience https://api.example.com)" …` |
 
 Every command takes `--json` (Agent ID's answer as JSON; errors as

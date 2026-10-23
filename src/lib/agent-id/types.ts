@@ -87,21 +87,6 @@ export type Agent = {
 // The actions an owner can ask to approve first.
 export type AskKind = "mail" | "sms" | "call" | "contacts" | "vault";
 
-// One thing an agent remembers, in every app it works in.
-export type Memory = {
-  id: string;
-  // null when it can't be read (encrypted with another key).
-  text: string | null;
-  topic: string | null;
-  // The app it was saved in or imported from (claude-code, codex…).
-  from: string | null;
-  source: "agent" | "owner" | "import";
-  model: string | null;
-  createdAt: string;
-  updatedAt: string;
-  note?: string;
-};
-
 export type AgentApp = {
   app: string;
   label: string;
