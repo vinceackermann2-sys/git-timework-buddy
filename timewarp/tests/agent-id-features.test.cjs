@@ -7,6 +7,14 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { startLocal } = require("../scripts/agent-id-local.cjs");
 
+// The agent's own command inside the wrapper that runs it as the agent's
+// ordinary account (vault/shell.ts), and the folder it runs in.
+function agentPart(body) {
+  const { command } = JSON.parse(body);
+  const match = /runuser -u agent -- .* bash -lc '[^']*' _ '((?:[^']|'\\'')*)' ([A-Za-z0-9+/=]+); else/.exec(command);
+  return match ? { cwd: match[1].replace(/'\\''/g, "'"), command: Buffer.from(match[2], "base64").toString() } : null;
+}
+
 function network() {
   const routes = [], calls = [];
   const fetch = async (url, init = {}) => {
@@ -151,14 +159,16 @@ test("a live machine lists its files, which stay between commands", async t => {
   const listed = await ok("GET", "/v1/me/vm/files?path=~", { token: bot.key });
   assert.equal(listed.path, "/root");
   assert.deepEqual(listed.entries.map(e => [e.type, e.name, e.size]), [["dir", "projects", 4096], ["file", "notes.md", 120]]);
-  const command = JSON.parse(net.find("POST", /executeShellCommand/)[0].body).command;
+  const command = agentPart(net.find("POST", /executeShellCommand/)[0].body).command;
   assert.match(command, /^p='~';/);
   assert.match(command, /find \. -mindepth 1 -maxdepth 1 -printf/);
   await ok("GET", `/v1/me/vm/files?path=${encodeURIComponent("/tmp/it's here")}`, { token: bot.key });
-  assert.match(JSON.parse(net.find("POST", /executeShellCommand/)[1].body).command, /^p='\/tmp\/it'\\''s here';/, "Paths are quoted for the shell.");
+  assert.match(agentPart(net.find("POST", /executeShellCommand/)[1].body).command, /^p='\/tmp\/it'\\''s here';/, "Paths are quoted for the shell.");
   assert.equal((await ok("GET", "/v1/me/vm/commands", { token: bot.key })).commands.length, 0, "Listing files isn't a command in the history.");
-  const { rows } = await local.db.query("select status from test_reservations");
-  assert.ok(rows.length === 2 && rows.every(r => r.status === "settled"), "Each listing is paid like a command.");
+  // Each listing is machine time like a command: here from the free hours, so no credits.
+  const { rows: [allowance] } = await local.db.query("select used_seconds from agent_id_compute_allowance where user_id=$1", [alice.id]);
+  assert.ok(allowance.used_seconds >= 2, "Each listing counts as machine time.");
+  assert.equal((await local.db.query("select count(*)::int as n from test_reservations")).rows[0].n, 0);
 });
 
 test("operators register Stripe and Resend webhooks in one step", async t => {
@@ -252,7 +262,7 @@ test("developers need no account: anyone can check a passport shown to them, and
 });
 
 test("production: no test resources, and live transfers to sanctioned addresses are refused", async t => {
-  const { local, net, ok, agent } = await setup(t, { AGENT_ID_ALLOW_TEST: "false", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "app", PRIVY_APP_SECRET: "secret", CHAINALYSIS_API_KEY: "ch_key", AGENT_ID_REQUIRE_VERIFICATION: "card" });
+  const { local, net, ok, agent } = await setup(t, { AGENT_ID_ALLOW_TEST: "false", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "app", PRIVY_APP_SECRET: "secret", CHAINALYSIS_API_KEY: "ch_key", AGENT_ID_REQUIRE_VERIFICATION: "card", AGENT_ID_VERIFY_TO_SEND: "false" });
   const owner = await local.user();
   const bot = await agent(owner, "Payer");
   assert.equal((await ok("GET", "/v1/config", {})).testMode, false);

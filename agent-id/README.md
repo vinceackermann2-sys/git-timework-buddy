@@ -18,16 +18,20 @@ agents they want.
 Give the agents you already have (Claude Code and its subagents, Codex,
 Cursor, Claude Desktop, Gemini CLI, Antigravity, Windsurf, opencode, Grok,
 Kiro, Qwen Code, Factory, Copilot CLI, Amazon Q, Continue, Cline, Roo, Kilo,
-Timewarp and OpenClaw agents, any folder) an Agent ID in one step; `attach`
+Timewarp and OpenClaw agents, any folder) an Agent ID in one step. It
 writes the wiring into each of them and tells Agent ID where each agent
 comes from, so the dashboard can show it:
 
 ```sh
-npx @timewarp/agent-id login --owner-key two_…   # from the Agent ID dashboard
-npx @timewarp/agent-id terms                     # accept Agent ID's terms of service, once
-npx @timewarp/agent-id attach                    # lists what it finds and asks
-npx @timewarp/agent-id approvals                 # answer transfers waiting for you
+npx @timewarp/agent-id              # finds your AI apps, asks which, sets them up
+npx @timewarp/agent-id approvals    # answer payments waiting for you
+npx @timewarp/agent-id detach       # take Agent ID out of them again
 ```
+
+Not signed in, it opens a link where you confirm your email (that makes your
+account); who you are is checked later, the first time money leaves. Signed
+in with an owner key (`login --owner-key two_…` and `terms`), each app gets
+an Agent ID of its own.
 
 Or build one up by hand:
 

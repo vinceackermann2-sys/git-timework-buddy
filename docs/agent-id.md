@@ -55,21 +55,23 @@ npx @timewarp/agent-id attach                     # pick from the agents it find
 
 No account or sign-in is needed first. On a computer that isn't signed in,
 `attach` starts a **claim**: it prints a link (and opens it) with a match code.
-On that page the person confirms their email with a 6-digit code, accepts the
-terms and verifies their identity (Stripe Identity). That creates their
-Timewarp account, or uses the one they have, and signs them in to the website.
-Once they're verified the agent is created for them, and `attach` collects its
-key and wires it in. Everything chosen in one `attach` shares that one Agent
-ID. A claim started on the website (`/agent-id/claim`) ends with
-`npx @timewarp/agent-id attach --claim twc_…`. Signed in
+On that page the person enters their email, ticks the terms and types the
+6-digit code they get. That creates their Timewarp account, or uses the one
+they have, signs them in to the website and creates the agent at once; no
+identity check (that comes the first time money leaves a wallet). `attach`
+collects its key and wires it in. Everything chosen in one `attach` shares
+that one Agent ID. On the website, `/agent-id/claim` asks only for an email:
+the agent is named after its owner ("Ada's agent", renamed any time) and the
+page ends with `npx @timewarp/agent-id attach --claim twc_…`. Signed in
 (`timewarp-id login --owner-key two_…`), `attach` creates agents directly as
 before.
 
 Claims (`agent_id_claims`, `claims.ts`) are open routes: `POST /v1/claims`,
 `GET /v1/claims/:code`, `POST /v1/claims/:code/email`,
-`…/email/confirm`, `…/identity` and `POST /v1/claims/collect`. The link
-code is random, and an unfinished link expires after an hour (a week once the
-identity check is running). The email code allows 5 tries and 5 sends, 30
+`…/email/confirm` (with `terms`, the version ticked), `…/terms` (when the
+terms weren't ticked; `…/identity` is its older name) and
+`POST /v1/claims/collect`. The link code is random, and an unfinished link
+expires after an hour. The email code allows 5 tries and 5 sends, 30
 seconds apart, and a network can start 20 claims an hour. The agent's key goes
 once, to the holder of the claim's secret.
 
@@ -78,6 +80,32 @@ and machine in every app that uses it. Each app it connects from (the MCP
 client's name) or is set up in (`attach`, `POST /v1/me/apps`) is recorded in
 `agent_id_agent_clients`, and agents carry `apps` (most recent first) for the
 dashboard.
+
+**Which model, in which app.** Each MCP connection gets a session
+(`Mcp-Session-Id: mcs_…`, table `agent_id_mcp_sessions`, migration
+20261022120000) that remembers its app. The server's instructions ask the agent
+to call `whoami` once with `model` (any tool call may carry `model`); the
+session keeps it, the app's row keeps the latest model and every one it has
+run as (`apps[].model`, `apps[].models`), and everything the agent does in that
+session is audited with `detail.via = { app, model }`. The page shows "Used in
+Claude Code · Claude Opus 5.5" and each action as "Agent in Claude Code ·
+Claude Opus 5.5". The model is what the agent says it is: MCP clients don't
+send it, so it can't be proven.
+
+**Any kind of AI.** An Agent ID can stand for an agent that acts with tools
+(the default) or for a model that makes one kind of output: `model.kind` is
+`agent`, `llm`, `image`, `voice`, `video`, `code`, `text`, `decision` or
+`other`, with `model.provider` and `model.name` as the owner says (migration
+20261023100000). Owners set it when creating an agent or later
+(`PATCH /v1/agents/:id {model}`, `timewarp-id agents model <agent> --kind
+image --provider Google --model "Imagen 4"`, the agent's Settings). Agents
+carry `model: { kind, label, provider, name }`, and passports and online
+checks carry `agent.model: { kind, provider?, name? }`.
+
+**Where each action came from.** Everything an agent does is audited with
+`detail.where = { ip, device }`: the request's network address and, from the
+CLI, the computer's name (the `Timewarp-Device` header). The activity log
+shows it beside the app and model.
 
 `attach` finds the agents already on the computer: Claude Code (the main
 agent, user or project scope, and its subagents), Codex, Cursor, Claude
@@ -125,20 +153,22 @@ on its own.
 | Kind | Live provider | What the agent gets | Gates (defaults) |
 | --- | --- | --- | --- |
 | mail | Resend on `TIMEWARP_AGENT_MAIL_DOMAIN` (`agents.timewarpdev.com`), the domain the previous app's agent mail used | `<handle>@agents.timewarpdev.com`; send, receive, reply in thread; delivery status | — |
-| phone | Telnyx (or Twilio, `AGENT_ID_PHONE_PROVIDER`), on Timewarp's account. Telnyx: one messaging profile and one TeXML app made on first use, Ed25519-signed webhooks | A local number that can text and call; texts; calls that read a message aloud; incoming calls get a greeting and voicemail | paid plan |
-| wallet | Privy server wallets on Base holding USDC and USDT, shown together as US dollars (`AGENT_ID_WALLET_CHAIN=base`, or `base_sepolia` to try it on testnet). Privy keeps the keys; with gas sponsorship on, sends need no ETH | An 0x address; a USD balance; deposits and sends in its history; transfers to addresses, other agents and contacts | verified owner |
-| card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner, paid plan |
-| vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A machine that resumes for each command, stops after it and keeps its files | credits (time is charged) |
+| phone | Telnyx (or Twilio, `AGENT_ID_PHONE_PROVIDER`), on Timewarp's account. Telnyx: one messaging profile and one TeXML app made on first use, Ed25519-signed webhooks | A local number that can text and call; texts; calls that read a message aloud; incoming calls get a greeting and voicemail | an application for now; will use credits |
+| wallet | Privy server wallets on Base holding USDC and USDT, shown together as US dollars (`AGENT_ID_WALLET_CHAIN=base`, or `base_sepolia` to try it on testnet). Privy keeps the keys; with gas sponsorship on, sends need no ETH | An 0x address; a USD balance; deposits and sends in its history; transfers to addresses, other agents and contacts | given at once; money leaves it only once the owner is verified |
+| card | An early-access application for now (`/v1/agents/:id/card-application`). Stripe Issuing cards are built in and turn on with `AGENT_ID_CARDS=issuing` once a card program is approved | A virtual card; every payment decided in real time by the limits | verified owner; an application for now, free |
+| vm | Azure Container Apps sandboxes (Linux microVMs), the same as the previous app's cloud agents | A computer that resumes for each command, stops after it and keeps its files. Set up the first time the agent uses it (its `vm_*` tools are always listed). The agent's commands run as an ordinary user; it can hold the agent's vault | credits (time is charged) |
 
 **Ready on creation.** A new Agent ID, whether made on the dashboard, by
 `attach`, through the API or by a claim link, comes with its resources
 (`provisioning.ts`):
 - mail and a wallet for everyone (`AGENT_ID_AUTO_GIVE`, default `mail,wallet`);
-- a phone number and a machine on paid plans (`AGENT_ID_AUTO_GIVE_PAID`,
-  default `phone,vm`); `none` turns either list off.
+- a phone number on paid plans (`AGENT_ID_AUTO_GIVE_PAID`, default `phone`);
+  `none` turns either list off;
+- no computer: the agent gets one the first time it uses it.
 
-The usual checks still apply: the provider is live, wallets need a verified
-owner, and phone numbers need a paid plan. A kind that can't be given now is
+The usual checks still apply: the provider is live (and a paid plan, for kinds
+a deployment lists in `AGENT_ID_PAID_PLAN_KINDS`; none by default). Wallets come before the owner is verified; money leaves one only
+after (`AGENT_ID_VERIFY_TO_SEND`, on by default). A kind that can't be given now is
 listed in the response's `setup.skipped` with its reason, and never stops the
 agent being made. Providers answer in the background (`EdgeRuntime.waitUntil`).
 The slots show as `provisioning` until they're ready, and one that fails is
@@ -152,13 +182,22 @@ Base (Privy). Money comes in and goes out in three ways:
   network to send USDC or USDT on Base from an exchange or another wallet.
   `POST /v1/agents/:id/wallet/withdraw` with `to` sends to the owner's own
   address.
-- **Bank (Bridge).** With `BRIDGE_API_KEY` set, the owner verifies once with
-  Bridge, a Stripe company (`POST /v1/account/bank/verify` gives Bridge's
-  hosted terms and identity check, for the name Agent ID already verified).
-  After that:
+- **Bank (Bridge).** With `BRIDGE_API_KEY` set, the owner's one identity check
+  is Bridge's (a Stripe company): `POST /v1/account/bank/verify` or
+  `POST /v1/account/verification` gives Bridge's hosted terms and ID check,
+  and Bridge's approval also verifies them on Agent ID. After that:
+  - **SEPA, as a form.** `POST /v1/agents/:id/wallet/bank-payins` with
+    `amount` (euro cents, €1 to €100,000) opens one Bridge transfer of that
+    amount to the wallet (`agent_id_bank_payins`). The person gets exactly
+    what to send: amount, name, IBAN, BIC and a reference. Bridge converts the
+    euros and sends USDC to the wallet; SEPA Instant arrives in minutes.
+    `GET …/bank-payins` lists them (open ones are looked at again every half
+    minute, and Bridge's transfer webhook updates them), `DELETE
+    …/bank-payins/:id` cancels one still waiting for the money.
   - `POST /v1/agents/:id/wallet/bank-deposit` with `currency` (`usd` or
     `eur`) gives the wallet its own bank details (a Bridge virtual account).
-    Money sent there arrives as USDC.
+    Money sent there arrives as USDC. The website uses these for US dollars
+    only.
   - `POST /v1/account/bank/accounts` saves a bank account at Bridge: an IBAN
     (euros, SEPA) or a US account (ACH), with the holder's address. Agent ID
     keeps only the bank's name and the last four characters.
@@ -170,12 +209,32 @@ Base (Privy). Money comes in and goes out in three ways:
   - US dollars need Bridge's `base` endorsement, euros its `sepa` one. Bridge
     opens SEPA per developer account; until it does, set
     `AGENT_ID_BANK_CURRENCIES=usd`.
-- **Card (Stripe).** With `STRIPE_CRYPTO_ONRAMP_ENABLED` set and Stripe's
-  onramp approved for the account, `POST /v1/agents/:id/wallet/add-money`
-  starts Stripe's crypto onramp. It buys USDC by card into that wallet only:
-  embedded with `STRIPE_PUBLISHABLE_KEY`, else on Stripe's own page. Stripe
-  sells USDC on Base to US buyers only. Others are told to use a bank
-  transfer.
+- **Card (Privy's funding by default).** Wherever Privy runs the wallets,
+  cards go through the onramps switched on in Privy's dashboard (Funding:
+  Stripe for USD and EUR in the US and EU, MoonPay, and Meld for more
+  currencies once its KYB is done). Privy opens them in the browser with its
+  SDK (`@privy-io/react-auth`, loaded only when someone opens Card), and only
+  for someone signed in to Privy, so the first time the owner confirms their
+  email with a Privy code (filled in). `POST /v1/agents/:id/wallet/add-money`
+  records the purchase (audit `wallet.add_money_card`) and returns the
+  destination: the wallet's address, USDC on Base, euros for people in Europe.
+  The website's domain must be in the Privy app's allowed origins.
+  Development deployments buy in Privy's sandbox. `PRIVY_CLIENT_APP_ID` sets a
+  separate public app ID for the browser (default `PRIVY_APP_ID`).
+  Privy's Custom authentication (Scale plan) would sign owners in to Privy
+  with their Agent ID login and drop the code.
+- **Card (MoonPay, or Stripe, by choice).** `AGENT_ID_CARD_PROVIDER=moonpay`
+  with `MOONPAY_API_KEY` and `MOONPAY_SECRET_KEY` set (same mode) makes
+  `POST /v1/agents/:id/wallet/add-money` return MoonPay's page for buying USDC on Base by card, Apple Pay or Google
+  Pay, in Europe and the US. The page's address is signed with the secret key
+  (so the wallet can't be swapped), bound to the buyer's IP address
+  (`allowedIpAddress`), and names the Agent ID account and the purchase
+  (`externalCustomerId`, `externalTransactionId`). The buyer pays in their
+  own money (euros in the euro area, crowns in Sweden, and so on). MoonPay
+  checks the buyer itself the first time. Without MoonPay, and with
+  `STRIPE_CRYPTO_ONRAMP_ENABLED` set and Stripe's onramp approved, the same
+  call starts Stripe's crypto onramp (US buyers only): embedded with
+  `STRIPE_PUBLISHABLE_KEY`, else on Stripe's own page.
 
 Withdrawals need a signed-in session. They are screened like any transfer,
 but they don't count against the agent's limits.
@@ -183,6 +242,89 @@ but they don't count against the agent's limits.
 An agent has at most one resource of each kind. Mail and wallet addresses are
 never given to anyone else, even after the agent is revoked. Phone numbers,
 cards and machines go back to their provider.
+
+## The vault: sign-ins and keys on the agent's computer
+
+Each agent can have a vault: website sign-ins (with a 2FA setup key) and API
+keys, kept only on its own computer. Neither Timewarp nor the AI model ever
+has them in the clear.
+
+- **On the computer** (`vault/shell.ts`, `vault/vm-script.ts`): the agent's
+  commands run as an ordinary account, `agent` (made on first use; a computer
+  from before keeps its files, copied from root's home), never as root. The
+  vault runs as its own locked account, `vault`, whose folder
+  (`/var/lib/agent-id-vault`) only it can read, with its own Node (checked
+  against nodejs.org's sums) under `/opt/agent-id-vault`. Other accounts'
+  processes are hidden where the computer allows it, and nothing secret is ever
+  on a command line. System packages come through `vm_install` (by name, from
+  the system's signed sources) now that the agent isn't root.
+- **Sealed in the browser** (`src/lib/agent-id/vault.ts`): the computer makes
+  its key pair at set-up and only its public key leaves it. The owner's browser
+  encrypts each item with a new AES-256-GCM key, wrapped with RSA-OAEP-256 to
+  that public key; Agent ID passes the sealed item to the computer, which opens
+  it to check it and keeps it sealed. Agent ID stores no secret, sealed or
+  not: `agent_id_vault_items` (migration 20261022100000) has the name, the
+  kind, and the website or the sites a key may go to, so the vault lists
+  without the computer.
+- **Encrypted on the computer too** (migration 20261022140000): the vault's
+  private key is kept as `key.enc`, AES-256-GCM with a key made (HKDF-SHA256)
+  from two halves: one in the vault's folder, one that Agent ID keeps in
+  `agent_id_vault_unlock` and sends with each operation. Neither half opens
+  anything alone, so a copy of the computer's disk holds nothing readable, and
+  Agent ID's half is no secret of anyone's. A vault from before is encrypted
+  the first time it's used, and its clear `key.pem` removed.
+- **The agent saves too** (`POST /v1/me/vault/items {label, envelope}`): a key
+  or sign-in it was given, so it isn't kept in a file or a conversation. The
+  Agent ID CLI seals it on the agent's own computer, to the public key
+  `vault_list` gives, before it's sent: `timewarp-id vault save` (the secret
+  from stdin or typed, never a flag) and the `vault_save` tool, which
+  `timewarp-id mcp` adds and answers itself, so the secret is never in an MCP
+  call to Agent ID. A secret sent in the clear is refused unread
+  (`seal_first`), and the cloud MCP server doesn't offer `vault_save`. Items
+  show who saved them (`savedBy`), and saves are audited
+  (`vault.item_saved`).
+- **Using a key** (`vault_list`, `vault_request`; `/v1/me/vault`,
+  `/v1/me/vault/request`): the agent sees names and sites, never values. It
+  asks for a request, and the vault adds the key on the computer (as a bearer
+  token, its own header, an address parameter or a basic password), only over
+  https and only to the sites the owner bound to the key, which are sealed with
+  it. Redirects aren't followed, and every form of the key is taken out of the
+  reply. Each use is audited (`vault.request`) and counts as machine time.
+- **Owners, from the website:** `GET/POST /v1/agents/:id/vault`,
+  `/vault/setup`, `/vault/items`, `DELETE /vault/items/:id` need a signed-in
+  session; owner keys can't add or remove items, and only the owner removes
+  them. A computer made
+  before agents ran as an ordinary user (`state.rootFree` missing) is replaced
+  before it gets a vault, since the agent once had root on it.
+- **Sign-ins** are stored the same way; using them needs a browser on the
+  computer that the vault types into (next).
+- Test computers (development) keep a test key pair in Agent ID instead and
+  simulate requests; that key is never shown.
+- **Limits:** Timewarp operates the computer (through Azure), so this protects
+  secrets from the model (for what the owner adds), from leaks of Agent ID's
+  data or of the computer's disk and from anyone with the API, not from
+  Timewarp changing its own code. A key the agent saves was in its hands
+  before; the vault keeps it from being written down or seen again. A key bound to a site is
+  as powerful there as the owner made it.
+
+## Asking the owner first
+
+The owner chooses, per agent, which actions wait for their yes (`ask.ts`,
+`agent_id_agents.ask_first`): sending mail, texting, calling, changing
+contacts and saving to the vault (migration 20261022160000). Payments keep the
+wallet's approval amount.
+Unless the owner chooses, texts and calls to real numbers ask; nothing else
+does. An action that waits becomes an approval (`kind: 'action'`) holding
+exactly what the agent asked for; the agent gets `needs_approval` with a link,
+the owner is emailed and answers under Approvals, and it runs as asked, once
+(`agentOps`/`vaultOps` through `APPROVABLE` in owner.ts). The agent can
+withdraw it or check it (`approval_status`); `timewarp-id mcp` asks the person
+in the app with MCP elicitation, as for payments. Turning asking off takes the
+signed-in website: an owner key can only turn it on.
+
+Each request gets its own context in `createHandler`, so what one request
+sets (the app and model it came through, an approval it carries out) never
+reaches another.
 
 ## Safety
 
@@ -203,17 +345,35 @@ cards and machines go back to their provider.
   released.
 - **Rate limits** apply to mail, texts, calls, transfers, card reveals, machine
   commands and passports. They use the shared `timewarp_consume_rate_limit`.
-- **Machine time is paid in credits.** Each command reserves the most it can
-  cost before it runs, at the same 2.5 × provider cost and 0.125 USD per credit
-  as AI usage, then settles what it actually used.
+- **Pricing: no subscription.** Mail and wallets are free; wallet top-ups and
+  bank withdrawals carry the payment provider's fee. Every account gets
+  `AGENT_ID_FREE_COMPUTE_HOURS` (5) hours of machine time free
+  (`agent_id_compute_allowance`, taken and given back atomically), then
+  machine time is paid in Timewarp credits. Each command first takes the most
+  it can use from the free time, reserves the rest from credits, and gives
+  back what it didn't use; credits are charged at the same 2.5 × provider cost
+  and 0.125 USD per credit as AI usage. Phone numbers will use credits when
+  they open; virtual cards will be free. `/agent-id/pricing` shows this, and owners buy
+  credits there: `POST /v1/account/credits {credits}` opens Stripe Checkout for
+  one of the Timewarp app's packs (`pricing.ts`, kept equal to
+  `_shared/credits.ts` by a test, and its Stripe price), and the existing
+  `stripe-webhook` adds the credits once paid. `/v1/config` has `pricing`, and
+  `/v1/account` has the account's `compute` use.
 - **Verification (KYC/KYB).**
-  - A person verifies with Stripe Identity: a document and a matching live
-    selfie (`AGENT_ID_KYC=stripe_identity`). Without it, Timewarp reviewers
-    named in `AGENT_ID_REVIEWERS` review submissions by hand.
-  - A business is reviewed from its registration details, submitted by an
-    organization owner or admin.
+  - A person verifies once, the first time they move money out of a wallet:
+    a document and a matching live selfie. Where Bridge moves money to and
+    from banks, that check is Bridge's, so nobody is checked twice
+    (`kycProvider: 'bridge'`; its approval arrives by webhook). Elsewhere it
+    is Stripe Identity (`AGENT_ID_KYC=stripe_identity`), and without either,
+    Timewarp reviewers named in `AGENT_ID_REVIEWERS` review submissions by hand.
+  - A business is checked the same way: where Bridge moves money, by Bridge's
+    business check (`kybProvider: 'bridge'`, `agent_id_bank_businesses`): its
+    registration, owners and a document on Bridge's page, then Bridge's
+    review. Elsewhere it's reviewed by Timewarp from its registration details.
+    Either way it's started by an organization owner or admin who is verified
+    themselves, with their role and a signed confirmation.
   - Only the outcome, the legal name and the country are stored. Documents stay
-    with Stripe.
+    with Bridge or Stripe.
   - An organization's agent counts as the business's only while its owner is an
     active member. Someone who leaves takes no company standing or Git rights
     along.
@@ -271,6 +431,58 @@ minutes:
    organization drops the key from the list immediately. A swarm of agents
    that aren't the company's own can't produce a commit that passes.
 
+## Tracing what agents make
+
+Everything an agent makes can carry a mark that leads back to it, like
+Google's SynthID, but for any AI with an Agent ID. `tracing.ts` records one
+row per output in `agent_id_traces` (migration 20261023120000); the row's id
+(`tr_` + 16 hex) is the mark itself. The output is never kept.
+
+| Output | How it's marked | Survives | Doesn't survive |
+| --- | --- | --- | --- |
+| Pictures (PNG, up to 2048×2048) | 80 bits (a 64-bit id and a CRC) spread over mid frequencies of the brightness, keyed, scaled to how busy each area is (`trace/image.ts`). PSNR 46–47 dB on photos, never under 38.5 dB | JPEG 75/60/40, WebP 75, resizing to 25–200%, brightness +10%, blur, grayscale, a changed shape, JPEG then resize | Cropping (even 1% from each side), flips and rotations, pictures under about 192 px |
+| Sound (WAV, up to 60 s at 48 kHz) | Paired loudness nudges in 32 ms × 125 Hz cells, keyed (`trace/audio.ts`). SNR 33–36 dB on music, never under 30.5 dB | Resampling, volume, noise at −35 dB, a 7 kHz low-pass, 16-bit, MP3/AAC 128k and Opus 64k (10 s and more), excerpts of 15 s and more, trimmed starts | Clips under about 10 s, MP3 64k on short clips, speed, pitch or time changes |
+| Text | Invisible characters after the first word (`trace/text.ts`), plus a fingerprint | Copying as is; edited copies match by the fingerprint (3 words changed: 0.83, 5 phrases: 0.64) | Anything that strips invisible characters or retypes it (the fingerprint still matches). No mark goes in code-like lines, a line starting with a link, or text without spaces |
+| Code | Left exactly as it is; a fingerprint only | Reformatted copies and renamed variables (0.69) | Rewrites |
+| Other pictures, sound, video, files | Recorded by their SHA-256 | Exact copies only | Any change |
+
+A mark counts as found only when its CRC holds and its 80 bit scores are
+strong enough together (1.05; unmarked content averages 0.80). Over 1,500
+readings of unmarked pictures and wrong keys, and 600 of sound, none was
+found. `tests/agent-id-trace-core.test.cjs` measures all of this.
+
+Marks are made and found with `AGENT_ID_TRACE_KEY`, or a key derived from
+`AGENT_ID_WEBHOOK_SECRET`. Neither may ever change, or marks made before
+can't be found.
+
+- **Agents mark their work:** `POST /v1/me/trace {text, kind?}` returns the
+  marked text; `{fileId}` (an upload) saves a marked copy and returns it. MCP:
+  `trace_mark`; through the CLI's MCP server also `trace_mark_file`, which
+  marks a file on the agent's computer in place. CLI: `timewarp-id mark
+  <file>` or `--text`.
+- **Everything Agent ID sends is traced:** mail (an `Agent-Trace: tr_…`
+  header, the text's fingerprint, and marked copies of PNG and WAV
+  attachments, which go instead), texts and calls (the fingerprint only:
+  hidden characters would make a text longer and pricier). A failed trace
+  never stops a message.
+- **Model makers mark for an agent:** the agent gives them a passport for
+  the audience `<issuer>/trace` (`/v1/config` → `trace.audience`), and they
+  send the output to `POST /v1/trace/mark` with it in `Agent-Passport`
+  (`?provider=&model=&kind=code`). They get the marked bytes back, with the
+  id in `Agent-Trace`.
+- **Anyone checks:** `POST /v1/trace/check` with the output as the body
+  (`image/png`, `audio/wav` or `text/plain`) answers `{found, kind, match:
+  'mark'|'exact'|'fingerprint', similarity?, trace}`, where `trace` names the
+  agent, its kind of AI, when, the app and model, and who answers for it (a
+  verified business by name, a person never by name). `GET /v1/trace/:id` is
+  one record. The website's checker (`/agent-id/check`) turns other picture
+  and sound formats into a PNG (at most 1024 px) or 30 seconds of 16 kHz
+  mono WAV in the browser first. MCP: `trace_check`; CLI: `timewarp-id
+  check`.
+- **Limits:** a missing mark proves nothing; only work made through Agent ID
+  (or a model maker who marks through it) carries one. Video is recorded,
+  not marked, for now.
+
 ## API reference
 
 Base: `https://mrqoeywofslgnquvzhuf.supabase.co/functions/v1/agent-id`. JSON
@@ -281,7 +493,7 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | Owner | |
 | --- | --- |
 | `GET /v1/account` | user, verification, organizations (with KYB), plan, reviewer flag, config |
-| `POST /v1/account/verification` | `{kind:'person'}` → Stripe Identity `url`, or `{legalName,country}` for review · `{kind:'business', organizationId, legalName, registrationNumber, country, website}` |
+| `POST /v1/account/verification` | `{kind:'person'}` → Bridge's or Stripe Identity's `url`, or `{legalName,country}` for review · `{kind:'business', organizationId, legalName, country, representativeRole, attestation, website?, registrationNumber?}` → Bridge's `url` where Bridge checks businesses (else the registration number is required, for review) |
 | `GET/POST /v1/agents` · `GET/PATCH/DELETE /v1/agents/:id` | create (returns the agent key once), list, rename, runtime, organization, desktop link, pause/resume, revoke |
 | `POST /v1/agents/:id/keys` · `DELETE …/keys/:keyId` | more agent keys |
 | `POST /v1/agents/:id/resources` | `{kind, mode:'test'|'live', settings, options}` (options: `size`, `country`, `areaCode`, `billing`, `currency`) |
@@ -289,6 +501,7 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | `POST /v1/agents/:id/wallet/test-funds` | test money |
 | `GET /v1/agents/:id/events?kind=` · `GET …/contacts` | everything the agent did |
 | `GET /v1/approvals` · `POST /v1/approvals/:id {decision}` | approve or deny transfers |
+| `GET /v1/recipients?to=` | the agent an id or handle names (anyone's), before paying it: name, mascot, owner verified, whether it's yours, and its wallet's mode (or none) |
 | `GET /v1/audit?agent=` | audit log |
 | `GET/POST /v1/keys` · `DELETE /v1/keys/:id` | owner keys for the CLI (created with a session only) |
 | `GET/POST /v1/relying-parties` · `PATCH/DELETE …/:id` · `POST …/:id/secret` | companies: audience, policy, secret (shown once; rotate replaces it at once). An audience is not owned: several companies may use the same one |
@@ -304,6 +517,7 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | `GET /v1/me/card` · `POST …/reveal` · `GET …/transactions` · `POST …/test-charge` | card |
 | `GET /v1/me/vm` · `POST …/start|stop|exec` · `GET …/commands` | machine |
 | `POST /v1/me/passport` | passport for an audience |
+| `POST /v1/me/trace` | mark text (`{text, kind?}`) or an upload (`{fileId}`) so it traces back to the agent |
 | `GET/POST /v1/me/signing-keys` · `DELETE …/:id` | Git signing keys |
 | `POST /mcp` | MCP (Streamable HTTP). Lists only the tools for what the agent has |
 
@@ -311,6 +525,9 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | --- | --- |
 | `POST /v1/verify {passport, audience, require?, organizations?}` | `valid`, `allowed`, `reasons`, agent, owner verification: any service can check a passport an agent showed it, including whether the agent was revoked a second ago |
 | `GET /v1/orgs/:orgId/allowed-signers[?format=json&require=kyb]` | Git `allowed_signers` for an organization's verified agents (agent ids and public keys only) |
+| `POST /v1/trace/check` | was this picture (PNG), sound (WAV) or text made by an agent with an Agent ID, and who answers for it |
+| `GET /v1/trace/:id` | one trace record |
+| `POST /v1/trace/mark` (with `Agent-Passport` for `<issuer>/trace`) | a model maker marks an output for the agent; the marked bytes come back |
 | `GET /.well-known/jwks.json` · `GET /v1/config` | public keys and what this deployment offers |
 
 Developers use the SDK (`@timewarp/agent-id-verify`): `verifyPassport` checks
@@ -348,10 +565,12 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | --- | --- |
 | `AGENT_ID_SIGNING_KEY`, `AGENT_ID_WEBHOOK_SECRET` | Passports, phone webhooks, owner pseudonyms. Generate with `node scripts/agent-id-keygen.cjs`. **Required.** |
 | `AGENT_ID_LIVE` | Comma list of the kinds that are live, e.g. `mail,vm`. Empty means everything is test. |
-| `AGENT_ID_REQUIRE_VERIFICATION` | Kinds whose live resources need a verified owner (default `wallet,card`). Add `agent` to require verification before any agent at all. `all` means everything. |
-| `AGENT_ID_PAID_PLAN_KINDS` | Live kinds that need Pro/Max/Ultra (default `phone,card`) |
-| `AGENT_ID_KYC` | `stripe_identity` (recommended), else manual review. `test` verifies at once: development only. |
-| `AGENT_ID_KYB` | Manual review (default). `test` is for development only. |
+| `AGENT_ID_REQUIRE_VERIFICATION` | Kinds whose live resources need a verified owner up front (default `card`). Add `agent` to require verification before any agent at all. `all` means everything. |
+| `AGENT_ID_VERIFY_TO_SEND` | `false` lets money leave live wallets before the owner is verified (on by default) |
+| `AGENT_ID_PAID_PLAN_KINDS` | Live kinds that need Pro/Max/Ultra (none by default: Agent ID has no subscription) |
+| `AGENT_ID_FREE_COMPUTE_HOURS` | Free machine hours per account before credits (default 5) |
+| `AGENT_ID_KYC` | Bridge's check wherever bank transfers are on; otherwise `stripe_identity` (recommended), else manual review. `test` verifies at once: development only. |
+| `AGENT_ID_KYB` | Bridge's business check wherever bank transfers are on; otherwise manual review. `manual` keeps manual review. `test` is for development only. |
 | `AGENT_ID_REVIEWERS` | User ids of Timewarp staff who review verifications |
 | `AGENT_ID_MAX_AGENTS` | Agents per account (default 25) |
 | `RESEND_API_KEY` (exists), `AGENT_ID_RESEND_WEBHOOK_SECRET` | Live mail. Optional `AGENT_ID_MAIL_DOMAIN` overrides the domain. |
@@ -359,7 +578,9 @@ Secrets on the Supabase project, read by the `agent-id` function:
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | Live phone numbers through Twilio instead (`AGENT_ID_PHONE_PROVIDER=twilio`) |
 | `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `AGENT_ID_WALLET_CHAIN` | Live wallets |
 | `BRIDGE_API_KEY`, `AGENT_ID_BANK_CURRENCIES` | Bank deposits and withdrawals for live wallets on Base (`usd,eur` by default; `AGENT_ID_BANK=off` hides them). Keys starting with `sk-test` use Bridge's sandbox. The Bridge webhook registers itself (`BRIDGE_WEBHOOK_PUBLIC_KEY` overrides). |
-| `STRIPE_CRYPTO_ONRAMP_ENABLED`, `STRIPE_PUBLISHABLE_KEY` | Buying USDC by card (Stripe's onramp, once approved). The publishable key embeds the form. |
+| `AGENT_ID_CARD_PROVIDER`, `PRIVY_CLIENT_APP_ID` | Card payments: `privy` (default where Privy runs the wallets), `moonpay` or `stripe`. `AGENT_ID_CARD_PAYMENTS=off` hides them. |
+| `MOONPAY_API_KEY`, `MOONPAY_SECRET_KEY` | Card payments through Timewarp's own MoonPay account (`AGENT_ID_CARD_PROVIDER=moonpay`, once MoonPay has approved it). `pk_test_`/`sk_test_` use MoonPay's sandbox. |
+| `STRIPE_CRYPTO_ONRAMP_ENABLED`, `STRIPE_PUBLISHABLE_KEY` | Buying USDC by card through Stripe's onramp (US only, once approved), when MoonPay isn't set. The publishable key embeds the form. |
 | `STRIPE_SECRET_KEY` (exists), `AGENT_ID_STRIPE_WEBHOOK_SECRET` | Live cards and Stripe Identity |
 | `AZURE_*` (exist) | Live machines |
 | `AGENT_ID_SITE_URL`, `AGENT_ID_ISSUER`, `AGENT_ID_PUBLIC_URL`, `AGENT_ID_PASSPORT_SECONDS` | Overrides (defaults: `https://timewarpdev.com`, `<site>/agent-id`, the function URL, 300) |
@@ -371,7 +592,8 @@ Secrets on the Supabase project, read by the `agent-id` function:
   and the time of acceptance are recorded.
 - **Privacy Policy:** section 7 covers Agent ID. It lists the data, the legal
   bases, Stripe Identity, Privy, Telnyx, Twilio and Azure as processors, Bridge
-  (bank transfers) as a company responsible for its own data, and how long
+  (bank transfers and identity checks) and MoonPay (card payments) as
+  companies responsible for their own data, and how long
   records are kept (content: while it exists, plus 30 days; verification, the
   agent–owner link and the audit log: 5 years).
 - **KYC:** explicit consent to the biometric check (GDPR Art. 9(2)(a)) is
@@ -379,7 +601,7 @@ Secrets on the Supabase project, read by the `agent-id` function:
   Identity session starts.
 - **KYB:** submitted by an organization owner or admin who is personally
   verified, with their role and a signed confirmation (`attested_at`).
-  Reviewed by operators.
+  Checked by Bridge where it moves money, else reviewed by operators.
 - **Sanctions:** with `CHAINALYSIS_API_KEY` set, live transfers to sanctioned
   addresses are refused, and a transfer fails closed when screening can't be
   reached.
@@ -484,9 +706,9 @@ Then, once, in the browser:
   providers named above (Resend, Twilio, Privy, Stripe, Microsoft). Update
   `/legal/privacy-policy` before launch.
 - **Costs.**
-  - Live phone numbers have monthly fees and are gated to paid plans; there is
-    no per-number charge in credits yet.
-  - Machine time is charged in credits.
+  - Live phone numbers have monthly fees; they're an application for now and
+    will be charged in credits.
+  - Machine time is free for the first hours, then charged in credits.
   - Mail and texts are rate limited but not charged.
 - **Abuse.** Live outbound mail and texts can be misused for spam. Consider
   requiring verification for `mail` and `phone` too, which is one setting.

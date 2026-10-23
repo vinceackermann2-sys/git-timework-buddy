@@ -9,7 +9,10 @@ import { CliError } from './errors.js';
 
 export const DEFAULT_API = 'https://mrqoeywofslgnquvzhuf.supabase.co/functions/v1/agent-id';
 export const PROJECT_FILE = '.timewarp-id.json';
-export const DASHBOARD = 'https://timewarpdev.com/agent-id';
+// Production's website; a local Agent ID names its own (site.js).
+export const SITE = 'https://timewarpdev.com';
+export const HOMEPAGE = `${SITE}/agent-id`;
+export const DASHBOARD = `${SITE}/agent-id/dashboard`;
 
 export const homeDir = (env = process.env) => env.TIMEWARP_ID_HOME || path.join(os.homedir(), '.timewarp-id');
 export const configPath = (env = process.env) => path.join(homeDir(env), 'config.json');

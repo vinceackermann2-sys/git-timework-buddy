@@ -4,13 +4,20 @@ import {
   amountValue,
   auditActionLabel,
   auditDetail,
+  balanceHistory,
+  balanceTrend,
   centsToInput,
   counterpartyLabel,
   declineReason,
   formatCents,
   formatMoney,
   formatRelativeTime,
+  formatTimeLeft,
+  modelLabel,
+  auditVia,
+  auditWhere,
   liveAvailability,
+  modelKindText,
   parseAmount,
   parseList,
   runtimeLabel,
@@ -91,7 +98,7 @@ describe("labels", () => {
         action: "resource.provision",
         detail: { kind: "vm", mode: "live", provider: "azure" },
       }),
-    ).toBe("Machine · Live");
+    ).toBe("Computer · Live");
     expect(auditDetail({ action: "mail.send", detail: { to: 2, mode: "test" } })).toBe(
       "Test · 2 recipients",
     );
@@ -171,7 +178,7 @@ describe("live availability", () => {
   it("says when live isn't offered at all", () => {
     const vm = liveAvailability("vm", config, { plan: "pro", verified: true });
     expect(vm.available).toBe(false);
-    expect(vm.reason).toBe("Live machines aren't available yet.");
+    expect(vm.reason).toBe("Live computers aren't available yet.");
     expect(liveAvailability("mail", undefined, {}).available).toBe(false);
   });
 });
@@ -211,5 +218,114 @@ bearer_token_env_var = "TIMEWARP_AGENT_KEY"`,
     );
     expect(githubActionSnippet("org-1")).toContain("organization: org-1");
     expect(githubActionSnippet("org-1")).not.toContain("secret");
+  });
+});
+
+describe("balance history", () => {
+  const now = new Date(2026, 9, 21, 15, 0).getTime();
+  const at = (daysAgo: number, hour = 12) => new Date(2026, 9, 21 - daysAgo, hour).toISOString();
+  const move = (daysAgo: number, direction: "in" | "out", cents: number, status = "completed") => ({
+    at: at(daysAgo),
+    direction,
+    status,
+    amount: { amount: cents },
+  });
+
+  it("walks back from today's balance, one point per day", () => {
+    const points = balanceHistory(
+      15000,
+      [move(0, "out", 5000), move(2, "in", 20000), move(5, "failed" as never, 1)],
+      { days: 5, now },
+    );
+    // Five days back: nothing yet; two days ago $200 came in; today $50 left.
+    expect(points).toEqual([0, 0, 20000, 20000, 15000]);
+    expect(balanceTrend(points)).toBe("up");
+  });
+
+  it("skips failed and pending transfers", () => {
+    const points = balanceHistory(
+      1000,
+      [move(1, "in", 500, "failed"), move(1, "out", 300, "pending")],
+      {
+        days: 3,
+        now,
+      },
+    );
+    expect(points).toEqual([1000, 1000, 1000]);
+    expect(balanceTrend(points)).toBe("flat");
+  });
+
+  it("goes down when more left than came in", () => {
+    expect(balanceTrend(balanceHistory(100, [move(3, "out", 900)], { days: 7, now }))).toBe("down");
+  });
+
+  it("leaves days it can't know empty when older transfers weren't loaded", () => {
+    const points = balanceHistory(700, [move(1, "in", 200), move(2, "out", 100)], {
+      days: 5,
+      now,
+      complete: false,
+    });
+    expect(points).toEqual([null, null, 500, 700, 700]);
+    expect(balanceTrend(points)).toBe("up");
+  });
+});
+
+describe("free machine time left", () => {
+  it("reads as hours and minutes", () => {
+    expect(formatTimeLeft(5 * 3600)).toBe("5 h");
+    expect(formatTimeLeft(4 * 3600 + 32 * 60 + 59)).toBe("4 h 32 min");
+    expect(formatTimeLeft(45 * 60)).toBe("45 min");
+    expect(formatTimeLeft(-10)).toBe("0 min");
+  });
+});
+
+describe("model names", () => {
+  it("reads model ids as people say them", () => {
+    expect(modelLabel("claude-opus-5-5")).toBe("Claude Opus 5.5");
+    expect(modelLabel("claude-opus-5.5")).toBe("Claude Opus 5.5");
+    expect(modelLabel("gpt-6")).toBe("GPT-6");
+    expect(modelLabel("openai/gpt-5-codex")).toBe("GPT-5 Codex");
+    expect(modelLabel("gemini-3-pro")).toBe("Gemini 3 Pro");
+    expect(modelLabel("claude-3-5-sonnet-20241022")).toBe("Claude 3.5 Sonnet 20241022");
+  });
+
+  it("says which app and model an agent acted through", () => {
+    const via = { app: "claude-code", model: "claude-opus-5-5" };
+    expect(auditVia({ actor: "agent", detail: { via } })).toBe("Claude Code · Claude Opus 5.5");
+    expect(auditVia({ actor: "agent", detail: { via: { app: "codex", model: null } } })).toBe(
+      "Codex",
+    );
+    expect(auditVia({ actor: "owner", detail: { via } })).toBeNull();
+    expect(auditVia({ actor: "agent", detail: {} })).toBeNull();
+  });
+
+  it("says where an agent acted from", () => {
+    const where = { ip: "203.0.113.7", device: "alice-laptop" };
+    expect(auditWhere({ actor: "agent", detail: { where } })).toBe("on alice-laptop · 203.0.113.7");
+    expect(
+      auditWhere({ actor: "agent", detail: { where: { ip: "203.0.113.7", device: null } } }),
+    ).toBe("203.0.113.7");
+    expect(auditWhere({ actor: "owner", detail: { where } })).toBeNull();
+  });
+
+  it("says what kind of AI an agent is, and what it marked", () => {
+    const model = {
+      kind: "image" as const,
+      label: "Image model",
+      provider: "Google",
+      name: "Imagen 4",
+    };
+    expect(modelKindText(model)).toBe("Image model · Google Imagen 4");
+    expect(modelKindText({ ...model, kind: "decision", provider: null, name: null })).toBe(
+      "Decision model",
+    );
+    expect(
+      modelKindText({ kind: "agent", label: "AI agent", provider: null, name: null }),
+    ).toBeNull();
+    expect(modelKindText(undefined)).toBeNull();
+    expect(auditActionLabel("trace.mark")).toBe("Marked its work");
+    expect(auditDetail({ action: "trace.mark", detail: { kind: "image", provider: "Acme" } })).toBe(
+      "A picture · by Acme",
+    );
   });
 });

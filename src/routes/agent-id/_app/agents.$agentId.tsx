@@ -1,25 +1,22 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, ErrorState, Notice, Section } from "@/components/agent-id/ui";
 import { IdCard } from "@/components/agent-id/agent/IdCard";
+import { AgentNav } from "@/components/agent-id/agent/AgentNav";
 import { MailTab } from "@/components/agent-id/agent/MailTab";
 import { PhoneTab } from "@/components/agent-id/agent/PhoneTab";
 import { WalletTab } from "@/components/agent-id/agent/WalletTab";
 import { CardTab } from "@/components/agent-id/agent/CardTab";
 import { MachineTab } from "@/components/agent-id/agent/MachineTab";
+import { VaultTab } from "@/components/agent-id/agent/VaultTab";
 import { ActivityTab } from "@/components/agent-id/agent/ActivityTab";
 import { SettingsTab } from "@/components/agent-id/agent/SettingsTab";
-import {
-  defaultTab,
-  parseAgentTab,
-  visibleTabs,
-  type AgentTab,
-} from "@/components/agent-id/agent/tabs";
+import { defaultTab, parseAgentTab, type AgentTab } from "@/components/agent-id/agent/tabs";
 import { AgentIdError } from "@/lib/agent-id/client";
-import { useAgent, usePhonesWaitlist } from "@/lib/agent-id/queries";
+import { useAgent } from "@/lib/agent-id/queries";
 
 export const Route = createFileRoute("/agent-id/_app/agents/$agentId")({
   validateSearch: (search: Record<string, unknown>): { tab?: AgentTab; compose?: string } => {
@@ -36,7 +33,6 @@ function AgentPage() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const query = useAgent(agentId);
-  const phonesWaitlist = usePhonesWaitlist();
 
   const back = (
     <Link to="/agent-id/dashboard" className="aid-link inline-flex items-center gap-1 text-sm">
@@ -72,7 +68,6 @@ function AgentPage() {
 
   const { agent } = query.data;
   const tab = search.tab ?? defaultTab(agent);
-  const tabs = visibleTabs(agent, tab, { phonesWaitlist });
 
   return (
     <div className="space-y-6">
@@ -87,22 +82,19 @@ function AgentPage() {
         </Notice>
       )}
 
+      {/* Its sections down the left, the open one on the right. */}
       <Tabs
         value={tab}
+        orientation="vertical"
         onValueChange={(next) =>
           void navigate({ search: { tab: next as AgentTab }, replace: true, resetScroll: false })
         }
+        className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[14.5rem_minmax(0,1fr)] lg:items-start"
       >
-        <div className="aid-scroll-x -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-          <TabsList className="h-10 w-max justify-start rounded-lg bg-[var(--muted)]">
-            {tabs.map(([id, label]) => (
-              <TabsTrigger key={id} value={id} className="px-3">
-                {label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+        <div className="lg:sticky lg:top-6">
+          <AgentNav detail={query.data} />
         </div>
-        <div className="mt-6">
+        <div className="min-w-0">
           <TabsContent value="mail" className="mt-0">
             <MailTab
               agent={agent}
@@ -123,6 +115,9 @@ function AgentPage() {
           </TabsContent>
           <TabsContent value="machine" className="mt-0">
             <MachineTab agent={agent} />
+          </TabsContent>
+          <TabsContent value="vault" className="mt-0">
+            <VaultTab agent={agent} />
           </TabsContent>
           <TabsContent value="activity" className="mt-0">
             <ActivityTab agent={agent} />

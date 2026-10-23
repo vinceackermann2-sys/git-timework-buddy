@@ -56,10 +56,28 @@ async function demo(local, owner) {
   await call("POST", `/v1/agents/${research.id}/wallet/test-funds`, owner.session, { amount: 100000 });
   await call("POST", "/v1/me/wallet/transfers", research.key, { to: sales.handle, value: "18.00", memo: "Data set from Sales" });
   await call("POST", "/v1/me/wallet/transfers", research.key, { to: sales.handle, value: "75.00", memo: "Deposit for supplier samples" });
+  // Connected over MCP, each says the model it is: the page shows it per app,
+  // and what it does there is recorded with both.
+  const connect = async (agent, client, model) => {
+    const rpc = (body, session) => local.call("POST", "/mcp", { token: agent.key, headers: session ? { "mcp-session-id": session } : {}, body: { jsonrpc: "2.0", ...body } });
+    const session = (await rpc({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", clientInfo: { name: client, version: "1.0.0" } } })).headers.get("mcp-session-id");
+    await rpc({ id: 2, method: "tools/call", params: { name: "whoami", arguments: { model } } }, session);
+    return (name, args) => rpc({ id: 3, method: "tools/call", params: { name, arguments: args } }, session);
+  };
+  await connect(research, "claude-code", "claude-sonnet-5-5");
+  const claude = await connect(research, "claude-code", "claude-opus-5-5");
+  await connect(research, "codex", "gpt-6");
+  await connect(sales, "codex", "gpt-6");
+  await claude("wallet_send", { to: sales.id, amount: "5.00", memo: "Shared API credits" });
   await call("POST", `/v1/agents/${sales.id}/card-application`, owner.session, { useCase: "Buy sample orders and software subscriptions", monthlySpend: 30000, country: "SE" });
   // A verified owner with a live wallet (simulated Privy) holding $250 in USDC,
   // for adding money by bank and withdrawing to a bank (simulated Bridge).
-  await call("POST", "/v1/account/verification", owner.session, { kind: "person", consent: true, legalName: "Dev Person", country: "SE" });
+  // Verified once, through (simulated) Bridge: its check is the identity check.
+  const check = await call("POST", "/v1/account/verification", owner.session, { kind: "person" });
+  // As if they finished Bridge's page (the server isn't listening yet).
+  if (check.url) money.kycPage(new URL(check.url).search.slice(1));
+  await new Promise(resolve => setTimeout(resolve, 5200));
+  await call("GET", "/v1/account", owner.session);
   const treasurer = await make("Treasurer", "claude-code", "project ~/finance", []);
   await call("POST", `/v1/agents/${treasurer.id}/resources`, owner.session, { kind: "wallet", mode: "live" });
   await local.settle();
@@ -70,7 +88,11 @@ async function demo(local, owner) {
 }
 
 (async () => {
-  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, fetch: money.fetch, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080", AGENT_ID_KYC: process.env.AGENT_ID_KYC || "test", AGENT_ID_AUTO_GIVE: process.env.AGENT_ID_AUTO_GIVE || "mail,wallet", AGENT_ID_AUTO_GIVE_PAID: process.env.AGENT_ID_AUTO_GIVE_PAID || "phone,vm", AGENT_ID_PHONES: process.env.AGENT_ID_PHONES || "waitlist", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "dev-privy", PRIVY_APP_SECRET: "dev-privy", BRIDGE_API_KEY: "sk-test-dev" } });
+  const local = await startLocal({ publicUrl: `http://127.0.0.1:${port}/agent-id`, fetch: money.fetch, env: { SUPABASE_URL: `http://127.0.0.1:${port}`, AGENT_ID_SITE_URL: process.env.AGENT_ID_SITE_URL || "http://localhost:8080", AGENT_ID_KYC: process.env.AGENT_ID_KYC || "", AGENT_ID_AUTO_GIVE: process.env.AGENT_ID_AUTO_GIVE || "mail,wallet", AGENT_ID_AUTO_GIVE_PAID: process.env.AGENT_ID_AUTO_GIVE_PAID || "phone", AGENT_ID_PHONES: process.env.AGENT_ID_PHONES || "waitlist", AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "dev-privy", PRIVY_APP_SECRET: "dev-privy", BRIDGE_API_KEY: "sk-test-dev",
+    // Card payments: Privy's funding in its sandbox when PRIVY_CLIENT_APP_ID names a real Privy app
+    // (its public ID); AGENT_ID_CARD_PROVIDER=moonpay opens MoonPay's sandbox page instead.
+    PRIVY_CLIENT_APP_ID: process.env.PRIVY_CLIENT_APP_ID || "", AGENT_ID_CARD_PROVIDER: process.env.AGENT_ID_CARD_PROVIDER || (process.env.PRIVY_CLIENT_APP_ID ? "privy" : "moonpay"),
+    MOONPAY_API_KEY: process.env.MOONPAY_API_KEY || "pk_test_dev", MOONPAY_SECRET_KEY: process.env.MOONPAY_SECRET_KEY || "sk_test_dev" } });
   const dev = await local.user({ email: "dev@timewarp.test", plan: "pro", credits: 100 });
   const teammate = await local.user({ email: "teammate@timewarp.test" });
   const org = await local.organization("Acme Robotics", [[dev, "owner"], [teammate, "lead"]]);

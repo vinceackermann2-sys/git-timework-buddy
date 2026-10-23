@@ -13,7 +13,7 @@ export async function acceptTerms(ctx, { yes = false } = {}) {
   const terms = await currentTerms(ctx);
   if (!terms) return null;
   ctx.err(`Agent ID's terms of service (version ${terms.version})${terms.url ? `: ${terms.url}` : ''}`);
-  const accepted = yes || (ctx.interactive && /^y(es)?$/i.test((await ctx.ask('Do you accept them? [y/N] ')).trim()));
+  const accepted = yes || (ctx.interactive && /^y(es)?$/i.test((await ctx.ask('Do you accept them? [y/N] ') ?? '').trim()));
   if (!accepted) return null;
   await ctx.owner.post('/v1/account/terms', { version: terms.version });
   return terms.version;

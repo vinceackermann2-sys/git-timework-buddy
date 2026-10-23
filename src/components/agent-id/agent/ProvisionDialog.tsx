@@ -29,7 +29,7 @@ export const GIVE_LABELS: Record<Kind, string> = {
   phone: "Give a phone",
   wallet: "Give a wallet",
   card: "Give a card",
-  vm: "Give a machine",
+  vm: "Give a computer",
 };
 
 export function ProvisionDialog({

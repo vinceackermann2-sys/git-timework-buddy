@@ -260,6 +260,10 @@ async function startLocal(options = {}) {
       try { parsed = JSON.parse(text); } catch { /* text responses */ }
       return { status: response.status, body: parsed, headers: response.headers };
     },
+    // The response itself, for answers that aren't JSON (files, marked bytes).
+    async fetch(method, url, { token, raw, headers = {} } = {}) {
+      return handler(new Request(`http://127.0.0.1:54329/agent-id${url}`, { method, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers }, ...(raw !== undefined ? { body: raw } : {}) }));
+    },
     close: () => db.close(),
   };
   return local;

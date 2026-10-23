@@ -28,6 +28,9 @@ describe("Agent ID routing", () => {
     ["/agent-id/developers", "/agent-id/_app/developers"],
     ["/agent-id/reviews", "/agent-id/_app/reviews"],
     ["/agent-id/settings", "/agent-id/_app/settings"],
+    ["/agent-id/check", "/agent-id/check"],
+    ["/agent-id/for/code", "/agent-id/for/$angle"],
+    ["/agent-id/for/claude-and-codex", "/agent-id/for/$angle"],
   ])("matches %s", (path, routeId) => {
     expect(leaf(path)).toBe(routeId);
   });
@@ -45,8 +48,13 @@ describe("Agent ID routing", () => {
     expect(ids).toContain("/agent-id/_app");
   });
 
-  it("keeps getting an Agent ID outside the signed-in layout", () => {
-    for (const path of ["/agent-id/claim", "/agent-id/claim/abcdefghijklmnopqrstuvwx"]) {
+  it("keeps getting an Agent ID, checking and every reason outside the signed-in layout", () => {
+    for (const path of [
+      "/agent-id/claim",
+      "/agent-id/claim/abcdefghijklmnopqrstuvwx",
+      "/agent-id/check",
+      "/agent-id/for/apis",
+    ]) {
       const ids = router.matchRoutes(path).map((m) => m.routeId);
       expect(ids).toContain("/agent-id");
       expect(ids).not.toContain("/agent-id/_app");
@@ -65,23 +73,25 @@ describe("Agent ID routing", () => {
       "wallet",
       "card",
       "machine",
+      "vault",
       "activity",
       "settings",
     ]);
   });
 
-  it("shows resource tabs once the agent has them, and the card application always", () => {
+  it("shows resource tabs once the agent has them, and the card application and vault always", () => {
     const ids = (resources: object, current?: Parameters<typeof visibleTabs>[1]) =>
       visibleTabs({ resources } as Parameters<typeof visibleTabs>[0], current).map(([id]) => id);
-    expect(ids({})).toEqual(["card", "activity", "settings"]);
+    expect(ids({})).toEqual(["card", "vault", "activity", "settings"]);
     expect(ids({ wallet: {}, vm: {} })).toEqual([
       "wallet",
       "card",
       "machine",
+      "vault",
       "activity",
       "settings",
     ]);
-    expect(ids({}, "mail")).toEqual(["mail", "card", "activity", "settings"]);
+    expect(ids({}, "mail")).toEqual(["mail", "card", "vault", "activity", "settings"]);
   });
 
   it("opens an agent on its first resource, else its activity", () => {

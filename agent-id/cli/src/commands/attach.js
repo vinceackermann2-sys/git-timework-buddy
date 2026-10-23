@@ -18,7 +18,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ApiError, CliError, UsageError } from '../errors.js';
-import { findProfile, homeDir, PROJECT_FILE } from '../config.js';
+import { findProfile, homeDir, HOMEPAGE, PROJECT_FILE } from '../config.js';
+import { dashboardOf, siteFrom, siteOf } from '../site.js';
 import { backupOnce, claudeDesktopConfig, CODEX_TABLE, codexBlock, serverSpec } from './connect.js';
 import { saveProfile } from './account.js';
 import { extractTable, removeTable, upsertTable } from '../toml.js';
@@ -46,7 +47,7 @@ function writeText(file, text) { fs.mkdirSync(path.dirname(file), { recursive: t
 const eolOf = text => (text && text.includes('\r\n') ? '\r\n' : '\n');
 export const short = file => {
   if (!file) return '';
-  const home = os.homedir();
+  const home = path.resolve(os.homedir());
   return file === home || file.startsWith(home + path.sep) ? `~${file.slice(home.length)}` : file;
 };
 const shown = file => short(file).replace(/\\/g, '/');
@@ -453,6 +454,9 @@ function subagent(file, scope, mcpFile) {
 export function discover(ctx) {
   const home = os.homedir(), cwd = path.resolve(ctx.cwd), env = ctx.env;
   const folder = path.basename(cwd), project = `project ${shown(cwd)}`;
+  // Run from the home folder (where a terminal starts), the tools' own
+  // folders there (~/.claude, ~/.cursor) aren't a project.
+  const inProject = (process.platform === 'win32' ? cwd.toLowerCase() !== path.resolve(home).toLowerCase() : cwd !== path.resolve(home));
   const targets = [];
   const add = target => { if (!targets.some(t => t.key === target.key)) targets.push(target); };
 
@@ -462,11 +466,11 @@ export function discover(ctx) {
     add({ key: 'claude', ref: 'claude', kind: 'claude', tool: 'Claude Code', app: 'claude-code', detail: 'every project', label: 'main agent, every project', name: 'Claude Code', where: claudeJson,
       instructions: path.join(claudeDir, 'CLAUDE.md'), global: true, mcps: [json(claudeJson, { name: 'timewarp-id', tool: 'claude', style: 'claude' })] });
   }
-  if (exists(path.join(cwd, '.mcp.json')) || exists(path.join(cwd, 'CLAUDE.md')) || isDir(path.join(cwd, '.claude'))) {
+  if (inProject && (exists(path.join(cwd, '.mcp.json')) || exists(path.join(cwd, 'CLAUDE.md')) || isDir(path.join(cwd, '.claude')))) {
     add({ key: `claude-project:${cwd}`, ref: 'claude:project', kind: 'claude-project', tool: 'Claude Code', app: 'claude-code', detail: project, label: `main agent, project ${folder}`, name: `${folder} (Claude Code)`, where: cwd,
       instructions: path.join(cwd, 'CLAUDE.md'), projectDir: cwd, mcps: [json(path.join(cwd, '.mcp.json'), { name: 'timewarp-id', mode: 'agent', tool: 'claude', style: 'claude' })] });
   }
-  for (const [dir, scope, mcpFile] of [[path.join(cwd, '.claude', 'agents'), 'project', path.join(cwd, '.mcp.json')], [path.join(claudeDir, 'agents'), 'user', claudeJson]]) {
+  for (const [dir, scope, mcpFile] of [...(inProject ? [[path.join(cwd, '.claude', 'agents'), 'project', path.join(cwd, '.mcp.json')]] : []), [path.join(claudeDir, 'agents'), 'user', claudeJson]]) {
     for (const entry of listDir(dir)) if (entry.isFile() && entry.name.endsWith('.md')) add(subagent(path.join(dir, entry.name), scope, mcpFile));
   }
 
@@ -478,7 +482,7 @@ export function discover(ctx) {
     add({ key: 'codex', ref: 'codex', kind: 'codex', tool: 'Codex', app: 'codex', detail: 'every project', label: 'main agent, every project', name: 'Codex', where: codexConfig,
       instructions: path.join(codexHome, 'AGENTS.md'), global: true, mcps: [codexMcp('default')] });
   }
-  if (exists(path.join(cwd, 'AGENTS.md'))) {
+  if (inProject && exists(path.join(cwd, 'AGENTS.md'))) {
     add({ key: `codex-project:${cwd}`, ref: 'codex:project', kind: 'codex-project', tool: 'Codex', app: 'codex', detail: project, label: `project ${folder}`, name: `${folder} (Codex)`, where: cwd,
       instructions: path.join(cwd, 'AGENTS.md'), projectDir: cwd, globalRef: 'codex', mcps: [codexMcp('follow')] });
   }
@@ -488,7 +492,7 @@ export function discover(ctx) {
     add({ key: 'cursor', ref: 'cursor', kind: 'cursor', tool: 'Cursor', app: 'cursor', detail: 'every project', label: 'every project', name: 'Cursor', where: path.join(home, '.cursor', 'mcp.json'),
       mcps: [json(path.join(home, '.cursor', 'mcp.json'), { name: 'timewarp-id', tool: 'cursor' })] });
   }
-  if (isDir(path.join(cwd, '.cursor'))) {
+  if (inProject && isDir(path.join(cwd, '.cursor'))) {
     add({ key: `cursor-project:${cwd}`, ref: 'cursor:project', kind: 'cursor-project', tool: 'Cursor', app: 'cursor', detail: project, label: `project ${folder}`, name: `${folder} (Cursor)`, where: cwd,
       rule: path.join(cwd, '.cursor', 'rules', `${RULE_FILE}.mdc`), ruleHeader: '---\ndescription: Timewarp Agent ID identity\nalwaysApply: true\n---\n', projectDir: cwd,
       mcps: [json(path.join(cwd, '.cursor', 'mcp.json'), { name: 'timewarp-id', mode: 'agent', tool: 'cursor' })] });
@@ -638,38 +642,60 @@ const originOf = (ctx, target) => ({ app: typeof ctx.flags.origin === 'string' ?
 const APP_SLUG = /^[a-z0-9-]{1,40}$/;
 
 // Without an account on this computer, the agent asks for its Agent ID: a
-// link the person opens (no sign-in needed), where confirming their email and
-// verifying who they are makes their Timewarp account. The key then comes
-// back here. `--claim twc_…` collects one the Agent ID website started.
+// link the person opens (no sign-in needed), where confirming their email
+// makes their Timewarp account (who they are is checked later, the first
+// time money leaves). The key then comes back here. `--claim twc_…` collects
+// one the Agent ID website started.
 async function claimAgent(ctx, target, options) {
   if (options.claimed) return { profile: options.claimed, created: false };
   let secret = typeof ctx.flags.claim === 'string' ? ctx.flags.claim.trim() : null;
   if (secret && !secret.startsWith('twc_')) throw new UsageError('--claim takes the twc_… code from the Agent ID website.');
+  const fromWebsite = !!secret;
   if (!secret) {
-    const name = String((typeof ctx.flags.name === 'string' && ctx.flags.name) || target.name || 'My agent').slice(0, 60);
+    // Named after its app, unless it will be in several.
+    const name = String((typeof ctx.flags.name === 'string' && ctx.flags.name) || (!options.several && target.name) || 'My agent').slice(0, 60);
     const app = originOf(ctx, target).app;
     const started = await ctx.api.post('/v1/claims', { name, ...(APP_SLUG.test(String(app || '')) ? { app } : {}), device: ctx.hostname(), clientName: 'timewarp-id' });
     secret = started.secret;
+    ctx.site ??= siteFrom(started.url);
+    const opened = ctx.openUrl(started.url);
     ctx.err([
       '',
-      `To give ${name} its Agent ID, open this link and follow the steps (no account needed):`,
+      'Open this link to confirm your email:',
       `  ${started.url}`,
-      `The page should show ${started.claim.matchCode}. Waiting for you… (Ctrl+C to stop)`,
+      `${opened ? 'We opened it in your browser. ' : ''}The page should show ${started.claim.matchCode}.`,
+      'Waiting… (press Ctrl+C to stop)',
       '',
     ].join('\n'));
-    ctx.openUrl(started.url);
   }
-  const waitMinutes = Number(ctx.flags.wait) > 0 ? Number(ctx.flags.wait) : 30;
-  const deadline = Date.now() + waitMinutes * 60_000;
-  for (;;) {
-    const result = await ctx.api.post('/v1/claims/collect', { secret });
-    if (result.status === 'claimed') {
-      saveProfile(ctx, result.agent, result.key);
-      options.claimed = findProfile(ctx.config, result.agent.handle);
-      return { profile: options.claimed, created: true };
+  const again = fromWebsite ? 'Start again on the Agent ID website for a new code.' : `Run \`${ctx.bin}\` again for a new link.`;
+  // Ctrl+C while waiting: how to pick it up later.
+  const stop = () => { ctx.err(`\nStopped waiting. ${fromWebsite ? again : `Run \`${ctx.bin}\` again when you're ready.`}`); process.exit(130); };
+  process.once('SIGINT', stop);
+  try {
+    const waitMinutes = Number(ctx.flags.wait) > 0 ? Number(ctx.flags.wait) : 30;
+    const deadline = Date.now() + waitMinutes * 60_000;
+    for (let offline = 0; ;) {
+      let result = null;
+      try { result = await ctx.api.post('/v1/claims/collect', { secret }); offline = 0; }
+      catch (error) {
+        if (error instanceof ApiError && error.code === 'expired') throw new CliError('The link expired before your email was confirmed.', { hint: again, code: 'expired' });
+        if (error instanceof ApiError && error.code === 'not_found') throw new CliError(fromWebsite ? 'No Agent ID is waiting for this code.' : 'The link was canceled.', { hint: again, code: 'not_found' });
+        // A dropped connection doesn't end the wait, unless it stays down.
+        if (!(error instanceof CliError && error.code === 'network') || ++offline >= 20) throw error;
+      }
+      if (result?.status === 'claimed') {
+        if (!fromWebsite) ctx.err('✓ Email confirmed.\n\n');
+        if (ctx.flags.api || ctx.env.AGENT_ID_API) ctx.config.api = ctx.apiBase;
+        saveProfile(ctx, result.agent, result.key);
+        options.claimed = findProfile(ctx.config, result.agent.handle);
+        return { profile: options.claimed, created: true };
+      }
+      if (Date.now() >= deadline) throw new CliError(`Stopped waiting after ${waitMinutes} minutes.`, { hint: again, code: 'timeout' });
+      await ctx.sleep(3000);
     }
-    if (Date.now() >= deadline) throw new CliError('The link wasn\'t finished in time.', { hint: 'Run attach again for a new link.' });
-    await ctx.sleep(3000);
+  } finally {
+    process.off('SIGINT', stop);
   }
 }
 
@@ -698,11 +724,16 @@ async function agentFor(ctx, target, current, options) {
     if (profile) return { profile, created: false };
     return keyFor(ctx, current.agentId || current.handle, `${target.tool} ${target.label} is attached to ${current.handle || current.agentId}`);
   }
-  // Not signed in here: one link sets up one Agent ID for everything chosen.
-  if (!ctx.hasOwnerKey()) return claimAgent(ctx, target, options);
+  // Not signed in here: the Agent ID already set up on this computer (one
+  // agent, in every app), else one link sets one up for everything chosen.
+  if (!ctx.hasOwnerKey()) {
+    const mine = !options.claimed && ctx.config.default ? findProfile(ctx.config, ctx.config.default) : null;
+    if (mine?.key) return { profile: mine, created: false };
+    return claimAgent(ctx, target, options);
+  }
   const name = String((typeof ctx.flags.name === 'string' && ctx.flags.name) || target.name).slice(0, 60);
   if (ctx.interactive && !ctx.flags.yes) {
-    const answer = (await ctx.ask(`Agent ID for ${target.tool} ${target.label}: Enter for a new one named "${name}", or an existing agent's handle: `)).trim();
+    const answer = (await ctx.ask(`Agent ID for ${target.tool} ${target.label}: Enter for a new one named "${name}", or an existing agent's handle: `) ?? '').trim();
     if (answer) return named(answer);
   }
   const origin = originOf(ctx, target);
@@ -800,15 +831,17 @@ async function attachOne(ctx, target, state, options) {
   if (target.kind === 'openclaw') notes.push(`OpenClaw agents use the \`timewarp-id\` command in their workspace, which acts as them there. For MCP tools, add this to OpenClaw:\n${snippet(handle)}`);
   if (target.kind === 'folder') notes.push('A custom agent uses the `timewarp-id` command in this folder, which acts as it; or connect its tool with `timewarp-id connect`.');
   if (target.kind === 'claude-project') notes.push('Claude Code asks once before it uses a project\'s MCP server.');
-  if (target.mcps.length && !target.subagent && target.kind !== 'claude-project') notes.push(`Restart ${target.tool} to load it.`);
+  // Apps read their MCP servers when they start.
+  const restart = target.mcps.length ? `Restart ${target.tool} to use it.` : null;
 
   state[target.key] = {
     target: { key: target.key, ref: target.ref, kind: target.kind, tool: target.tool, app: target.app, label: target.label, where: target.where, instructions: target.instructions, rule: target.rule, projectDir: target.projectDir, mcps: target.mcps, subagent: !!target.subagent, desktopId: target.desktopId, commandOnly: !!target.commandOnly },
     handle, agentId: profile.agentId, at: new Date().toISOString(), changes,
   };
   // What it can use right away: a new Agent ID comes with its mail and wallet.
-  const has = Object.fromEntries(Object.entries(me.agent.resources || {}).map(([kind, r]) => [kind, r.address || r.status]));
-  return { target, agent: { id: me.agent.id, handle, name: me.agent.name, created }, has, given, wrote, notes };
+  const resources = me.agent.resources || {};
+  const has = Object.fromEntries(Object.entries(resources).map(([kind, r]) => [kind, r.address || r.status]));
+  return { target, agent: { id: me.agent.id, handle, name: me.agent.name, created }, has, resources, given, wrote, notes, restart };
 }
 
 const parseGive = value => {
@@ -832,6 +865,82 @@ const listingText = rows => table(rows, [
   ['#', r => r.number], ['TOOL', r => r.tool], ['AGENT', r => r.agent], ['AGENT ID', r => r.manual ? 'manual setup' : r.attached], ['REF', r => r.ref], ['WHERE', r => short(r.where)],
 ]);
 
+// --- What people see ----------------------------------------------------------------------
+// What a person calls each thing attach sets up (recorded targets lack a name).
+export function displayName(target) {
+  if (target.kind === 'claude-agent') return `Claude Code ${target.label || `subagent ${target.name}`}`;
+  if (target.kind === 'timewarp') return `Timewarp agent ${target.name || target.label}`;
+  if (target.kind === 'openclaw') return target.name || `OpenClaw ${target.label}`;
+  if (target.kind === 'folder') return `Your agent in ${shown(target.projectDir || target.where)}`;
+  if (target.projectDir) return `${target.tool} in project ${path.basename(target.projectDir)}`;
+  return /^in /.test(target.label || '') ? `${target.tool} ${target.label}` : target.tool;
+}
+
+// Enter (or --yes) takes each app's main agent, not projects, subagents or workspaces.
+const USUAL = new Set(['claude', 'codex', 'cursor', 'claude-desktop', 'tool']);
+
+// The numbered list a person picks from, with what each has now.
+function pickList(ctx, targets, state) {
+  const names = targets.map(displayName);
+  const width = Math.max(...names.map(name => name.length)) + 3;
+  const digits = String(targets.length).length;
+  return targets.map((target, i) => {
+    const current = target.manual ? null : attachedTo(ctx, target, state);
+    const now = target.manual ? `set up by hand (see \`${ctx.bin} agents scan\`)` : current ? `has Agent ID ${current.handle || current.agentId}` : '';
+    return `  ${String(i + 1).padStart(digits)}  ${now ? `${names[i].padEnd(width)}${now}` : names[i]}`;
+  }).join('\n');
+}
+
+const nothingFound = bin => [
+  'No AI apps found on this computer.',
+  '',
+  'Agent ID works with Claude Code, Codex, Cursor, Claude Desktop, Gemini CLI,',
+  'Windsurf, Copilot CLI, Cline and more. Install one, then run this again.',
+  '',
+  'Your own agent in a folder? Run this in that folder:',
+  `  ${bin} attach --here`,
+  '',
+  `More help: ${HOMEPAGE}`,
+].join('\n');
+
+// What the agent has, line by line; what it hasn't, where to get it (its
+// own page on the dashboard, on the right tab).
+function hasLines(resources, dashboard, agentId) {
+  const { mail, wallet, phone, vm, card } = resources;
+  const page = tab => agentId ? `${dashboard.replace(/\/dashboard$/, '')}/agents/${agentId}?tab=${tab}` : dashboard;
+  const value = r => `${r.address || (r.status === 'provisioning' ? 'Being set up (ready in a minute)' : r.status)}${r.mode === 'test' ? ' (test)' : ''}`;
+  const row = (label, text) => `  ${label.padEnd(10)}${text}`;
+  return [
+    row('Email', mail ? value(mail) : `Add one at ${dashboard}`),
+    row('Wallet', wallet ? value(wallet) : `Add one at ${dashboard}`),
+    ...(wallet ? [row('', `Add money at ${page('wallet')}`)] : []),
+    row('Phone', phone ? value(phone) : `Apply at ${page('phone')}`),
+    row('Computer', vm ? (vm.status === 'active' ? 'Ready' : value({ ...vm, address: null })) : 'Starts the first time your agent uses it'),
+    ...(card ? [row('Card', card.label || card.status)] : []),
+  ];
+}
+
+// Who to ask, in each app.
+const ASSISTANTS = { 'claude-code': 'Claude', 'claude-desktop': 'Claude', codex: 'Codex', cursor: 'Cursor', gemini: 'Gemini', windsurf: 'Windsurf', copilot: 'Copilot', grok: 'Grok', kiro: 'Kiro', qwen: 'Qwen', cline: 'Cline', roo: 'Roo', kilocode: 'Kilo', 'amazon-q': 'Amazon Q' };
+
+// After attach: each app, what the agent has, and one thing to try.
+export function finished(results, { dashboard }) {
+  const lines = [];
+  for (const r of results) {
+    lines.push(`✓ ${displayName(r.target)} is set up.${r.restart ? ` ${r.restart}` : ''}`);
+    for (const note of r.notes) lines.push(`  ${note.replace(/\n/g, '\n  ')}`);
+  }
+  const agents = [...new Map(results.map(r => [r.agent.id, r])).values()];
+  for (const r of agents) {
+    const named = r.agent.name && r.agent.name !== 'My agent' ? ` “${r.agent.name}”` : '';
+    lines.push('', agents.length > 1 ? `${r.agent.name} (${r.agent.handle}) has:` : `Your agent${named} has:`, ...hasLines(r.resources || {}, dashboard, r.agent.id));
+  }
+  const who = ASSISTANTS[results[0].target.app] || 'your agent';
+  const question = agents.some(r => r.resources?.mail?.address) ? 'What\'s my Agent ID email address?' : 'What can you do with your Agent ID?';
+  lines.push('', `Ask ${who}: “${question}”`);
+  return lines.join('\n');
+}
+
 export async function scan(ctx) {
   const state = loadState(ctx.env);
   const rows = listing(ctx, discover(ctx), state);
@@ -839,10 +948,10 @@ export async function scan(ctx) {
   ctx.print({ targets: rows }, () => rows.length
     ? [
       listingText(rows), '',
-      'Give one an Agent ID: `timewarp-id attach <# or ref>` (or a folder: `timewarp-id attach --here`).',
+      `Give one an Agent ID: \`${ctx.bin} attach <# or ref>\` (or a folder: \`${ctx.bin} attach --here\`).`,
       ...(manual.length ? [`Found, manual setup: ${manual.map(r => r.tool).join(', ')}. Add this MCP server in their settings:`, snippet()] : []),
     ].join('\n')
-    : 'No agents found here. Give a folder\'s agent an Agent ID with `timewarp-id attach --here`.');
+    : nothingFound(ctx.bin));
 }
 
 async function choose(ctx, targets, state, verb) {
@@ -851,12 +960,32 @@ async function choose(ctx, targets, state, verb) {
   if (ctx.flags.here) add(folderTarget(ctx, ctx.cwd, targets));
   for (const arg of ctx.args) add(resolveOne(ctx, arg, targets));
   if (chosen.length) return chosen;
-  const rows = listing(ctx, targets, state);
-  if (!ctx.json) ctx.out(rows.length ? listingText(rows) : 'No agents found here.');
-  if (!ctx.interactive || !rows.length) throw new UsageError(`Name what to ${verb}: a number or ref from the list, or a folder (e.g. \`timewarp-id ${verb} claude\`, \`timewarp-id ${verb} --here\`).`);
-  const answer = await ctx.ask(`${verb === 'attach' ? 'Attach' : 'Detach'} which? Numbers like 1,3 (Enter to stop): `);
-  for (const part of answer.split(/[\s,]+/).filter(Boolean)) add(resolveOne(ctx, part, targets));
-  return chosen;
+  // Detaching, everything listed is attached.
+  const usual = verb === 'detach' ? targets : targets.filter(target => USUAL.has(target.kind));
+  if (verb === 'attach' && ctx.flags.yes && usual.length) return usual;
+  if (!ctx.interactive) {
+    if (!ctx.json) ctx.out(listingText(listing(ctx, targets, state)));
+    throw new UsageError(`Name what to ${verb}: a number or ref from the list, or a folder (e.g. \`${ctx.bin} ${verb} claude\`, \`${ctx.bin} ${verb} --here\`).`);
+  }
+  ctx.out(`${verb === 'attach' ? 'Found on this computer' : 'Attached on this computer'}:\n${pickList(ctx, targets, state)}\n\n`);
+  const numbers = usual.map(target => String(targets.indexOf(target) + 1));
+  const question = verb === 'detach' ? 'Detach which? Press Enter for all, or type numbers like 1,3: '
+    : !numbers.length ? 'Set up which? Type numbers like 1,3 (Enter to stop): '
+    : `Set up which? Press Enter for ${numbers.length === targets.length ? 'all' : joinList(numbers)}, or type numbers like 1,3: `;
+  for (;;) {
+    const answer = await ctx.ask(question);
+    if (answer === null) return [];
+    const parts = answer.split(/[\s,]+/).filter(Boolean);
+    if (!parts.length) return usual;
+    try {
+      for (const part of parts) add(resolveOne(ctx, part, targets));
+      return chosen;
+    } catch (error) {
+      if (!(error instanceof UsageError)) throw error;
+      chosen.length = 0;
+      ctx.err(error.message);
+    }
+  }
 }
 
 export async function attach(ctx) {
@@ -866,23 +995,24 @@ export async function attach(ctx) {
   if (typeof ctx.flags.origin === 'string' && !APPS.includes(ctx.flags.origin)) throw new UsageError(`--origin is one of ${APPS.join(', ')}.`);
   const state = loadState(ctx.env);
   const targets = discover(ctx);
+  if (!targets.length && !ctx.args.length && !ctx.flags.here) {
+    ctx.print({ attached: [] }, () => nothingFound(ctx.bin));
+    return 1;
+  }
   const chosen = await choose(ctx, targets, state, 'attach');
   if (!chosen.length) return 0;
   // Signed in, each gets its own new Agent ID; through a link they share one.
   if (typeof ctx.flags.name === 'string' && chosen.length > 1 && ctx.hasOwnerKey() && typeof ctx.flags.claim !== 'string') throw new UsageError('--name names one agent; attach one at a time.');
+  options.several = chosen.length > 1;
   const results = [];
   try {
     for (const target of chosen) results.push(await attachOne(ctx, target, state, options));
   } finally {
     saveState(ctx.env, state);
   }
-  ctx.print({ attached: results.map(r => ({ ref: r.target.ref, tool: r.target.tool, label: r.target.label, origin: { app: r.target.app, detail: r.target.detail ?? null }, agent: r.agent, has: r.has, given: r.given, wrote: r.wrote.map(([file, what]) => ({ file, what })), notes: r.notes })) }, () => results.map(r => [
-    `${r.target.tool} ${r.target.label} → Agent ID ${r.agent.name} (${r.agent.handle}, ${r.agent.id})${r.agent.created ? ', new' : ''}`,
-    ...r.wrote.map(([file, what]) => `  ${file ? `${short(file)}: ` : ''}${what}`),
-    ...(Object.keys(r.has).length ? [`  has: ${Object.entries(r.has).map(([kind, value]) => `${kind === 'vm' ? 'machine' : kind} ${value}`).join(', ')}`] : []),
-    ...(r.given.length ? [`  gave it: ${r.given.join(', ')}${options.test ? ' (test)' : ''}`] : []),
-    ...r.notes.map(note => `  ${note.replace(/\n/g, '\n  ')}`),
-  ].join('\n')).join('\n\n'));
+  const dashboard = ctx.json ? null : dashboardOf(await siteOf(ctx));
+  ctx.print({ attached: results.map(r => ({ ref: r.target.ref, tool: r.target.tool, label: r.target.label, origin: { app: r.target.app, detail: r.target.detail ?? null }, agent: r.agent, has: r.has, given: r.given, wrote: r.wrote.map(([file, what]) => ({ file, what })), notes: [...r.notes, ...(r.restart ? [r.restart] : [])] })) },
+    () => finished(results, { dashboard }));
 }
 
 // --- Detach -------------------------------------------------------------------------------
@@ -953,6 +1083,7 @@ export async function detach(ctx) {
   // Recorded attachments count too, wherever they are, and match by handle.
   const recorded = Object.entries(state).map(([key, record]) => ({ ...(discovered.find(t => t.key === key) || { mcps: [], ...record.target } || { key, ref: key, tool: '', label: key, mcps: [] }), handle: record.handle }));
   const targets = [...recorded, ...discovered.filter(t => !state[t.key] && attachedTo(ctx, t, state))];
+  if (!targets.length && !ctx.args.length && !ctx.flags.here) return ctx.print({ detached: [] }, () => 'Nothing to detach: no app on this computer has an Agent ID.');
   let chosen;
   if (ctx.flags.all) chosen = targets;
   else {
@@ -965,7 +1096,10 @@ export async function detach(ctx) {
   } finally {
     saveState(ctx.env, state);
   }
-  ctx.print({ detached: results.map(r => ({ ref: r.target.ref, agent: r.handle, undone: r.undone })) }, () => results.map(r => r.handle
-    ? [`${r.target.tool} ${r.target.label}: detached from ${r.handle}`, ...r.undone.map(line => `  ${line}`), '  The Agent ID itself is kept; `timewarp-id agents revoke` ends it.'].join('\n')
-    : `${r.target.tool} ${r.target.label}: nothing attached`).join('\n\n'));
+  ctx.print({ detached: results.map(r => ({ ref: r.target.ref, agent: r.handle, undone: r.undone })) }, () => [
+    ...results.map(r => r.handle
+      ? [`✓ ${displayName(r.target)}: detached from ${r.handle}`, ...r.undone.map(line => `  ${line}`)].join('\n')
+      : `${displayName(r.target)}: nothing attached`),
+    ...(results.some(r => r.handle) ? ['', 'The Agent ID itself is kept; end it on the Agent ID dashboard if you want to.'] : []),
+  ].join('\n'));
 }

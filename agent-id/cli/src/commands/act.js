@@ -1,5 +1,5 @@
 // What an agent does as itself, with its own key: mail, texts, calls,
-// contacts, wallet, card, machine and passports.
+// contacts, wallet, card, machine, vault and passports.
 import fs from 'node:fs';
 import path from 'node:path';
 import { dollarsString, dollarsToCents } from '../args.js';
@@ -7,11 +7,23 @@ import { CliError, UsageError } from '../errors.js';
 import { findProfile } from '../config.js';
 import { clip, fields, limits as limitText, money, table, usd, when } from '../output.js';
 import { describeResource } from './account.js';
+import { hostsOf, seal, vaultItem } from '../vault.js';
 
 const sub = (ctx, fallback) => ctx.args[0] || fallback;
 const need = (value, message) => { if (value === undefined || value === null || value === '' || value === true) throw new UsageError(message); return String(value); };
 const list = value => typeof value === 'string' ? value.split(',').map(s => s.trim()).filter(Boolean) : undefined;
 const unknown = (ctx, name) => { throw new UsageError(`${name} has no "${ctx.args[0]}" command.`); };
+
+// The owner asked to approve this kind of action first: what waits, and where
+// they answer. Nothing happened yet.
+const waits = data => data?.status === 'needs_approval';
+function waiting(ctx, data) {
+  return ctx.print(data, () => [
+    'Waiting for the owner: they asked to approve this first. Nothing was done yet.',
+    `Approval id: ${data.approval}`,
+    data.approveUrl ? `They approve or decline it here: ${data.approveUrl}` : 'They approve it on the Agent ID website.',
+  ].join('\n'));
+}
 
 async function text(ctx, flag = 'text') {
   const value = ctx.flags[flag];
@@ -25,7 +37,8 @@ export async function me(ctx) {
     fields([
       ['Agent', `${agent.name} (${agent.handle})`], ['Id', agent.id], ['Status', agent.status], ['Runtime', agent.runtime],
       ['Git identity', agent.gitPrincipal],
-      ['Owner', `${owner.verified ? 'verified' : 'not verified'} (${owner.level})${owner.business ? `, ${owner.business}` : ''}`],
+      // Owners are checked the first time money leaves, not before.
+      ['Owner', `${owner.verified ? `verified (${owner.level})` : 'identity not checked yet (needed the first time money leaves)'}${owner.business ? `, ${owner.business}` : ''}`],
       ['Organization', organization ? `${organization.name || organization.id}${organization.verified ? ' (verified business)' : ''}` : null],
     ]),
     ...Object.values(agent.resources || {}).map(r => `  ${describeResource(r)}`),
@@ -90,12 +103,14 @@ export async function mail(ctx) {
     const body = { to, subject, text: await text(ctx), ...(list(ctx.flags.cc)?.length ? { cc: list(ctx.flags.cc) } : {}) };
     const files = await attachments(ctx);
     const data = await ctx.self.post('/v1/me/mail', { ...body, ...(files.length ? { attachments: files } : {}) });
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, sent => `Sent "${sent.message.subject}" to ${sent.message.counterparty} (${sent.message.status})${files.length ? ` with ${files.length} attachment${files.length === 1 ? '' : 's'}` : ''}. Id ${sent.message.id}${sent.note ? `\n${sent.note}` : ''}`);
   }
   if (action === 'reply') {
     const id = need(ctx.args[1], 'Which message? timewarp-id mail reply <id> --text "…"');
     const files = await attachments(ctx);
     const data = await ctx.self.post('/v1/me/mail', { replyTo: id, text: await text(ctx), ...(list(ctx.flags.to)?.length ? { to: list(ctx.flags.to) } : {}), ...(typeof ctx.flags.subject === 'string' ? { subject: ctx.flags.subject } : {}), ...(files.length ? { attachments: files } : {}) });
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, sent => `Replied to ${sent.message.counterparty}: "${sent.message.subject}" (${sent.message.status}). Id ${sent.message.id}${sent.note ? `\n${sent.note}` : ''}`);
   }
   unknown(ctx, 'mail');
@@ -114,6 +129,7 @@ export async function sms(ctx) {
     const to = need(ctx.args[1], 'timewarp-id sms send <+14155550123> <text…>');
     const message = ctx.args.slice(2).join(' ') || (ctx.flags.text !== undefined ? await text(ctx) : '');
     const data = await ctx.self.post('/v1/me/sms', { to, text: need(message, 'What should the text say? timewarp-id sms send <number> <text…>') });
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, ({ message: m }) => `Texted ${m.counterparty} (${m.status}).`);
   }
   unknown(ctx, 'sms');
@@ -131,6 +147,7 @@ export async function call(ctx) {
     const to = need(ctx.args[1], 'timewarp-id call place <+14155550123> --say "…"');
     const say = need(ctx.flags.say ?? ctx.args.slice(2).join(' '), '--say is required: what should the call say?');
     const data = await ctx.self.post('/v1/me/calls', { to, say });
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, ({ call: c }) => `Called ${c.counterparty} (${c.status}).`);
   }
   unknown(ctx, 'call');
@@ -150,16 +167,19 @@ export async function contacts(ctx) {
     const body = { ...contactFields(), ...(ctx.args.length > 1 ? { name: ctx.args.slice(1).join(' ') } : {}) };
     need(body.name, 'Name the contact: timewarp-id contacts add <name> [--email …] [--phone …]');
     const data = await ctx.self.post('/v1/me/contacts', body);
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, ({ contact }) => `Saved ${contact.name} (${contact.id}).`);
   }
   if (action === 'update' || action === 'edit') {
     const id = need(ctx.args[1], 'Which contact? timewarp-id contacts update <id> --email …');
     const data = await ctx.self.patch(`/v1/me/contacts/${encodeURIComponent(id)}`, contactFields());
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, ({ contact }) => `Updated ${contact.name}.`);
   }
   if (action === 'rm' || action === 'remove' || action === 'delete') {
     const id = need(ctx.args[1], 'Which contact? timewarp-id contacts rm <id>');
     const data = await ctx.self.delete(`/v1/me/contacts/${encodeURIComponent(id)}`);
+    if (waits(data)) return waiting(ctx, data);
     return ctx.print(data, () => 'Removed.');
   }
   unknown(ctx, 'contacts');
@@ -306,6 +326,57 @@ export async function vm(ctx) {
     ]) : 'No commands yet.');
   }
   unknown(ctx, 'vm');
+}
+
+// --- Vault ----------------------------------------------------------------------------------
+// Keys and sign-ins in the vault on the agent's own computer. A secret comes
+// from stdin or is typed (never a flag: shell history would keep it), and is
+// sealed here before it's sent.
+async function readSecret(ctx, what) {
+  if (ctx.stdin?.isTTY) return (await ctx.askSecret(`${what} (not shown): `)) ?? '';
+  return (await ctx.readStdin()).replace(/\r?\n$/, '');
+}
+
+export async function vault(ctx) {
+  const action = sub(ctx, 'list');
+  if (action === 'list' || action === 'ls') {
+    const data = await ctx.self.get('/v1/me/vault');
+    return ctx.print(data, ({ ready, items, note }) => !ready ? note || 'The vault isn\'t set up yet.' : items.length ? table(items, [
+      ['ID', i => i.id], ['KIND', i => (i.kind === 'login' ? 'sign-in' : 'key')], ['NAME', i => i.label],
+      ['FOR', i => (i.kind === 'login' ? i.site : (i.hosts || []).join(', '))], ['SAVED BY', i => (i.savedBy === 'agent' ? 'agent' : 'owner')],
+    ]) : 'The vault is empty.');
+  }
+  if (action === 'save' || action === 'add') {
+    for (const flag of ['secret', 'value', 'password', 'key']) {
+      if (ctx.flags[flag] !== undefined) throw new UsageError(`A secret isn't taken as --${flag}: your shell would keep it in its history. Pipe it in, or type it when asked.`);
+    }
+    const login = ctx.flags.site !== undefined;
+    const label = need(ctx.flags.label ?? ctx.args[1], `Give it a name: ${ctx.bin} vault save --label "Resend API" --for api.resend.com`);
+    if (!login) hostsOf(ctx.flags.for === true ? '' : ctx.flags.for);
+    const listed = await ctx.self.get('/v1/me/vault');
+    if (!listed.ready || !listed.publicKey) throw new CliError(listed.note || 'The vault isn\'t set up yet. Your owner sets it up on the Agent ID website.');
+    const secret = await readSecret(ctx, login ? 'Password' : 'Key');
+    const item = vaultItem({ kind: login ? 'login' : 'key', secret, hosts: ctx.flags.for, as: ctx.flags.as, username: ctx.flags.username, site: ctx.flags.site });
+    const data = await ctx.self.post('/v1/me/vault/items', { label, envelope: seal(listed.publicKey, item) });
+    if (waits(data)) return waiting(ctx, data);
+    return ctx.print(data, ({ item: saved }) => `Saved "${saved.label}" in the vault (${saved.id}), sealed on this computer.${saved.kind === 'key' ? `\nUse it with: ${ctx.bin} vault request ${saved.id} <https address>` : ''}`);
+  }
+  if (action === 'request' || action === 'use') {
+    const item = need(ctx.args[1], `Which item? ${ctx.bin} vault request <item> <https address>`);
+    const url = need(ctx.args[2] ?? ctx.flags.url, `Where to? ${ctx.bin} vault request ${item} https://api.example.com/…`);
+    const body = ctx.flags.data === undefined ? undefined : ctx.flags.data === '-' ? await ctx.readStdin() : String(ctx.flags.data);
+    const data = await ctx.self.post('/v1/me/vault/request', {
+      item, url,
+      ...(typeof ctx.flags.method === 'string' ? { method: ctx.flags.method } : {}),
+      ...(typeof ctx.flags.type === 'string' ? { headers: { 'Content-Type': ctx.flags.type } } : {}),
+      ...(body !== undefined ? { body } : {}),
+    });
+    if (ctx.json) { ctx.print(data); return data.status < 400 ? 0 : 1; }
+    ctx.err(`HTTP ${data.status}${data.truncated ? ' (cut short)' : ''}`);
+    if (data.body) ctx.stdout.write(data.body.endsWith('\n') ? data.body : `${data.body}\n`);
+    return data.status < 400 ? 0 : 1;
+  }
+  unknown(ctx, 'vault');
 }
 
 // --- Passport -------------------------------------------------------------------------------

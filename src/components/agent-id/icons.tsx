@@ -1,11 +1,14 @@
 // Agent ID's own marks. Drawn on lucide's 24px grid with the same 2px stroke
 // so they sit with lucide icons at 16–20px.
+import { useId } from "react";
 import type { SVGProps } from "react";
 
 import { cn } from "@/lib/utils";
 
-// An ID badge with a small agent face: the "Agents" mark.
+// The "Agents" mark: Timewarp's mascot as a line drawing, a round head with
+// one big eye and an orbit ring passing in front of it.
 export function AgentsIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
+  const id = useId().replace(/:/g, "");
   return (
     <svg
       viewBox="0 0 24 24"
@@ -18,12 +21,35 @@ export function AgentsIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
       className={cn("h-4 w-4", className)}
       {...props}
     >
-      <rect x="3" y="6" width="18" height="15" rx="4" />
-      <path d="M12 6V3" />
-      <path d="M10.5 2.5h3" />
-      <path d="M9 12.5v.01" />
-      <path d="M15 12.5v.01" />
-      <path d="M9.5 16.5h5" />
+      <defs>
+        {/* The ring's far side disappears behind the head. */}
+        <mask id={`${id}-behind`}>
+          <rect width="24" height="24" fill="#fff" />
+          <circle cx="12" cy="12" r="7.6" fill="#000" />
+        </mask>
+        {/* Its near side passes in front. */}
+        <clipPath id={`${id}-front`}>
+          <rect x="-6" y="12" width="36" height="14" transform="rotate(-18 12 12)" />
+        </clipPath>
+      </defs>
+      <circle cx="12" cy="12" r="6.2" />
+      <circle cx="12" cy="11" r="1.7" fill="currentColor" stroke="none" />
+      <ellipse
+        cx="12"
+        cy="12"
+        rx="10.6"
+        ry="3.4"
+        transform="rotate(-18 12 12)"
+        mask={`url(#${id}-behind)`}
+      />
+      <ellipse
+        cx="12"
+        cy="12"
+        rx="10.6"
+        ry="3.4"
+        transform="rotate(-18 12 12)"
+        clipPath={`url(#${id}-front)`}
+      />
     </svg>
   );
 }

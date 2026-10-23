@@ -64,6 +64,55 @@ export async function recordApp(ctx: Ctx, agentId: string, app: string, client: 
   }, { onConflict: 'agent_id,app' });
 }
 
+// What kind of AI an Agent ID stands for: an agent that acts with tools, or a
+// model that makes one kind of output (pictures, voices, code, decisions…).
+// The owner says which, and who makes the model; it shows with the agent, in
+// its passports and on everything it marks.
+export const MODEL_KINDS: Record<string, string> = {
+  agent: 'AI agent', llm: 'Language model', image: 'Image model', voice: 'Voice and audio model', video: 'Video model',
+  code: 'Code model', text: 'Text model', decision: 'Decision model', other: 'Other AI',
+};
+const kinds = Object.keys(MODEL_KINDS);
+
+// The fields `model: { kind, provider, name }` sets.
+export function modelInput(input: any) {
+  const patch: Record<string, unknown> = {};
+  const model = input?.model;
+  if (model === undefined || model === null) return patch;
+  if (typeof model !== 'object' || Array.isArray(model)) throw fail(400, 'invalid', 'model is { kind, provider, name }.');
+  if (model.kind !== undefined) {
+    if (!kinds.includes(model.kind)) throw fail(400, 'invalid', `model.kind is one of ${kinds.join(', ')}.`);
+    patch.model_kind = model.kind;
+  }
+  if (model.provider !== undefined) patch.model_provider = str(model.provider, 60, 'model.provider') || null;
+  if (model.name !== undefined) patch.model_name = str(model.name, 80, 'model.name') || null;
+  return patch;
+}
+
+export function modelView(agent: { model_kind?: string | null; model_provider?: string | null; model_name?: string | null }) {
+  const kind = agent.model_kind && kinds.includes(agent.model_kind) ? agent.model_kind : 'agent';
+  return { kind, label: MODEL_KINDS[kind], provider: agent.model_provider || null, name: agent.model_name || null };
+}
+// The same, as passports and checks carry it: what the owner says it is.
+export function passportModel(agent: Parameters<typeof modelView>[0]) {
+  const { kind, provider, name } = modelView(agent);
+  return { kind, ...(provider ? { provider } : {}), ...(name ? { name } : {}) };
+}
+
+// The model an agent says it is ("claude-opus-5-5", "gpt-6"…), as given.
+export function modelOf(value: unknown) {
+  const model = String(value ?? '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9.:/_-]/g, '').slice(0, 80);
+  return model.length >= 2 ? model : null;
+}
+
+// Remembered for the app it runs in: the latest, and the list of all (up to 20).
+export async function recordModel(ctx: Ctx, agentId: string, app: string | null, model: string) {
+  if (!app) return;
+  const row = (await ctx.admin.from('agent_id_agent_clients').select('models').eq('agent_id', agentId).eq('app', app).maybeSingle()).data as any;
+  const models = [model, ...((row?.models as string[]) || []).filter(m => m !== model)].slice(0, 20);
+  await ctx.admin.from('agent_id_agent_clients').upsert({ agent_id: agentId, app, model, models, last_seen_at: new Date(ctx.now()).toISOString() }, { onConflict: 'agent_id,app' });
+}
+
 export async function appsOf(ctx: Ctx, agentIds: string[]) {
   const map = new Map<string, any[]>();
   if (!agentIds.length) return map;
@@ -75,9 +124,13 @@ export async function appsOf(ctx: Ctx, agentIds: string[]) {
 
 export function appsView(agent: { runtime: string; created_at?: string }, rows: any[] = []) {
   const label = (app: string) => APPS[app] || app.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  const list = rows.map(row => ({ app: row.app, label: label(row.app), clientName: row.client_name || null, lastSeenAt: row.last_seen_at, firstSeenAt: row.first_seen_at }));
+  const list = rows.map(row => ({
+    app: row.app, label: label(row.app), clientName: row.client_name || null, lastSeenAt: row.last_seen_at, firstSeenAt: row.first_seen_at,
+    // The model it last ran with in this app, and every one it has.
+    model: row.model || null, models: Array.isArray(row.models) ? row.models : [],
+  }));
   if (agent.runtime && !['custom', 'any', 'other'].includes(agent.runtime) && !list.some(item => item.app === agent.runtime)) {
-    list.push({ app: agent.runtime, label: label(agent.runtime), clientName: null, lastSeenAt: null, firstSeenAt: agent.created_at || null });
+    list.push({ app: agent.runtime, label: label(agent.runtime), clientName: null, lastSeenAt: null, firstSeenAt: agent.created_at || null, model: null, models: [] });
   }
   return list;
 }

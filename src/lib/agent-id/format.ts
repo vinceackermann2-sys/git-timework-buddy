@@ -1,9 +1,12 @@
 // How Agent ID values read on the dashboard. Pure functions, unit tested.
 import type {
   Account,
+  AgentModel,
   AgentStatus,
   AuditEntry,
   Kind,
+  ModelKind,
+  Mode,
   Money,
   PublicConfig,
   Runtime,
@@ -119,14 +122,14 @@ export const KIND_LABELS: Record<Kind, string> = {
   phone: "Phone",
   wallet: "Wallet",
   card: "Card",
-  vm: "Machine",
+  vm: "Computer",
 };
 export const KIND_NOUNS: Record<Kind, string> = {
   mail: "a mail inbox",
   phone: "a phone number",
   wallet: "a wallet",
   card: "a virtual card",
-  vm: "a virtual machine",
+  vm: "a computer",
 };
 
 export const STATUS_LABELS: Record<AgentStatus, string> = {
@@ -259,16 +262,17 @@ const AUDIT_ACTIONS: Record<string, string> = {
   "wallet.test_funds": "Test money added",
   "wallet.send": "Money sent",
   "wallet.approval_requested": "Transfer waiting for approval",
-  "approval.approve": "Transfer approved",
-  "approval.deny": "Transfer denied",
+  "approval.approve": "Approved",
+  "approval.deny": "Declined",
   "mail.send": "Email sent",
   "sms.send": "Text sent",
   "call.place": "Call placed",
   "card.reveal": "Card details revealed",
-  "vm.start": "Machine started",
-  "vm.stop": "Machine stopped",
+  "vm.start": "Computer started",
+  "vm.stop": "Computer stopped",
   "vm.exec": "Command run",
   "passport.issue": "Passport issued",
+  "trace.mark": "Marked its work",
   "passport.checked": "Passport checked by a company",
   "signing_key.add": "Signing key added",
   "signing_key.remove": "Signing key removed",
@@ -283,6 +287,13 @@ const AUDIT_ACTIONS: Record<string, string> = {
   "verification.business.submit": "Business submitted for review",
   "verification.business.verified": "Business verified",
   "verification.business.rejected": "Business rejected",
+  "approval.requested": "Asked for approval",
+  "approval.withdrawn": "Approval request withdrawn",
+  "vault.setup": "Vault set up",
+  "vault.item_added": "Added to the vault",
+  "vault.item_saved": "Saved to the vault",
+  "vault.item_removed": "Removed from the vault",
+  "vault.request": "Used a key from the vault",
 };
 export function auditActionLabel(action: string): string {
   const known = AUDIT_ACTIONS[action];
@@ -292,11 +303,28 @@ export function auditActionLabel(action: string): string {
 }
 
 // A short line of the details that matter, never secrets.
+// What was marked so it traces back to the agent.
+const TRACE_KINDS: Record<string, string> = {
+  image: "A picture",
+  audio: "A sound",
+  text: "A text",
+  code: "Code",
+  video: "A video",
+  other: "A file",
+};
+
 export function auditDetail(entry: Pick<AuditEntry, "action" | "detail">): string {
   const d = entry.detail || {};
   const parts: string[] = [];
   const kind = d["kind"];
-  if (typeof kind === "string") parts.push(KIND_LABELS[kind as Kind] ?? kind);
+  if (typeof kind === "string")
+    parts.push(
+      entry.action === "trace.mark"
+        ? (TRACE_KINDS[kind] ?? kind)
+        : (KIND_LABELS[kind as Kind] ?? kind),
+    );
+  const provider = d["provider"];
+  if (typeof provider === "string" && entry.action === "trace.mark") parts.push(`by ${provider}`);
   const mode = d["mode"];
   if (typeof mode === "string") parts.push(mode === "live" ? "Live" : "Test");
   const amount = d["amount"];
@@ -323,6 +351,38 @@ export function auditDetail(entry: Pick<AuditEntry, "action" | "detail">): strin
   const prefix = d["prefix"];
   if (typeof prefix === "string") parts.push(`${prefix}…`);
   return parts.join(" · ");
+}
+
+// What a wallet's address takes, said plainly: Agent ID wallets hold dollar
+// stablecoins on Base, never Bitcoin or coins on other networks.
+export function walletHolds(mode: Mode | string | undefined): string {
+  return mode === "test" ? "Test dollars (not real money)" : "USDC and USDT on Base";
+}
+
+// The app and model an agent did something through: "Claude Code · Claude Opus 5.5".
+export function auditVia(entry: Pick<AuditEntry, "actor" | "detail">): string | null {
+  const via = entry.actor === "agent" ? entry.detail?.["via"] : null;
+  if (!via || typeof via !== "object") return null;
+  const { app, model } = via as { app?: unknown; model?: unknown };
+  const parts: string[] = [];
+  if (typeof app === "string" && app)
+    parts.push(
+      ORIGIN_LABELS[app] ?? app.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    );
+  if (typeof model === "string" && model) parts.push(modelLabel(model));
+  return parts.length ? parts.join(" · ") : null;
+}
+
+// Where it was done from: "on vince-laptop · 81.2.3.4".
+export function auditWhere(entry: Pick<AuditEntry, "actor" | "detail">): string | null {
+  const where = entry.actor === "agent" ? entry.detail?.["where"] : null;
+  if (!where || typeof where !== "object") return null;
+  const { device, ip } = where as { device?: unknown; ip?: unknown };
+  const parts = [
+    typeof device === "string" && device ? `on ${device}` : null,
+    typeof ip === "string" && ip ? ip : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
 }
 
 export const ACTOR_LABELS: Record<AuditEntry["actor"], string> = {
@@ -367,8 +427,8 @@ export function liveAvailability(
       available: false,
       reason:
         entry?.unavailable === "not_configured"
-          ? `Live ${kind === "vm" ? "machines aren't" : `${KIND_LABELS[kind].toLowerCase()} isn't`} set up on this deployment.`
-          : `Live ${kind === "vm" ? "machines aren't" : `${KIND_LABELS[kind].toLowerCase()} isn't`} available yet.`,
+          ? `Live ${kind === "vm" ? "computers aren't" : `${KIND_LABELS[kind].toLowerCase()} isn't`} set up on this deployment.`
+          : `Live ${kind === "vm" ? "computers aren't" : `${KIND_LABELS[kind].toLowerCase()} isn't`} available yet.`,
       requirements,
       ready: false,
     };
@@ -512,6 +572,14 @@ export const shortAddress = (value: string) =>
 
 // --- Money in US dollars (wallets hold USDC and USDT, 1:1) -----------------------------
 
+// The mascot an agent has without one picked: the same as the API's choice.
+export const MASCOTS = ["orbit", "nova", "cosmo"] as const;
+export function mascotOf(key: string): (typeof MASCOTS)[number] {
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return MASCOTS[hash % MASCOTS.length]!;
+}
+
 export function formatUsd(cents: number | null | undefined): string {
   if (cents === null || cents === undefined || !Number.isFinite(cents)) return "—";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
@@ -544,6 +612,41 @@ export function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
   return m ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
+}
+
+// A model's id as people say it: "claude-opus-5-5" → "Claude Opus 5.5",
+// "gpt-6" → "GPT-6", "openai/gpt-5-codex" → "GPT-5 Codex".
+export function modelLabel(model: string): string {
+  const parts: string[] = [];
+  for (const part of model
+    .replace(/^.*\//, "")
+    .split(/[-_\s]+/)
+    .filter(Boolean)) {
+    const last = parts[parts.length - 1];
+    // "5", "5" → "5.5" (a version written with dashes), not a date.
+    if (/^\d{1,2}$/.test(part) && last && /^\d{1,2}$/.test(last))
+      parts[parts.length - 1] = `${last}.${part}`;
+    else parts.push(part);
+  }
+  return parts
+    .map((p) =>
+      p.toLowerCase() === "gpt"
+        ? "GPT"
+        : /^\d/.test(p)
+          ? p
+          : p.charAt(0).toUpperCase() + p.slice(1),
+    )
+    .join(" ")
+    .replace(/^GPT (\d)/, "GPT-$1");
+}
+
+// Free machine time left, as people say it: "4 h 32 min", "45 min", "5 h".
+export function formatTimeLeft(seconds: number): string {
+  const minutes = Math.max(0, Math.floor(seconds / 60));
+  const h = Math.floor(minutes / 60),
+    m = minutes % 60;
+  if (!h) return `${m} min`;
+  return m ? `${h} h ${m} min` : `${h} h`;
 }
 
 // --- Phone ------------------------------------------------------------------------------
@@ -671,6 +774,45 @@ export function dayLabel(iso: string, now: number = Date.now()): string {
   );
 }
 
+// The balance at the end of each of the last `days` days, oldest first, walked
+// back from today's balance through completed money in and out. Days before
+// the oldest loaded transfer are null when older ones weren't loaded.
+export function balanceHistory(
+  balance: number,
+  events: { at: string; direction: string; status: string; amount: { amount: number } | null }[],
+  { days = 30, now = Date.now(), complete = true } = {},
+): (number | null)[] {
+  const moves = events
+    .filter((e) => e.status === "completed" && e.amount && e.direction !== "none")
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const endOfToday = new Date(now);
+  endOfToday.setHours(24, 0, 0, 0);
+  const oldest = moves.length ? Date.parse(moves[moves.length - 1]!.at) : null;
+  const points: (number | null)[] = [];
+  let running = balance;
+  let next = 0;
+  for (let back = 0; back < days; back++) {
+    const end = new Date(endOfToday);
+    end.setDate(end.getDate() - back);
+    for (; next < moves.length && Date.parse(moves[next]!.at) >= end.getTime(); next++) {
+      const { direction, amount } = moves[next]!;
+      running += direction === "in" ? -amount!.amount : amount!.amount;
+    }
+    points.push(
+      !complete && oldest !== null && end.getTime() <= oldest ? null : Math.max(0, running),
+    );
+  }
+  return points.reverse();
+}
+
+// Up, down or flat over the known part of a balance history.
+export function balanceTrend(points: (number | null)[]): "up" | "down" | "flat" {
+  const known = points.filter((p): p is number => p !== null);
+  const first = known[0] ?? 0;
+  const last = known.at(-1) ?? 0;
+  return last > first ? "up" : last < first ? "down" : "flat";
+}
+
 // Items (newest first) grouped under day labels, keeping their order.
 export function groupByDay<T extends { at: string }>(
   items: T[],
@@ -716,3 +858,28 @@ export const NOT_LIVE_YET: Record<Kind, string> = {
   card: "Cards are coming soon",
   vm: "Machines are being set up",
 };
+
+// --- What kind of AI -----------------------------------------------------------
+
+// Any AI can have an Agent ID: an agent that acts with tools, or a model that
+// makes one kind of output.
+export const MODEL_KINDS: { kind: ModelKind; label: string; hint: string }[] = [
+  { kind: "agent", label: "AI agent", hint: "Acts with tools: Claude Code, Codex, Cursor…" },
+  { kind: "llm", label: "Language model", hint: "Chats and answers" },
+  { kind: "image", label: "Image model", hint: "Makes pictures" },
+  { kind: "voice", label: "Voice and audio model", hint: "Speaks, sings or makes sound" },
+  { kind: "video", label: "Video model", hint: "Makes video" },
+  { kind: "code", label: "Code model", hint: "Writes code" },
+  { kind: "text", label: "Text model", hint: "Writes text" },
+  { kind: "decision", label: "Decision model", hint: "Scores, approves or ranks" },
+  { kind: "other", label: "Other AI", hint: "Anything else" },
+];
+
+// "Image model · Google Imagen 4"; an agent with no model named says nothing.
+export function modelKindText(model: AgentModel | undefined): string | null {
+  if (!model) return null;
+  const made = [model.provider, model.name].filter(Boolean).join(" ");
+  if (model.kind === "agent" && !made) return null;
+  const label = MODEL_KINDS.find((k) => k.kind === model.kind)?.label ?? model.label;
+  return made ? `${label} · ${made}` : label;
+}

@@ -4,10 +4,8 @@ import {
   CLAIM_SESSION_HEADER,
   claimCommand,
   claimScreen,
-  claimStepIndex,
   cleanCode,
   createClaimsClient,
-  isCountryCode,
   readClaimMemory,
   resendWait,
   writeClaimMemory,
@@ -99,24 +97,32 @@ describe("claims client", () => {
     expect(headersOf(calls[1])[CLAIM_SESSION_HEADER]).toBe("twcs_session");
   });
 
-  it("posts the email, the code and the identity step to their routes", async () => {
+  it("posts the email, the code (with the terms ticked next to the email) and the terms to their routes", async () => {
     const { fn, calls } = fakeFetch(() => json({ claim: claim() }));
     const client = createClaimsClient({ baseUrl: base, fetch: fn });
     await client.sendCode("abc123abc123abc123abc123", "me@example.com");
-    await client.confirmEmail("abc123abc123abc123abc123", "123456");
-    await client.verifyIdentity("abc123abc123abc123abc123", "twcs_s", {
-      consent: true,
-      terms: "2026-10-20",
-      legalName: "Ada",
-      country: "SE",
-    });
+    await client.confirmEmail("abc123abc123abc123abc123", "123456", "2026-10-20");
+    await client.confirmEmail("abc123abc123abc123abc123", "654321");
+    await client.acceptTerms("abc123abc123abc123abc123", "twcs_s", "2026-10-20");
     expect(calls.map((c) => c.url.replace(base, ""))).toEqual([
       "/v1/claims/abc123abc123abc123abc123/email",
       "/v1/claims/abc123abc123abc123abc123/email/confirm",
-      "/v1/claims/abc123abc123abc123abc123/identity",
+      "/v1/claims/abc123abc123abc123abc123/email/confirm",
+      "/v1/claims/abc123abc123abc123abc123/terms",
     ]);
-    expect(JSON.parse(String(calls[1]!.init.body))).toEqual({ code: "123456" });
-    expect(headersOf(calls[2])[CLAIM_SESSION_HEADER]).toBe("twcs_s");
+    expect(JSON.parse(String(calls[1]!.init.body))).toEqual({
+      code: "123456",
+      terms: "2026-10-20",
+    });
+    expect(JSON.parse(String(calls[2]!.init.body))).toEqual({ code: "654321" });
+    expect(headersOf(calls[3])[CLAIM_SESSION_HEADER]).toBe("twcs_s");
+  });
+
+  it("starts a claim from the website without a name", async () => {
+    const { fn, calls } = fakeFetch(() => json({ claim: claim(), url: "u", secret: "twc_x" }));
+    const client = createClaimsClient({ baseUrl: base, fetch: fn });
+    await client.start();
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ startedBy: "person" });
   });
 
   it("turns API errors into AgentIdErrors with their code", async () => {
@@ -148,21 +154,13 @@ describe("which claim screen to show", () => {
   });
 
   it("follows the API's step once the email is confirmed here", () => {
-    expect(claimScreen(claim({ step: "identity" }))).toBe("identity");
-    expect(claimScreen(claim({ status: "verifying", step: "checking" }))).toBe("checking");
+    expect(claimScreen(claim({ step: "terms" }))).toBe("terms");
     expect(claimScreen(claim({ status: "claimed", step: "done" }))).toBe("done");
   });
 
   it("knows expired links and Agent IDs claimed in another browser", () => {
     expect(claimScreen(claim({ status: "expired" }))).toBe("expired");
     expect(claimScreen(claim({ status: "claimed" }))).toBe("claimed-elsewhere");
-  });
-
-  it("puts each screen under its step", () => {
-    expect(claimStepIndex("email")).toBe(0);
-    expect(claimStepIndex("identity")).toBe(1);
-    expect(claimStepIndex("checking")).toBe(1);
-    expect(claimStepIndex("done")).toBe(2);
   });
 });
 
@@ -171,13 +169,6 @@ describe("claim helpers", () => {
     expect(cleanCode("123 456")).toBe("123456");
     expect(cleanCode("12-34-56-78")).toBe("123456");
     expect(cleanCode("abc")).toBe("");
-  });
-
-  it("checks two-letter country codes", () => {
-    expect(isCountryCode("se")).toBe(true);
-    expect(isCountryCode(" US ")).toBe(true);
-    expect(isCountryCode("SWE")).toBe(false);
-    expect(isCountryCode("S1")).toBe(false);
   });
 
   it("counts down to the next code", () => {

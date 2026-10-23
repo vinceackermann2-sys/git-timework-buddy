@@ -1,6 +1,6 @@
-// Money in and out of a live wallet, as a bank app does it: add money (a bank
-// transfer, a card where Stripe's onramp is on, or crypto to its address on
-// Base) and withdraw to your bank account or your own wallet or exchange.
+// Money in and out of a live wallet, as a bank app does it: add money (a card,
+// one SEPA transfer of an amount you choose, or crypto to its address on Base)
+// and withdraw to your bank account or your own wallet or exchange.
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -19,20 +19,28 @@ import {
   shortAddress,
 } from "@/lib/agent-id/format";
 import { qrPath } from "@/lib/agent-id/qr";
-import { queryKeys, shouldRetry, useAccount, useRefreshAgent } from "@/lib/agent-id/queries";
+import {
+  queryKeys,
+  shouldRetry,
+  useAccount,
+  useBank,
+  useRefreshAgent,
+} from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
 import type { AddMoneyInfo, Agent, Money } from "@/lib/agent-id/types";
-import { CopyButton, ErrorState, Field, LoadingRows, Muted, Notice, Segmented } from "../ui";
+import { Chip, CopyButton, ErrorState, Field, LoadingRows, Muted, Notice, Segmented } from "../ui";
 import { BankDeposit, BankWithdraw } from "./BankMoney";
 
-type AddMethod = "bank" | "card" | "crypto";
-const ADD_METHODS: { value: AddMethod; label: string }[] = [
-  { value: "bank", label: "Bank" },
-  { value: "card", label: "Card" },
-  { value: "crypto", label: "Crypto" },
-];
+type AddMethod = "card" | "bank" | "crypto";
 
-export function AddMoney({ agent }: { agent: Agent }) {
+// `onPrivyPay`: Privy's card payment runs outside this pop-up (see PrivyCardPay).
+export function AddMoney({
+  agent,
+  onPrivyPay,
+}: {
+  agent: Agent;
+  onPrivyPay?: (appId: string) => void;
+}) {
   const info = useQuery({
     queryKey: [...queryKeys.agent(agent.id), "add-money"],
     queryFn: () => api.addMoneyInfo(agent.id),
@@ -40,16 +48,27 @@ export function AddMoney({ agent }: { agent: Agent }) {
     staleTime: 60_000,
   });
   const [chosen, setChosen] = useState<AddMethod | null>(null);
+  const bankOn = info.data?.bank?.available === true;
+  const bank = useBank(bankOn);
 
   if (info.isPending) return <LoadingRows rows={3} />;
   if (info.isError) return <ErrorState error={info.error} onRetry={() => void info.refetch()} />;
 
+  // SEPA, unless the bank check opened US dollars only.
+  const currencies = bank.data?.status === "approved" ? bank.data.currencies : null;
+  const bankLabel = currencies && !currencies.includes("eur") ? "Bank" : "SEPA";
   const available: Record<AddMethod, boolean> = {
-    bank: info.data.bank?.available === true,
     card: info.data.card.available,
+    bank: bankOn,
     crypto: true,
   };
-  const offered = ADD_METHODS.filter((m) => available[m.value]);
+  const offered = (
+    [
+      { value: "card", label: "Card" },
+      { value: "bank", label: bankLabel },
+      { value: "crypto", label: "Crypto" },
+    ] as { value: AddMethod; label: string }[]
+  ).filter((m) => available[m.value]);
   const method = chosen && offered.some((m) => m.value === chosen) ? chosen : offered[0]!.value;
   return (
     <div className="grid gap-6">
@@ -65,7 +84,13 @@ export function AddMoney({ agent }: { agent: Agent }) {
       {method === "bank" ? (
         <BankDeposit agent={agent} />
       ) : method === "card" ? (
-        <CardOnramp agent={agent} />
+        info.data.card.provider === "privy" && info.data.card.privy && onPrivyPay ? (
+          <CardPayPrivy onPay={() => onPrivyPay(info.data.card.privy!.appId)} />
+        ) : info.data.card.provider === "moonpay" ? (
+          <CardPay agent={agent} />
+        ) : (
+          <CardOnramp agent={agent} />
+        )
       ) : (
         <CryptoDeposit info={info.data} />
       )}
@@ -81,6 +106,15 @@ function CryptoDeposit({ info }: { info: AddMoneyInfo }) {
       {address ? (
         <div className="grid justify-items-center gap-4 text-center">
           <QrCode value={address} />
+          {/* What this address takes, before anything else. */}
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {(assets.length ? assets : ["USDC"]).map((asset) => (
+              <Chip key={asset} tone="ink">
+                {asset}
+              </Chip>
+            ))}
+            <Chip>on {networkName}</Chip>
+          </div>
           <p className="text-sm">
             Send {assets.length ? assets.join(" or ") : "USDC"} on{" "}
             <strong className="font-semibold">{networkName}</strong> from Coinbase, a wallet or any
@@ -101,8 +135,9 @@ function CryptoDeposit({ info }: { info: AddMoneyInfo }) {
             </div>
           </div>
           <Muted>
-            Only send on {networkName}. Money sent on another network can be lost. It shows here
-            within a few minutes.
+            Only {assets.length ? assets.join(" and ") : "USDC"} on {networkName}. Bitcoin, ETH or
+            coins sent on another network can't be received and may be lost. It shows here within a
+            few minutes.
           </Muted>
         </div>
       ) : (
@@ -125,6 +160,69 @@ export function QrCode({ value }: { value: string }) {
       <rect width={size} height={size} fill="#ffffff" />
       <path d={path} fill="#172033" />
     </svg>
+  );
+}
+
+// --- Paying by card (Privy's funding) ------------------------------------------------
+
+function CardPayPrivy({ onPay }: { onPay: () => void }) {
+  return (
+    <div className="grid gap-4 text-center">
+      <p className="text-sm">
+        Pay with a card, Apple Pay or Google Pay. The money goes straight to this wallet.
+      </p>
+      <Button size="lg" className="h-12 rounded-full" onClick={onPay}>
+        Pay with card
+      </Button>
+      <Muted>The first time, we send a code to your email to confirm it's you.</Muted>
+    </div>
+  );
+}
+
+// --- Paying by card (MoonPay) ----------------------------------------------------------
+
+// MoonPay's page in a new tab, with this wallet filled in and locked: the card,
+// Apple Pay or Google Pay there, and the USDC lands here.
+function CardPay({ agent }: { agent: Agent }) {
+  const open = useMutation({
+    mutationFn: async () => {
+      // Opened right away, so the browser doesn't block it as a pop-up.
+      const tab = window.open("about:blank", "_blank");
+      try {
+        const session = await api.buyWithCard(agent.id);
+        if (tab && "url" in session && session.url) {
+          tab.opener = null;
+          tab.location.href = session.url;
+        } else tab?.close();
+        return session;
+      } catch (error) {
+        tab?.close();
+        throw error;
+      }
+    },
+  });
+  return (
+    <div className="grid gap-4 text-center">
+      <p className="text-sm">
+        Pay with a card, Apple Pay or Google Pay. The money goes straight to this wallet.
+      </p>
+      <Button
+        size="lg"
+        className="h-12 rounded-full"
+        disabled={open.isPending}
+        onClick={() => open.mutate()}
+      >
+        {open.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
+        Pay with card
+        <ExternalLink aria-hidden="true" />
+      </Button>
+      {open.isError && <Notice tone="danger">{errorMessage(open.error)}</Notice>}
+      <Muted>
+        {open.isSuccess
+          ? "Finish paying in the new tab. The money shows here within a few minutes."
+          : "MoonPay takes the payment and asks for your ID the first time, as card rules require."}
+      </Muted>
+    </div>
   );
 }
 
@@ -169,8 +267,11 @@ function CardOnramp({ agent }: { agent: Agent }) {
     gcTime: 0,
   });
 
+  // Stripe's answer (MoonPay's goes to CardPay).
+  const stripeSession = session.data && "clientSecret" in session.data ? session.data : undefined;
+
   useEffect(() => {
-    const data = session.data;
+    const data = stripeSession;
     const publishableKey = data?.publishableKey;
     if (!data || !publishableKey) return;
     let cancelled = false;
@@ -194,17 +295,18 @@ function CardOnramp({ agent }: { agent: Agent }) {
     return () => {
       cancelled = true;
     };
-  }, [session.data]);
+  }, [stripeSession]);
 
+  const url = session.data && "url" in session.data ? session.data.url : undefined;
   const problem =
     error ??
     (session.isError
       ? errorMessage(session.error)
-      : session.data && !session.data.publishableKey && !session.data.url
+      : session.data && !stripeSession?.publishableKey && !url
         ? "Couldn't open the card form."
         : null);
   // Without an embed, Stripe's own page, in a new tab.
-  const hosted = session.data && !session.data.publishableKey ? session.data.url : undefined;
+  const hosted = session.data && !stripeSession?.publishableKey ? url : undefined;
   return (
     <div className="grid gap-4">
       {problem && <Notice tone="danger">{problem}</Notice>}
@@ -227,27 +329,29 @@ function CardOnramp({ agent }: { agent: Agent }) {
   );
 }
 
-// A big dollar amount, as payment apps ask for it: the field grows with the
-// number so the dollar sign stays beside it.
+// A big amount, as payment apps ask for it: the field grows with the number
+// so the currency sign stays beside it.
 export function AmountField({
   id,
   value,
   onChange,
   autoFocus = false,
+  currency = "usd",
 }: {
   id: string;
   value: string;
   onChange: (value: string) => void;
   autoFocus?: boolean;
+  currency?: "usd" | "eur";
 }) {
   const width = Math.min(Math.max(value.length, 1), 10);
   return (
     <>
       <label htmlFor={id} className="sr-only">
-        Amount in dollars
+        {currency === "eur" ? "Amount in euros" : "Amount in dollars"}
       </label>
       <div className="flex items-baseline justify-center text-5xl font-semibold tracking-tight">
-        <span className="text-[var(--muted-foreground)]">$</span>
+        <span className="text-[var(--muted-foreground)]">{currency === "eur" ? "€" : "$"}</span>
         <input
           id={id}
           inputMode="decimal"

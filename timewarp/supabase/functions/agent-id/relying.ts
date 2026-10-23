@@ -11,6 +11,7 @@ import type { AgentRow, Ctx } from './context.ts';
 import { verifyJwt } from './passport.ts';
 import { audit, principalOf, verificationOf } from './shared.ts';
 import { allowedSignersLine } from './ssh.ts';
+import { passportModel } from './origin.ts';
 
 type Level = 'kyb' | 'kyc' | 'none';
 // Whether an owner's verification meets a policy's `require`.
@@ -47,7 +48,7 @@ async function checkPassport(ctx: Ctx, token: string, audience: string, rp: Reco
     valid: agent.status === 'active',
     allowed: policy.allowed,
     ...(policy.reasons.length ? { reasons: policy.reasons } : {}),
-    agent: { id: agent.id, name: agent.name, runtime: agent.runtime, status: agent.status, principal: principalOf(ctx, agent), organizationId: policy.verification.organizationId },
+    agent: { id: agent.id, name: agent.name, runtime: agent.runtime, status: agent.status, principal: principalOf(ctx, agent), organizationId: policy.verification.organizationId, model: passportModel(agent) },
     owner: { ref: claims.owner?.ref, verified: policy.verification.verified, level: policy.verification.level, ...(policy.verification.business ? { business: policy.verification.business.legalName } : {}) },
     passport: { id: claims.jti, issuedAt: new Date(claims.iat * 1000).toISOString(), expiresAt: new Date(claims.exp * 1000).toISOString() },
   };

@@ -1,15 +1,18 @@
 // Who is responsible for an agent. A person verifies their identity (KYC)
-// with Stripe Identity: a document and a matching selfie, checked by Stripe;
+// once: with Bridge where it moves money to and from banks (bank.ts), else
+// with Stripe Identity. Either checks a document and a matching selfie;
 // Agent ID keeps only the outcome, the name and the country. A business
-// (KYB) is reviewed by Timewarp from its registration details. Without a
-// provider, people are reviewed by hand too. 'test' verifies at once and is
+// (KYB) is checked by Bridge too where it's on (its registration, owners and
+// documents), else reviewed by Timewarp from its registration details. Without
+// a provider, people are reviewed by hand too. 'test' verifies at once and is
 // for development deployments only.
-import { checked, CORS, fail, str } from './util.ts';
+import { checked, CORS, EMAIL, fail, str } from './util.ts';
 import type { Owner } from './app.ts';
 import type { Ctx } from './context.ts';
 import { audit, membership, personOf } from './shared.ts';
 import { stripe } from './providers/stripe.ts';
 import { completeClaims } from './claims.ts';
+import { startBridgeBusinessCheck, startBridgeCheck } from './bank.ts';
 import { BUCKET } from './files.ts';
 
 const COUNTRY = /^[A-Z]{2}$/;
@@ -18,8 +21,8 @@ const country = (value: unknown, field = 'country') => { const code = str(value,
 export function personView(row: any) {
   return row ? { status: row.status, provider: row.provider, legalName: row.legal_name, country: row.country, verifiedAt: row.verified_at, lastError: row.last_error, consentAt: row.consent_at } : { status: 'unverified' };
 }
-export function businessView(row: any) {
-  return row ? { status: row.status, legalName: row.legal_name, registrationNumber: row.registration_number, vatNumber: row.vat_number || null, country: row.country, website: row.website, representativeRole: row.representative_role, document: row.document_name ? { name: row.document_name } : null, checks: row.checks || {}, verifiedAt: row.verified_at, note: row.review_note } : { status: 'unverified' };
+export function businessView(row: any, link?: string | null) {
+  return row ? { status: row.status, provider: row.provider || 'manual', ...(link ? { link } : {}), legalName: row.legal_name, registrationNumber: row.registration_number, vatNumber: row.vat_number || null, country: row.country, website: row.website, representativeRole: row.representative_role, document: row.document_name ? { name: row.document_name } : null, checks: row.checks || {}, verifiedAt: row.verified_at, note: row.review_note } : { status: 'unverified' };
 }
 
 async function savePerson(ctx: Ctx, userId: string, fields: Record<string, unknown>) {
@@ -31,6 +34,11 @@ export async function startVerification(ctx: Ctx, owner: Owner, input: any, opti
   if (input.kind !== 'person') throw fail(400, 'invalid', 'kind is person or business.');
   const current = await personOf(ctx, owner.userId);
   if (current?.status === 'verified') return { person: personView(current) };
+  // Bridge's own page asks for its terms and consent, and checks the ID and selfie.
+  if (ctx.config.kycProvider === 'bridge') {
+    const { link } = await startBridgeCheck(ctx, owner);
+    return { person: personView(await personOf(ctx, owner.userId)), ...(link ? { url: link } : {}) };
+  }
   // The check involves biometric data: explicit consent comes first, and is recorded.
   if (input.consent !== true) throw fail(400, 'consent_required', 'Agree to the identity check (your ID document and a selfie) first.');
   await savePerson(ctx, owner.userId, { consent_version: ctx.config.termsVersion, consent_at: new Date(ctx.now()).toISOString() });
@@ -75,6 +83,21 @@ async function submitBusiness(ctx: Ctx, owner: Owner, input: any) {
   if (vatNumber && !/^[A-Z0-9]{4,20}$/.test(vatNumber)) throw fail(400, 'invalid', 'vatNumber must be a VAT number like SE556000000001.');
   const checks: Record<string, unknown> = { ...(existing?.checks || {}) };
   if (vatNumber) checks.vat = await viesCheck(ctx, vatNumber, code);
+  if (ctx.config.kybProvider === 'bridge') {
+    // Bridge's page asks for the registration, the owners and the documents.
+    const legalName = str(input.legalName, 200, 'legalName', { required: true });
+    const email = input.email ? str(input.email, 254, 'email') : null;
+    if (email && !EMAIL.test(email)) throw fail(400, 'invalid', 'Enter a valid email address for the business.');
+    const { row: check, link } = await startBridgeBusinessCheck(ctx, owner, { workspaceId, legalName, email });
+    const row = checked(await ctx.admin.from('agent_id_businesses').upsert({
+      workspace_id: workspaceId, status: 'pending', provider: 'bridge', provider_ref: check.customer_ref || check.kyc_link_ref,
+      legal_name: legalName, registration_number: input.registrationNumber ? str(input.registrationNumber, 100, 'registrationNumber') : null,
+      vat_number: vatNumber, checks, country: code, website, submitted_by: owner.userId, representative_role: representativeRole,
+      attested_at: new Date(ctx.now()).toISOString(), review_note: null, verified_at: null, updated_at: new Date(ctx.now()).toISOString(),
+    }, { onConflict: 'workspace_id' }).select('*').single());
+    await audit(ctx, owner.userId, null, 'owner', 'verification.business.start', { organization: workspaceId, provider: 'bridge' });
+    return { business: businessView(row, link), ...(link ? { url: link } : {}) };
+  }
   const row = checked(await ctx.admin.from('agent_id_businesses').upsert({
     workspace_id: workspaceId, status: verified ? 'verified' : 'pending', provider: ctx.config.kybProvider,
     legal_name: str(input.legalName, 200, 'legalName', { required: true }),

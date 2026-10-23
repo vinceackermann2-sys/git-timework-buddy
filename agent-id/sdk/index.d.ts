@@ -34,7 +34,7 @@ export interface PassportClaims {
   exp: number;
   /** Passport id. */
   jti: string;
-  agent: { name: string; handle: string; runtime: string; principal: string };
+  agent: { name: string; handle: string; runtime: string; principal: string; model?: AgentModel };
   owner: {
     /** Stable for your audience, different for every other audience. */
     ref: string;
@@ -50,8 +50,15 @@ export interface PassportClaims {
   [claim: string]: unknown;
 }
 
+/** What kind of AI the agent is, and its maker and model, as its owner says. */
+export interface AgentModel {
+  kind: 'agent' | 'llm' | 'image' | 'voice' | 'video' | 'code' | 'text' | 'decision' | 'other';
+  provider?: string;
+  name?: string;
+}
+
 export interface VerifiedAgent {
-  agent: { id: string; name: string; handle: string; runtime: string; principal: string };
+  agent: { id: string; name: string; handle: string; runtime: string; principal: string; model?: AgentModel };
   owner: PassportClaims['owner'];
   org: PassportClaims['org'];
   claims: PassportClaims;

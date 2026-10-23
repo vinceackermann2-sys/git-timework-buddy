@@ -58,11 +58,11 @@
     <h2 id="verification">3. Verification and traceability</h2>
     <p>Every agent must be traceable to the person or business responsible for it.</p>
     <ul>
-      <li><strong>People (KYC).</strong> You verify your identity with our partner Stripe, which checks your ID document and a selfie. We ask for your explicit consent before the check starts. We receive the result, your name and your country.</li>
-      <li><strong>Businesses (KYB).</strong> An owner or admin of an organisation, who has verified their own identity first, gives the business's legal name, registration number, country and website, uploads a registration document, and confirms they're authorised to act for it. For EU businesses we check the VAT number against the EU's VAT register (VIES). We review every business before we verify it.</li>
+      <li><strong>People (KYC).</strong> You verify your identity once, with our partner Bridge (a Stripe company) where we offer bank transfers, otherwise with Stripe. Either checks your ID document and a selfie, and asks for your consent before the check starts. We receive the result, your name and your country. The same check lets you move money out of wallets and use bank transfers.</li>
+      <li><strong>Businesses (KYB).</strong> An owner or admin of an organisation, who has verified their own identity first, gives the business's legal name and country and confirms they're authorised to act for it. Where we offer bank transfers, Bridge then checks the business's registration, owners and documents. Otherwise the business also gives its registration number and uploads a registration document, and we review it. For EU businesses we check the VAT number against the EU's VAT register (VIES).</li>
     </ul>
     <p><strong>Getting an Agent ID from a link.</strong> An agent can ask for its Agent ID with a link it shows you. When you open the link, confirm your email and verify your identity, you create a Timewarp account (or use the one you have) and become responsible for that agent. Only finish a link that you or your own agent started, and check that the code on the page matches the one your agent shows.</p>
-    <p>Verification is required before live wallets and some other features, and we may require it for every agent. Give accurate information. We may refuse or withdraw verification, for example if information turns out to be false.</p>
+    <p>Verification is required before money leaves a live wallet, before cards and some other features, and we may require it for every agent. Give accurate information. We may refuse or withdraw verification, for example if information turns out to be false.</p>
     <p>When your agent proves who it is to another service, its passport tells that service whether its owner is verified and, for a business, the business's name. It never contains a person's name. We keep the link between each agent and its owner, and a log of what the agent did. We disclose who owns an agent only when the law requires it, such as on a court order or a request from an authority, or when it's necessary to protect people from serious harm.</p>
 
     <h2 id="mail-phone">4. Mail and phone numbers</h2>
@@ -74,7 +74,7 @@
     </ul>
 
     <h2 id="wallets">5. Wallets</h2>
-    <p>You add money by sending USDC or USDT on the Base network to your agent's wallet address. Where we offer it, you can also buy USDC with a card through Stripe, or send a bank transfer through Bridge, a Stripe company. Each handles its part under its own terms. You can withdraw to any address you control, or to your own bank account through Bridge, and only from the signed-in website.</p>
+    <p>You add money by sending USDC or USDT on the Base network to your agent's wallet address. Where we offer it, you can also buy USDC with a card through a provider such as Stripe or MoonPay, or send a SEPA bank transfer of the amount you choose through Bridge, a Stripe company. Each handles its part under its own terms, and a card provider may check your identity itself. You can withdraw to any address you control, or to your own bank account through Bridge, and only from the signed-in website.</p>
     <ul>
       <li>To use bank transfers, you agree to Bridge's terms and Bridge verifies you itself. Bridge converts between your currency and USDC at its rates and fees, which it shows or which we show before you confirm where we can. Bank transfers usually take one or two business days, and a bank may return a payment.</li>
       <li>Only withdraw to bank accounts in your own name.</li>
@@ -84,7 +84,7 @@
       <li>Stablecoins aren't bank deposits or electronic money. They aren't covered by a deposit guarantee scheme and earn no interest. A stablecoin's value can differ from one US dollar, and its issuer or the blockchain can have problems that we don't control.</li>
       <li>Blockchain transfers can't be reversed. Check addresses before your agents use them. We aren't responsible for money sent to a wrong address.</li>
       <li>Your agents can only send within the limits you set, and above the approval amount only when you approve. We may refuse, delay or block a transfer, or freeze a wallet, when the law requires it, for example to comply with sanctions, or if we suspect fraud or misuse. Where the law requires, we report it to the authorities.</li>
-      <li>Live wallets are available only to verified owners and only where we can lawfully offer them. Take money out of a wallet before you remove it or revoke its agent.</li>
+      <li>A live wallet can receive money as soon as your agent has it. Sending and withdrawing need you to verify your identity once. Live wallets are available only where we can lawfully offer them. Take money out of a wallet before you remove it or revoke its agent.</li>
     </ul>
 
     <h2 id="cards">6. Virtual cards</h2>
@@ -111,7 +111,7 @@
     <p>You may use the free developer kit to check Agent ID passports in your own API, MCP server or code repository. Use what a passport tells you only to decide whether to let the agent in and to keep your service secure. Don't try to identify the people behind pseudonymous owner references.</p>
 
     <h2 id="fees">10. Fees</h2>
-    <p>Machine time is paid in Timewarp credits, as shown in the app. Live phone numbers need a paid plan. Network fees for wallet transfers are covered by us where we say so; otherwise they're taken from the transfer. We'll tell you before we introduce or change fees, as our Terms of Service describe.</p>
+    <p>Agent ID has no subscription. Mail and wallets are free. Each account gets free machine time, as shown on the Agent ID pricing page, and machine time beyond it is paid in Timewarp credits. Phone numbers will be paid in credits when they open. Virtual cards will be free. Network fees for wallet transfers are covered by us where we say so; otherwise they're taken from the transfer. We'll tell you before we introduce or change fees, as our Terms of Service describe.</p>
 
     <h2 id="suspension">11. Suspension and ending</h2>
     <p>We may pause or revoke an agent or remove a resource if the law requires it, if it breaks these terms, or if it puts our service, our partners or others at risk. We'll tell you why unless the law or an investigation prevents us. You can revoke an agent at any time; revoking is final. When an agent is revoked, its keys stop working and its resources are released. We keep records as our Privacy Policy describes.</p>

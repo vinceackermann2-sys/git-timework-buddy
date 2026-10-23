@@ -21,7 +21,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +49,8 @@ import {
   initials,
   statusLabel,
   type Tone,
+  MASCOTS,
+  mascotOf,
 } from "@/lib/agent-id/format";
 import type { Kind, Mode } from "@/lib/agent-id/types";
 import { useTestMode } from "@/lib/agent-id/queries";
@@ -326,11 +334,24 @@ export function Row({ children, className }: { children: ReactNode; className?: 
   );
 }
 
-// The one empty state: a short line and, when there is one, the action.
-export function Empty({ children, action }: { children: ReactNode; action?: ReactNode }) {
+// The one empty state: an icon, a short line and, when there is one, the action.
+export function Empty({
+  children,
+  action,
+  icon: Icon,
+}: {
+  children: ReactNode;
+  action?: ReactNode;
+  icon?: LucideIcon | undefined;
+}) {
   return (
-    <div className="flex flex-col items-center gap-3 px-5 py-10 text-center">
-      <p className="text-sm text-[var(--muted-foreground)]">{children}</p>
+    <div className="flex flex-col items-center gap-3 px-5 py-12 text-center">
+      {Icon && (
+        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--accent)] text-[var(--aid-ink)]">
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </span>
+      )}
+      <p className="max-w-sm text-sm text-[var(--muted-foreground)]">{children}</p>
       {action}
     </div>
   );
@@ -600,6 +621,41 @@ export function toastError(error: unknown, title?: string) {
 
 // --- Identity ------------------------------------------------------------------------
 
+const MASCOT_SIZES = {
+  sm: "h-8 w-8",
+  md: "h-11 w-11",
+  lg: "h-16 w-16",
+  xl: "h-28 w-28",
+} as const;
+
+// An agent's face: its Timewarp mascot (Orbit, Nova or Cosmo). People and
+// contacts keep their initials (Avatar).
+export function AgentAvatar({
+  mascot,
+  id,
+  size = "md",
+  className,
+}: {
+  mascot?: string | null | undefined;
+  // Without a mascot, the one that follows from the agent's id.
+  id?: string | undefined;
+  size?: keyof typeof MASCOT_SIZES;
+  className?: string;
+}) {
+  const name =
+    mascot && (MASCOTS as readonly string[]).includes(mascot) ? mascot : mascotOf(id ?? "agent");
+  const pixels = size === "lg" || size === "xl" ? 256 : 128;
+  return (
+    <img
+      src={`/agent-id/mascots/${name}-${pixels}.png`}
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      className={cn("shrink-0 select-none object-contain", MASCOT_SIZES[size], className)}
+    />
+  );
+}
+
 const AVATAR_SIZES = {
   sm: "h-8 w-8 text-xs",
   md: "h-10 w-10 text-sm",
@@ -635,8 +691,9 @@ export function Avatar({
   );
 }
 
-// A panel that slides in from the side for one task (send money, add money…).
-export function SidePanel({
+// A pop-up in the middle of the screen for one task (add money, send,
+// verify…): the page stays where it was behind it.
+export function Popup({
   open,
   onOpenChange,
   trigger,
@@ -645,23 +702,22 @@ export function SidePanel({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  trigger: ReactNode;
+  trigger?: ReactNode;
   title: string;
   children: ReactNode;
 }) {
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetTrigger asChild>{trigger}</SheetTrigger>
-      <SheetContent
-        side="right"
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
+      <DialogContent
         aria-describedby={undefined}
-        className="flex w-full flex-col gap-0 overflow-y-auto bg-[var(--background)] p-0 sm:max-w-md"
+        className="flex max-h-[calc(100svh-2rem)] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-2xl bg-[var(--background)] p-0 sm:max-w-md"
       >
-        <SheetHeader className="border-b border-[var(--border)] px-6 py-4 text-left">
-          <SheetTitle className="text-lg">{title}</SheetTitle>
-        </SheetHeader>
-        <div className="flex-1 p-6">{children}</div>
-      </SheetContent>
-    </Sheet>
+        <DialogHeader className="border-b border-[var(--border)] px-6 py-4 text-left">
+          <DialogTitle className="text-lg">{title}</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto p-6">{children}</div>
+      </DialogContent>
+    </Dialog>
   );
 }

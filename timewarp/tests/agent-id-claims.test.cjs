@@ -66,7 +66,7 @@ test("an agent asks for an Agent ID; a person confirms their email and verifies,
   assert.equal((await local.call("POST", `/v1/claims/${code}/email/confirm`, { body: { code: wrong } })).body.error.code, "wrong_code");
   const confirmed = await ok("POST", `/v1/claims/${code}/email/confirm`, { body: { code: sent.devCode } });
   assert.match(confirmed.session, /^twcs_/);
-  assert.equal(confirmed.claim.step, "identity");
+  assert.equal(confirmed.claim.step, "terms", "The terms weren't ticked with the code, so they come next.");
   assert.equal(confirmed.claim.email, "grace@example.com");
   // The confirmed email made an account, and the browser is signed in to it.
   const account = await ok("GET", "/v1/account", { token: confirmed.auth.access_token });
@@ -77,15 +77,15 @@ test("an agent asks for an Agent ID; a person confirms their email and verifies,
   assert.equal((await local.call("POST", `/v1/claims/${code}/email/confirm`, { body: { code: sent.devCode } })).body.error.code, "invalid");
   assert.equal((await local.call("GET", `/v1/claims/${code}`, { headers: { "timewarp-claim-session": "twcs_guess" } })).body.error.code, "claim_session");
 
-  // Terms and consent come first; then the identity check.
+  // The terms, and the agent is made. No identity check here: that comes the
+  // first time money leaves a wallet.
   const headers = { "timewarp-claim-session": confirmed.session };
-  assert.equal((await local.call("POST", `/v1/claims/${code}/identity`, { headers, body: { consent: true } })).body.error.code, "terms_required");
+  assert.equal((await local.call("POST", `/v1/claims/${code}/terms`, { headers, body: {} })).body.error.code, "terms_required");
   const { legal } = await config();
-  assert.equal((await local.call("POST", `/v1/claims/${code}/identity`, { headers, body: { terms: legal.termsVersion } })).body.error.code, "consent_required");
-  const verified = await ok("POST", `/v1/claims/${code}/identity`, { headers, body: { terms: legal.termsVersion, consent: true, legalName: "Grace Hopper", country: "US" } });
-  assert.equal(verified.claim.step, "done");
-  assert.equal(verified.claim.status, "claimed");
-  assert.equal(verified.claim.agent.name, "Travel Planner");
+  const finished = await ok("POST", `/v1/claims/${code}/terms`, { headers, body: { terms: legal.termsVersion } });
+  assert.equal(finished.claim.step, "done");
+  assert.equal(finished.claim.status, "claimed");
+  assert.equal(finished.claim.agent.name, "Travel Planner");
 
   // The agent collects its key once.
   const collected = await ok("POST", "/v1/claims/collect", { body: { secret: started.secret } });
@@ -94,14 +94,14 @@ test("an agent asks for an Agent ID; a person confirms their email and verifies,
   const me = await ok("GET", "/v1/me", { token: collected.key });
   assert.equal(me.agent.name, "Travel Planner");
   assert.equal((await local.call("POST", "/v1/claims/collect", { body: { secret: started.secret } })).body.error.code, "already_collected");
-  // The person owns it, verified, with the app it asked from.
+  // The person owns it, with the app it asked from; not verified yet.
   const mine = await ok("GET", "/v1/agents", { token: confirmed.auth.access_token });
   assert.deepEqual(mine.agents.map(a => [a.name, a.apps.map(x => x.app)]), [["Travel Planner", ["claude-code"]]]);
   const after = await ok("GET", "/v1/account", { token: confirmed.auth.access_token });
-  assert.deepEqual([after.person.status, after.person.legalName, after.terms.accepted], ["verified", "Grace Hopper", true]);
+  assert.deepEqual([after.person.status, after.terms.accepted], ["unverified", true]);
   assert.equal((await local.call("POST", `/v1/claims/${code}/email`, { body: { email: "x@example.com" } })).body.error.code, "already_claimed");
   const log = (await ok("GET", "/v1/audit", { token: confirmed.auth.access_token })).entries.map(e => e.action);
-  for (const action of ["account.create_by_claim", "terms.accept", "verification.person.consent", "agent.create", "agent_key.create"]) assert.ok(log.includes(action), action);
+  for (const action of ["account.create_by_claim", "terms.accept", "agent.create", "agent_key.create"]) assert.ok(log.includes(action), action);
 });
 
 test("claims: an existing verified account finishes at once; links expire; wrong codes and floods are stopped", async t => {
@@ -135,31 +135,17 @@ test("claims: an existing verified account finishes at once; links expire; wrong
   assert.equal((await local.call("POST", "/v1/claims", { headers: { "x-forwarded-for": "198.51.100.7" }, body: { name: "Elsewhere" } })).status, 200);
 });
 
-test("claims with Stripe Identity: the check returns to the claim page, and Stripe's signed answer finishes the claim", async t => {
-  const { local, net, ok, config } = await setup(t, { AGENT_ID_KYC: "stripe_identity", STRIPE_SECRET_KEY: "sk_test_identity", AGENT_ID_STRIPE_WEBHOOK_SECRET: "whsec_stripe", AGENT_ID_SITE_URL: "https://timewarpdev.com" });
-  const started = await ok("POST", "/v1/claims", { body: { name: "Bookkeeper", app: "cursor" } });
+test("from the website: no agent name asked, the terms ticked with the email, and the agent is ready at once, named after its owner", async t => {
+  const { local, ok, config } = await setup(t, { AGENT_ID_AUTO_GIVE: "mail,wallet" });
+  const started = await ok("POST", "/v1/claims", { body: { startedBy: "person" } });
   const code = started.claim.code;
-  const sent = await ok("POST", `/v1/claims/${code}/email`, { body: { email: "lin@example.com" } });
-  const confirmed = await ok("POST", `/v1/claims/${code}/email/confirm`, { body: { code: sent.devCode } });
-  net.on("POST", /\/v1\/identity\/verification_sessions$/, () => ({ id: "vs_claim", url: "https://verify.stripe.com/start/vs_claim" }));
-  const headers = { "timewarp-claim-session": confirmed.session };
-  const result = await ok("POST", `/v1/claims/${code}/identity`, { headers, body: { terms: (await config()).legal.termsVersion, consent: true } });
-  assert.equal(result.url, "https://verify.stripe.com/start/vs_claim");
-  assert.equal(result.claim.step, "checking");
-  const form = Object.fromEntries(new URLSearchParams(net.find("POST", /verification_sessions$/)[0].body));
-  assert.equal(form.return_url, `https://timewarpdev.com/agent-id/claim/${code}?checked=1`);
-  assert.equal(form["provided_details[email]"], "lin@example.com");
-  // The check takes a while: the claim stays open for a week meanwhile.
-  local.setClock(() => Date.now() + 2 * 3_600_000);
-  assert.equal((await ok("POST", "/v1/claims/collect", { body: { secret: started.secret } })).status, "verifying");
-  local.setClock(null);
-  net.on("GET", /verification_sessions\/vs_claim\?expand\[\]=verified_outputs$/, () => ({ id: "vs_claim", verified_outputs: { first_name: "Lin", last_name: "Wu", address: { country: "SE" } } }));
-  const userId = (await ok("GET", "/v1/account", { token: confirmed.auth.access_token })).user.id;
-  const event = JSON.stringify({ type: "identity.verification_session.verified", data: { object: { id: "vs_claim", metadata: { agent_id_user: userId } } } });
-  const timestamp = Math.floor(Date.now() / 1000);
-  assert.equal((await local.call("POST", "/webhooks/stripe", { raw: event, headers: { "content-type": "application/json", "stripe-signature": `t=${timestamp},v1=${hmac("whsec_stripe", `${timestamp}.${event}`, "hex")}` } })).status, 200);
-  const done = (await ok("GET", `/v1/claims/${code}`, { headers })).claim;
-  assert.deepEqual([done.step, done.agent.name, done.person.legalName], ["done", "Bookkeeper", "Lin Wu"]);
+  const sent = await ok("POST", `/v1/claims/${code}/email`, { body: { email: "lin.wu@example.com" } });
+  const confirmed = await ok("POST", `/v1/claims/${code}/email/confirm`, { body: { code: sent.devCode, terms: (await config()).legal.termsVersion } });
+  assert.deepEqual([confirmed.claim.step, confirmed.claim.status, confirmed.claim.agent.name], ["done", "claimed", "Lin's agent"]);
+  await local.settle();
+  const shown = (await ok("GET", `/v1/claims/${code}`, { headers: { "timewarp-claim-session": confirmed.session } })).claim;
+  assert.ok(shown.agent.resources.mail && shown.agent.resources.wallet, "Mail and a wallet, ready to use.");
+  assert.equal((await ok("GET", "/v1/account", { token: confirmed.auth.access_token })).person.status, "unverified", "Nobody is asked for an ID to get started.");
   assert.equal((await ok("POST", "/v1/claims/collect", { body: { secret: started.secret } })).status, "claimed");
 });
 
@@ -186,7 +172,8 @@ test("one Agent ID, many apps: each app it connects from or is set up in is list
 });
 
 test("wallets: owners add money (address or card) and withdraw, without using up their agent's limits", async t => {
-  const { local, net, ok, agent, verify } = await setup(t, { AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "privy-app", PRIVY_APP_SECRET: "privy-secret" });
+  // Cards through Stripe's onramp here (Privy's funding is covered in agent-id-bank).
+  const { local, net, ok, agent, verify } = await setup(t, { AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "privy-app", PRIVY_APP_SECRET: "privy-secret", AGENT_ID_CARD_PROVIDER: "stripe" });
   const alice = await local.user();
   const bot = await agent(alice, "Treasurer");
   await verify(alice);
