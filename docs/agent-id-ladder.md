@@ -357,14 +357,22 @@ identity that leads back to the person or business who answers for it.**
 | `/agent-id/for/apis` | Comparison | Priya, product aware | A4 |
 | `/agent-id/for/claude-and-codex` | Mini sales letter | Leo, solution aware | A5 |
 
-**The look (2026-10-23).** Same branding (lilac and ink, the gradient, the
-mascots, Segoe), laid out like the sites the owner likes: lovable.dev,
-claude.ai and Strawberry. A centered hero on a soft dotted, glowing backdrop.
-One rounded box to start in: an email, like their prompt box; it sends the
-code at once. The product below, in an app window, with the mascots peeking
-over its top edge. Then a few airy sections: the moment, tiles (a product
-picture on a soft stage, a title and one line), answers, and the close with
-the same box.
+**The look (2026-10-23): Timewarp's own DNA.** The public pages are built from
+the main Timewarp website (`timewarp-site/dist`), not from a template:
+- the same tokens, nav, footer and dark ink button, light only;
+- Quadrant Text headlines;
+- the desktop app's lilac frame, where Cosmo does a real task under its own
+  ID, animated like the main site's hero (typing, steps ticking off, the
+  owner's cursor approving a payment);
+- "Others against Agent ID", with the animated mascots (`/assets/*.webp`)
+  holding Agent ID's own things drawn in the palette: an ID card, a
+  passport, signed work, a traced picture;
+- store-artwork cards with real product moments;
+- the app's composer as the place to start (it takes the email).
+
+Styles live in `src/components/agent-id/site/site.css`, scoped to `.tw`.
+lovable.dev, claude.ai, Strawberry and Grok Bot were looked at for what they
+share (the brand's own character and live product moments), not copied.
 
 **Copy: Deus's Copywriting Formula on every page.** Make them feel
 understood, not sold to:
