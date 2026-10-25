@@ -770,7 +770,7 @@ a { color: var(--accent-strong); }
 .tw-window[data-pane="full"] .tw-pane { flex: 1; }
 /* Tabs sit on a strip; the selected tab joins the toolbar below, as in Chrome. */
 .tw-pane-top { display: flex; align-items: flex-end; height: 34px; padding: 0 4px 0 2px; flex: none; background: color-mix(in srgb, var(--surface) 55%, var(--card)); box-shadow: inset 0 -0.67px 0 var(--border); }
-.tw-pane-tabs { flex: 1; min-width: 0; display: flex; align-items: flex-end; height: 100%; padding: 0 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.tw-pane-tabs { flex: 0 1 auto; min-width: 0; display: flex; align-items: flex-end; height: 100%; padding: 0 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .tw-pane-tab { position: relative; display: flex; align-items: center; gap: 4px; width: 160px; min-width: 72px; flex: 0 1 160px; height: 32px; padding: 0 28px 2px 10px; border-radius: 10px 10px 0 0; cursor: pointer; color: var(--muted); font-size: 12px; line-height: 16px; }
 .tw-pane-tab:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 .tw-pane-tab[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 -1px 2px rgb(0 0 0 / 0.04); z-index: 1; }
@@ -781,14 +781,14 @@ a { color: var(--accent-strong); }
 .tw-pane-tab span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tw-pane-tab button { position: absolute; right: 8px; top: 6px; width: 20px; height: 20px; border: none; background: none; border-radius: 6px; display: grid; place-items: center; color: var(--muted); cursor: pointer; }
 .tw-pane-tab button:hover { background: var(--hover); color: var(--ink); }
-.tw-pane-controls { display: flex; align-items: center; gap: 4px; height: 100%; padding-bottom: 4px; flex: none; }
+.tw-pane-add { width: 28px; height: 28px; align-self: flex-start; margin: 2px 4px 0 0; border-radius: 8px; color: var(--muted); }
+.tw-pane-controls { display: flex; align-items: center; gap: 4px; height: 100%; margin-left: auto; padding-bottom: 4px; flex: none; }
 .tw-pane-controls .tw-icon-button { width: 28px; height: 28px; border-radius: 8px; color: var(--muted); }
-.tw-pane-controls .tw-icon-button.add { align-self: flex-start; margin-top: 2px; }
 .tw-pane-controls .tw-icon-button:hover { color: var(--ink); }
 .tw-pane-toolbar { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 4px; flex: none; background: var(--surface); border-bottom: 0.67px solid var(--border); }
 .tw-pane-toolbar > .tw-icon-button, .tw-pane-toolbar .tw-anchor > .tw-icon-button { width: 32px; height: 32px; border-radius: 8px; color: var(--muted); }
 .tw-pane-toolbar .tw-icon-button:disabled { opacity: 0.45; }
-.tw-address { flex: 1; min-width: 0; height: 28px; padding: 4px 10px; border: none; background: transparent; text-align: center; outline: none; font-size: 14px; color: var(--ink); border-radius: 8px; }
+.tw-address { flex: 1; min-width: 0; height: 28px; padding: 4px 10px; border: none; background: var(--selected); text-align: center; outline: none; font-size: 14px; color: var(--ink); border-radius: 8px; }
 .tw-address:focus { background: var(--card); text-align: left; box-shadow: inset 0 0 0 0.67px var(--border); }
 .tw-address::placeholder { color: var(--muted); }
 .tw-pane-agent { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 4px; border-radius: 999px; background: var(--user-bubble); color: var(--accent-ink); font-size: 12px; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; flex: none; }
@@ -1174,8 +1174,7 @@ a.tw-agent-automation:hover { background: color-mix(in srgb, var(--ink) 3%, var(
 .tw-pane-toolbar > [aria-label="Browser home"] { margin-right: 2px; }
 .tw-pane-toolbar > .tw-address { margin: 0 2px; }
 .tw-pane-controls { gap: 0; }
-.tw-pane-controls .tw-icon-button.add { margin-right: 4px; }
-.tw-pane-controls .tw-icon-button:not(.add) { position: relative; top: 5px; }
+.tw-pane-controls .tw-icon-button { position: relative; top: 5px; }
 /* Agent picker rows, as before: 36px with the mascot uncropped; New Agent after a divider */
 .tw-agent-menu .tw-menu-item { min-height: 36px; padding: 8px; gap: 12px; }
 .tw-agent-menu .tw-menu-item:last-child { padding: 8px 12px; }
