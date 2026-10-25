@@ -258,6 +258,8 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
             </div>
           ))}
         </div>
+        {/* Right after the newest tab, as in Chrome. */}
+        <button type="button" className="tw-icon-button tw-pane-add" aria-label="Add browser tab" title="New tab" onClick={() => void run("browser.newTab")}><Plus size={12} strokeWidth={2} /></button>
         <ContextMenu at={menuTab ? tabMenu : null} onClose={closeTabMenu}>
           {menuTab ? (
             <>
@@ -268,7 +270,6 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
           ) : null}
         </ContextMenu>
         <div className="tw-pane-controls">
-          <button type="button" className="tw-icon-button add" aria-label="Add browser tab" title="New tab" onClick={() => void run("browser.newTab")}><Plus size={12} strokeWidth={2} /></button>
           {narrow ? null : <button type="button" className="tw-icon-button" aria-label={expanded ? "Restore secondary pane" : "Expand secondary pane"} title={expanded ? "Restore" : "Expand"} onClick={onExpand}>{expanded ? <Minimize2 size={16} strokeWidth={1.7} /> : <Maximize2 size={16} strokeWidth={1.7} />}</button>}
           <button type="button" className="tw-icon-button" aria-label="Hide pane" title="Hide pane" onClick={onClose}><PanelRight size={16} strokeWidth={1.7} /></button>
         </div>
