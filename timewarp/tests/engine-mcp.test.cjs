@@ -148,3 +148,12 @@ test("a server whose sign-in ran out is listed as needing a new sign-in until it
   [docs] = await mcp.list();
   assert.deepEqual([docs.reauthenticationRequired, docs.failureReason, docs.error], [false, null, null]);
 });
+
+test("a server's sign-in started in a chat opens there, and says so", async () => {
+  const { client } = mcpClient({ GitHub: { url: "https://api.githubcopilot.com/mcp/" } });
+  const asked = [];
+  const mcp = createMcp({ client, openExternal: async (url, options) => { asked.push([url, options]); return { opened: true, inChat: !!options.conversationId }; } });
+  assert.deepEqual(await mcp.signIn("GitHub", { conversationId: "chat-1" }), { opened: true, inChat: true });
+  assert.deepEqual(await mcp.signIn("GitHub"), { opened: true });
+  assert.deepEqual(asked, [["https://example.com/authorize", { conversationId: "chat-1" }], ["https://example.com/authorize", { conversationId: null }]]);
+});

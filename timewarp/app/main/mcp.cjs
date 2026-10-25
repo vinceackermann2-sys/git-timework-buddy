@@ -279,12 +279,14 @@ function createMcp({ client, openExternal, notify = () => {}, confirmCommand = n
       failures.delete(name);
       return list();
     },
-    async signIn(name) {
+    // conversationId: the chat the sign-in was started in, where it opens
+    // (inChat) when that chat can show it.
+    async signIn(name, { conversationId = null } = {}) {
       const server = await existing(name);
       if (!server.url) throw fail(400, "This server doesn't use a sign-in.");
       const { authorizationUrl } = await client.request("mcpServer/oauth/login", { name });
-      await openExternal(authorizationUrl);
-      return { opened: true };
+      const opened = await openExternal(authorizationUrl, { conversationId });
+      return { opened: true, ...(opened?.inChat ? { inChat: true } : {}) };
     },
     // Servers added by address, as account sync carries them to the
     // account's other computers (account-sync.cjs): the address, whether it's

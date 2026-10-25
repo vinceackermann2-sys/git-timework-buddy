@@ -304,7 +304,7 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
       </form>
       <div className="tw-pane-content" ref={content}>
         {tool === "files" ? <ToolPage title="Files" onBack={() => setTool(null)}><Files key={active.id} agent={agent} files={filesOf(active.id)} onChange={value => setFilesOf(active.id, value)} openPath={fileTab?.tabId === active?.id ? fileTab : null} /></ToolPage>
-          : agentSection(tool) ? <ToolPage title="Agent" onBack={() => setTool(null)}><AgentPage agent={agent} section={agentSection(tool)} onSection={section => setTool(section === "instructions" ? "agent" : "agent:" + section)}
+          : agentSection(tool) ? <ToolPage title="Agent" onBack={() => setTool(null)}><AgentPage agent={agent} conversationId={id} section={agentSection(tool)} onSection={section => setTool(section === "instructions" ? "agent" : "agent:" + section)}
             onEditAgent={onEditAgent} onAgentChanged={onAgentChanged} onSettings={onSettings} onArchiveAgent={onArchiveAgent} onAsk={ask} /></ToolPage>
           : !active || active.kind === "home" ? <Home conversation={conversation} agent={agent} onOpen={open} onTool={setTool} /> : null}
       </div>

@@ -19,7 +19,7 @@ function fakeBrowser() {
     openTab(conversationId, { url, activate = true, worker = false }) { const tab = { id: "tab-" + (++next), url, worker }; tabs.set(tab.id, tab); if (activate) active = tab.id; return { id: tab.id, url }; },
     navigate(conversationId, { tabId, url }) { let tab; try { tab = tabFor(tabId); } catch { return this.openTab(conversationId, { url }); } tab.url = url; return { id: tab.id, url }; },
     webContents(conversationId, tabId) { const tab = tabFor(tabId); return { tab, contents: contentsOf(tab), onScreen: false }; },
-    state: () => ({ active, tabs: [...tabs.values()].map(tab => ({ id: tab.id, url: tab.url, title: "" })) }),
+    state: () => ({ active, tabs: [...tabs.values()].map(tab => ({ id: tab.id, url: tab.url, title: "", ...(tab.signin ? { signin: true } : {}) })) }),
     close(conversationId, tabId) { const tab = tabFor(tabId); tabs.delete(tab.id); if (active === tab.id) active = [...tabs.keys()][0] || null; return this.state(); },
     markAgent() {}, userInControl: () => false,
   };
@@ -53,4 +53,28 @@ test("workers browse in their own tabs and leave the chat agent's tab alone", as
   assert.ok(browser.tabs.has(chatTab) && ![...browser.tabs.values()].some(tab => tab.url === "https://example.com/b"));
   assert.equal(tools.defaultTab("chat-1", workerA), [...browser.tabs.values()].find(tab => tab.url === "https://example.com/a2").id);
   assert.equal(tools.defaultTab("chat-1", agent), undefined, "The chat agent uses the active tab");
+});
+
+test("a sign-in the user started in the chat is theirs: the agent's tools work in another tab", async () => {
+  const browser = fakeBrowser();
+  const tools = createBrowserTools({ browser });
+  const call = (tool, args) => tools.call("chat-1", { tool, arguments: args, threadId: "root" }, { name: "Orbit" });
+  await call("open", { url: "https://example.com/start" });
+  const page = browser.active();
+  // The user connects an app from the chat: its sign-in is the active tab (browser.openSignin).
+  const signin = browser.openTab("chat-1", { url: "https://connect.example.com/link" });
+  browser.tabs.get(signin.id).signin = true;
+  // Reading or acting without a tab doesn't touch it, and it can't be closed.
+  for (const tool of ["read", "snapshot", "click"]) await assert.rejects(call(tool, tool === "click" ? { ref: "e1" } : {}), /signing in to an app in this tab/, tool);
+  const closing = await call("close_tab", {});
+  assert.equal(closing.success, false);
+  assert.match(closing.contentItems[0].text, /signing in to an app in this tab/);
+  assert.throws(() => tools.pageUrl("chat-1"), /signing in to an app in this tab/, "Vault fills can't reach it either");
+  // Opening a page goes to a new tab rather than replacing the sign-in.
+  await call("open", { url: "https://example.com/next" });
+  assert.equal(browser.tabs.get(signin.id).url, "https://connect.example.com/link");
+  assert.equal(browser.tabs.size, 3);
+  assert.equal(browser.tabs.get(browser.active()).url, "https://example.com/next");
+  // A tab named explicitly still works.
+  assert.match((await call("read", { tab: page })).contentItems[0].text, /example\.com\/start/);
 });

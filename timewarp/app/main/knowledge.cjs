@@ -328,6 +328,30 @@ function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runti
   }
   const forgetImported = () => { importedCache = null; };
 
+  // The memory a turn carries while memory may be read, in its parts: the
+  // whole notes file, today's log and the latest days' summaries; each null
+  // when there is none, and null for all when memory isn't read. A turn
+  // carries each part as an entry of its own, which Codex adds again only
+  // when it changed: a new line in today's log doesn't send the notes again.
+  function memoryParts(setting, now = new Date()) {
+    const mode = memoryMode(setting);
+    if (mode !== "enabled" && mode !== "read") return null;
+    const parts = { notes: null, today: null, earlier: null };
+    const text = keptText(notesFile, { links: true }).trim();
+    // Setup's blocks (the user's chosen names) count; the bare placeholder doesn't.
+    if (text.replace(PLACEHOLDER, "").replace(/^#\s*User\s*$/m, "").trim()) parts.notes = `Notes (${notesFile}, full file):\n<user_notes>\n${text.length > NOTES_LIMIT ? text.slice(0, NOTES_LIMIT) + "\n…" : text}\n</user_notes>`;
+    const logs = dailyLogs(), day = today(now);
+    const current = logs.find(log => log.day === day && log.file.startsWith(dailyLogsRoot + path.sep));
+    if (current) {
+      const body = keptText(current.file).trim();
+      if (body) parts.today = `Today's log (${current.file}):\n${body.length > CONTEXT_TODAY ? body.slice(0, CONTEXT_TODAY) + "\n…" : body}`;
+    }
+    const earlier = logs.filter(log => log !== current).slice(0, CONTEXT_DAILY_LOGS)
+      .map(log => ({ ...log, summary: logSummary(keptText(log.file)) })).filter(log => log.summary);
+    if (earlier.length) parts.earlier = "Earlier days (summaries; the full logs are in those files):\n" + earlier.map(log => `- ${log.day} (${log.file}): ${log.summary}`).join("\n");
+    return parts;
+  }
+
   return {
     memoriesRoot, importsRoot, skillsRoot, notesFile, detect, importItems,
     // The settings of one MCP server found by detect(), for importing.
@@ -408,26 +432,12 @@ function createKnowledge({ runtimeDir, codexHome, memoriesRoot = path.join(runti
       }
       return lines.join("\n");
     },
-    // The memory a turn carries while memory may be read: the whole notes file,
-    // today's log and the latest days' summaries. Null when there is none. It
-    // changes only when the files do, so Codex adds it again only then.
+    contextParts: memoryParts,
+    // The same memory as one text, or null when there is none.
     context(setting, now = new Date()) {
-      const mode = memoryMode(setting);
-      if (mode !== "enabled" && mode !== "read") return null;
-      const parts = [];
-      const text = keptText(notesFile, { links: true }).trim();
-      // Setup's blocks (the user's chosen names) count; the bare placeholder doesn't.
-      if (text.replace(PLACEHOLDER, "").replace(/^#\s*User\s*$/m, "").trim()) parts.push(`Notes (${notesFile}, full file):\n<user_notes>\n${text.length > NOTES_LIMIT ? text.slice(0, NOTES_LIMIT) + "\n…" : text}\n</user_notes>`);
-      const logs = dailyLogs(), day = today(now);
-      const current = logs.find(log => log.day === day && log.file.startsWith(dailyLogsRoot + path.sep));
-      if (current) {
-        const body = keptText(current.file).trim();
-        if (body) parts.push(`Today's log (${current.file}):\n${body.length > CONTEXT_TODAY ? body.slice(0, CONTEXT_TODAY) + "\n…" : body}`);
-      }
-      const earlier = logs.filter(log => log !== current).slice(0, CONTEXT_DAILY_LOGS)
-        .map(log => ({ ...log, summary: logSummary(keptText(log.file)) })).filter(log => log.summary);
-      if (earlier.length) parts.push("Earlier days (summaries; the full logs are in those files):\n" + earlier.map(log => `- ${log.day} (${log.file}): ${log.summary}`).join("\n"));
-      return parts.length ? parts.join("\n\n") : null;
+      const parts = memoryParts(setting, now);
+      const text = parts && [parts.notes, parts.today, parts.earlier].filter(Boolean).join("\n\n");
+      return text || null;
     },
     // A block of the notes that setup keeps (<!-- setup-import:<id> -->), such
     // as an online assistant's memory (assistant-import.cjs). Importing from

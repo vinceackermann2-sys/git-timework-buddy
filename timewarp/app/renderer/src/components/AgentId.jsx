@@ -353,7 +353,7 @@ function navValue(key, identity, glance) {
 // The agent's page: who it is at the top, what waits for its owner, and its
 // sections down the left (a row across the top when the pane is narrow).
 // Instructions, connectors and automations work without an Agent ID.
-export function AgentPage({ agent, section, onSection, onEditAgent, onAgentChanged, onSettings, onArchiveAgent, onAsk }) {
+export function AgentPage({ agent, conversationId, section, onSection, onEditAgent, onAgentChanged, onSettings, onArchiveAgent, onAsk }) {
   const [identity, load, setIdentity] = useAgentId(agent);
   const [glance, setGlance] = useState({});
   // Raised after a change on a section, so the left side shows it too.
@@ -370,7 +370,7 @@ export function AgentPage({ agent, section, onSection, onEditAgent, onAgentChang
   const current = AGENT_PAGES[section] ? section : "instructions";
   const View = { mail: MailView, phone: PhoneView, wallet: WalletView, card: CardView, vm: ComputerView }[current];
   const body = current === "instructions" ? <InstructionsView agent={agent} />
-    : current === "connectors" ? <ConnectorsView agent={agent} identity={identity} onSettings={onSettings} onAgentChanged={onAgentChanged} />
+    : current === "connectors" ? <ConnectorsView agent={agent} conversationId={conversationId} identity={identity} onSettings={onSettings} onAgentChanged={onAgentChanged} />
       : current === "automations" ? <AutomationsView agent={agent} onAsk={onAsk} />
           : identity === undefined ? <p className="tw-hint">Loading…</p>
             : identity === null || identity.offline ? <Section><p className="tw-hint tw-agent-note">Agent ID can't be reached right now.</p></Section>
@@ -536,7 +536,7 @@ function InstructionsView({ agent }) {
 
 // The apps the owner connected that this agent may use, which its Agent ID
 // uses wherever the agent runs, and whether it may use the vault without asking.
-function ConnectorsView({ agent, identity, onSettings, onAgentChanged }) {
+function ConnectorsView({ agent, conversationId, identity, onSettings, onAgentChanged }) {
   const { items } = useApps();
   const [access, setAccess] = useState(undefined);
   const toast = useToast();
@@ -552,7 +552,8 @@ function ConnectorsView({ agent, identity, onSettings, onAgentChanged }) {
   const toggle = (entry, on) => void save(on ? [...accounts.filter(allowed), entry] : accounts.filter(item => allowed(item) && item !== entry));
   // Accounts waiting to reconnect are listed too, as before; choosing one reconnects it for this agent.
   const waiting = (items || []).filter(app => app.pendingAccounts?.length).flatMap(app => app.pendingAccounts.map(account => ({ app, account })));
-  const reconnect = entry => call("integrations.beginConnect", { integrationId: entry.app.id, agentId: agent.id, reconnectAccountId: entry.account.id }).then(() => toast("Finish connecting in the window that opened.")).catch(error => toast(error, "error"));
+  // Its sign-in opens in this pane, as a tab of its own.
+  const reconnect = entry => call("integrations.beginConnect", { integrationId: entry.app.id, agentId: agent.id, reconnectAccountId: entry.account.id, ...(conversationId ? { conversationId } : {}) }).then(result => { if (!result?.inChat) toast("Finish connecting in the window that opened."); }).catch(error => toast(error, "error"));
   const setVault = value => call("agents.update", { id: agent.id, vaultAccess: value }).then(() => onAgentChanged?.()).catch(error => toast(error, "error"));
   const everywhere = identity?.linked && identity.connectorsAvailable !== false;
   return (

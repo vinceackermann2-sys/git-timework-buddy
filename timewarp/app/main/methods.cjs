@@ -281,12 +281,14 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     },
 
     "integrations.list": input => { signedIn(); return services.integrations.list(input); },
-    "integrations.beginConnect": async input => {
+    // conversationId: the chat the connection was started in, where its sign-in opens (inChat).
+    "integrations.beginConnect": async ({ conversationId, ...input } = {}) => {
       signedIn();
       await services.ensureCallback();
       const result = await services.integrations.beginConnect(input);
-      if (result?.connectUrl) await (openConnector ? openConnector(result.connectUrl) : services.openExternal(result.connectUrl));
-      return result;
+      if (!result?.connectUrl) return result;
+      const opened = openConnector ? openConnector(result.connectUrl, undefined, typeof conversationId === "string" ? conversationId : null) : await services.openExternal(result.connectUrl);
+      return { ...result, ...(opened?.inChat ? { inChat: true } : {}) };
     },
     "integrations.disconnect": input => { signedIn(); return services.integrations.disconnect(input); },
     "integrations.getAccess": input => { signedIn(); return services.integrations.getAccess(input); },
@@ -476,7 +478,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "mcp.add": input => { signedIn(); return mcp.add(input); },
     "mcp.setEnabled": ({ name, enabled }) => { signedIn(); return mcp.setEnabled(name, enabled); },
     "mcp.remove": ({ name }) => { signedIn(); return mcp.remove(name); },
-    "mcp.signIn": ({ name }) => { signedIn(); return mcp.signIn(name); },
+    "mcp.signIn": ({ name, conversationId }) => { signedIn(); return mcp.signIn(name, { conversationId: typeof conversationId === "string" ? conversationId : null }); },
     // The signed-in account's own (codexHome() is its Codex home).
     "instructions.get": () => { signedIn(); try { return { text: fs.readFileSync(path.join(codexHome(), "AGENTS.md"), "utf8") }; } catch { return { text: "" }; } },
     "instructions.save": ({ text: value }) => {

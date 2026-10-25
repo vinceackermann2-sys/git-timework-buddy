@@ -632,7 +632,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
     return latest.current.send(replied ? { ...message, text: quote(replied) + message.text } : message).catch(error => { setReply(current => current ?? replied); throw error; });
   }, []);
   const onStop = useCallback(() => call("conversations.interrupt", { id }).catch(error => toast(error, "error")), [id, toast]);
-  const banner = useMemo(() => <><ReconnectBanner agentId={agent.id} /><FundingBanner funding={funding} onOptions={() => onSettings("billing")} /></>, [agent.id, funding, onSettings]);
+  const banner = useMemo(() => <><ReconnectBanner agentId={agent.id} conversationId={conversation.id} /><FundingBanner funding={funding} onOptions={() => onSettings("billing")} conversationId={conversation.id} /></>, [agent.id, conversation.id, funding, onSettings]);
   // The trace shows the turns as they are when it opens, with what waited for it.
   traceOpen.current = dialog === "trace";
   useLayoutEffect(() => { if (dialog === "trace") flush(); }, [dialog, flush]);
@@ -679,7 +679,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
           {approvals.map(approval => <ApprovalCard key={approval.id} approval={approval} />)}
           {loading ? null : (
             <AgentActivity state={state} commentary={commentaryLine(turns)} workers={workers} browserTab={browserTab} working={running}
-              onOpenThread={openThread} onOpenBrowser={openBrowser} onContinue={onContinue} funding={funding} onSettings={onSettings} />
+              onOpenThread={openThread} onOpenBrowser={openBrowser} onContinue={onContinue} funding={funding} onSettings={onSettings} conversationId={conversation.id} />
           )}
         </div>
       </div>

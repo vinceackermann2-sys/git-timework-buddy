@@ -137,8 +137,9 @@ function createTitles({ store, runner, autoTitle, notify = () => {}, log = () =>
 }
 
 // The memory writer. memoryMode() and privateMode() read the current settings;
-// running(conversationId) says whether the chat is replying.
-function createMemoryWriter({ store, knowledge, runner, userId, memoryMode, privateMode, running = () => false, idleMs = IDLE_MS, log = () => {}, now = () => new Date() }) {
+// running(conversationId) says whether the chat is replying. quiet(turnId)
+// says whether an automation's run in that turn found nothing to report.
+function createMemoryWriter({ store, knowledge, runner, userId, memoryMode, privateMode, running = () => false, quiet = () => false, idleMs = IDLE_MS, log = () => {}, now = () => new Date() }) {
   const timers = new Map(), waiting = new Set();
   let busy = false;
   const MARKS = "memoryWriterMarks";
@@ -216,7 +217,12 @@ function createMemoryWriter({ store, knowledge, runner, userId, memoryMode, priv
     observe(name, payload) {
       if (name !== "conversation.event" || payload?.params?.subAgent) return;
       if (payload.method === "turn/started") clearTimeout(timers.get(payload.conversationId));
-      if (payload.method === "turn/completed") schedule(payload.conversationId);
+      if (payload.method !== "turn/completed") return;
+      // An automation's run that found nothing has nothing to remember: when
+      // it's all the writer hasn't seen, it's marked seen without a job.
+      const turnId = payload.params?.turn?.id, fresh = turnId && quiet(turnId) ? unseen(payload.conversationId) : null;
+      if (fresh?.length && fresh.every(message => message.turnId === turnId)) { mark(payload.conversationId, fresh.at(-1).id); return; }
+      schedule(payload.conversationId);
     },
     write,
     stop() { for (const timer of timers.values()) clearTimeout(timer); timers.clear(); waiting.clear(); },

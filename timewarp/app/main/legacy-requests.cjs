@@ -24,8 +24,14 @@ function createLegacyRequests({ services, harness, guard, version, selectModel, 
       // Billing's own checks read the plan fresh, not the balance chats keep for a moment.
       case "chatgptDetails": { const state = await funding.current({ fresh: true }); if (!state.subscriptionAllowed) await chatgpt.refresh(); return { ...chatgpt.details(), funding: state, login: chatgpt.currentBrowserLogin() }; }
       case "verifyChatgpt": await funding.requireFree(); return chatgpt.verifyAccess();
-      // The ChatGPT sign-in opens in a Timewarp window (main.cjs openChatgpt).
-      case "connectChatgpt": { await auth.accessToken(); await funding.requireFree(); const result = await chatgpt.startBrowserLogin(input); await (openChatgpt ? openChatgpt(result) : services.openExternal(result.authUrl)); return { status: result.status }; }
+      // The ChatGPT sign-in opens in Timewarp (main.cjs openChatgpt): in the
+      // chat it was started in (conversationId), else in a window.
+      case "connectChatgpt": {
+        await auth.accessToken(); await funding.requireFree();
+        const result = await chatgpt.startBrowserLogin({ newAccount: input.newAccount });
+        const opened = await (openChatgpt ? openChatgpt(result, { conversationId: typeof input.conversationId === "string" ? input.conversationId : null }) : services.openExternal(result.authUrl));
+        return { status: result.status, ...(opened?.inChat ? { inChat: true } : {}) };
+      }
       case "cancelChatgpt": return chatgpt.cancelLogin();
       // The default model follows the new catalog (Timewarp's models after a
       // disconnect); open pickers and the composer reload.

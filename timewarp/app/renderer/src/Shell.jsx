@@ -287,6 +287,24 @@ function Shell({ account, setAccount, settings, setSettings }) {
     for (const account of connected || []) toast({ title: `${account.app || "App"} connected`, body: accountText(account) || "Your account is ready for your agents." });
   });
   useEvent("browser.agent", ({ conversationId }) => { if (route.view === "chat" && conversationId === route.id && pane === "closed") setPane("open"); });
+  // A sign-in started in the chat (connecting an app, ChatGPT or an MCP
+  // server) shows in its pane, beside the agent. A pane opened just for it
+  // closes again once the sign-in's tab goes, unless the user turned to another tab.
+  const signinPane = useRef(null);
+  useEvent("browser.signin", ({ conversationId, tabId }) => {
+    if (route.view !== "chat" || conversationId !== route.id) return;
+    if (pane === "closed") { signinPane.current = { conversationId, tabId, active: true }; setPane("open"); }
+  });
+  useEvent("browser.state", state => {
+    const opened = signinPane.current;
+    if (!opened || state?.conversationId !== opened.conversationId) return;
+    if (state.tabs.some(tab => tab.id === opened.tabId)) { opened.active = state.active === opened.tabId; return; }
+    signinPane.current = null;
+    if (opened.active && route.view === "chat" && route.id === opened.conversationId) setPane("closed");
+  });
+  useEffect(() => { if (signinPane.current && (route.view !== "chat" || route.id !== signinPane.current.conversationId)) signinPane.current = null; }, [route.view, route.id]);
+  // How a sign-in Codex completes (ChatGPT, an MCP server) went; app connections say so themselves.
+  useEvent("signin.finished", ({ ok, title, message } = {}) => { if (title) toast(ok ? title : { title, body: message }, ok ? undefined : "error"); });
   // Tab links in a chat open that tab in the pane.
   useEffect(() => {
     const openTab = ({ detail }) => {
