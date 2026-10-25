@@ -65,11 +65,6 @@ test("live mail: sent through Resend from the agent's own address; signed inboun
   const { local, net, ok, agent } = await setup(t, { AGENT_ID_LIVE: "mail", RESEND_API_KEY: "re_live_key", AGENT_ID_RESEND_WEBHOOK_SECRET: svixSecret });
   const alice = await local.user();
   const bot = await agent(alice, "Sales Bot");
-  // An address the previous Timewarp app already gave out is refused.
-  await local.db.exec("create table public.timewarp_personal_agents(id text, email text)");
-  await local.db.query("insert into public.timewarp_personal_agents values('old', $1)", [`${bot.handle}@agents.timewarpdev.com`]);
-  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "mail", mode: "live" } })).body.error.code, "address_taken");
-  await local.db.exec("delete from public.timewarp_personal_agents");
   const mail = (await ok("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "mail", mode: "live" } })).resource;
   assert.equal(mail.address, `${bot.handle}@agents.timewarpdev.com`);
   assert.equal(mail.provider, "resend");

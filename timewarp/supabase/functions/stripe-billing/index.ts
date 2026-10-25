@@ -1,7 +1,6 @@
 // Billing control plane. Authenticated with the user's Supabase JWT; every
 // action is scoped to the caller and to one workspace.
 //
-//   scopes   -> the workspaces this user could activate a plan in (+ their plans)
 //   status   -> one scope's plan, budgets, and pooled usage
 //   checkout -> Stripe Checkout URL for a first paid subscription on a scope
 //   portal   -> Stripe billing portal URL (change card, cancel, invoices)
@@ -176,8 +175,6 @@ Deno.serve(async (req) => {
       surface?: string;
       packCredits?: number;
       monthlyExtraCredits?: number;
-      enabled?: boolean;
-      threshold?: number;
       sessionId?: string;
     };
     const action = String(body.action || 'status');
@@ -191,70 +188,6 @@ Deno.serve(async (req) => {
       body.surface === 'web'
         ? `/account?status=${status}${extra}`
         : `/billing-return.html?status=${status}${extra}`;
-
-    // --- scopes -------------------------------------------------------------
-    // Everywhere this user could put a plan: their personal workspace, plus
-    // every workspace they are an active member of. canManage marks the ones
-    // they may actually pay for.
-    if (action === 'scopes') {
-      const { data: memberships } = await admin
-        .from('timewarp_workspace_members')
-        .select('workspace_id, role, timewarp_workspaces(id, name)')
-        .eq('user_id', user.id)
-        .eq('status', 'active');
-
-      const rows = ((memberships || []) as unknown as Array<{
-        workspace_id: string;
-        role: string;
-        timewarp_workspaces: { id: string; name: string } | null;
-      }>).filter((row) => row.timewarp_workspaces);
-
-      // Two queries, not one per workspace: this list only needs each scope's
-      // plan name, so calling the full usage rollup per membership would be an
-      // N+1 for data the picker never shows.
-      const { data: personalSub } = await admin
-        .from('timewarp_subscriptions')
-        .select('plan')
-        .is('workspace_id', null)
-        .eq('owner_user_id', user.id)
-        .maybeSingle<{ plan: string }>();
-
-      const workspaceIds = rows.map((row) => row.workspace_id);
-      const { data: workspaceSubs } = workspaceIds.length
-        ? await admin
-          .from('timewarp_subscriptions')
-          .select('workspace_id, plan')
-          .in('workspace_id', workspaceIds)
-        : { data: [] as Array<{ workspace_id: string; plan: string }> };
-
-      const planByWorkspace = new Map(
-        (workspaceSubs || []).map((sub) => [sub.workspace_id, sub.plan]),
-      );
-
-      const scopes = [
-        {
-          workspaceId: null as string | null,
-          name: 'Personal',
-          role: 'owner',
-          canManage: true,
-          isPersonal: true,
-          plan: isPlanId(personalSub?.plan) ? personalSub.plan : ('free' as PlanId),
-        },
-        ...rows.map((row) => {
-          const plan = planByWorkspace.get(row.workspace_id);
-          return {
-            workspaceId: row.workspace_id as string | null,
-            name: row.timewarp_workspaces!.name,
-            role: row.role,
-            canManage: canManageBilling(row.role),
-            isPersonal: false,
-            plan: isPlanId(plan) ? plan : ('free' as PlanId),
-          };
-        }),
-      ];
-
-      return jsonResponse({ scopes });
-    }
 
     // Stripe webhooks remain the normal writer of billing state, but the
     // authenticated return leg also reconciles the exact Checkout Session the
@@ -439,14 +372,6 @@ Deno.serve(async (req) => {
           usdPerCredit: USD_PER_CREDIT,
           markup: AI_COST_MARKUP,
           packs: CREDIT_PACKS.map((pack) => ({ credits: pack.credits, usd: pack.priceUsd })),
-          autoRecharge: {
-            enabled: Boolean(usageRow?.auto_recharge_enabled),
-            packCredits: Number(usageRow?.auto_recharge_pack_credits) || null,
-            // Whether the caller is the one whose card gets charged; the UI
-            // shows "paid by someone else" to everyone else.
-            isPayer: usageRow?.auto_recharge_user_id === user.id,
-            failures: Number(usageRow?.recharge_failures) || 0,
-          },
         },
       });
     }
@@ -497,8 +422,7 @@ Deno.serve(async (req) => {
           workspace_id: workspaceId ?? '',
           supabase_user_id: user.id,
         },
-        // Saving the card is what makes auto-recharge possible later: the
-        // off-session PaymentIntent charges this stored payment method.
+        // The card stays saved on the Stripe customer, as it always has.
         payment_intent_data: { setup_future_usage: 'off_session' },
         allow_promotion_codes: body.surface !== 'energy',
         success_url: `${siteUrl}${returnPath('success', `&credits=${pack.credits}&session_id={CHECKOUT_SESSION_ID}`)}`,
@@ -506,50 +430,6 @@ Deno.serve(async (req) => {
       });
 
       return jsonResponse({ url: session.url, sessionId: session.id, amountTotal: session.amount_total, currency: session.currency });
-    }
-
-    // --- auto-recharge settings ---------------------------------------------
-    if (action === 'auto-recharge') {
-      if (!canManageBilling(role)) {
-        return jsonResponse({ error: 'Only workspace owners and admins can change auto-recharge.' }, 403);
-      }
-      const enabled = body.enabled === true;
-      const pack = enabled ? getCreditPack(body.packCredits) : null;
-      if (enabled && !pack) {
-        return jsonResponse({ error: 'Choose which credit pack to recharge with.' }, 400);
-      }
-
-      if (enabled) {
-        // Enabling commits the caller's saved card to future off-session
-        // charges, so verify there is one now rather than failing silently at
-        // 2am when the balance runs out.
-        const { data: customerRow } = await admin
-          .from('timewarp_billing_customers')
-          .select('stripe_customer_id')
-          .eq('user_id', user.id)
-          .maybeSingle<{ stripe_customer_id: string }>();
-        const cards = customerRow?.stripe_customer_id
-          ? await stripe.paymentMethods.list({ customer: customerRow.stripe_customer_id, type: 'card', limit: 1 }).catch(() => null)
-          : null;
-        if (!cards?.data?.length) {
-          return jsonResponse({
-            error: 'No saved card yet. Buy a credit pack or subscribe first — that stores your card, then auto-recharge can use it.',
-          }, 400);
-        }
-      }
-
-      const { error: setError } = await admin.rpc('timewarp_set_credit_recharge', {
-        p_workspace_id: workspaceId,
-        p_owner_user_id: user.id,
-        p_user_id: user.id,
-        p_enabled: enabled,
-        p_pack_credits: pack?.credits ?? null,
-        p_threshold: Number(body.threshold) || 0,
-      });
-      if (setError) {
-        return jsonResponse({ error: `Could not save auto-recharge: ${setError.message}` }, 500);
-      }
-      return jsonResponse({ ok: true, enabled, packCredits: pack?.credits ?? null });
     }
 
     // --- checkout / plan change --------------------------------------------

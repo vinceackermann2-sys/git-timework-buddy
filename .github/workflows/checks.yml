@@ -41,5 +41,5 @@ jobs:
       - run: npm run verify:cloud-source
       - run: npm run test:email
       - name: Check all cloud entry points with the shared email JSX types
-        run: deno check --frozen --config supabase/functions/auth-email-hook/deno.json cloud/index.ts supabase/functions/timewarp-energy/index.ts supabase/functions/stripe-billing/index.ts supabase/functions/stripe-webhook/index.ts supabase/functions/timewarp-workspaces/index.ts supabase/functions/contact/index.ts supabase/functions/auth-email-hook/index.ts supabase/functions/agent-id/index.ts
+        run: deno check --frozen --config supabase/functions/auth-email-hook/deno.json cloud/index.ts supabase/functions/timewarp-energy/index.ts supabase/functions/stripe-billing/index.ts supabase/functions/stripe-webhook/index.ts supabase/functions/timewarp-workspaces/index.ts supabase/functions/contact/index.ts supabase/functions/auth-email-hook/index.ts supabase/functions/agent-id/index.ts supabase/functions/timewarp-agent-mail-webhook/index.ts
       - run: npm audit --audit-level=high
