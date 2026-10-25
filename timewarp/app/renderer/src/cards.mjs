@@ -10,13 +10,13 @@ export const PLACEHOLDER = /\uE000(\d+)\uE001/g;
 // The previous app's longer names for the same cards.
 const ALIASES = { "widget-file": "file", "widget-connector": "connect-plugin", "widget-citation": "citation", "widget-assistants": "assistants", "widget-suggested-tasks": "suggested-tasks" };
 // Cards that stand on their own line, and cards that sit in a sentence.
-const BLOCK = new Set(["file", "connect-plugin", "widget-mcp-connection", "select", "conversation", "message", "message-input", "tabs", "widget-secret", "suggested-tasks", "assistants", "usage"]);
+const BLOCK = new Set(["file", "connect-plugin", "widget-mcp-connection", "select", "conversation", "message", "message-input", "tabs", "widget-secret", "suggested-tasks", "assistants", "usage", "wallet"]);
 const INLINE = new Set(["button", "citation", "ref", "widget-interaction"]);
 // Steps of the previous app's onboarding chat, which Timewarp does in its own
 // screens: removed from old messages.
 const HIDDEN = new Set(["browser-connection", "widget-browser-connection", "theme-picker", "widget-onboarding-theme", "connect-chatgpt", "widget-onboarding-chatgpt-connection", "onboarding-local-imports", "widget-onboarding-local-imports", "widget-trigger-event"]);
 // Cards whose content is optional: without a closing tag they end at ">".
-const VOID = new Set(["file", "connect-plugin", "widget-mcp-connection", "button", "citation", "ref", "widget-secret", "assistants", "usage"]);
+const VOID = new Set(["file", "connect-plugin", "widget-mcp-connection", "button", "citation", "ref", "widget-secret", "assistants", "usage", "wallet"]);
 const NAMES = [...Object.keys(ALIASES), ...BLOCK, ...INLINE, ...HIDDEN];
 const MAX_CARDS = 200, MAX_OPTIONS = 20, MAX_TASKS = 10, MAX_TABS = 12;
 
@@ -382,6 +382,9 @@ export function resolveLink(href) {
     if (tab) return { type: "tab", conversationId: tab[1], tabId: tab[2] };
     const chat = /^\/conversation\/([^/]+)$/.exec(route);
     if (chat) return { type: "conversation", conversationId: chat[1] };
+    // The chat's agent's own page, at one of its parts (timewarp://agent/wallet).
+    const agent = /^\/agent(?:\/([a-z]+))?$/.exec(route);
+    if (agent) return { type: "agent", section: agent[1] || null };
     return { type: "app", route: route + url.search + url.hash };
   }
   if (scheme === "http" || scheme === "https") return { type: "url", url: value };

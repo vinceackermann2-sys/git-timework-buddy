@@ -194,6 +194,8 @@ export type PublicConfig = {
   passports: { available: boolean; lifetimeSeconds: number };
   // Bank transfers in and out of live wallets (Bridge); older servers leave it out.
   bank?: { available: boolean };
+  // The owner's connected apps (Composio) for their agents; older servers leave it out.
+  connectors?: { available: boolean };
   // No subscription: free machine hours, then Timewarp credits (bought in packs).
   pricing?: {
     computeFreeHours: number;
@@ -498,6 +500,45 @@ export type VaultStatus = {
   publicKey: string | null;
   test: boolean;
 };
+
+// The owner's connected accounts (Gmail, Slack…, connected in Timewarp) and
+// which of them this agent may use. all: every one, also ones connected later.
+// timewarp: the agent is a Timewarp agent, so this is its Tools setting there.
+export type Connector = {
+  id: string;
+  toolkit: string;
+  app: string;
+  label: string | null;
+  allowed: boolean;
+};
+export type AgentConnectors = { all: boolean; timewarp: boolean; connectors: Connector[] };
+export type ConnectorsChange = { all: true } | { connections: string[] };
+
+// An agent's automations, as Timewarp reports them from the computer that runs
+// them. Pausing, resuming or running one waits until Timewarp there picks it up.
+export type AutomationAction = "pause" | "resume" | "run";
+export type Automation = {
+  id: string;
+  name: string;
+  schedule: Record<string, unknown>;
+  summary: string | null;
+  enabled: boolean;
+  nextRunAt: string | null;
+  lastRun: { status: string | null; at: string | null } | null;
+  device: string | null;
+  updatedAt: string;
+};
+export type AutomationRequest = {
+  id: string;
+  agentId: string;
+  automationId: string;
+  action: AutomationAction;
+  status: "pending" | "done" | "failed";
+  error: string | null;
+  createdAt: string;
+  doneAt: string | null;
+};
+export type AgentAutomations = { automations: Automation[]; pending: AutomationRequest[] };
 
 export type NewBankAccount =
   | {

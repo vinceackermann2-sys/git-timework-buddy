@@ -15,6 +15,8 @@ export const queryKeys = {
   events: (id: string, scope: string) => ["agent-id", "events", id, scope] as const,
   eventsOf: (id: string) => ["agent-id", "events", id] as const,
   contacts: (id: string) => ["agent-id", "contacts", id] as const,
+  connectors: (id: string) => ["agent-id", "connectors", id] as const,
+  automations: (id: string) => ["agent-id", "automations", id] as const,
   me: (id: string, what: string) => ["agent-id", "me", id, what] as const,
   meOf: (id: string) => ["agent-id", "me", id] as const,
   approvals: ["agent-id", "approvals"] as const,
@@ -86,6 +88,38 @@ export const useContacts = (agentId: string) =>
     ...base,
     queryKey: queryKeys.contacts(agentId),
     queryFn: async () => (await api.contacts(agentId)).contacts,
+  });
+
+// Connected apps are switched on per deployment: false when this one says
+// they're off, undefined until the account is known. Older servers don't say,
+// so they're asked.
+export function useConnectorsAvailable(): boolean | undefined {
+  const account = useAccount();
+  if (!account.data) return undefined;
+  return account.data.config.connectors?.available !== false;
+}
+
+export const isConnectorsUnavailable = (error: unknown) =>
+  error instanceof AgentIdError && error.code === "connectors_unavailable";
+
+export const useConnectors = (agentId: string, enabled = true) =>
+  useQuery({
+    ...base,
+    enabled,
+    queryKey: queryKeys.connectors(agentId),
+    queryFn: () => api.connectors(agentId),
+    retry: (count, error) => !isConnectorsUnavailable(error) && shouldRetry(count, error),
+  });
+
+// A pause, resume or run asked for on the website waits until Timewarp picks
+// it up: look again every few seconds while one waits.
+export const AUTOMATIONS_POLL = 10_000;
+export const useAutomations = (agentId: string) =>
+  useQuery({
+    ...base,
+    queryKey: queryKeys.automations(agentId),
+    queryFn: () => api.automations(agentId),
+    refetchInterval: (query) => (query.state.data?.pending.length ? AUTOMATIONS_POLL : false),
   });
 
 export const useApprovals = ({ poll = false }: { poll?: boolean } = {}) =>

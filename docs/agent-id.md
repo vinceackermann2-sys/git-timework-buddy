@@ -326,6 +326,71 @@ Each request gets its own context in `createHandler`, so what one request
 sets (the app and model it came through, an approval it carries out) never
 reaches another.
 
+## Connected apps and automations
+
+**Connected apps** (`connectors.ts`). The apps an owner connected in Timewarp
+(Gmail, Slack, Notion…, through Composio) that they let an agent use go with
+its Agent ID: the agent uses them wherever it runs, through
+`GET /v1/me/connectors`, `GET /v1/me/connectors/tools?app=&query=` and
+`POST /v1/me/connectors/run`, or the MCP tools `connectors_list`,
+`connector_tools` and `connector_run`. Composio is called directly with
+`COMPOSIO_API_KEY` (the same project secret the app's `composio` function
+uses), as the owner's personal Composio user. Which accounts an agent may use
+is one setting, kept where Timewarp keeps it: the account's
+`connector-access` item in `timewarp_energy_account_data`, keyed by the
+Timewarp agent's id (no item: all of the owner's accounts, as in Timewarp). An
+Agent ID made outside Timewarp keeps its own item under its `agt_` id and
+starts with none. The owner changes it with
+`GET`/`PUT /v1/agents/:id/connectors`, written over the latest revision as the
+app writes it, so the app takes it at its next sync. Every run is audited
+(`connector.run`) and rate-limited (30 a minute, 600 a day).
+`/v1/config` says `connectors.available`.
+
+**Automations** (`automations.ts`, migration 20261024160000). Timewarp keeps an
+agent's automations on the computer they were made on and runs them there.
+After each change it sends what they are (name, schedule in words, next and
+last run, the computer: never their instructions) with
+`PUT /v1/agents/:id/automations`. The website shows them and can ask to pause,
+resume or run one (`POST /v1/agents/:id/automations/:automationId/requests`).
+The request waits until Timewarp picks it up (`GET /v1/automation-requests`,
+about once a minute while it's open), does it and answers
+(`POST /v1/automation-requests/:requestId`). The agent sees its own with
+`automations_list`.
+
+## In the Timewarp app
+
+The agent's pane in Timewarp has an Agent ID section and a full Agent ID view:
+who the agent is (name, owner's check, model, the apps it's used in, its ID),
+what waits for the owner's yes, and mail, phone, wallet, card, computer,
+vault, connected apps, automations and activity down the left, as on the
+website. The app calls Agent ID with the signed-in account's session
+(`app/main/agent-id.cjs`, a fixed list of named requests), and keeps each
+agent's key encrypted with the computer's key store (`agent-ids.bin`).
+
+The owner's own pages open in the **Agent ID window**
+(`app/main/agent-id-window.cjs`), never in an agent's browser, which an agent
+can see and click in: the identity check (Bridge's or Stripe's page, which
+asks for the camera there, or a name and a country where Agent ID reviews
+people itself), and the website's agent page ("Open Agent ID" in the agent's
+menu, and Add money or Withdraw on its wallet), where money goes in and out
+on the payment providers' pages. Its storage is apart from every browser
+profile, one per account. The website opens signed in: the window asks for a
+session of its own (`POST /v1/account/web-session`, a Timewarp session only,
+never an owner key; made as a magic link would, audited, 5 a minute) and keeps
+it where the website's Supabase client looks for it, so the app's own session
+never leaves the app. Without that route, the website asks for its own sign-in.
+The agent links its owner to its page in a chat as `timewarp://agent`, or a
+part of it, such as `timewarp://agent/wallet`.
+
+The agent uses its Agent ID from its chats (`app/main/agent-id-tools.cjs`):
+two small tools, `agent_id_tools` (what it can do, with arguments) and
+`agent_id` (do one), forwarded to `/mcp` with the agent's own key, never the
+owner's session, so its limits and asking first apply. An Agent ID linked
+elsewhere gets a key for that computer the first time. `GET /v1/mcp/tools`
+(open) lists the actions. GPT's code mode leaves the two tools for the model
+to find (`ALL_TOOLS`); other models carry only their two short descriptions.
+Agent ID records Timewarp, and the chat's model, as where the ID is used.
+
 ## Safety
 
 - **Owner limits, enforced in the database.**
@@ -493,6 +558,7 @@ in and out. Errors are `{ "error": { "code", "message" } }`. Money is
 | Owner | |
 | --- | --- |
 | `GET /v1/account` | user, verification, organizations (with KYB), plan, reviewer flag, config |
+| `POST /v1/account/web-session` | A new session for the account, for the website the Timewarp app opens signed in: `{session:{access_token, refresh_token, expires_in, expires_at, user}}`. A Timewarp session only (403 `session_required` for an owner key); audited (`account.web_session`) |
 | `POST /v1/account/verification` | `{kind:'person'}` → Bridge's or Stripe Identity's `url`, or `{legalName,country}` for review · `{kind:'business', organizationId, legalName, country, representativeRole, attestation, website?, registrationNumber?}` → Bridge's `url` where Bridge checks businesses (else the registration number is required, for review) |
 | `GET/POST /v1/agents` · `GET/PATCH/DELETE /v1/agents/:id` | create (returns the agent key once), list, rename, runtime, organization, desktop link, pause/resume, revoke |
 | `POST /v1/agents/:id/keys` · `DELETE …/keys/:keyId` | more agent keys |

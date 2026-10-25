@@ -21,6 +21,8 @@ import { addBankAccount, bankDeposit, bankPayins, bankStatus, cancelBankPayin, r
 import { cardCurrency, moonpayOn, moonpayUrl } from './providers/moonpay.ts';
 import { CREDIT_PACKS } from './pricing.ts';
 import { vaultOps, vaultOwnerRoutes } from './vault.ts';
+import { connectorOwnerRoutes } from './connectors.ts';
+import { automationOwnerRoutes } from './automations.ts';
 
 type Handler = Route<Owner>[2];
 const iso = (ctx: Ctx) => new Date(ctx.now()).toISOString();
@@ -133,6 +135,20 @@ const buyCredits: Handler = async (ctx, owner, input) => {
 function termsView(ctx: Ctx, person: any) {
   return { accepted: person?.terms_version === ctx.config.termsVersion && !!person?.terms_accepted_at, version: person?.terms_version || null, acceptedAt: person?.terms_accepted_at || null, current: ctx.config.termsVersion };
 }
+// The website from the Timewarp app: the app opens it signed in, in a window
+// of its own, with a new session for the same account (made as a magic link
+// would make it, so the app's own session never leaves the app). Only a
+// Timewarp session asks, never an owner key, and each one is recorded.
+const webSession: Handler = async (ctx, owner) => {
+  if (owner.via !== 'session') throw fail(403, 'session_required', 'Sign in to Timewarp to open the Agent ID website from the app.');
+  await rateLimit(ctx, owner.userId, 'web-session', 5, 50, 'website sign-ins');
+  const email = await ownerEmail(ctx, owner);
+  const session = email && ctx.signIn ? await ctx.signIn(email).catch(error => { console.error('[agent-id] web session', error?.message); return null; }) : null;
+  if (!session) throw fail(503, 'unavailable', 'The website couldn\'t be signed in from here. Sign in there with your email.');
+  await audit(ctx, owner.userId, null, 'owner', 'account.web_session', {});
+  return { session };
+};
+
 const acceptTerms: Handler = async (ctx, owner, input) => {
   if (input.version !== ctx.config.termsVersion) throw fail(409, 'terms_changed', 'The Agent ID Terms have changed. Read the current version and accept it.', { current: ctx.config.termsVersion });
   const row = checked(await ctx.admin.from('agent_id_people').upsert({ user_id: owner.userId, terms_version: ctx.config.termsVersion, terms_accepted_at: iso(ctx), updated_at: iso(ctx) }, { onConflict: 'user_id' }).select('*').single());
@@ -626,7 +642,10 @@ export const ownerRoutes: Route<Owner>[] = [
   ['GET', '/v1/account', account],
   ['POST', '/v1/account/verification', (ctx, owner, input) => startVerification(ctx, owner, input)],
   ['POST', '/v1/account/terms', acceptTerms],
+  ['POST', '/v1/account/web-session', webSession],
   ...vaultOwnerRoutes,
+  ...connectorOwnerRoutes,
+  ...automationOwnerRoutes,
   ['POST', '/v1/account/credits', buyCredits],
   ['GET', '/v1/agents', listAgents], ['POST', '/v1/agents', createAgent],
   ['GET', '/v1/recipients', lookupRecipient],

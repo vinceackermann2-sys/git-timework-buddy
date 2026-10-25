@@ -74,13 +74,20 @@ function toolServers(port) {
   const base = `http://127.0.0.1:${port}/mcp/`;
   const own = (name, timeout) => ({ url: base + name, enabled: true, required: true, bearer_token_env_var: "TIMEWARP_TOOLS_TOKEN", default_tools_approval_mode: "approve", tool_timeout_sec: timeout, omit_tools_from: ["deferred"] });
   return {
-    timewarp_composio: { url: base + "composio", enabled: true, bearer_token_env_var: "TIMEWARP_COMPOSIO_TOKEN", omit_tools_from: ["deferred"] },
+    // Sending, paying and deleting wait for the user's card (approvals.cjs), so those calls may wait.
+    timewarp_composio: { url: base + "composio", enabled: true, bearer_token_env_var: "TIMEWARP_COMPOSIO_TOKEN", tool_timeout_sec: 900, omit_tools_from: ["deferred"] },
     timewarp_browser: own("timewarp_browser", 180),
     timewarp_vault: own("timewarp_vault", 900),
     timewarp_automations: own("timewarp_automations", 120),
     timewarp_chats: own("timewarp_chats", 60),
     timewarp_team: own("timewarp_team", 900),
     timewarp_app: own("timewarp_app", 900),
+    // The chat's agent's own Agent ID (agent-id-tools.cjs): two small tools.
+    // GPT's code mode leaves them for the model to find when a task needs
+    // them (no omit_tools_from); other models are told about just these two.
+    // Like connected apps, its actions keep Codex's review. Not required: a
+    // chat starts without it when Agent ID can't be reached.
+    timewarp_agent_id: { url: base + "timewarp_agent_id", enabled: true, bearer_token_env_var: "TIMEWARP_TOOLS_TOKEN", tool_timeout_sec: 900 },
   };
 }
 

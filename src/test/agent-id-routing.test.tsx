@@ -64,6 +64,8 @@ describe("Agent ID routing", () => {
   it("reads the agent tab from the URL and ignores unknown ones", () => {
     expect(parseAgentTab("wallet")).toBe("wallet");
     expect(parseAgentTab("machine")).toBe("machine");
+    expect(parseAgentTab("connectors")).toBe("connectors");
+    expect(parseAgentTab("automations")).toBe("automations");
     expect(parseAgentTab("nope")).toBeUndefined();
     expect(parseAgentTab("connect")).toBeUndefined();
     expect(parseAgentTab(3)).toBeUndefined();
@@ -74,24 +76,20 @@ describe("Agent ID routing", () => {
       "card",
       "machine",
       "vault",
+      "connectors",
+      "automations",
       "activity",
       "settings",
     ]);
   });
 
-  it("shows resource tabs once the agent has them, and the card application and vault always", () => {
+  it("shows resource tabs once the agent has them; the card application, vault, connectors and automations always", () => {
     const ids = (resources: object, current?: Parameters<typeof visibleTabs>[1]) =>
       visibleTabs({ resources } as Parameters<typeof visibleTabs>[0], current).map(([id]) => id);
-    expect(ids({})).toEqual(["card", "vault", "activity", "settings"]);
-    expect(ids({ wallet: {}, vm: {} })).toEqual([
-      "wallet",
-      "card",
-      "machine",
-      "vault",
-      "activity",
-      "settings",
-    ]);
-    expect(ids({}, "mail")).toEqual(["mail", "card", "vault", "activity", "settings"]);
+    const always = ["connectors", "automations", "activity", "settings"];
+    expect(ids({})).toEqual(["card", "vault", ...always]);
+    expect(ids({ wallet: {}, vm: {} })).toEqual(["wallet", "card", "machine", "vault", ...always]);
+    expect(ids({}, "mail")).toEqual(["mail", "card", "vault", ...always]);
   });
 
   it("opens an agent on its first resource, else its activity", () => {

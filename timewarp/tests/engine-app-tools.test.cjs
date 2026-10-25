@@ -44,7 +44,7 @@ function setup(t, { funding = { plan: "pro", subscriptionAllowed: false, source:
 test("app tools have strict schemas; change_settings needs a reason", () => {
   const [namespace] = toolSpecs();
   assert.equal(namespace.name, "timewarp_app");
-  assert.deepEqual(namespace.tools.map(tool => tool.name), ["get_usage", "get_settings", "get_status", "change_settings"]);
+  assert.deepEqual(namespace.tools.map(tool => tool.name), ["get_usage", "get_settings", "get_status", "change_settings", "app_action"]);
   for (const tool of namespace.tools) assert.equal(tool.inputSchema.additionalProperties, false);
   assert.deepEqual(namespace.tools.find(tool => tool.name === "change_settings").inputSchema.required, ["reason"]);
   assert.ok(!namespace.tools.find(tool => tool.name === "change_settings").inputSchema.properties.approvals, "how extra access is approved isn't for agents to change");

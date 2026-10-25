@@ -13,6 +13,7 @@ import { Chat, FeedbackDialog } from "./components/Chat.jsx";
 import { ALIASES, CreateOrganizationDialog, InviteDialog, SECTIONS, Settings, sectionHref, uploadPicture } from "./components/Settings.jsx";
 import { AgentDialog } from "./components/AgentDialog.jsx";
 import { Pane } from "./components/Pane.jsx";
+import { AGENT_SECTIONS } from "./components/AgentId.jsx";
 import { IncomingShares, ShareDialog } from "./components/Share.jsx";
 import { FirstSteps } from "./components/FirstSteps.jsx";
 
@@ -302,9 +303,15 @@ function Shell({ account, setAccount, settings, setSettings }) {
         })
         .catch(error => toast(error, "error"));
     };
+    // A link to the chat's agent's page (timewarp://agent/<part>) opens it in the chat's pane.
+    const openAgent = ({ detail }) => {
+      const chatId = detail?.conversationId || (route.view === "chat" ? route.id : null);
+      if (chatId) showAgentPage(chatId, AGENT_SECTIONS.includes(detail.section) && detail.section !== "instructions" ? "agent:" + detail.section : "agent");
+    };
     window.addEventListener("tw:open-tab", openTab);
     window.addEventListener("tw:open-url", openUrl);
-    return () => { window.removeEventListener("tw:open-tab", openTab); window.removeEventListener("tw:open-url", openUrl); };
+    window.addEventListener("tw:open-agent", openAgent);
+    return () => { window.removeEventListener("tw:open-tab", openTab); window.removeEventListener("tw:open-url", openUrl); window.removeEventListener("tw:open-agent", openAgent); };
   }, [route.view, route.id, pane]);
 
   // Starts a chat from the home screen with its first message.
@@ -332,10 +339,14 @@ function Shell({ account, setAccount, settings, setSettings }) {
   function editAgent(agent) {
     const chat = route.view === "chat" && opened?.agentId === agent.id ? opened : [...conversations].filter(item => item.agentId === agent.id).sort(byActivity)[0];
     if (!chat) { setDialog({ open: true, agent }); return; }
-    write("tw.pane." + chat.id, "open");
-    setPaneTool({ conversationId: chat.id, tool: "agent", at: Date.now() });
-    if (route.view === "chat" && route.id === chat.id) { if (pane === "closed") setPane("open"); }
-    else go("#/conversation/" + chat.id);
+    showAgentPage(chat.id, "agent");
+  }
+  // The agent page ("agent", or "agent:<part>") in a chat's pane, opening the chat.
+  function showAgentPage(chatId, tool) {
+    write("tw.pane." + chatId, "open");
+    setPaneTool({ conversationId: chatId, tool, at: Date.now() });
+    if (route.view === "chat" && route.id === chatId) { if (pane === "closed") setPane("open"); }
+    else go("#/conversation/" + chatId);
   }
   // As before, a chat an automation runs in asks first; archiving it pauses its automations.
   async function archiveConversation(conversation) {

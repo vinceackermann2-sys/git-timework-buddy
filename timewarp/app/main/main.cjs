@@ -213,7 +213,7 @@ async function boot() {
   const { CODEX_FEATURES, WINDOWS_SANDBOX_FEATURES, PERMISSIONS, agentThreadConfig, workspaceRoots, toolServers, REPLACED_SKILLS } = require("./codex-config.cjs");
   // Timewarp's base prompt, in place of Codex's own.
   const { BASE_INSTRUCTIONS } = require("./base-instructions.cjs");
-  const { createToolServer } = require("./tool-server.cjs");
+  const { createToolServer, mcpResult } = require("./tool-server.cjs");
   // The cards agents can put in their messages (widgets.jsx).
   const { WIDGETS } = require("./widget-instructions.cjs");
   const { createBrowser } = require("./browser.cjs");
@@ -224,6 +224,9 @@ async function boot() {
   const { createSandbox } = require("./sandbox.cjs");
   const { createMcp } = require("./mcp.cjs");
   const { createVault, safeStorageCipher } = require("./vault.cjs");
+  const { createAgentIds, createAutomationSync, agentIdApi } = require("./agent-id.cjs");
+  const { createAgentIdTools } = require("./agent-id-tools.cjs");
+  const { protectedStore } = require("../../desktop/protected-store.cjs");
   const { createVaultTools } = require("./vault-tools.cjs");
   const { migrateAppearance, defaultAccent } = require("../../shared/appearance.cjs");
 
@@ -284,7 +287,9 @@ async function boot() {
       if (changedUser) {
         sandboxArmed = false;
         accountSync?.stop(); accountSync = null;
-        await client.stop().catch(() => {}); harness.reset(); toolsRegistered = false;
+        await client.stop().catch(() => {}); harness.reset(); toolsRegistered = false; agentIdTools.reset();
+        // Signed out, the Agent ID window's website session goes too.
+        if (services.auth.user()) agentIdWindows.close(); else await agentIdWindows.forget(path.join(app.getPath("userData"), "Partitions"));
         browser.closeAll(); replies.clear();
         applyThemeSource(store.settings.get("appearance")?.scheme);
       }
@@ -328,7 +333,9 @@ async function boot() {
   const knowledge = new Proxy({}, { get: (_target, name) => accountKnowledge()[name] });
   fs.mkdirSync(path.join(runtimeDir, "codex-app-server-cwd"), { recursive: true });
   // The local endpoint Codex uses for Timewarp models and connected apps.
-  const bridge = createModelBridge({ token: bridgeToken, cloud: services.cloud, cloudSafe: services.cloudSafe, funding: services.funding, chatgpt: services.chatgpt, integrations: services.integrations, mascots: require("../../desktop/mascots.cjs"), toolServer: () => toolServer });
+  // Sending, paying and deleting in connected apps wait for the user's card (connectedAppGate, below).
+  let connectedAppGate = null;
+  const bridge = createModelBridge({ token: bridgeToken, cloud: services.cloud, cloudSafe: services.cloudSafe, funding: services.funding, chatgpt: services.chatgpt, integrations: services.integrations, mascots: require("../../desktop/mascots.cjs"), toolServer: () => toolServer, gate: call => connectedAppGate ? connectedAppGate(call) : { isError: true, content: [{ type: "text", text: "Timewarp is still starting; try again in a moment." }] } });
   const bridgeReady = bridge.listen();
   bridgeReady.catch(error => console.error("[timewarp]", error.message));
   const vendor = vendorRoot();
@@ -515,13 +522,47 @@ async function boot() {
   const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast, log: appLog, zoom: () => mainWindow?.webContents.getZoomFactor() ?? 1 });
   pane = browser;
   if (windowZoom) browser.setPageFit(windowZoom.fit());
-  const browserTools = createBrowserTools({ browser, onActivity: (conversationId, action) => broadcast("browser.agent", { conversationId, action }) });
+  // A click or Enter in a page that sends, pays or deletes asks on a card in the chat (confirmInChat, below).
+  const browserTools = createBrowserTools({ browser, onActivity: (conversationId, action) => broadcast("browser.agent", { conversationId, action }), confirm: (conversationId, card) => confirmInChat(conversationId, card) });
   // Raise when the tool set changes: chats then continue in a new thread.
   const cipher = safeStorageCipher(safeStorage);
   const vault = createVault({ store, cipher, userId: () => userId() });
+  // Each agent's Agent ID, its key encrypted on this computer (agent-id.cjs).
+  // Preview builds answer it themselves, or use a local Agent ID (scripts/
+  // agent-id-dev.cjs) with one of its session tokens, and its local website.
+  const localAgentId = fixture && process.env.TIMEWARP_FIXTURE_AGENT_ID_URL ? { base: process.env.TIMEWARP_FIXTURE_AGENT_ID_URL, token: process.env.TIMEWARP_FIXTURE_AGENT_ID_TOKEN || "", site: process.env.TIMEWARP_FIXTURE_AGENT_ID_SITE || "http://localhost:8093" } : null;
+  const agentIdRequest = localAgentId ? agentIdApi({ config, base: localAgentId.base, auth: { accessToken: async () => localAgentId.token } })
+    : fixture ? fixture.agentId : agentIdApi({ config, auth: services.auth });
+  const agentIdSite = localAgentId?.site || "https://timewarpdev.com";
+  // The owner's own Agent ID pages, in a window no agent reaches (agent-id-window.cjs).
+  const agentIdWindows = require("./agent-id-window.cjs").createAgentIdWindows({
+    BrowserWindow, session, dialog, icon: appIcon, userId: () => userId(), request: agentIdRequest, site: agentIdSite, supabaseUrl: config.supabaseUrl, loopback: !!fixture,
+    onClosed: () => broadcast("agentId.changed", {}), log: (message, detail) => appLog.warn("agent-id", message, { detail }),
+  });
+  const agentIds = createAgentIds({
+    request: agentIdRequest,
+    storage: protectedStore(path.join(profile, "agent-ids.bin"), safeStorage), encryption: safeStorage,
+    agents, userId: () => userId(), openPage: url => agentIdWindows.open(url), site: agentIdSite, log: (message, detail) => appLog.warn("agent-id", message, { detail }),
+  });
+  // Each agent's own Agent ID as tools in its chats (agent-id-tools.cjs).
+  const agentIdToolsFile = path.join(profile, "agent-id-tools.json");
+  const agentIdTools = createAgentIdTools({
+    request: agentIdRequest, agentIds, version: VERSION,
+    cache: { load: () => JSON.parse(fs.readFileSync(agentIdToolsFile, "utf8")), save: value => fs.writeFileSync(agentIdToolsFile, JSON.stringify(value)) },
+    modelOf: conversationId => store.conversations.get(conversationId)?.modelSettings?.name || store.settings.get("modelSettings")?.name || null,
+    // Sending, paying and deleting ask on a card in the chat (confirmInChat, below).
+    confirm: (conversationId, card) => confirmInChat(conversationId, card),
+    log: (message, detail) => appLog.warn("agent-id", message, { detail }),
+  });
+  void agentIdTools.refresh();
   const vaultTools = createVaultTools({
     vault, browserTools,
-    ask: async (message, detail) => {
+    // A card in the chat, as for sending and paying; a dialog only outside a chat.
+    ask: async (message, detail, card) => {
+      if (card?.conversationId) {
+        const { conversationId, ...question } = card;
+        return (await confirmInChat(conversationId, question)).decision === "accept";
+      }
       focusApp();
       const result = await dialog.showMessageBox(mainWindow, { type: "question", title: "Timewarp vault", message, detail, buttons: ["Allow", "Don't allow"], defaultId: 1, cancelId: 1, noLink: true });
       return result.response === 0;
@@ -578,6 +619,10 @@ async function boot() {
     // Late Codex events during quit find the database closed: they're dropped.
     notify: (name, payload) => { if (storeClosed) return; broadcast(name, payload); automations?.observe(name, payload); replies.observe(name, payload); background?.observe(name, payload); teamTools?.observe(name, payload); },
     log: (...args) => console.error("[timewarp]", ...args),
+    // Approvals, questions and app forms in chats: kind, app, timing and outcome, never their text or answers.
+    record: (level, message, facts) => appLog[level === "warn" ? "warn" : "info"]("request", message, facts),
+    // Codex asking before a connected app or Agent ID action that Timewarp's own card asks about.
+    answerFor: (method, params) => method === "mcpServer/elicitation/request" && require("./approvals.cjs").asksItself(params) ? { action: "accept", content: null, _meta: null } : null,
   });
   // Chat titles and the memory writer run in the background on a small model (memory-writer.cjs).
   background = (() => {
@@ -594,8 +639,11 @@ async function boot() {
     });
     return { observe: (name, payload) => { titles.observe(name, payload); writer.observe(name, payload); }, stop: () => writer.stop() };
   })();
-  automations = createAutomations({ store, harness, userId: () => userId(), notify: broadcast, log: (...args) => console.error("[timewarp]", ...args) });
-  automationTools = require("./automation-tools.cjs").createAutomationTools({ automations });
+  // Automations show on each agent's Agent ID, and its website's requests come back here (agent-id.cjs).
+  let automationSync = null;
+  automations = createAutomations({ store, harness, userId: () => userId(), notify: (name, payload) => { broadcast(name, payload); if (name === "automations.changed") automationSync?.changed(); }, log: (...args) => console.error("[timewarp]", ...args) });
+  automationSync = createAutomationSync({ request: agentIdRequest, automations, userId: () => userId(), log: (message, detail) => appLog.warn("agent-id", message, { detail }) });
+  automationTools = require("./automation-tools.cjs").createAutomationTools({ automations, confirm: (conversationId, card) => confirmInChat(conversationId, card) });
   // The browser, vault, automation and chat tools for every agent thread, workers
   // included. A call acts for the chat its thread (or its parent) belongs to.
   const automationSpecs = require("./automation-tools.cjs").toolSpecs;
@@ -621,6 +669,22 @@ async function boot() {
       } catch (error) { appLog.warn("notifications", "A card notification couldn't be shown: " + error.message); }
     }
     return asked;
+  };
+  // A connected app's action that sends, pays or deletes runs only after the
+  // user's OK on a card written from its own arguments (approvals.cjs),
+  // even when the user asked for it.
+  const approvals = require("./approvals.cjs");
+  connectedAppGate = async ({ conversationId, agent, arguments: args }) => {
+    const kind = approvals.composioKind(args.toolSlug, args.arguments || {});
+    if (!kind) return null;
+    let account = null;
+    try {
+      const apps = (await services.integrations.list({}))?.items || [];
+      const found = apps.flatMap(app => app.accounts || []).find(item => item.id === args.connectedAccountId);
+      account = found?.email || found?.displayName || null;
+    } catch {}
+    const answer = await confirmInChat(conversationId, approvals.composioCard({ slug: args.toolSlug, args: args.arguments || {}, kind, agent: agent?.name, account }));
+    return answer.decision === "accept" ? null : mcpResult(approvals.refusal(answer, kind));
   };
   const appTools = require("./app-tools.cjs").createAppTools({
     store, harness, userId: () => userId(),
@@ -659,6 +723,8 @@ async function boot() {
       };
     },
     confirm: confirmInChat,
+    // What the other screens do (app_action): MCP servers, new agents, Agent ID.
+    mcp: () => mcp, agents, agentIds,
   });
   toolServer = createToolServer({
     token: toolsToken,
@@ -669,6 +735,7 @@ async function boot() {
       timewarp_chats: { title: "Timewarp chats", instructions: chatTools.specs()[0].description, specs: chatTools.specs, call: chatTools.call, readOnly: new Set(["search_conversations", "search_messages", "read_conversation"]) },
       timewarp_team: { title: "Timewarp team", instructions: teamTools.specs()[0].description, specs: teamTools.specs, call: teamTools.call, readOnly: new Set(["list_agents"]) },
       timewarp_app: { title: "Timewarp app", instructions: appTools.specs()[0].description, specs: appTools.specs, call: appTools.call, readOnly: new Set(["get_usage", "get_settings", "get_status"]) },
+      timewarp_agent_id: { title: "Timewarp Agent ID", specs: agentIdTools.specs, call: agentIdTools.call, readOnly: agentIdTools.readOnly },
     },
     resolve: (threadId, rootThreadId) => {
       const conversationId = harness.conversationFor(threadId) || harness.conversationFor(rootThreadId);
@@ -904,7 +971,7 @@ async function boot() {
   const shares = require("./shares.cjs").createShares({ store, agents, harness, automations, accountRpc: (rpc, input) => services.accountRpc(rpc, input), userId: () => userId() });
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, assistantImport, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates, shares,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, assistantImport, onboarding, automations, mcp, codexHome, vault, agentIds, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates, shares,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();
@@ -973,6 +1040,7 @@ async function boot() {
   trace("services wired");
   markBooted();
   automations.start();
+  automationSync.start();
   createWindow();
   // After the window exists: on Windows a window without a title bar only gets
   // the menu's shortcuts when the menu is set once it's open.

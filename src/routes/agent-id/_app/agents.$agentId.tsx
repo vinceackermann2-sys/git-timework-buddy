@@ -12,6 +12,8 @@ import { WalletTab } from "@/components/agent-id/agent/WalletTab";
 import { CardTab } from "@/components/agent-id/agent/CardTab";
 import { MachineTab } from "@/components/agent-id/agent/MachineTab";
 import { VaultTab } from "@/components/agent-id/agent/VaultTab";
+import { ConnectorsTab } from "@/components/agent-id/agent/ConnectorsTab";
+import { AutomationsTab } from "@/components/agent-id/agent/AutomationsTab";
 import { ActivityTab } from "@/components/agent-id/agent/ActivityTab";
 import { SettingsTab } from "@/components/agent-id/agent/SettingsTab";
 import { defaultTab, parseAgentTab, type AgentTab } from "@/components/agent-id/agent/tabs";
@@ -118,6 +120,12 @@ function AgentPage() {
           </TabsContent>
           <TabsContent value="vault" className="mt-0">
             <VaultTab agent={agent} />
+          </TabsContent>
+          <TabsContent value="connectors" className="mt-0">
+            <ConnectorsTab agent={agent} />
+          </TabsContent>
+          <TabsContent value="automations" className="mt-0">
+            <AutomationsTab agent={agent} />
           </TabsContent>
           <TabsContent value="activity" className="mt-0">
             <ActivityTab agent={agent} />

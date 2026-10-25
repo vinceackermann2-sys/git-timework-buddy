@@ -4,6 +4,7 @@ import type {
   AgentModel,
   AgentStatus,
   AuditEntry,
+  ConnectorsChange,
   Kind,
   ModelKind,
   Mode,
@@ -294,6 +295,11 @@ const AUDIT_ACTIONS: Record<string, string> = {
   "vault.item_saved": "Saved to the vault",
   "vault.item_removed": "Removed from the vault",
   "vault.request": "Used a key from the vault",
+  "connectors.update": "Connected apps changed",
+  "connector.run": "Used a connected app",
+  "automation.pause": "Asked Timewarp to pause an automation",
+  "automation.resume": "Asked Timewarp to resume an automation",
+  "automation.run": "Asked Timewarp to run an automation",
 };
 export function auditActionLabel(action: string): string {
   const known = AUDIT_ACTIONS[action];
@@ -830,6 +836,60 @@ export function groupByDay<T extends { at: string }>(
 
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+// When something runs next: "now", "in 25 min", "in 3 h", then "Mon 8:30 AM"
+// within the week, else "Oct 27, 8:30 AM" (with the year when it's another).
+export function formatNextRun(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return "";
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) return "";
+  const minutes = Math.round((at - now) / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `in ${minutes} min`;
+  if (minutes < 12 * 60) return `in ${Math.round(minutes / 60)} h`;
+  const date = new Date(at);
+  const time = formatTime(iso);
+  if (at - now < 6 * 86_400_000)
+    return `${date.toLocaleDateString("en-US", { weekday: "short" })} ${time}`;
+  const sameYear = date.getFullYear() === new Date(now).getFullYear();
+  return `${date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  })}, ${time}`;
+}
+
+// --- Connected apps and automations ------------------------------------------------
+
+// What an agent's Connectors tab says in the side menu.
+export function connectorsValue(data: {
+  all: boolean;
+  connectors: { allowed: boolean }[];
+}): string {
+  if (data.all) return "All";
+  const allowed = data.connectors.filter((c) => c.allowed).length;
+  return allowed ? `${allowed} allowed` : "None";
+}
+
+export function automationsValue(data: { automations: unknown[] }): string {
+  const count = data.automations.length;
+  if (!count) return "None";
+  return count === 1 ? "1 automation" : `${count} automations`;
+}
+
+// What switching one connected account on or off asks for: the accounts it
+// may use now. Switching one off while "all" is on keeps every other one; and,
+// as Timewarp's own Tools do, every account on is "all".
+export function connectorsChange(
+  data: { connectors: { id: string; allowed: boolean }[] },
+  id: string,
+  allowed: boolean,
+): ConnectorsChange {
+  const connections = data.connectors
+    .filter((c) => (c.id === id ? allowed : c.allowed))
+    .map((c) => c.id);
+  return connections.length === data.connectors.length ? { all: true } : { connections };
 }
 
 // A soft colour per name, the same every time, for avatars.

@@ -1,11 +1,13 @@
 // What an agent has, drawn for Agent ID in a phone's style but without tiles
 // behind them: a message bubble and a phone in Timewarp's purple-to-pink, a
-// wallet with cards in it, a desktop computer, a card and a vault.
+// wallet with cards in it, a desktop computer, a card and a vault; connected
+// apps as four app tiles, and automations as a clock.
 import { useId } from "react";
 
 import { cn } from "@/lib/utils";
 
-export type ArtKind = "mail" | "wallet" | "phone" | "vm" | "card" | "vault";
+export type ArtKind =
+  "mail" | "wallet" | "phone" | "vm" | "card" | "vault" | "connectors" | "automations";
 
 // Drawn a little larger than the 40px box's middle, now that no tile frames them.
 const GROW = "translate(20 20) scale(1.22) translate(-20 -20)";
@@ -106,6 +108,27 @@ export function ResourceArt({
             <rect x="7" y="11" width="26" height="18" rx="3" fill={brand} />
             <rect x="10.5" y="15" width="5.5" height="4" rx="1" fill="#F6D98A" />
             <rect x="10.5" y="23.5" width="10" height="1.8" rx="0.9" fill="#fff" opacity="0.75" />
+          </g>
+        )}
+        {kind === "connectors" && (
+          <g>
+            <rect x="9" y="9" width="10" height="10" rx="2.8" fill={brand} />
+            <rect x="21" y="9" width="10" height="10" rx="2.8" fill="#4FB4F0" />
+            <rect x="9" y="21" width="10" height="10" rx="2.8" fill="#5ED17A" />
+            <rect x="21" y="21" width="10" height="10" rx="2.8" fill="#FFC93C" />
+          </g>
+        )}
+        {kind === "automations" && (
+          <g>
+            <circle cx="20" cy="20" r="11.5" fill={brand} />
+            <path
+              d="M20 13.5V20l4.4 2.6"
+              fill="none"
+              stroke="#fff"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </g>
         )}
       </g>

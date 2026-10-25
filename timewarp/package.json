@@ -59,7 +59,7 @@
     "engine:smoke": "node scripts/smoke-engine.cjs",
     "engine:eval": "node scripts/eval-engine.cjs",
     "engine:package:store": "node scripts/package-engine.cjs --store",
-    "test:agent-id": "node --test tests/agent-id.test.cjs tests/agent-id-providers.test.cjs tests/agent-id-features.test.cjs tests/agent-id-claims.test.cjs tests/agent-id-setup.test.cjs tests/agent-id-telnyx.test.cjs tests/agent-id-bank.test.cjs tests/agent-id-vault.test.cjs tests/agent-id-ask-first.test.cjs tests/agent-id-trace.test.cjs tests/agent-id-trace-core.test.cjs",
+    "test:agent-id": "node --test tests/agent-id.test.cjs tests/agent-id-providers.test.cjs tests/agent-id-features.test.cjs tests/agent-id-claims.test.cjs tests/agent-id-setup.test.cjs tests/agent-id-telnyx.test.cjs tests/agent-id-bank.test.cjs tests/agent-id-vault.test.cjs tests/agent-id-ask-first.test.cjs tests/agent-id-trace.test.cjs tests/agent-id-trace-core.test.cjs tests/agent-id-connectors.test.cjs tests/agent-id-app.test.cjs",
     "agent-id:dev": "node scripts/agent-id-dev.cjs"
   },
   "devDependencies": {

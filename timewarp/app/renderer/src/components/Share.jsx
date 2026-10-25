@@ -14,7 +14,7 @@ const ICON = { chat: MessageSquare, agent: Bot, automation: CalendarClock };
 // What a copy carries, said where it is sent and where it is accepted.
 const INCLUDED = {
   chat: "They get a copy of its messages. Files, attachments and your connected apps stay with you.",
-  agent: "They get a copy of its name, picture, instructions and workflows. It works with their own connected apps and vault; its chats, files and memory stay with you.",
+  agent: "They get a copy of its name, picture, instructions and skills. It works with their own connected apps and vault; its chats, files and memory stay with you.",
   automation: "They get a copy of its name, instructions and schedule, and choose which of their agents runs it with their own connected apps.",
 };
 const RECEIVED = {
@@ -190,7 +190,7 @@ export function IncomingShares({ agents, onAccepted }) {
             <span className="grow">
               <strong>{share.title}</strong>
               {kind === "chat" ? <small>{summary.messages ? `${summary.messages} message${summary.messages === 1 ? "" : "s"}` : "Conversation"}{summary.agentName ? ` with ${summary.agentName}` : ""}{summary.omitted ? ` · the latest ${summary.messages} of ${summary.messages + summary.omitted}` : ""}</small> : null}
-              {kind === "agent" ? <small>{summary.workflows?.length ? `Workflows: ${summary.workflows.join(", ")}` : "No workflows"}</small> : null}
+              {kind === "agent" ? <small>{summary.workflows?.length ? `Skills: ${summary.workflows.join(", ")}` : "No skills"}</small> : null}
               {kind === "automation" ? <small>{describeSchedule((content ? content.schedule : summary.schedule) || {})}{summary.agentName ? ` · run by ${summary.agentName}` : ""}</small> : null}
               {kind !== "automation" && (summary.preview || summary.description) ? <span className="tw-share-preview">{summary.preview || summary.description}</span> : null}
             </span>

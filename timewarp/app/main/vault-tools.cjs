@@ -81,8 +81,14 @@ const describe = entry => entry.kind === "password" ? `${entry.id} | sign-in | $
   : entry.kind === "card" ? `${entry.id} | card | ${entry.label} | ${entry.brand} ending ${entry.last4} | expires ${String(entry.expMonth).padStart(2, "0")}/${entry.expYear}`
     : `${entry.id} | secret | ${entry.label}`;
 
+// ask(message, detail, card): the user's yes or no. card is the same question
+// for the chat ({ conversationId, kind, title, agent, app, lines, body, action }),
+// where the app asks it (Approval.jsx); message and detail are its plain words.
 function createVaultTools({ vault, browserTools, ask }) {
   const text = value => ({ contentItems: [{ type: "inputText", text: String(value) }], success: true });
+  // Sign-ins the user allowed on their own site in a chat: "<chat>\n<item>".
+  // A sign-in on another site, a card and a secret are asked about every time.
+  const signInsAllowed = new Set();
   return {
     specs: toolSpecs,
     async call(conversationId, params, agent) {
@@ -109,19 +115,33 @@ function createVaultTools({ vault, browserTools, ask }) {
       // the user is told which site's frame a card or secret goes to.
       const framesOf = refs => refs.filter(Boolean).map(ref => browserTools.fieldUrl ? browserTools.fieldUrl(conversationId, { ref, tab: tabId }) : page);
       const where = urls => { const others = [...new Set(urls.map(host))].filter(name => name !== host(page)); return host(page) + (others.length ? ` (in a form from ${others.join(", ")})` : ""); };
+      const card = (kind, title, lines, body, action) => ({ conversationId, kind, title, agent: agent.name, app: "Vault", lines, body, action });
       if (name === "fill_sign_in") {
         if (entry.kind !== "password") throw fail(400, "That item isn't a sign-in.");
         if (!input.username_ref && !input.password_ref) throw fail(400, "Pass the username or password field reference.");
         const fields = framesOf([input.username_ref, input.password_ref]);
-        if (![page, ...fields].every(url => matchesSite(entry.origin, url)) && !await ask(`${agent.name} wants to use your ${host(entry.origin)} sign-in on ${where(fields)}.`, "This site isn't the one the sign-in was saved for. Allow it only if you trust this page."))
+        const warning = "This site isn't the one the sign-in was saved for. Allow it only if you trust this page.";
+        const ownSite = [page, ...fields].every(url => matchesSite(entry.origin, url)), allowedHere = conversationId + "\n" + entry.id;
+        if (!ownSite && !await ask(`${agent.name} wants to use your ${host(entry.origin)} sign-in on ${where(fields)}.`, warning,
+          card("use", `Use your ${host(entry.origin)} sign-in here?`, [{ label: "Saved for", value: host(entry.origin) }, { label: "Page", value: where(fields) }, ...(entry.username ? [{ label: "Username", value: entry.username }] : [])], warning, "Use sign-in")))
           return { contentItems: [{ type: "inputText", text: "The user didn't allow using this sign-in here." }], success: false };
+        // On its own site: once per chat.
+        if (ownSite && !signInsAllowed.has(allowedHere)) {
+          const detail = "Your agent fills your saved sign-in without seeing the password. Allowed for this site for the rest of this chat.";
+          if (!await ask(`${agent.name} wants to sign in to ${host(entry.origin)}${entry.username ? " as " + entry.username : ""}.`, detail,
+            card("use", `Sign in to ${host(entry.origin)}?`, [...(entry.username ? [{ label: "Account", value: entry.username }] : []), { label: "Page", value: where(fields) }], detail, "Sign in")))
+            return { contentItems: [{ type: "inputText", text: "The user didn't allow signing in here." }], success: false };
+          signInsAllowed.add(allowedHere);
+        }
         await fill(input.username_ref, entry.username, "username");
         await fill(input.password_ref, entry.password, "password");
         return text(`Filled the ${host(entry.origin)} sign-in. Submit the form when ready.`);
       }
       if (name === "fill_card") {
         if (entry.kind !== "card") throw fail(400, "That item isn't a payment card.");
-        if (!await ask(`${agent.name} wants to fill your ${entry.brand} ending ${entry.last4} on ${where(framesOf([input.number_ref, input.expiry_ref, input.exp_month_ref, input.exp_year_ref, input.name_ref]))}.`, "Allow it only if you're expecting to pay on this site."))
+        const site = where(framesOf([input.number_ref, input.expiry_ref, input.exp_month_ref, input.exp_year_ref, input.name_ref]));
+        if (!await ask(`${agent.name} wants to fill your ${entry.brand} ending ${entry.last4} on ${site}.`, "Allow it only if you're expecting to pay on this site.",
+          card("pay", `Fill your ${entry.brand} ending ${entry.last4}?`, [{ label: "Card", value: `${entry.label ? entry.label + " · " : ""}${entry.brand} ···· ${entry.last4}` }, { label: "Page", value: site }], "Allow it only if you're expecting to pay on this site. The security code is never filled.", "Fill card")))
           return { contentItems: [{ type: "inputText", text: "The user didn't allow using this card." }], success: false };
         // Each field gets the details in the form it takes (a list's option, a
         // two- or four-digit year) and is read back: what didn't go in is reported.
@@ -145,7 +165,9 @@ function createVaultTools({ vault, browserTools, ask }) {
       }
       if (name === "fill_secret") {
         if (entry.kind !== "secret") throw fail(400, "That item isn't a secret.");
-        if (!await ask(`${agent.name} wants to fill your secret "${entry.label}" on ${where(framesOf([input.ref]))}.`, "Allow it only if this page should receive it."))
+        const site = where(framesOf([input.ref]));
+        if (!await ask(`${agent.name} wants to fill your secret "${entry.label}" on ${site}.`, "Allow it only if this page should receive it.",
+          card("use", `Fill your secret "${entry.label}"?`, [{ label: "Secret", value: entry.label }, { label: "Page", value: site }], "Allow it only if this page should receive it.", "Fill secret")))
           return { contentItems: [{ type: "inputText", text: "The user didn't allow using this secret." }], success: false };
         await fill(input.ref, entry.value);
         return text(`Filled "${entry.label}".`);

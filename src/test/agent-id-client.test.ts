@@ -158,6 +158,30 @@ describe("Agent ID client", () => {
     expect(JSON.parse(String(calls[5]?.init.body))).toEqual({ bankAccount: "bnk_1", value: "60" });
   });
 
+  it("reads and sets an agent's connected apps, and asks Timewarp about its automations", async () => {
+    const { fn, calls } = fakeFetch(() => json({ ok: true }));
+    const client = createAgentIdClient({
+      baseUrl: "http://api",
+      getToken: async () => "tok",
+      fetch: fn,
+    });
+    await client.connectors("agt_1");
+    await client.setConnectors("agt_1", { connections: ["ca_gmail"] });
+    await client.setConnectors("agt_1", { all: true });
+    await client.automations("agt_1");
+    await client.automationRequest("agt_1", "auto/1", "run");
+    expect(calls.map((c) => `${c.init.method} ${c.url}`)).toEqual([
+      "GET http://api/v1/agents/agt_1/connectors",
+      "PUT http://api/v1/agents/agt_1/connectors",
+      "PUT http://api/v1/agents/agt_1/connectors",
+      "GET http://api/v1/agents/agt_1/automations",
+      "POST http://api/v1/agents/agt_1/automations/auto%2F1/requests",
+    ]);
+    expect(
+      calls.slice(1).map((c) => (c.init.body ? JSON.parse(String(c.init.body)) : null)),
+    ).toEqual([{ connections: ["ca_gmail"] }, { all: true }, null, { action: "run" }]);
+  });
+
   it("turns API errors into AgentIdError with the server's message", async () => {
     const { fn } = fakeFetch(() =>
       json(

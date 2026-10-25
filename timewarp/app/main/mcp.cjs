@@ -255,10 +255,11 @@ function createMcp({ client, openExternal, notify = () => {}, confirmCommand = n
       if (imported.length) { await reload(); notify("mcp.changed", {}); }
       return { imported, skipped };
     },
-    async add(input) {
+    // confirmed: the user already allowed this exact server on a card in a chat (app-tools.cjs).
+    async add(input, { confirmed = false } = {}) {
       if (await taken(input.name)) throw fail(409, "A server with this name already exists.");
       const config = serverConfig(input);
-      if (config.command && !await confirmCommand({ name: input.name, command: config.command, args: config.args, envKeys: Object.keys(config.env || {}) })) throw fail(400, "The server wasn't added.");
+      if (config.command && !confirmed && !await confirmCommand({ name: input.name, command: config.command, args: config.args, envKeys: Object.keys(config.env || {}) })) throw fail(400, "The server wasn't added.");
       await write(`mcp_servers.${input.name}`, config);
       return list();
     },

@@ -18,7 +18,7 @@ async function signIn(email: string) {
   const verified = await client.auth.verifyOtp({ type: 'magiclink', token_hash: tokenHash });
   const session = verified.data?.session;
   if (verified.error || !session) throw new Error(verified.error?.message || 'No session.');
-  return { access_token: session.access_token, refresh_token: session.refresh_token, expires_in: session.expires_in };
+  return { access_token: session.access_token, refresh_token: session.refresh_token, expires_in: session.expires_in, expires_at: session.expires_at, user: session.user };
 }
 
 // Keeps the function alive until work started for a request finishes (a new

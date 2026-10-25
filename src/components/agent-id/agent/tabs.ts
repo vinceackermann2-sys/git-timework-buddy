@@ -1,6 +1,7 @@
 // The tabs on an agent's page; the id is the `tab` search param. Mail, Phone,
 // Wallet and Machine show once the agent has them; Card is always there (it is
 // the early-access application), and so is Phone while numbers are applied for.
+// Vault, Connectors (its connected apps) and Automations always show.
 import type { Agent, Kind } from "@/lib/agent-id/types";
 
 export const AGENT_TABS = [
@@ -10,6 +11,8 @@ export const AGENT_TABS = [
   ["card", "Card"],
   ["machine", "Computer"],
   ["vault", "Vault"],
+  ["connectors", "Connectors"],
+  ["automations", "Automations"],
   ["activity", "Activity"],
   ["settings", "Settings"],
 ] as const;

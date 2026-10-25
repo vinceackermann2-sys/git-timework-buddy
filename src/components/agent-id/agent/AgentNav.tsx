@@ -1,14 +1,18 @@
 // An agent's sections down the left of its page: what it has (mail, phone,
-// wallet, card, computer), each with where it stands, then its activity and
-// settings. On phones, a row that scrolls sideways.
+// wallet, card, computer, vault, connected apps, automations), each with where
+// it stands, then its activity and settings. On phones, a row that scrolls sideways.
 import type { ReactNode } from "react";
 import { Activity, Loader2, Settings } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatPhone, formatUsd } from "@/lib/agent-id/format";
+import { automationsValue, connectorsValue, formatPhone, formatUsd } from "@/lib/agent-id/format";
 import {
+  isConnectorsUnavailable,
+  useAutomations,
   useCardApplication,
+  useConnectors,
+  useConnectorsAvailable,
   usePhoneApplication,
   usePhonesWaitlist,
   useWalletSummary,
@@ -28,6 +32,9 @@ export function AgentNav({ detail }: { detail: AgentDetail }) {
   const phoneApplication = usePhoneApplication(agent.id, phonesWaitlist && !phone);
   const balance = summary.data?.balance ?? wallet?.balance ?? null;
   const vault = useVault(agent.id);
+  const connectorsAvailable = useConnectorsAvailable();
+  const connectors = useConnectors(agent.id, connectorsAvailable === true);
+  const automations = useAutomations(agent.id);
   const settingUp = (
     <span className="inline-flex items-center gap-1">
       <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> Setting up
@@ -96,6 +103,23 @@ export function AgentNav({ detail }: { detail: AgentDetail }) {
           : vault.data.items.length === 1
             ? "1 saved"
             : `${vault.data.items.length} saved`,
+    },
+    {
+      tab: "connectors",
+      label: "Connectors",
+      icon: <ResourceArt kind="connectors" size={32} />,
+      value:
+        connectorsAvailable === false || isConnectorsUnavailable(connectors.error)
+          ? "Not available"
+          : connectors.data
+            ? connectorsValue(connectors.data)
+            : "",
+    },
+    {
+      tab: "automations",
+      label: "Automations",
+      icon: <ResourceArt kind="automations" size={32} />,
+      value: automations.data ? automationsValue(automations.data) : "",
     },
     { tab: "activity", label: "Activity", icon: <Plain icon={<Activity className="h-5 w-5" />} /> },
     { tab: "settings", label: "Settings", icon: <Plain icon={<Settings className="h-5 w-5" />} /> },

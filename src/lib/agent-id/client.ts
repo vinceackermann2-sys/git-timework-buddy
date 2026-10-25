@@ -4,6 +4,11 @@
 import type {
   Account,
   AddMoneyInfo,
+  AgentAutomations,
+  AgentConnectors,
+  AutomationAction,
+  AutomationRequest,
+  ConnectorsChange,
   BankAccount,
   BankCurrency,
   BankDeposit,
@@ -124,7 +129,7 @@ export function buildUrl(base: string, path: string, query?: Query): string {
 }
 
 export type RequestOptions = {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   query?: Query;
   body?: unknown;
   // A file sent as the raw body (uploads), with its own headers.
@@ -358,6 +363,22 @@ export function createAgentIdClient(options: ClientOptions) {
       request<{ removed: boolean }>(`/v1/agents/${id(agentId)}/vault/items/${id(itemId)}`, {
         method: "DELETE",
       }),
+    // The owner's connected apps this agent may use (Timewarp's Tools setting
+    // for a Timewarp agent), and its automations as Timewarp reports them.
+    connectors: (agentId: string) =>
+      request<AgentConnectors>(`/v1/agents/${id(agentId)}/connectors`),
+    setConnectors: (agentId: string, change: ConnectorsChange) =>
+      request<AgentConnectors>(`/v1/agents/${id(agentId)}/connectors`, {
+        method: "PUT",
+        body: change,
+      }),
+    automations: (agentId: string) =>
+      request<AgentAutomations>(`/v1/agents/${id(agentId)}/automations`),
+    automationRequest: (agentId: string, automationId: string, action: AutomationAction) =>
+      request<{ request: AutomationRequest }>(
+        `/v1/agents/${id(agentId)}/automations/${id(automationId)}/requests`,
+        { body: { action } },
+      ),
     removeResource: (agentId: string, kind: Kind) =>
       request<{ released: boolean }>(`/v1/agents/${id(agentId)}/resources/${kind}`, {
         method: "DELETE",

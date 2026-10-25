@@ -11,7 +11,7 @@ export type Ctx = {
   // Work that finishes after the answer is sent (a new agent's resources).
   background: (work: Promise<unknown>) => void;
   // Signs a person in (as a magic link would) once they've proved their email.
-  signIn?: (email: string) => Promise<{ access_token: string; refresh_token: string; expires_in: number } | null>;
+  signIn?: (email: string) => Promise<{ access_token: string; refresh_token: string; expires_in: number; expires_at?: number; user?: unknown } | null>;
   // The app and model an agent acts through (its MCP session), recorded with what it does.
   via?: { app: string | null; model: string | null };
   // Where an agent's request came from: its network address and, from the

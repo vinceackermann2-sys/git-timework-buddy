@@ -141,6 +141,8 @@ export function publicConfig(config: Config) {
     // that gives them a passport for this audience.
     trace: { audience: `${config.issuer}/trace`, check: `${config.publicUrl}/v1/trace/check`, mark: `${config.publicUrl}/v1/trace/mark` },
     bank: { available: bankAvailable(config) },
+    // The owner's connected apps (Composio), usable by their agents anywhere.
+    connectors: { available: !!config.env('COMPOSIO_API_KEY') },
     // No subscription: free mail and wallets, free machine hours, then credits.
     pricing: {
       computeFreeHours: config.computeFreeHours,
