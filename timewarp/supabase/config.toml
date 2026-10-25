@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.agent-id]
 verify_jwt = false
+
+[functions.timewarp-agent-mail-webhook]
+verify_jwt = false

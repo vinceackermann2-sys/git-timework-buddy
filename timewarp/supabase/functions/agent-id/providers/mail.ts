@@ -8,13 +8,6 @@ import type { AgentRow, Ctx, ResourceRow } from '../context.ts';
 export async function provisionMail(ctx: Ctx, agent: AgentRow, mode: 'live' | 'test') {
   const domain = mode === 'live' ? ctx.config.mailDomain : ctx.config.testMailDomain;
   const address = `${agent.handle}@${domain}`;
-  if (mode === 'live') {
-    // The previous Timewarp app gave its agents addresses on the same domain.
-    for (const [table, column] of [['timewarp_personal_agents', 'email'], ['timewarp_agent_teams', 'shared_email']]) {
-      const { data, error } = await ctx.admin.from(table).select(column).eq(column, address).limit(1);
-      if (!error && Array.isArray(data) && data.length) throw fail(409, 'address_taken', 'That mail address is already in use. Rename the agent and try again.');
-    }
-  }
   return { provider: mode === 'live' ? 'resend' : 'test', address, label: address, providerRef: null as string | null, state: {} };
 }
 

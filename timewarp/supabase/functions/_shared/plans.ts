@@ -4,7 +4,7 @@
 // This file is the authority for what a user is allowed to spend. The desktop
 // client keeps its own copy of the *marketing* copy in src/lib/plans.ts (names,
 // prices, feature bullets), but it never decides limits — it reads live usage
-// and budgets from billing-status, and ai-proxy enforces them here. Keeping the
+// and budgets from stripe-billing, and the server enforces them. Keeping the
 // gate server-side matters: the app's local usage ledger is a plain JSON file in
 // the user's data directory, so anything enforced only on the client can be
 // reset by deleting a file.
