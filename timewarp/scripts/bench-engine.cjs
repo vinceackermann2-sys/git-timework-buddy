@@ -183,6 +183,83 @@ async function engine({ exe, leadingArgs, resources }) {
   }
 }
 
+// --- Codex's code tool ---------------------------------------------------------
+// A GPT model reaches every tool (connected apps, the browser, commands)
+// through Codex's code tool, which runs JavaScript in a separate V8 program
+// (codex-code-mode-host). If that program can't run, as on a Mac whose
+// signature lacks Codex's entitlements, every tool call fails while replies
+// still stream. A local fake GPT model makes one code tool call here.
+const CODE_MODEL = "gpt-6.1-sol"; // a model Codex runs in code mode
+async function codeTool({ exe, leadingArgs, resources }) {
+  const sse = events => events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+  const completed = id => ({ type: "response.completed", response: { id, usage: { input_tokens: 50, input_tokens_details: { cached_tokens: 0 }, output_tokens: 5, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 55 } } });
+  let offered = false, output = null, requests = 0;
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", chunk => { raw += chunk; });
+    req.on("end", () => {
+      if (req.method !== "POST" || !req.url.endsWith("/responses")) { res.writeHead(404, { "content-type": "application/json" }); res.end("{}"); return; }
+      const body = JSON.parse(raw), id = "resp_" + ++requests;
+      const result = (body.input || []).find(item => item.type === "custom_tool_call_output");
+      offered ||= (body.input || []).filter(item => item.type === "additional_tools").flatMap(item => item.tools || []).flatMap(tool => tool.type === "namespace" ? tool.tools || [] : [tool]).some(tool => tool.name === "exec");
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      if (!result && offered) {
+        const call = { type: "custom_tool_call", id: "ctc_1", call_id: "call_1", name: "exec", input: "const total = [1, 2, 3].map(n => n * 14).reduce((a, b) => a + b, 0);\ntext(\"code tool \" + total);", status: "completed" };
+        res.end(sse([{ type: "response.created", response: { id } }, { type: "response.output_item.added", output_index: 0, item: { ...call, input: "" } }, { type: "response.output_item.done", output_index: 0, item: call }, completed(id)]));
+        return;
+      }
+      if (result) output = typeof result.output === "string" ? result.output : (result.output || []).map(part => part.text || "").join("\n");
+      const message = { type: "message", role: "assistant", id: "msg_" + requests, content: [{ type: "output_text", text: "Done." }] };
+      res.end(sse([{ type: "response.created", response: { id } }, { type: "response.output_item.added", output_index: 0, item: { ...message, content: [] } }, { type: "response.output_item.done", output_index: 0, item: message }, completed(id)]));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const home = scratch(".tw-smoke-codex-"), workspace = path.join(home, "workspace");
+  fs.mkdirSync(workspace, { recursive: true });
+  const extra = ["codex-path", "codex-resources"].map(name => path.join(resources, name)).filter(fs.existsSync);
+  const pathKey = Object.keys(process.env).find(name => name.toUpperCase() === "PATH") || "PATH";
+  const args = [...leadingArgs,
+    "-c", `model_providers.smoke={name="Smoke",base_url="http://127.0.0.1:${server.address().port}/v1",wire_api="responses",env_key="TIMEWARP_SMOKE_TOKEN"}`,
+    "-c", 'model_provider="smoke"', "-c", `model="${CODE_MODEL}"`];
+  const child = cp.spawn(exe, args, { cwd: workspace, env: { ...process.env, CODEX_HOME: home, TIMEWARP_SMOKE_TOKEN: "smoke", [pathKey]: [...extra, process.env[pathKey] || ""].join(path.delimiter) }, stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+  let buffer = "", nextId = 0;
+  const pending = new Map();
+  let finished;
+  const done = new Promise((resolve, reject) => { finished = { resolve, reject }; });
+  done.catch(() => {}); // awaited below; an early exit isn't an unhandled rejection
+  child.once("exit", code => finished.reject(new Error(`Codex exited (${code}) before the turn finished.`)));
+  child.stdout.on("data", chunk => {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
+      if (!line.trim()) continue;
+      let message; try { message = JSON.parse(line); } catch { continue; }
+      if (message.id !== undefined && pending.has(message.id) && !message.method) { const { resolve, reject } = pending.get(message.id); pending.delete(message.id); message.error ? reject(new Error(message.error.message)) : resolve(message.result); }
+      else if (message.method && message.id !== undefined) child.stdin.write(JSON.stringify({ id: message.id, result: { decision: "accept" } }) + "\n");
+      else if (message.method === "turn/completed") finished.resolve(message.params.turn);
+    }
+  });
+  const request = (method, params) => new Promise((resolve, reject) => { const id = ++nextId; pending.set(id, { resolve, reject }); child.stdin.write(JSON.stringify({ id, method, params }) + "\n"); });
+  try {
+    await request("initialize", { clientInfo: { name: "timewarp-smoke", title: "Timewarp smoke test", version: "0" }, capabilities: { experimentalApi: true } });
+    child.stdin.write(JSON.stringify({ method: "initialized" }) + "\n");
+    const thread = await request("thread/start", { cwd: workspace, approvalPolicy: "never", sandbox: "workspace-write", model: CODE_MODEL });
+    const started = now();
+    await request("turn/start", { threadId: thread.thread.id, input: [{ type: "text", text: "Run the check.", text_elements: [] }] });
+    const timer = setTimeout(() => finished.reject(new Error("The code tool's turn didn't finish within 60 s.")), 60000);
+    const turn = await done.finally(() => clearTimeout(timer));
+    if (!offered) throw new Error(`Codex didn't offer its code tool to ${CODE_MODEL}.`);
+    if (!/code tool 84/.test(output || "")) throw new Error("The code tool didn't run: " + String(output ?? turn?.error?.message ?? "no result").replace(/\s+/g, " ").slice(0, 400));
+    return { replyMs: Math.round(now() - started) };
+  } finally {
+    killTree(child.pid);
+    server.closeAllConnections(); server.close();
+    await pause(800);
+    await remove(home);
+  }
+}
+
 function summarize(runs) {
   const pick = getter => median(runs.map(run => { try { return getter(run); } catch { return NaN; } }));
   const first = runs[0];
@@ -223,8 +300,8 @@ async function compare() {
   console.log(JSON.stringify({ previous: { installMb: results.previous.installMb, startup: results.previous.startup, agent: results.previous.agent }, engine: { installMb: results.engine.installMb, startup: results.engine.startup, agent: results.engine.agent } }, null, 2));
 }
 
-// The packaging smoke tests reuse the start-up and agent engine checks.
-module.exports = { startup, engine };
+// The packaging smoke tests reuse the start-up, agent engine and code tool checks.
+module.exports = { startup, engine, codeTool };
 
 if (require.main === module) {
   if (process.argv[2] === "compare") compare().catch(error => { console.error(error.message); process.exitCode = 1; });

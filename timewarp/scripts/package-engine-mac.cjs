@@ -75,6 +75,8 @@ function builderOptions({ draft, config, feed, app, output, codex, version }) {
         target: draft ? "dmg" : ["dmg", "zip"], icon: path.join(root, "assets/app-icon.icns"), category: "public.app-category.productivity",
         identity: draft ? "-" : config.identity.replace(/^Developer ID Application: /, ""), hardenedRuntime: true, notarize: false, gatekeeperAssess: false,
         entitlements: path.join(root, "assets/entitlements.mac.plist"), entitlementsInherit: path.join(root, "assets/entitlements.mac.plist"),
+        // Codex's V8 programs are signed with Codex's own entitlements (sign-mac.cjs).
+        sign: path.join(__dirname, "sign-mac.cjs"),
         minimumSystemVersion: MINIMUM_MACOS,
         extendInfo: { NSMicrophoneUsageDescription: "Timewarp uses the microphone when you dictate messages.", NSCameraUsageDescription: "Timewarp uses the camera when a website in its browser asks for it and you allow it." },
         // The zip's name (the DMG has its own below). electron-builder has no
