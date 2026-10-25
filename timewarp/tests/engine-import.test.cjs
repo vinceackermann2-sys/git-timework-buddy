@@ -312,7 +312,9 @@ test("a relaunch downloads and uploads only the chats that changed", async t => 
   t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const adapter = createHistoryAdapter({ store, settings: store.settings, createAgent: input => store.agents.create({ ...input, workspace: path.join(root, input.id) }) });
   const remote = historyCloud(), at = minutes => new Date(Date.UTC(2026, 9, 1, 10, minutes)).toISOString();
-  const entry = (id, minutes, text) => ({ id, kind: "message", authorId: "user-1", createdAt: at(minutes), parts: [{ type: "text", text }], suggestedReplies: [], replyToMessageId: null, forwardedFromMessageId: null });
+  // Message ids are UUIDs, as the cloud takes them ("a-3" stands for one).
+  const uid = name => "00000000-0000-4000-8000-" + Buffer.from(name).toString("hex").padStart(12, "0");
+  const entry = (id, minutes, text) => ({ id: uid(id), kind: "message", authorId: "user-1", createdAt: at(minutes), parts: [{ type: "text", text }], suggestedReplies: [], replyToMessageId: null, forwardedFromMessageId: null });
   const chat = (id, extra) => ({ conversation: { id, kind: "dm", createdByEntityId: "user-1", title: "Chat " + id, createdAt: at(0), updatedAt: at(0), lastActivityAt: at(0), modelSettings: { name: "gpt-5.6-sol", reasoningEffort: "low", serviceTier: null }, archived: false, read: true, ...extra },
     agents: [{ id: "agent-r", displayName: "Nova" }], entries: [entry(id + "-1", 1, "Hello " + id), entry(id + "-2", 2, "Reply " + id)] });
   remote.put(chat("a"));
@@ -353,11 +355,11 @@ test("a relaunch downloads and uploads only the chats that changed", async t => 
   assert.deepEqual(remote.take("get").flatMap(call => call.ids), ["b"]);
   assert.equal(store.messages.list("b").at(-1).text, "From the laptop");
   assert.ok(store.conversations.get("b").archivedAt, "An archived chat stays archived");
-  store.messages.append({ id: "a-3", conversationId: "a", authorId: "user-1", text: "One more", createdAt: at(6) });
+  store.messages.append({ id: uid("a-3"), conversationId: "a", authorId: "user-1", text: "One more", createdAt: at(6) });
   await history.sync();
   const saves = remote.take("save");
-  assert.deepEqual(saves.find(save => save.snapshot.conversation.id === "a").snapshot.entries.map(item => item.id), ["a-3"], "Only the new message is sent");
-  assert.deepEqual(saves.flatMap(save => save.snapshot.entries.map(item => item.id)), ["a-3"]);
+  assert.deepEqual(saves.find(save => save.snapshot.conversation.id === "a").snapshot.entries.map(item => item.id), [uid("a-3")], "Only the new message is sent");
+  assert.deepEqual(saves.flatMap(save => save.snapshot.entries.map(item => item.id)), [uid("a-3")]);
   history.stop();
 
   // A chat removed here comes back, and one the cloud lost is sent in full.

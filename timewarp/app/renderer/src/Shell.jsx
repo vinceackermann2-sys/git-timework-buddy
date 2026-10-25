@@ -274,6 +274,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
   });
   useEvent("app.navigate", ({ route: target } = {}) => { if (typeof target === "string" && target.startsWith("#/")) go(target); });
   useEvent("history.status", state => { if (state.state === "synced") { void loadAgents(); void loadConversations(); void loadRunning(); } });
+  // Chats that changed on the account's other computers, as they arrive.
+  useEvent("history.restored", () => { void loadAgents(); void loadConversations(); });
   // Agents changed on the account's other computer.
   useEvent("account.synced", () => { void loadAgents(); });
   useEvent("funding.changed", () => { void loadModels(); loadFunding(); });

@@ -807,7 +807,9 @@ async function main() {
     // follow it, and the other account sees none of them.
     accounts: async () => {
       const cloudFile = path.join(os.tmpdir(), `timewarp-e2e-cloud-${process.pid}.json`);
-      const desk = await launch({ TIMEWARP_FIXTURE_CLOUD_FILE: cloudFile });
+      // The desk's requests to the model, to see what its agent was given.
+      const dumps = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-e2e-requests-"));
+      const desk = await launch({ TIMEWARP_FIXTURE_CLOUD_FILE: cloudFile, TIMEWARP_FIXTURE_DUMP: path.join(dumps, "%n.json") });
       const laptop = await launch({ TIMEWARP_FIXTURE_CLOUD_FILE: cloudFile });
       const until = async (check, what, ms = 45000) => {
         let last;
@@ -830,17 +832,22 @@ async function main() {
         await until(async () => await app.evaluate(`window.timewarp?.request("state").then(state => state.user?.email)`) === email && await app.evaluate("!!document.querySelector('.tw-window')"), "The window didn't show " + email);
         await until(async () => (await app.call("debug.accountSync")).state === "synced", "The account didn't finish starting");
       };
+      // Sends a message in a chat and waits for its reply.
+      const ask = async (app, id, text) => {
+        const before = (await app.call("conversations.history", { id })).turns?.length || 0;
+        await app.call("conversations.send", { id, text, images: [], files: [], clientId: crypto.randomUUID() });
+        await until(async () => {
+          const [status, history] = await Promise.all([app.call("conversations.status", { id }), app.call("conversations.history", { id })]);
+          const last = history.turns?.at(-1);
+          return !status.running && history.turns.length > before && last.status !== "inProgress" ? last.status : null;
+        }, `"${text}" got no reply`, 90000);
+      };
       try {
         // On the desk: an agent with a chat, notes, instructions for every
         // agent, a skill, the theme, app access and an MCP server.
         const navigator = await desk.call("agents.create", { name: "Navigator", instructions: "Plan trips by train." });
         const chat = await desk.call("conversations.create", { agentId: navigator.id });
-        await desk.call("conversations.send", { id: chat.id, text: "Find a night train to Berlin", images: [], files: [], clientId: crypto.randomUUID() });
-        await until(async () => {
-          const [status, history] = await Promise.all([desk.call("conversations.status", { id: chat.id }), desk.call("conversations.history", { id: chat.id })]);
-          const last = history.turns?.at(-1);
-          return !status.running && last && last.status !== "inProgress" ? last.status : null;
-        }, "The chat got no reply", 90000);
+        await ask(desk, chat.id, "Find a night train to Berlin");
         await desk.call("memory.save", { notes: "# User\n\n- Prefers aisle seats\n" });
         await desk.call("instructions.save", { text: "Answer in Swedish." });
         await desk.call("skills.create", { name: "rail-planner", description: "Plans rail journeys", instructions: "Check night trains first." });
@@ -860,6 +867,22 @@ async function main() {
         if (JSON.stringify((await laptop.call("integrations.getAccess", { agentId: navigator.id })).items) !== "[]") throw new Error("The agent's app access didn't follow.");
         if (!(await laptop.call("mcp.list", { status: false })).some(server => server.name === "docs" && server.url === "https://mcp.example.com/mcp")) throw new Error("The MCP server didn't follow.");
         if (!(await laptop.call("conversations.search", { query: "night train" })).messages.some(item => item.conversation.id === chat.id)) throw new Error("The chat didn't follow.");
+        const replied = (await laptop.call("conversations.history", { id: chat.id })).messages.map(message => message.text);
+        if (!replied.some(text => /Preview reply/.test(text))) throw new Error("The agent's reply didn't follow: " + JSON.stringify(replied));
+
+        // The chat continues on the laptop. Back on the desk it shows there,
+        // after the desk's turn, and the desk's agent is given it before the
+        // next message there.
+        await ask(laptop, chat.id, "Is there a sleeper cabin?");
+        await synced(laptop); await synced(desk);
+        const back = await desk.call("conversations.history", { id: chat.id });
+        if (!back.elsewhere?.some(message => message.text === "Is there a sleeper cabin?") || !back.elsewhere.some(message => /Preview reply/.test(message.text))) throw new Error("The desk doesn't show what was written on the laptop: " + JSON.stringify(back.elsewhere));
+        await ask(desk, chat.id, "Book the cheapest one");
+        // The chat's own request (not a background job's, such as its title).
+        const given = fs.readdirSync(dumps).map(name => fs.readFileSync(path.join(dumps, name), "utf8"))
+          .filter(body => !body.includes("timewarp_background")).map(body => JSON.stringify(JSON.parse(body).input || [])).find(input => input.includes("Book the cheapest one"));
+        if (!given || !(given.indexOf("Is there a sleeper cabin?") < given.indexOf("Book the cheapest one"))) throw new Error("The desk's agent wasn't given the laptop's messages.");
+        if ((given.match(/Is there a sleeper cabin\?/g) || []).length > 3) throw new Error("The laptop's messages were given more than once.");
 
         // Both change the notes before either syncs: both lines are kept.
         await laptop.call("memory.save", { notes: "# User\n\n- Prefers aisle seats\n- Vegetarian\n" });
@@ -888,10 +911,11 @@ async function main() {
         // Back to the first account: everything is where it was.
         await signIn(desk, "preview@timewarp.invalid");
         if (!(await desk.call("agents.list")).some(item => item.id === navigator.id) || !(await desk.call("memory.get")).notes.includes("Travels with a bike")) throw new Error("The first account's data didn't come back.");
-        return "the account's agent, chat, memory (merged after both computers changed it), instructions, skill, theme, app access and MCP server reached its other computer; a second account on the same computer saw none of them and had its own browser profile; the first account's data was there when it signed in again";
+        return "the account's agent, chat (its reply included), memory (merged after both computers changed it), instructions, skill, theme, app access and MCP server reached its other computer; the chat continued on the laptop showed on the desk and the desk's agent was given it before the next message; a second account on the same computer saw none of them and had its own browser profile; the first account's data was there when it signed in again";
       } finally {
         await desk.close(); await laptop.close();
         fs.rmSync(cloudFile, { force: true });
+        fs.rmSync(dumps, { recursive: true, force: true });
       }
     },
   };

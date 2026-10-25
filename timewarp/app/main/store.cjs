@@ -387,6 +387,9 @@ function createStore(db) {
 
   const messages = {
     list: conversationId => all("select * from messages where conversation_id = ? order by seq", conversationId).map(messageOf),
+    // The chat's messages after `seq`, and where its last message of a turn on this computer is.
+    after: (conversationId, seq) => all("select * from messages where conversation_id = ? and seq > ? order by seq", conversationId, seq).map(messageOf),
+    lastTurnSeq: conversationId => one("select max(seq) seq from messages where conversation_id = ? and turn_id is not null", conversationId)?.seq || 0,
     get: id => messageOf(one("select * from messages where id = ?", id)),
     append(input) {
       return transaction(() => {
