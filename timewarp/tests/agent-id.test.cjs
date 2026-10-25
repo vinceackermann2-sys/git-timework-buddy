@@ -266,11 +266,15 @@ test("live resources are opt-in per kind and gated by verification and plan", as
   local.setEnv({ AGENT_ID_LIVE: "mail,phone,wallet,card,vm" });
   assert.equal((await live("mail")).body.error.code, "provider_unavailable", "Listed but without its secrets.");
   local.setEnv({ RESEND_API_KEY: "re_test", TWILIO_ACCOUNT_SID: "AC1", TWILIO_AUTH_TOKEN: "t", PRIVY_APP_ID: "p", PRIVY_APP_SECRET: "s", STRIPE_SECRET_KEY: "sk_test_x" });
-  assert.equal((await live("wallet")).body.error.code, "verification_required", "Live money needs a verified owner.");
-  assert.equal((await live("card")).body.error.code, "verification_required");
-  assert.equal((await live("phone")).body.error.code, "plan_required", "A live number needs a paid plan.");
+  assert.equal((await live("card")).body.error.code, "verification_required", "A live card needs a verified owner up front.");
+  // No subscription is needed by default; a deployment can still reserve kinds for paid plans.
+  local.setEnv({ AGENT_ID_PAID_PLAN_KINDS: "phone" });
+  assert.equal((await live("phone")).body.error.code, "plan_required", "A live number needs a paid plan where one is set.");
+  local.setEnv({ AGENT_ID_PAID_PLAN_KINDS: "" });
+  assert.equal((await ok("GET", "/v1/config", {})).resources.phone.paidPlanRequired, false);
   const config = await ok("GET", "/v1/config", {});
-  assert.equal(config.resources.wallet.verificationRequired, true);
+  assert.equal(config.resources.wallet.verificationRequired, false, "Wallets come unverified; money leaving one needs a verified owner.");
+  assert.equal(config.resources.card.verificationRequired, true);
   assert.equal(config.resources.vm.live, false);
   assert.equal(config.resources.vm.unavailable, "not_configured", "Listed, but without Azure's secrets.");
   assert.equal(config.resources.mail.unavailable, undefined);
@@ -472,6 +476,51 @@ test("MCP: an agent's own tools, only for what it has", async t => {
   assert.equal((await rpc({ id: 7, method: "tools/list" }, alice.session)).status, 403, "MCP acts as an agent.");
   assert.equal((await local.call("POST", "/mcp", { token: alice.session, headers: { "timewarp-agent": bot.id }, body: { jsonrpc: "2.0", id: 8, method: "ping" } })).status, 200);
   assert.equal((await local.call("GET", "/mcp", { token: bot.key })).status, 405);
+});
+
+test("MCP: each connection's app and the model the agent says it is are kept with what it does", async t => {
+  const { local, ok, agent, give } = await setup(t);
+  const alice = await local.user();
+  const bot = await agent(alice, "Bot"), friend = await agent(alice, "Friend");
+  await give(alice, bot, "wallet", { settings: { approvalAbove: null } });
+  await give(alice, friend, "wallet");
+  await ok("POST", `/v1/agents/${bot.id}/wallet/test-funds`, { token: alice.session, body: { amount: 1000 } });
+  const rpc = (body, session) => local.call("POST", "/mcp", { token: bot.key, headers: session ? { "mcp-session-id": session } : {}, body: { jsonrpc: "2.0", ...body } });
+  const init = await rpc({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", clientInfo: { name: "claude-code", version: "2.9.1" } } });
+  const session = init.headers.get("mcp-session-id");
+  assert.match(session, /^mcs_[a-z0-9]{24}$/, "A session for this connection.");
+  assert.match(init.body.result.instructions, /call whoami once with model/);
+  const whoami = (await rpc({ id: 2, method: "tools/list" }, session)).body.result.tools.find(tool => tool.name === "whoami");
+  assert.ok(whoami.inputSchema.properties.model);
+  // The agent says its model, then pays: both are recorded with the payment.
+  await rpc({ id: 3, method: "tools/call", params: { name: "whoami", arguments: { model: "Claude Opus 5.5" } } }, session);
+  const paid = await rpc({ id: 4, method: "tools/call", params: { name: "wallet_send", arguments: { to: friend.id, amount: "1.00" } } }, session);
+  assert.equal(paid.body.result.isError, undefined);
+  const entry = (await ok("GET", "/v1/audit", { token: alice.session })).entries.find(e => e.action === "wallet.send" || e.action === "wallet.transfer");
+  assert.deepEqual(entry?.detail.via, { app: "claude-code", model: "claude-opus-5.5" });
+  // The page shows the app with its model, and every model it has run with.
+  await rpc({ id: 5, method: "tools/call", params: { name: "whoami", arguments: { model: "claude-sonnet-5-5" } } }, session);
+  const apps = (await ok("GET", `/v1/agents/${bot.id}`, { token: alice.session })).agent.apps;
+  const claude = apps.find(a => a.app === "claude-code");
+  assert.deepEqual([claude.model, claude.models], ["claude-sonnet-5-5", ["claude-sonnet-5-5", "claude-opus-5.5"]]);
+  // A session is the agent's own: another agent's id isn't taken.
+  const other = await local.call("POST", "/mcp", { token: friend.key, headers: { "mcp-session-id": session }, body: { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "whoami", arguments: { model: "gpt-6" } } } });
+  assert.equal(other.status, 200);
+  assert.deepEqual((await ok("GET", `/v1/agents/${bot.id}`, { token: alice.session })).agent.apps.find(a => a.app === "claude-code").model, "claude-sonnet-5-5");
+  // What one request came through never sticks to the next one (another agent's, here).
+  await ok("POST", `/v1/agents/${friend.id}/wallet/test-funds`, { token: alice.session, body: { amount: 500 } });
+  await ok("POST", "/v1/me/wallet/transfers", { token: friend.key, body: { to: bot.id, value: "1.00" } });
+  const friendsSend = (await ok("GET", `/v1/audit?agent=${friend.id}`, { token: alice.session })).entries.find(e => e.action === "wallet.send");
+  assert.equal(friendsSend.detail.via, undefined);
+});
+
+test("Agent ID sells the Timewarp app's credit packs", () => {
+  const pricing = fs.readFileSync(path.join(__dirname, "../supabase/functions/agent-id/pricing.ts"), "utf8");
+  const credits = fs.readFileSync(path.join(__dirname, "../supabase/functions/_shared/credits.ts"), "utf8");
+  assert.equal(/PACK_CREDITS_PER_USD = (\d+)/.exec(pricing)?.[1], /PACK_CREDITS_PER_USD = (\d+)/.exec(credits)?.[1]);
+  const prices = source => /\[([\d,\s]+)\]\.map\(\(?priceUsd/.exec(source)?.[1] ?? /PACK_PRICES_USD = \[([\d,\s]+)\]/.exec(source)?.[1];
+  assert.ok(prices(credits));
+  assert.equal(prices(pricing).replace(/\s/g, ""), prices(credits).replace(/\s/g, ""), "The same packs at the same prices.");
 });
 
 test("machine time is charged in credits like AI usage", () => {

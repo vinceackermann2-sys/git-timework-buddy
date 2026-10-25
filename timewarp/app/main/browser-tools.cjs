@@ -5,6 +5,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { pageActionKind, enterKind, pageCard, refusal } = require("./approvals.cjs");
 
 const MAX_SNAPSHOT = 24000, MAX_TEXT = 20000, MAX_UPLOADS = 10;
 // The longest value the vault keeps (vault.cjs).
@@ -130,6 +131,19 @@ const ELEMENT_IN_PAGE = `function (name) {
     return { password, attribute: value === null || value === undefined ? null : String(value) };
   }
   return { password, text: String(this.innerText ?? this.textContent ?? ""), value: "value" in this && typeof this.value !== "object" ? String(this.value ?? "") : null };
+}`;
+// What Enter in a field would do (approvals.cjs enterKind): the field's kind
+// and label, its text, and what its form's own submit button says. On the
+// field it's called on, or on the focused one.
+const ENTER_INFO = `function () {
+  const field = this && this.nodeType === 1 ? this : document.activeElement;
+  if (!field || field === document.body) return null;
+  const label = field.getAttribute("aria-label") || field.getAttribute("placeholder") || field.getAttribute("data-placeholder") || field.getAttribute("title") || (field.labels && field.labels[0] ? field.labels[0].textContent : "") || "";
+  const text = field.isContentEditable ? field.innerText : typeof field.value === "string" ? field.value : "";
+  const button = field.form ? field.form.querySelector("button[type=submit], button:not([type]), input[type=submit]") : null;
+  const submit = button ? (button.getAttribute("aria-label") || button.textContent || button.value || "") : "";
+  const role = field.getAttribute("role") || (field.isContentEditable ? "textbox" : field.type === "search" ? "searchbox" : field.tagName.toLowerCase());
+  return { role, label: String(label).replace(/\\s+/g, " ").trim().slice(0, 200), text: String(text).slice(0, 4000), submit: String(submit).replace(/\\s+/g, " ").trim().slice(0, 60) };
 }`;
 // Counts key presses that reach the page, to tell whether Chromium delivered one.
 const KEY_WATCH = `(() => {
@@ -348,7 +362,9 @@ const FIELD_IN_PAGE = `function () {
   };
 }`;
 
-function createBrowserTools({ browser, onActivity = () => {} }) {
+// confirm(conversationId, card): the user's answer to a card in the chat,
+// asked before a click or Enter that sends, pays or deletes (approvals.cjs).
+function createBrowserTools({ browser, onActivity = () => {}, confirm = null }) {
   // An element is a node and the debugger session of its frame's process:
   // none for the page and its frames from the same site, their own for frames
   // from other sites (a card form, a sign-in box), which run in their own process.
@@ -466,7 +482,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
           if (node.properties?.some(item => item.name === "focused" && item.value?.value === true)) line += " (focused)";
           const address = role === "link" && node.properties?.find(item => item.name === "url")?.value?.value;
           if (typeof address === "string" && /^https?:/i.test(address)) line += ` url="${address.slice(0, 200)}"`;
-          if (INTERACTIVE.has(role) && node.backendDOMNodeId) { const id = "e" + (++counter); map.set(id, { node: node.backendDOMNodeId, session: tree.session, url: tree.url }); line += ` [ref=${id}]`; }
+          if (INTERACTIVE.has(role) && node.backendDOMNodeId) { const id = "e" + (++counter); map.set(id, { node: node.backendDOMNodeId, session: tree.session, url: tree.url, role, name }); line += ` [ref=${id}]`; }
           lines.push(line); size += line.length + 1; shown = true;
         }
         if (filled) return;
@@ -697,6 +713,34 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
     return id && browser.state(conversationId).tabs.some(item => item.id === id) ? id : null;
   }
 
+  // A click or Enter that sends, pays or deletes waits for the user's OK on a
+  // card (approvals.cjs) with the page's site, title and a picture of it, never
+  // while it shows a value filled from the vault. Null to go ahead, else what
+  // the agent hears.
+  async function askFirst(conversationId, contents, kind, { label = "", text = "" }, agent) {
+    if (!kind || !confirm) return null;
+    let image = null;
+    try {
+      if (!await showsFilledValue(contents) && !await echoesFilledValue(conversationId, contents)) {
+        let picture = await within(contents.capturePage(), 5000, "");
+        if (picture && !picture.isEmpty()) {
+          if (picture.getSize().width > 640) picture = picture.resize({ width: 640 });
+          image = "data:image/jpeg;base64," + picture.toJPEG(70).toString("base64");
+        }
+      }
+    } catch {}
+    let host = "";
+    try { host = new URL(contents.getURL()).host; } catch {}
+    const answer = await confirm(conversationId, pageCard({ kind, label: redact(conversationId, label), host, title: redact(conversationId, contents.getTitle()), text: redact(conversationId, text), image, agent: agent?.name }));
+    return answer.decision === "accept" ? null : refusal(answer, kind);
+  }
+  const enterInfo = async (contents, element) => {
+    try {
+      if (element) return (await callOn(contents, element, ENTER_INFO, { returnByValue: true }))?.result?.value || null;
+      return await inWorld(contents, `(${ENTER_INFO}).call(null)`);
+    } catch { return null; }
+  };
+
   // scope: the tabs the call acts on, filled in as it finds them (for dialogs they open).
   async function act(conversationId, params, agent, scope = new Set()) {
     const name = params.tool, input = params.arguments || {};
@@ -746,6 +790,9 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
           if (before.checked === wanted) return text(`${input.ref} is already ${wanted ? "checked" : "unchecked"}.`);
           if (before.radio && !wanted) return failed("A radio button can't be unchecked; choose another option instead.");
         }
+        // "Send", "Place order", "Delete"…: the user's OK first.
+        const refused = wanted === null ? await askFirst(conversationId, contents, pageActionKind(element.role, element.name), { label: element.name }, agent) : null;
+        if (refused) return refused;
         const point = await centerOf(contents, element), count = input.double ? 2 : 1;
         note(item.id, input.double ? "Double-clicking" : "Clicking");
         const cursor = await showCursor(contents, point, agent);
@@ -772,6 +819,12 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
       case "type": {
         // Without a reference, the text goes where the focus is, after what's there.
         const { tab: item, contents } = target(); const element = input.ref ? nodeFor(contents, input.ref) : null;
+        // Typing a message and pressing Enter sends it: the user's OK first, with the message.
+        if (input.submit) {
+          const info = await enterInfo(contents, element);
+          const refused = info ? await askFirst(conversationId, contents, enterKind({ ...info, label: element?.name || info.label, text: String(input.text ?? "") }), { label: info.submit || element?.name || info.label, text: info.submit ? "" : String(input.text ?? "") }, agent) : null;
+          if (refused) return refused;
+        }
         note(item.id, "Typing");
         const mark = markOf(contents);
         if (element) {
@@ -784,7 +837,14 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         return text(`Typed into ${input.ref || "the focused element"}${input.submit ? " and pressed Enter" : ""}.`);
       }
       case "press": {
-        const { tab: item, contents } = target(); note(item.id, "Pressing " + input.key);
+        const { tab: item, contents } = target();
+        // Enter (or Ctrl/Cmd+Enter) in a message box or a form sends it: the user's OK first.
+        if (/^(?:(?:control|ctrl|meta|cmd|command)\+)?enter$/i.test(String(input.key || "").replace(/\s+/g, ""))) {
+          const info = await enterInfo(contents, null);
+          const refused = info ? await askFirst(conversationId, contents, enterKind(info), { label: info.submit || info.label, text: info.submit ? "" : info.text }, agent) : null;
+          if (refused) return refused;
+        }
+        note(item.id, "Pressing " + input.key);
         const mark = markOf(contents);
         await press(conversationId, item.id, contents, input.key);
         await settle(contents, 300, mark);

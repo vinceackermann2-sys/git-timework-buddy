@@ -15,10 +15,14 @@ import { actionStatus, ASSETS, type Asset, EVM_ADDRESS, explorerUrl, liveBalance
 import { revealCard } from './providers/card.ts';
 import { machineCost, machineState, runCommand, startMachine, stopMachine, type Size } from './providers/vm.ts';
 import { parseSshKey } from './ssh.ts';
-import { appOf, recordApp } from './origin.ts';
+import { appOf, passportModel, recordApp } from './origin.ts';
+import { giveResource } from './provisioning.ts';
+import { agentCommand, installCommand, PACKAGE } from './vault/shell.ts';
 
 type Op = (ctx: Ctx, who: AgentCaller, input: any) => Promise<unknown>;
 const actor = (who: AgentCaller) => who.via === 'owner' ? 'owner' as const : 'agent' as const;
+import { approvalUrl, askFirst, mailOwner } from './ask.ts';
+import { traceOutgoing } from './tracing.ts';
 
 async function seen(ctx: Ctx, agent: AgentRow) {
   if (agent.last_seen_at && ctx.now() - Date.parse(agent.last_seen_at) < 60_000) return;
@@ -156,31 +160,37 @@ const mailSend: Op = async (ctx, who, input) => {
   if (!subject) throw fail(400, 'invalid', 'subject is required.');
   const body = str(input.text, 100_000, 'text', { required: true, multiline: true });
   const html = input.html ? str(input.html, 200_000, 'html', { multiline: true }) : undefined;
-  const files = await ownFiles(ctx, who.agent.id, input.attachments);
+  let files = await ownFiles(ctx, who.agent.id, input.attachments);
+  const waiting = await askFirst(ctx, who, 'mail', 'mailSend', input, { to, cc, subject, preview: body.slice(0, 500), attachments: files.length }, resource.mode);
+  if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `mail:${who.agent.id}`, 10, 200, 'emails');
+  // Traced to this agent as it goes (tracing.ts): the text by its
+  // fingerprint, and attached pictures and sound as marked copies.
+  const traced = await traceOutgoing(ctx, who, 'mail', body, files);
+  files = traced.files;
   let status = 'sent', providerRef: string | null = null;
   const delivered: string[] = [];
   if (resource.mode === 'live') {
     const attachments = [];
     for (const file of files) attachments.push({ filename: file.filename, content: toBase64(await fileBytes(ctx, file)), content_type: file.content_type });
-    providerRef = await sendResend(ctx, resource, who.agent, { to, cc, subject, text: body, html, inReplyTo, attachments }, `agent-id/${who.agent.id}/${crypto.randomUUID()}`);
+    providerRef = await sendResend(ctx, resource, who.agent, { to, cc, subject, text: body, html, inReplyTo, attachments, trace: traced.trace }, `agent-id/${who.agent.id}/${crypto.randomUUID()}`);
   } else {
     // Test mail reaches other test inboxes only.
     for (const address of [...to, ...cc]) {
       const inbox = await internalResource(ctx, 'mail', 'test', address);
       if (!inbox) continue;
-      const received = await record(ctx, inbox, { kind: 'mail', direction: 'in', status: 'received', counterparty: resource.address, subject, body, data: { to, cc, fromAgent: who.agent.id } });
+      const received = await record(ctx, inbox, { kind: 'mail', direction: 'in', status: 'received', counterparty: resource.address, subject, body, data: { to, cc, fromAgent: who.agent.id, ...(traced.trace ? { trace: traced.trace } : {}) } });
       await shareFiles(ctx, files, inbox, received);
       delivered.push(address);
     }
     status = delivered.length === to.length + cc.length ? 'delivered' : 'simulated';
   }
-  const id = await record(ctx, resource, { kind: 'mail', direction: 'out', status, counterparty: to.join(', '), subject, body, providerRef, thread, data: { to, cc, ...(html ? { html: html.slice(0, 50_000) } : {}), ...(resource.mode === 'test' ? { deliveredTo: delivered } : {}) } });
+  const id = await record(ctx, resource, { kind: 'mail', direction: 'out', status, counterparty: to.join(', '), subject, body, providerRef, thread, data: { to, cc, ...(html ? { html: html.slice(0, 50_000) } : {}), ...(resource.mode === 'test' ? { deliveredTo: delivered } : {}), ...(traced.trace ? { trace: traced.trace } : {}) } });
   // An upload belongs to the first message it goes out with; sending it again makes a copy.
   const fresh = files.filter(file => !file.event_id);
   if (fresh.length) await ctx.admin.from('agent_id_files').update({ event_id: id }).in('id', fresh.map(file => file.id));
   await shareFiles(ctx, files.filter(file => file.event_id), { agent_id: who.agent.id, owner_user_id: who.agent.owner_user_id }, id);
-  await audit(ctx, who.userId, who.agent.id, actor(who), 'mail.send', { to: to.length + cc.length, mode: resource.mode, attachments: files.length });
+  await audit(ctx, who.userId, who.agent.id, actor(who), 'mail.send', { to: to.length + cc.length, mode: resource.mode, attachments: files.length, ...(traced.trace ? { trace: traced.trace } : {}) });
   return { message: { ...(await eventById(ctx, id)), attachments: (await filesOf(ctx, [id])).get(id) || [] }, ...(status === 'simulated' ? { note: 'Test inboxes only deliver to other Agent ID test inboxes; this message was recorded but not sent.' } : {}) };
 };
 
@@ -191,23 +201,29 @@ const callList: Op = async (ctx, who, input) => { await resourceFor(ctx, who.age
 const smsSend: Op = async (ctx, who, input) => {
   const resource = await resourceFor(ctx, who.agent.id, 'phone');
   const to = phoneNumber(input.to), body = str(input.text, 1600, 'text', { required: true, multiline: true });
+  const waiting = await askFirst(ctx, who, 'sms', 'smsSend', input, { to, text: body }, resource.mode);
+  if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `sms:${who.agent.id}`, 10, 100, 'texts');
+  const traced = await traceOutgoing(ctx, who, 'sms', body);
   let status: string, providerRef: string | null = null;
   if (resource.mode === 'live') ({ status, providerRef } = await sendSms(ctx, resource, to, body));
   else {
     const phone = await internalResource(ctx, 'phone', 'test', to);
-    if (phone) await record(ctx, phone, { kind: 'sms', direction: 'in', status: 'received', counterparty: resource.address, body, data: { fromAgent: who.agent.id } });
+    if (phone) await record(ctx, phone, { kind: 'sms', direction: 'in', status: 'received', counterparty: resource.address, body, data: { fromAgent: who.agent.id, ...(traced.trace ? { trace: traced.trace } : {}) } });
     status = phone ? 'delivered' : 'simulated';
   }
-  const id = await record(ctx, resource, { kind: 'sms', direction: 'out', status, counterparty: to, body, providerRef });
-  await audit(ctx, who.userId, who.agent.id, actor(who), 'sms.send', { mode: resource.mode });
+  const id = await record(ctx, resource, { kind: 'sms', direction: 'out', status, counterparty: to, body, providerRef, ...(traced.trace ? { data: { trace: traced.trace } } : {}) });
+  await audit(ctx, who.userId, who.agent.id, actor(who), 'sms.send', { mode: resource.mode, ...(traced.trace ? { trace: traced.trace } : {}) });
   return { message: await eventById(ctx, id) };
 };
 
 const callPlace: Op = async (ctx, who, input) => {
   const resource = await resourceFor(ctx, who.agent.id, 'phone');
   const to = phoneNumber(input.to), say = str(input.say, 1000, 'say', { required: true, multiline: true });
+  const waiting = await askFirst(ctx, who, 'call', 'callPlace', input, { to, say }, resource.mode);
+  if (waiting) return waiting;
   await rateLimit(ctx, who.userId, `call:${who.agent.id}`, 3, 30, 'calls');
+  const traced = await traceOutgoing(ctx, who, 'call', say);
   let status: string, providerRef: string | null = null;
   if (resource.mode === 'live') ({ status, providerRef } = await placeCall(ctx, resource, to, say));
   else {
@@ -215,8 +231,8 @@ const callPlace: Op = async (ctx, who, input) => {
     if (phone) await record(ctx, phone, { kind: 'call', direction: 'in', status: 'completed', counterparty: resource.address, body: say, data: { fromAgent: who.agent.id } });
     status = phone ? 'completed' : 'simulated';
   }
-  const id = await record(ctx, resource, { kind: 'call', direction: 'out', status, counterparty: to, body: say, providerRef });
-  await audit(ctx, who.userId, who.agent.id, actor(who), 'call.place', { mode: resource.mode });
+  const id = await record(ctx, resource, { kind: 'call', direction: 'out', status, counterparty: to, body: say, providerRef, ...(traced.trace ? { data: { trace: traced.trace } } : {}) });
+  await audit(ctx, who.userId, who.agent.id, actor(who), 'call.place', { mode: resource.mode, ...(traced.trace ? { trace: traced.trace } : {}) });
   return { call: await eventById(ctx, id) };
 };
 
@@ -237,6 +253,8 @@ const contactSave: Op = async (ctx, who, input) => {
     note: input.note ? str(input.note, 1000, 'note', { multiline: true }) : null,
     updated_at: new Date(ctx.now()).toISOString(),
   };
+  const waiting = await askFirst(ctx, who, 'contacts', 'contactSave', input, { change: input.id ? 'update' : 'add', name: fields.name || null, email: fields.email, phone: fields.phone, wallet: fields.wallet });
+  if (waiting) return waiting;
   if (input.id) {
     const patch = Object.fromEntries(Object.entries(fields).filter(([key]) => key === 'updated_at' || input[key] !== undefined));
     const row = checked(await ctx.admin.from('agent_id_contacts').update(patch).eq('id', str(input.id, 60, 'id')).eq('agent_id', who.agent.id).select('*').maybeSingle());
@@ -248,7 +266,12 @@ const contactSave: Op = async (ctx, who, input) => {
   return { contact: contactView(checked(await ctx.admin.from('agent_id_contacts').insert({ agent_id: who.agent.id, ...fields }).select('*').single())) };
 };
 const contactDelete: Op = async (ctx, who, input) => {
-  const rows = checked(await ctx.admin.from('agent_id_contacts').delete().eq('id', str(input.id, 60, 'id', { required: true })).eq('agent_id', who.agent.id).select('id')) as any[];
+  const id = str(input.id, 60, 'id', { required: true });
+  const contact = checked(await ctx.admin.from('agent_id_contacts').select('*').eq('id', id).eq('agent_id', who.agent.id).maybeSingle()) as any;
+  if (!contact) throw fail(404, 'not_found', 'No contact with that id.');
+  const waiting = await askFirst(ctx, who, 'contacts', 'contactDelete', { id }, { change: 'delete', name: contact.name });
+  if (waiting) return waiting;
+  const rows = checked(await ctx.admin.from('agent_id_contacts').delete().eq('id', id).eq('agent_id', who.agent.id).select('id')) as any[];
   if (!rows?.length) throw fail(404, 'not_found', 'No contact with that id.');
   return { deleted: true };
 };
@@ -357,10 +380,21 @@ const TRANSFER_ERRORS: Record<string, [number, string]> = {
   invalid: [400, 'The transfer is not valid.'],
 };
 
+// Money leaves a live wallet only once its owner (or their business) is
+// verified; receiving needs nothing. The owner verifies once, on the website.
+async function mayMoveMoney(ctx: Ctx, agent: AgentRow, byAgent: boolean) {
+  if (!ctx.config.verifyToMoveMoney || (await verificationOf(ctx, agent)).verified) return;
+  const where = `${ctx.config.siteUrl}/agent-id/verify`;
+  throw fail(403, 'verification_required', byAgent
+    ? `Your owner needs to verify their identity before money can leave this wallet. Ask them to do it once at ${where}.`
+    : `Verify your identity once to send and withdraw money: ${where}`);
+}
+
 // Shared with owner approvals: sends once the limits (and, with an
 // approval, the owner) allow it.
 export async function transfer(ctx: Ctx, who: AgentCaller, input: { to: string; amount: number; memo?: string; asset?: string }, approvalId: string | null = null) {
   const from = await resourceFor(ctx, who.agent.id, 'wallet');
+  if (from.mode === 'live') await mayMoveMoney(ctx, who.agent, who.via !== 'owner');
   const target = await recipient(ctx, who, from, input.to);
   if (target.resource?.id === from.id) throw fail(400, 'invalid', 'A wallet can\'t pay itself.');
   if (from.mode === 'live' && await sanctioned(ctx, target.address)) {
@@ -430,6 +464,7 @@ export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; a
     await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.withdraw', { amount: input.amount, to: input.to, mode: 'test' });
     return { status: 'completed', transfer: await eventById(ctx, result.event), balance: usd(Number(result.balance)) };
   }
+  await mayMoveMoney(ctx, agent, false);
   if (input.to.toLowerCase() === String(from.address).toLowerCase()) throw fail(400, 'invalid', 'That is this wallet\'s own address.');
   if (await sanctioned(ctx, input.to)) {
     await audit(ctx, agent.owner_user_id, agent.id, 'owner', 'wallet.blocked_sanctioned', { to: input.to });
@@ -465,39 +500,27 @@ export async function withdraw(ctx: Ctx, agent: AgentRow, input: { to: string; a
 // --- Approvals ------------------------------------------------------------------
 // Payments above the approval amount wait for the owner, who answers on the
 // signed-in website (or from the email link), never from the agent's side.
-const approvalUrl = (ctx: Ctx, id: string) => `${ctx.config.siteUrl}/agent-id/approvals?id=${id}`;
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
-const escapeHtml = (value: string) => value.replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]!));
 
-async function notifyApproval(ctx: Ctx, who: AgentCaller, amount: number, to: string, memo: string | null, url: string) {
-  const key = ctx.config.env('RESEND_API_KEY');
-  if (!key) return;
-  const { data } = await ctx.admin.auth.admin.getUserById(who.userId);
-  const email = data?.user?.email;
-  if (!email) return;
-  const what = `${who.agent.name} wants to send ${dollars(amount)} to ${to}`;
-  const response = await ctx.fetch('https://api.resend.com/emails', {
-    method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: `Timewarp Agent ID <no-reply@${ctx.config.mailDomain}>`, to: [email],
-      subject: `Approve ${dollars(amount)} from ${who.agent.name}?`,
-      text: `${what}${memo ? ` (${memo})` : ''}.\n\nApprove or decline it: ${url}\n\nIt expires in 24 hours. Nothing is sent unless you approve.`,
-      html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:440px;margin:0 auto;padding:24px;color:#1c1b22"><p style="font-size:15px;margin:0 0 6px">${escapeHtml(what)}</p>${memo ? `<p style="font-size:13px;color:#6b6878;margin:0 0 18px">"${escapeHtml(memo)}"</p>` : ''}<a href="${escapeHtml(url)}" style="display:inline-block;background:#6d4bd8;color:#fff;text-decoration:none;font-weight:600;padding:11px 20px;border-radius:10px">Review payment</a><p style="font-size:12px;color:#6b6878;margin-top:18px">It expires in 24 hours. Nothing is sent unless you approve.</p></div>`,
-      tags: [{ name: 'agent_id', value: 'approval' }],
-    }),
-    signal: AbortSignal.timeout(20_000),
+function notifyApproval(ctx: Ctx, who: AgentCaller, amount: number, to: string, memo: string | null, url: string) {
+  return mailOwner(ctx, who, {
+    subject: `Approve ${dollars(amount)} from ${who.agent.name}?`,
+    line: `${who.agent.name} wants to send ${dollars(amount)} to ${to}.`,
+    quote: memo, button: 'Review payment', url, note: 'It expires in 24 hours. Nothing is sent unless you approve.',
   });
-  if (!response.ok) console.error('[agent-id] approval mail', response.status);
 }
 
 const approvalView = async (ctx: Ctx, row: any) => {
   const expired = row.status === 'pending' && Date.parse(row.expires_at) <= ctx.now();
   const transfer = row.result?.event ? await eventById(ctx, row.result.event).catch(() => null) : null;
+  const action = row.kind === 'action';
   return {
     approval: {
-      id: row.id, status: expired ? 'expired' : row.status, amount: usd(Number(row.request?.amount) || 0), to: row.request?.to || null,
-      memo: row.request?.memo || null, reason: row.reason, createdAt: row.created_at, decidedAt: row.decided_at, expiresAt: row.expires_at,
+      id: row.id, status: expired ? 'expired' : row.status, kind: action ? row.request?.kind : 'payment',
+      ...(action ? { summary: row.request?.summary || {} } : { amount: usd(Number(row.request?.amount) || 0), to: row.request?.to || null, memo: row.request?.memo || null }),
+      reason: row.reason, createdAt: row.created_at, decidedAt: row.decided_at, expiresAt: row.expires_at,
     },
+    ...(action && row.result ? { result: row.result } : {}),
     approveUrl: approvalUrl(ctx, row.id),
     ...(transfer ? { transfer } : {}),
   };
@@ -515,7 +538,7 @@ const approvalWithdraw: Op = async (ctx, who, input) => {
   const row = await ownApproval(ctx, who, input.id ?? input.approval);
   const rows = checked(await ctx.admin.from('agent_id_approvals').update({ status: 'denied', reason: 'Withdrawn by the agent', decided_at: new Date(ctx.now()).toISOString() }).eq('id', row.id).eq('status', 'pending').select('*')) as any[];
   if (!rows?.length) throw fail(409, 'not_pending', 'This request was already answered.');
-  await audit(ctx, who.userId, who.agent.id, actor(who), 'wallet.approval_withdrawn', { approval: row.id });
+  await audit(ctx, who.userId, who.agent.id, actor(who), row.kind === 'action' ? 'approval.withdrawn' : 'wallet.approval_withdrawn', { approval: row.id });
   return approvalView(ctx, rows[0]);
 };
 
@@ -555,8 +578,14 @@ const cardTestCharge: Op = async (ctx, who, input) => {
 };
 
 // --- Machine -----------------------------------------------------------------
-async function machine(ctx: Ctx, who: AgentCaller) {
-  const resource = await resourceFor(ctx, who.agent.id, 'vm');
+// The agent's machine. None is set up in advance: the first time the agent
+// uses one, it gets it (live where machines are, its time on its owner's credits).
+export async function machine(ctx: Ctx, who: AgentCaller) {
+  let resource = await resourceFor(ctx, who.agent.id, 'vm', { required: false });
+  if (!resource) {
+    resource = await giveResource(ctx, who.agent, 'vm');
+    await audit(ctx, who.userId, who.agent.id, actor(who), 'vm.first_use', { mode: resource.mode });
+  }
   let state = await machineState(ctx, resource).catch(() => 'unknown');
   if (resource.status === 'provisioning' && ['running', 'stopped', 'suspended', 'idle'].includes(state)) {
     await ctx.admin.from('agent_id_resources').update({ status: 'active', state: { ...resource.state, machine: state }, updated_at: new Date(ctx.now()).toISOString() }).eq('id', resource.id);
@@ -566,7 +595,7 @@ async function machine(ctx: Ctx, who: AgentCaller) {
 }
 const vmGet: Op = async (ctx, who) => {
   const { resource, state } = await machine(ctx, who);
-  return { machine: { label: resource.label, mode: resource.mode, status: resource.status, state, size: resource.state?.size, ...(resource.mode === 'test' ? { note: 'Test machines show a state but don\'t run commands.' } : {}) } };
+  return { machine: { label: resource.label, mode: resource.mode, status: resource.status, state, size: resource.state?.size, ...(resource.mode === 'test' ? { note: 'Test computers show a state but don\'t run commands.' } : {}) } };
 };
 const setTestState = async (ctx: Ctx, resource: ResourceRow, state: string) => {
   await ctx.admin.from('agent_id_resources').update({ state: { ...resource.state, machine: state }, updated_at: new Date(ctx.now()).toISOString() }).eq('id', resource.id);
@@ -590,8 +619,18 @@ const vmExec: Op = async (ctx, who, input) => {
   const command = str(input.command, 20_000, 'command', { required: true, multiline: true });
   const cwd = input.cwd ? str(input.cwd, 500, 'cwd') : undefined;
   const timeoutSeconds = input.timeoutSeconds === undefined ? 120 : int(input.timeoutSeconds, 'timeoutSeconds', { min: 5, max: 900 });
-  const result = await metered(ctx, who, resource, command, cwd, timeoutSeconds, true);
+  const result = await metered(ctx, who, resource, command, { cwd, timeoutSeconds, history: true });
   return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, seconds: result.seconds };
+};
+
+// The agent's commands don't run as root, so system packages come through
+// here: installed by name from the system's own signed sources.
+const vmInstall: Op = async (ctx, who, input) => {
+  const { resource } = await machine(ctx, who);
+  const packages = (Array.isArray(input.packages) ? input.packages : String(input.packages || '').split(/[\s,]+/)).map((p: unknown) => String(p).trim()).filter(Boolean);
+  if (!packages.length || packages.length > 30 || !packages.every((p: string) => PACKAGE.test(p))) throw fail(400, 'invalid', 'packages: up to 30 package names, like python3-pip or ffmpeg.');
+  const result = await metered(ctx, who, resource, installCommand(packages), { timeoutSeconds: 600, history: true, as: 'system', subject: `Install ${packages.join(' ')}` });
+  return { exitCode: result.exitCode, installed: result.exitCode === 0 ? packages : [], output: (result.stderr || result.stdout).slice(-4000), seconds: result.seconds };
 };
 
 // What is in a folder on the machine (the agent's files stay there between
@@ -602,7 +641,7 @@ const vmFiles: Op = async (ctx, who, input) => {
   if (/[\u0000-\u001f]/.test(path)) throw fail(400, 'invalid', 'path is not valid.');
   const quoted = `'${path.replace(/'/g, `'\\''`)}'`;
   const command = `p=${quoted}; case "$p" in "~"|"~/"*) p="$HOME\${p#\\~}";; esac; cd -- "$p" && pwd && find . -mindepth 1 -maxdepth 1 -printf '%y\\t%s\\t%T@\\t%f\\n' 2>/dev/null | head -500`;
-  const result = await metered(ctx, who, resource, command, undefined, 60, false);
+  const result = await metered(ctx, who, resource, command, { timeoutSeconds: 60, history: false });
   if (result.exitCode !== 0) throw fail(404, 'not_found', result.stderr.trim().split('\n').pop() || 'That folder does not exist on the machine.');
   const [where, ...lines] = result.stdout.trim().split('\n');
   const entries = lines.map(line => line.split('\t')).filter(parts => parts.length === 4).map(([type, size, modified, name]) => ({
@@ -611,41 +650,62 @@ const vmFiles: Op = async (ctx, who, input) => {
   return { path: where, entries };
 };
 
-// Runs a command on a live machine: the most it can cost is reserved from
-// the owner's credits first, one command runs at a time, and what it used is
-// settled after.
-async function metered(ctx: Ctx, who: AgentCaller, resource: ResourceRow, command: string, cwd: string | undefined, timeoutSeconds: number, history: boolean) {
+// Runs a command on a live machine. Its time comes out of the owner's free
+// machine hours first, then their credits: the most it can use is taken from
+// both up front, one command runs at a time, and what it didn't use goes back.
+// The agent's commands run as its ordinary account (vault/shell.ts); Agent ID's
+// own (the vault, installing packages) as the computer's root.
+export async function metered(ctx: Ctx, who: AgentCaller, resource: ResourceRow, command: string, options: { cwd?: string; timeoutSeconds: number; history: boolean; as?: 'agent' | 'system'; subject?: string }) {
+  const { cwd, timeoutSeconds, history, as = 'agent' } = options;
   if (resource.mode === 'test') throw fail(409, 'test_machine', 'Test machines don\'t run commands. The owner can give this agent a live machine in Agent ID.');
   if (resource.status !== 'active') throw fail(409, 'machine_not_ready', 'The machine is still being set up. Try again in a minute.');
   await rateLimit(ctx, who.userId, `vm-exec:${who.agent.id}`, 30, 1000, 'commands');
-  // The longest this command can take, with starting and stopping the
-  // machine, is reserved from the owner's credits first.
+  // The longest this command can take, with starting and stopping the machine.
   const size = (resource.state?.size || 'medium') as Size;
-  const maxCost = machineCost(ctx, size, timeoutSeconds + 180);
-  const reservation = crypto.randomUUID();
-  const { data: reserved, error: reserveError } = await ctx.admin.rpc('timewarp_reserve_agent_ai', { p_id: reservation, p_user_id: who.userId, p_credits: maxCost * AI_COST_MARKUP / USD_PER_CREDIT });
-  if (reserveError || reserved !== true) throw fail(reserveError ? 503 : 402, reserveError ? 'unavailable' : 'credits_required', reserveError ? 'Machine time can\'t be reserved right now.' : 'Running commands uses the owner\'s Timewarp credits, and there aren\'t enough left. Add credits in Timewarp.');
+  const maxSeconds = timeoutSeconds + 180;
+  const allowance = Math.round(ctx.config.computeFreeHours * 3600);
+  const free = allowance > 0 ? Number(checked(await ctx.admin.rpc('agent_id_take_free_compute', { p_user: who.userId, p_seconds: maxSeconds, p_allowance: allowance }))) || 0 : 0;
+  const giveBack = (seconds: number) => seconds > 0 ? ctx.admin.rpc('agent_id_return_free_compute', { p_user: who.userId, p_seconds: seconds }) : null;
+  // Beyond the free time, the most the rest can cost is reserved from credits.
+  const maxCost = maxSeconds > free ? machineCost(ctx, size, maxSeconds - free) : 0;
+  const reservation = maxCost > 0 ? crypto.randomUUID() : null;
+  const release = () => reservation ? ctx.admin.rpc('timewarp_energy_complete_ai', { p_id: reservation, p_user_id: who.userId, p_model: 'agent-id-vm', p_input: 0, p_output: 0, p_cost: 0, p_outcome: 'released' }) : null;
+  if (reservation) {
+    const { data: reserved, error: reserveError } = await ctx.admin.rpc('timewarp_reserve_agent_ai', { p_id: reservation, p_user_id: who.userId, p_credits: maxCost * AI_COST_MARKUP / USD_PER_CREDIT });
+    if (reserveError || reserved !== true) {
+      await giveBack(free);
+      throw fail(reserveError ? 503 : 402, reserveError ? 'unavailable' : 'credits_required', reserveError ? 'Machine time can\'t be reserved right now.' : `The ${ctx.config.computeFreeHours} free machine hours are used up, and running commands now uses the owner's Timewarp credits. Add credits on the Agent ID website (Pricing).`);
+    }
+  }
   const holder = randomId(16);
   const leased = checked(await ctx.admin.rpc('agent_id_machine_lease', { p_resource: resource.id, p_holder: holder, p_seconds: timeoutSeconds + 240 }));
   if (leased !== true) {
-    await ctx.admin.rpc('timewarp_energy_complete_ai', { p_id: reservation, p_user_id: who.userId, p_model: 'agent-id-vm', p_input: 0, p_output: 0, p_cost: 0, p_outcome: 'released' });
+    await Promise.all([release(), giveBack(free)]);
     throw fail(409, 'machine_busy', 'The machine is running another command. Try again when it finishes.');
   }
   let result;
-  try { result = await runCommand(ctx, resource, command, { cwd, timeoutSeconds }); }
+  try { result = await runCommand(ctx, resource, as === 'agent' ? agentCommand(command, cwd) : command, { timeoutSeconds }); }
+  catch (error) {
+    await Promise.all([release(), giveBack(free)]);
+    throw error;
+  }
   finally {
     await ctx.admin.rpc('agent_id_machine_release', { p_resource: resource.id, p_holder: holder });
   }
-  const cost = Math.min(maxCost, machineCost(ctx, size, result.seconds));
-  const { error: settleError } = await ctx.admin.rpc('timewarp_energy_complete_ai', { p_id: reservation, p_user_id: who.userId, p_model: 'agent-id-vm', p_input: 0, p_output: 0, p_cost: cost, p_outcome: 'settled' });
-  if (settleError) console.error('[agent-id] machine time settlement pending', reservation, cost);
+  const usedFree = Math.min(free, result.seconds);
+  await giveBack(free - usedFree);
+  const cost = reservation && result.seconds > usedFree ? Math.min(maxCost, machineCost(ctx, size, result.seconds - usedFree)) : 0;
+  if (reservation) {
+    const { error: settleError } = await ctx.admin.rpc('timewarp_energy_complete_ai', { p_id: reservation, p_user_id: who.userId, p_model: 'agent-id-vm', p_input: 0, p_output: 0, p_cost: cost, p_outcome: 'settled' });
+    if (settleError) console.error('[agent-id] machine time settlement pending', reservation, cost);
+  }
   if (history) {
-    await record(ctx, resource, { kind: 'vm', direction: 'none', status: result.failed ? 'failed' : result.exitCode === 0 ? 'completed' : 'exited', subject: command.slice(0, 1000), body: (result.stdout + (result.stderr ? `\n[stderr]\n${result.stderr}` : '')).slice(-20_000), data: { exitCode: result.exitCode, seconds: result.seconds, credits: Math.round(cost * AI_COST_MARKUP / USD_PER_CREDIT * 1000) / 1000 } });
-    await audit(ctx, who.userId, who.agent.id, actor(who), 'vm.exec', { seconds: result.seconds, exitCode: result.exitCode });
+    await record(ctx, resource, { kind: 'vm', direction: 'none', status: result.failed ? 'failed' : result.exitCode === 0 ? 'completed' : 'exited', subject: (options.subject ?? command).slice(0, 1000), body: (result.stdout + (result.stderr ? `\n[stderr]\n${result.stderr}` : '')).slice(-20_000), data: { exitCode: result.exitCode, seconds: result.seconds, freeSeconds: usedFree, credits: Math.round(cost * AI_COST_MARKUP / USD_PER_CREDIT * 1000) / 1000 } });
+    await audit(ctx, who.userId, who.agent.id, actor(who), 'vm.exec', { seconds: result.seconds, freeSeconds: usedFree, exitCode: result.exitCode });
   }
   return result;
 }
-const vmHistory: Op = async (ctx, who, input) => { await resourceFor(ctx, who.agent.id, 'vm'); const page = await listEvents(ctx, who.agent.id, ['vm'], input); return { commands: page.events, more: page.more }; };
+const vmHistory: Op = async (ctx, who, input) => { const page = await listEvents(ctx, who.agent.id, ['vm'], input); return { commands: page.events, more: page.more }; };
 
 // --- Identity ----------------------------------------------------------------
 export async function identity(ctx: Ctx, agent: AgentRow) {
@@ -670,7 +730,7 @@ const passport: Op = async (ctx, who, input) => {
   const now = Math.floor(ctx.now() / 1000), jti = randomId(20);
   const claims = {
     iss: ctx.config.issuer, sub: who.agent.id, aud: audience, iat: now, nbf: now, exp: now + ctx.config.passportSeconds, jti,
-    agent: { name: who.agent.name, handle: who.agent.handle, runtime: who.agent.runtime, principal: principalOf(ctx, who.agent) },
+    agent: { name: who.agent.name, handle: who.agent.handle, runtime: who.agent.runtime, principal: principalOf(ctx, who.agent), model: passportModel(who.agent) },
     owner: {
       ref: await pairwiseOwner(ctx.config, who.agent.owner_user_id, audience),
       type: verification.level === 'kyb' ? 'business' : 'person', verified: verification.verified, level: verification.level,
@@ -712,7 +772,7 @@ export const ops: Record<string, Op> = {
   contactsList, contactSave, contactDelete,
   walletGet, walletHistory, walletSend, approvalStatus, approvalWithdraw,
   cardGet, cardReveal, cardTransactions, cardTestCharge,
-  vmGet, vmStart, vmStop, vmExec, vmFiles, vmHistory,
+  vmGet, vmStart, vmStop, vmExec, vmFiles, vmHistory, vmInstall,
   passport, signingKeysList, signingKeyAdd, signingKeyRemove,
 };
 
@@ -738,7 +798,7 @@ export const agentRoutes: Route<AgentCaller>[] = [
   ['GET', '/v1/me/approvals/:id', wrap(approvalStatus)], ['POST', '/v1/me/approvals/:id/withdraw', wrap(approvalWithdraw)],
   ['GET', '/v1/me/wallet', walletGet], ['GET', '/v1/me/wallet/transactions', walletHistory], ['POST', '/v1/me/wallet/transfers', walletSend],
   ['GET', '/v1/me/card', cardGet], ['POST', '/v1/me/card/reveal', cardReveal], ['GET', '/v1/me/card/transactions', cardTransactions], ['POST', '/v1/me/card/test-charge', cardTestCharge],
-  ['GET', '/v1/me/vm', vmGet], ['POST', '/v1/me/vm/start', vmStart], ['POST', '/v1/me/vm/stop', vmStop], ['POST', '/v1/me/vm/exec', vmExec], ['GET', '/v1/me/vm/files', vmFiles], ['GET', '/v1/me/vm/commands', vmHistory],
+  ['GET', '/v1/me/vm', vmGet], ['POST', '/v1/me/vm/start', vmStart], ['POST', '/v1/me/vm/stop', vmStop], ['POST', '/v1/me/vm/exec', vmExec], ['POST', '/v1/me/vm/install', vmInstall], ['GET', '/v1/me/vm/files', vmFiles], ['GET', '/v1/me/vm/commands', vmHistory],
   ['POST', '/v1/me/passport', passport],
   ['GET', '/v1/me/signing-keys', signingKeysList], ['POST', '/v1/me/signing-keys', signingKeyAdd], ['DELETE', '/v1/me/signing-keys/:id', signingKeyRemove],
   ] as [string, string, Op][]).map(([method, pattern, op]) => [method, pattern, wrap(op)] as Route<AgentCaller>),

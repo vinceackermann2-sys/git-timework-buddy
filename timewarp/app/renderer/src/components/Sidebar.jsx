@@ -1,9 +1,30 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Archive, Bell, BellDot, Blocks, Building2, CalendarClock, ChevronRight, ChevronUp, CircleFadingArrowUp, GripVertical, LoaderCircle, LogOut, MailOpen, Pencil, Plus, Search, Settings2, Share, UserPlus, UserRound } from "lucide-react";
+import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { Archive, Bell, BellDot, BellRing, Blocks, Building2, CalendarClock, ChevronRight, ChevronUp, CircleFadingArrowUp, GripVertical, LoaderCircle, LogOut, MailOpen, Pencil, Plus, Search, Settings2, Share, UserPlus, UserRound } from "lucide-react";
 import { call, readScoped, relativeTime, useEvent, writeScoped } from "../api.js";
 import { Avatar, ContextMenu, Dialog, Menu, Tip, menuKeys, modKey, useToast } from "./common.jsx";
 import { PAGE, activityGroups, byActivity, dropSide, moveId, shownCount } from "../shell.mjs";
 import { shareItem } from "./Share.jsx";
+
+// Chats with a card waiting for the user (an approval, a question, a form):
+// approval id → chat, kept from the app's events once a row asks.
+const waitingCards = new Map(), waitingListeners = new Set();
+let waitingStarted = false;
+function useWaiting(conversationId) {
+  const [, force] = useReducer(value => value + 1, 0);
+  useEffect(() => {
+    if (!waitingStarted) {
+      waitingStarted = true;
+      const changed = () => waitingListeners.forEach(listener => listener());
+      window.tw.on("approval.requested", item => { waitingCards.set(item.id, item.conversationId); changed(); });
+      window.tw.on("approval.resolved", item => { waitingCards.delete(item.id); changed(); });
+      call("approvals.pending").then(items => { for (const item of items || []) waitingCards.set(item.id, item.conversationId); changed(); }).catch(() => {});
+    }
+    waitingListeners.add(force);
+    return () => waitingListeners.delete(force);
+  }, []);
+  for (const id of waitingCards.values()) if (id === conversationId) return true;
+  return false;
+}
 
 const readFlag = key => { try { return localStorage.getItem(key) === "1"; } catch { return false; } };
 const writeFlag = (key, value) => { try { localStorage.setItem(key, value ? "1" : "0"); } catch {} };
@@ -50,6 +71,7 @@ function ConversationRow({ conversation, agent = null, current, working, automat
   const names = automations.filter(item => item.enabled).map(item => item.name);
   const setRead = read => call(read ? "conversations.markRead" : "conversations.markUnread", { id: conversation.id }).then(onChanged).catch(error => toast(error, "error"));
   const title = conversation.title?.trim() || agent?.name || "New conversation";
+  const waiting = useWaiting(conversation.id);
   return (
     <>
       <a href={"#/conversation/" + conversation.id} className={"tw-convo" + (agent ? " feed" : "") + (unread ? " unread" : "")} aria-current={current ? "page" : undefined}
@@ -62,7 +84,8 @@ function ConversationRow({ conversation, agent = null, current, working, automat
         </span>
         {names.length ? <Tip label={<span className="tw-tip-lines">{names.map((name, index) => <span key={name + index}>{name}</span>)}</span>}><span className="tw-convo-automation" aria-label="Has automation" role="img"><CalendarClock size={15} /></span></Tip> : null}
         <span className="tw-convo-status">
-          {working ? <span className="tw-working" aria-label="Agent is working" role="img"><LoaderCircle size={12} /></span>
+          {waiting ? <span className="tw-needs-you" title="Waiting for your OK" aria-label="Waiting for your OK" role="img"><BellRing size={13} /></span>
+            : working ? <span className="tw-working" aria-label="Agent is working" role="img"><LoaderCircle size={12} /></span>
             : unread ? <i className="tw-unread-dot" aria-label="Unread" /> : <time>{relativeTime(conversation.lastActivityAt)}</time>}
           <Tip label="Archive"><button type="button" className="tw-icon-button" aria-label="Archive" onClick={event => { event.preventDefault(); event.stopPropagation(); onArchive(conversation); }}><Archive size={14} /></button></Tip>
         </span>

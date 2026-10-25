@@ -1,5 +1,5 @@
-// One agent's settings: its details, how to add it to an app, its keys, what
-// it has, and pausing or revoking it.
+// One agent's settings: its details, what waits for the owner's yes, how to
+// add it to an app, its keys, what it has, and pausing or revoking it.
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -24,15 +25,27 @@ import {
 } from "@/lib/agent-id/connect";
 import {
   KIND_LABELS,
+  MASCOTS,
+  MODEL_KINDS,
   ORIGIN_CHOICES,
   ORIGIN_LABELS,
+  mascotOf,
   originOf,
   runtimeForOrigin,
 } from "@/lib/agent-id/format";
 import { useAccount, useRefreshAgent } from "@/lib/agent-id/queries";
 import { API_BASE, api } from "@/lib/agent-id/session";
-import { KINDS, type AgentDetail, type Kind } from "@/lib/agent-id/types";
 import {
+  KINDS,
+  type AgentDetail,
+  type AskKind,
+  type Kind,
+  type Mascot,
+  type ModelKind,
+} from "@/lib/agent-id/types";
+import { cn } from "@/lib/utils";
+import {
+  AgentAvatar,
   CodeBlock,
   CommandLine,
   ConfirmButton,
@@ -59,10 +72,60 @@ export function SettingsTab({ detail }: { detail: AgentDetail }) {
   return (
     <div className="space-y-6">
       <Details detail={detail} />
+      {!revoked && <AskFirst detail={detail} />}
       {!revoked && <AddToApp detail={detail} />}
       <Resources detail={detail} />
       {!revoked && <Access detail={detail} />}
     </div>
+  );
+}
+
+// Which of its actions wait for the owner's yes. Payments follow the wallet's
+// approval amount instead.
+const ASKS: { kind: AskKind; label: string }[] = [
+  { kind: "mail", label: "Sending email" },
+  { kind: "sms", label: "Sending texts" },
+  { kind: "call", label: "Making calls" },
+  { kind: "contacts", label: "Changing contacts" },
+  { kind: "vault", label: "Saving to its vault" },
+];
+
+function AskFirst({ detail }: { detail: AgentDetail }) {
+  const { agent } = detail;
+  const refresh = useRefreshAgent();
+  const set = useMutation({
+    mutationFn: ({ kind, value }: { kind: AskKind; value: boolean }) =>
+      api.updateAgent(agent.id, { askFirst: { [kind]: value } }),
+    onSuccess: async (_result, { value }) => {
+      toast.success(value ? "It asks you first now" : "It no longer asks first");
+      await refresh(agent.id);
+    },
+    onError: (error) => toastError(error),
+  });
+  // Older servers don't have it.
+  if (!agent.askFirst) return null;
+  return (
+    <Section title="Ask me first">
+      <Muted>
+        Before {agent.name} does these, it waits for your yes: you're emailed, and you answer under
+        Approvals. Payments follow the wallet's approval amount.
+      </Muted>
+      <ul className="mt-2 divide-y divide-[var(--border)]">
+        {ASKS.map(({ kind, label }) => (
+          <li key={kind} className="flex items-center justify-between gap-3 py-2.5">
+            <label htmlFor={`ask-${kind}`} className="text-sm">
+              {label}
+            </label>
+            <Switch
+              id={`ask-${kind}`}
+              checked={agent.askFirst?.[kind] ?? false}
+              disabled={set.isPending}
+              onCheckedChange={(value) => set.mutate({ kind, value })}
+            />
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 
@@ -74,12 +137,21 @@ function Details({ detail }: { detail: AgentDetail }) {
   const [name, setName] = useState(agent.name);
   const [app, setApp] = useState(origin.app);
   const [org, setOrg] = useState(agent.organizationId ?? PERSONAL);
+  const current = agent.mascot ?? mascotOf(agent.id);
+  const [mascot, setMascot] = useState<Mascot>(current);
+  const [kind, setKind] = useState<ModelKind>(agent.model?.kind ?? "agent");
+  const [provider, setProvider] = useState(agent.model?.provider ?? "");
+  const [modelName, setModelName] = useState(agent.model?.name ?? "");
   const revoked = agent.status === "revoked";
 
   useEffect(() => {
+    setKind(agent.model?.kind ?? "agent");
+    setProvider(agent.model?.provider ?? "");
+    setModelName(agent.model?.name ?? "");
     setName(agent.name);
     setApp(originOf(agent).app);
     setOrg(agent.organizationId ?? PERSONAL);
+    setMascot(agent.mascot ?? mascotOf(agent.id));
   }, [agent]);
 
   const patch = () => {
@@ -91,6 +163,16 @@ function Details({ detail }: { detail: AgentDetail }) {
     }
     const nextOrg = org === PERSONAL ? null : org;
     if (nextOrg !== agent.organizationId) p.organizationId = nextOrg;
+    if (mascot !== current) p.mascot = mascot;
+    // Older servers don't say what kind of AI it is: nothing to change then.
+    if (agent.model) {
+      const model: NonNullable<typeof p.model> = {};
+      if (kind !== agent.model.kind) model.kind = kind;
+      if (provider.trim() !== (agent.model.provider ?? ""))
+        model.provider = provider.trim() || null;
+      if (modelName.trim() !== (agent.model.name ?? "")) model.name = modelName.trim() || null;
+      if (Object.keys(model).length) p.model = model;
+    }
     return p;
   };
   const dirty = Object.keys(patch()).length > 0;
@@ -139,6 +221,48 @@ function Details({ detail }: { detail: AgentDetail }) {
               </SelectContent>
             </Select>
           </Field>
+          {agent.model && (
+            <>
+              <Field id="settings-kind" label="What kind of AI">
+                <Select
+                  value={kind}
+                  onValueChange={(value) => setKind(value as ModelKind)}
+                  disabled={revoked}
+                >
+                  <SelectTrigger id="settings-kind">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODEL_KINDS.map((k) => (
+                      <SelectItem key={k.kind} value={k.kind}>
+                        {k.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field id="settings-provider" label="Made by">
+                <Input
+                  id="settings-provider"
+                  value={provider}
+                  maxLength={60}
+                  placeholder="Anthropic, OpenAI, Google…"
+                  disabled={revoked}
+                  onChange={(e) => setProvider(e.target.value)}
+                />
+              </Field>
+              <Field id="settings-model" label="Model">
+                <Input
+                  id="settings-model"
+                  value={modelName}
+                  maxLength={80}
+                  placeholder="Claude Opus 5.5, Imagen 4…"
+                  disabled={revoked}
+                  onChange={(e) => setModelName(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
           {(orgs.length > 0 || agent.organizationId) && (
             <Field id="settings-org" label="Belongs to">
               <Select value={org} onValueChange={setOrg} disabled={revoked}>
@@ -160,6 +284,29 @@ function Details({ detail }: { detail: AgentDetail }) {
             </Field>
           )}
         </div>
+        <fieldset disabled={revoked}>
+          <legend className="mb-2 text-sm font-medium">Mascot</legend>
+          <div className="flex gap-2" role="radiogroup" aria-label="Mascot">
+            {MASCOTS.map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={mascot === m}
+                aria-label={m[0]!.toUpperCase() + m.slice(1)}
+                onClick={() => setMascot(m)}
+                className={cn(
+                  "grid place-items-center rounded-2xl border-2 p-1.5 transition-colors",
+                  mascot === m
+                    ? "border-[var(--aid-ink)] bg-[var(--accent)]"
+                    : "border-transparent bg-[var(--muted)] hover:border-[var(--border)]",
+                )}
+              >
+                <AgentAvatar mascot={m} size="lg" />
+              </button>
+            ))}
+          </div>
+        </fieldset>
         <dl className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
           <div className="min-w-0">
             <dt className="aid-label">Agent ID</dt>
@@ -403,7 +550,7 @@ function Access({ detail }: { detail: AgentDetail }) {
         </Button>
         <ConfirmButton
           title={`Revoke ${agent.name}?`}
-          description="Final. Its keys stop working and its mail, phone, wallet and machine are released. Its history stays."
+          description="Final. Its keys stop working and its mail, phone, wallet and computer are released. Its history stays."
           typed={agent.name}
           confirmLabel="Revoke"
           variant="outline"

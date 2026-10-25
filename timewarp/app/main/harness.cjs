@@ -10,6 +10,36 @@ const APPROVAL_METHODS = new Set([
   "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval",
   "item/tool/requestUserInput", "mcpServer/elicitation/request", "applyPatchApproval", "execCommandApproval",
 ]);
+const REQUEST_KINDS = {
+  "item/commandExecution/requestApproval": "command", execCommandApproval: "command",
+  "item/fileChange/requestApproval": "file change", applyPatchApproval: "file change",
+  "item/permissions/requestApproval": "extra access", "item/tool/requestUserInput": "question", "timewarp/confirm": "confirmation",
+};
+// A request's line in the app log: what kind it is, which chat and app asked,
+// and how many fields it has. Never its text or the user's answers.
+function requestFacts(pending) {
+  const params = pending.params || {};
+  const facts = { kind: REQUEST_KINDS[pending.method] || "other", chat: String(pending.conversationId || "").slice(0, 8), thread: params.threadId ? String(params.threadId).slice(0, 8) : undefined };
+  if (pending.method === "mcpServer/elicitation/request") {
+    // "tool": Codex asking before one of the server's tools runs.
+    const tool = params._meta?.codex_approval_kind === "mcp_tool_call";
+    Object.assign(facts, { kind: params.mode === "url" ? "page" : tool ? "tool" : "form", server: params.serverName });
+    const schema = params.requestedSchema;
+    if (params.mode !== "url" && !tool) Object.assign(facts, { fields: Object.keys(schema?.properties || {}).length, required: Array.isArray(schema?.required) ? schema.required.length : 0 });
+  }
+  if (pending.method === "item/tool/requestUserInput") facts.questions = (params.questions || []).length;
+  if (pending.method === "timewarp/confirm") facts.about = params.kind;
+  return facts;
+}
+// The user's answer in a word (accept, acceptForSession, decline, cancel or answered).
+function outcomeOf(response) {
+  const decision = response?.decision;
+  if (typeof decision === "string") return decision;
+  if (decision && typeof decision === "object") return Object.keys(decision)[0] || "answered";
+  if (typeof response?.action === "string") return response.action;
+  if (response?.permissions) return !Object.keys(response.permissions).length ? "decline" : response.scope === "session" ? "acceptForSession" : "accept";
+  return "answered";
+}
 const TITLE_LENGTH = 60;
 // A message another agent sent to this chat (team-tools.cjs), kept as its input.
 const AGENT_MESSAGE = /^<agent-message\b/;
@@ -57,7 +87,12 @@ const ATTACHED = "[Attached files, saved in your workspace]";
 // (its connected apps) when its chat is warmed or about to be written.
 // spareInputs(agent): a fingerprint of the files Codex reads as a thread
 // starts (instructions, settings, skills), for spare threads (prepare).
-function createHarness({ store, client, userId, instructionsFor, threadConfig = () => ({}), permissions = null, toolsReady = () => null, modelSettings, approvalsReviewer = () => "user", tools = null, notify = () => {}, log = () => {}, baseInstructions = null, turnContext = null, workspaceRoots = null, prepareContext = null, spareInputs = () => "" }) {
+// record(level, message, facts): the app log's line for each request shown
+// in a chat and for how it ended (requestFacts: no text, no answers).
+// answerFor(method, params): Timewarp's own answer to a request it needn't
+// show, or null: Codex asking before a tool whose call Timewarp asks the user
+// about itself, on its own card (approvals.cjs), so the user is asked once.
+function createHarness({ store, client, userId, instructionsFor, threadConfig = () => ({}), permissions = null, toolsReady = () => null, modelSettings, approvalsReviewer = () => "user", tools = null, notify = () => {}, log = () => {}, record = () => {}, answerFor = () => null, baseInstructions = null, turnContext = null, workspaceRoots = null, prepareContext = null, spareInputs = () => "" }) {
   const toolsVersion = tools?.version || 0;
   const threadOwner = new Map(); // codex thread id -> root conversation id (includes sub-agent threads)
   // Threads known not to be a chat's (background jobs, spares): Codex streams
@@ -92,12 +127,20 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   // Questions Timewarp itself asks the user in a chat (confirm), shown with
   // Codex's approval requests: request id -> { resolve, timer, turnId }.
   const confirmations = new Map();
+  // The app log's lines for a request: when it's shown, and how it ended
+  // after how long. A failing log never stops the request.
+  const shown = pending => { try { record("info", "Request shown", requestFacts(pending)); } catch {} };
+  const ended = (pending, message, extra = {}, level = "info") => {
+    try { record(level, message, { ...requestFacts(pending), ...extra, waitedMs: Date.now() - pending.requestedAt }); } catch {}
+  };
   const settleConfirmation = (id, answer) => {
     const pending = approvals.get(id), local = confirmations.get(id);
     if (!local) return false;
     confirmations.delete(id);
     approvals.delete(id);
     clearTimeout(local.timer);
+    if (pending && answer.decision === "timeout") ended(pending, "Request timed out");
+    else if (pending && answer.decision === "cancel") ended(pending, "Request closed");
     local.resolve(answer);
     if (pending) notify("approval.resolved", { id, conversationId: pending.conversationId });
     return true;
@@ -129,7 +172,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     active.clear();
     for (const turnId of [...turnWaiters.keys()]) finishWaits(turnId, { status: "aborted" });
     for (const id of [...confirmations.keys()]) settleConfirmation(id, { decision: "cancel" });
-    for (const [id, pending] of approvals) { approvals.delete(id); notify("approval.resolved", { id, conversationId: pending.conversationId }); }
+    for (const [id, pending] of approvals) { approvals.delete(id); ended(pending, "Request dropped: Codex stopped", {}, "warn"); notify("approval.resolved", { id, conversationId: pending.conversationId }); }
   });
 
   function conversationForThread(threadId) {
@@ -235,17 +278,27 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   client.on("request", message => {
     if (message.method === "item/tool/call") return void callTool(message);
     if (!APPROVAL_METHODS.has(message.method)) {
+      record("warn", "Request not supported", { method: String(message.method).slice(0, 80) });
       client.respondError(message.id, "Timewarp does not support this request.", -32601);
       return;
     }
     const threadId = message.params?.threadId || message.params?.conversationId;
     void Promise.resolve(conversationForThread(threadId) || ownerFromParents(threadId)).then(conversationId => {
       if (!conversationId) {
+        record("warn", "Request had no chat to show it in", requestFacts({ method: message.method, params: message.params }));
         client.respondError(message.id, "No conversation is waiting for this request.");
         return;
       }
       const pending = { id: message.id, method: message.method, params: message.params, conversationId, requestedAt: Date.now() };
+      let automatic = null;
+      try { automatic = answerFor(message.method, message.params || {}); } catch {}
+      if (automatic) {
+        ended(pending, "Request answered by Timewarp: its own card asks", { outcome: outcomeOf(automatic) });
+        client.respond(message.id, automatic);
+        return;
+      }
       approvals.set(message.id, pending);
+      shown(pending);
       notify("approval.requested", pending);
     }).catch(error => log("A request could not be shown.", error.message));
   });
@@ -254,6 +307,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     const pending = approvals.get(params.requestId);
     if (!pending) return;
     approvals.delete(params.requestId);
+    ended(pending, "Request closed by Codex");
     notify("approval.resolved", { id: params.requestId, conversationId: pending.conversationId });
   });
 
@@ -729,6 +783,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
         confirmations.set(requestId, { resolve, timer, turnId: active.get(id)?.turnId || null });
         const pending = { id: requestId, method: "timewarp/confirm", params: request, conversationId: id, requestedAt: Date.now() };
         approvals.set(requestId, pending);
+        shown(pending);
         notify("approval.requested", pending);
       });
     },
@@ -757,10 +812,13 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       ownedConversation(pending.conversationId);
       // Timewarp's own question: only its two answers count.
       if (confirmations.has(requestId)) {
-        settleConfirmation(requestId, { decision: response?.decision === "accept" ? "accept" : "decline" });
+        const decision = response?.decision === "accept" ? "accept" : "decline";
+        ended(pending, "Request answered", { outcome: decision });
+        settleConfirmation(requestId, { decision });
         return { answered: true };
       }
       approvals.delete(requestId);
+      ended(pending, "Request answered", { outcome: outcomeOf(response) });
       client.respond(requestId, response);
       notify("approval.resolved", { id: requestId, conversationId: pending.conversationId });
       return { answered: true };

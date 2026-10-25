@@ -1,7 +1,14 @@
 import { useState } from "react";
+import { Activity } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { ACTOR_LABELS, auditActionLabel, auditDetail } from "@/lib/agent-id/format";
+import {
+  ACTOR_LABELS,
+  auditActionLabel,
+  auditDetail,
+  auditVia,
+  auditWhere,
+} from "@/lib/agent-id/format";
 import { useAudit } from "@/lib/agent-id/queries";
 import type { Agent } from "@/lib/agent-id/types";
 import { Empty, ErrorState, LoadingRows, Row, Rows, Section, TimeAgo } from "../ui";
@@ -20,12 +27,14 @@ export function ActivityTab({ agent }: { agent: Agent }) {
       ) : audit.isError ? (
         <ErrorState error={audit.error} onRetry={() => void audit.refetch()} />
       ) : entries.length === 0 ? (
-        <Empty>Nothing yet.</Empty>
+        <Empty icon={Activity}>Nothing yet. Everything this agent does shows up here.</Empty>
       ) : (
         <>
           <Rows label="Activity">
             {shown.map((entry) => {
-              const detail = auditDetail(entry);
+              // What it was, then where it was done from.
+              const detail = [auditDetail(entry), auditWhere(entry)].filter(Boolean).join(" · ");
+              const via = auditVia(entry);
               return (
                 <Row key={entry.id}>
                   <div className="min-w-0">
@@ -34,6 +43,7 @@ export function ActivityTab({ agent }: { agent: Agent }) {
                       <span className="text-[var(--muted-foreground)]">
                         {" "}
                         · {ACTOR_LABELS[entry.actor]}
+                        {via && ` in ${via}`}
                       </span>
                     </p>
                     {detail && (

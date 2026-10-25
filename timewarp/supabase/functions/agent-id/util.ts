@@ -10,7 +10,7 @@ export const fail = (status: number, code: string, message: string, extra: Recor
 export const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization,apikey,content-type,timewarp-agent,timewarp-claim-session,x-filename,mcp-protocol-version,mcp-session-id',
-  'Access-Control-Expose-Headers': 'content-disposition',
+  'Access-Control-Expose-Headers': 'content-disposition,mcp-session-id',
   'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
 };
 export const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -132,6 +132,6 @@ export function emailAddress(value: unknown, field = 'to') {
 // A handle for an agent's mail address: its name in lowercase with a short
 // random tail, so two agents called "Research" don't collide.
 export function handleFor(name: string) {
-  const base = name.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'agent';
+  const base = name.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'agent';
   return `${base}-${randomId(4)}`;
 }

@@ -123,22 +123,32 @@ test("vault tools fill values without returning them and ask before cards", asyn
   const typed = [], asked = [];
   const fields = [];
   const browserTools = { pageUrl: () => page, fillSecret: async (_conversation, { ref, value, field }) => { typed.push([ref, value]); fields.push(field); return page; } };
-  const tools = createVaultTools({ vault, browserTools, ask: async message => { asked.push(message); return allow; } });
+  const cards = [];
+  const tools = createVaultTools({ vault, browserTools, ask: async (message, detail, question) => { asked.push(message); cards.push(question); return allow; } });
   const call = (tool, args, agent = { ...store.agents.get("agent-1"), vaultAccess: true }) => tools.call("chat-1", { tool, arguments: args }, agent);
 
   await assert.rejects(call("list", {}, store.agents.get("agent-1")), /doesn't have vault access/);
   const listed = await call("list", {});
   assert.ok(!JSON.stringify(listed).includes("s3cret-pass") && !JSON.stringify(listed).includes("4242424242424242"));
 
+  // A sign-in on its own site asks once in a chat: a no fills nothing.
+  const notYet = await call("fill_sign_in", { item: login.id, username_ref: "e1", password_ref: "e2" });
+  assert.equal(notYet.success, false);
+  assert.deepEqual(typed, []);
+  allow = true;
   const filled = await call("fill_sign_in", { item: login.id, username_ref: "e1", password_ref: "e2" });
   assert.deepEqual(typed, [["e1", "ada"], ["e2", "s3cret-pass"]]);
   assert.ok(!JSON.stringify(filled).includes("s3cret-pass"));
-  assert.deepEqual(asked, [], "A sign-in on its own site needs no prompt");
+  await call("fill_sign_in", { item: login.id, username_ref: "e1", password_ref: "e2" });
+  assert.equal(asked.length, 2, "once allowed, the same sign-in fills again in this chat without asking");
+  await tools.call("chat-2", { tool: "fill_sign_in", arguments: { item: login.id, password_ref: "e2" } }, { ...store.agents.get("agent-1"), vaultAccess: true });
+  assert.equal(asked.length, 3, "another chat asks again");
+  allow = false;
 
   page = "https://elsewhere.test/";
   const refused = await call("fill_sign_in", { item: login.id, password_ref: "e2" });
   assert.equal(refused.success, false);
-  assert.equal(asked.length, 1);
+  assert.equal(asked.length, 4, "another site always asks");
 
   const declined = await call("fill_card", { item: card.id, number_ref: "e5" });
   assert.equal(declined.success, false);
@@ -148,7 +158,14 @@ test("vault tools fill values without returning them and ask before cards", asyn
   // The number is looked for anywhere on the page; the expiry only in its field.
   assert.deepEqual(fields.slice(-2), [undefined, "detail"]);
   assert.match(cardFilled.contentItems[0].text, /type the security code/);
-  assert.equal(asked.length, 3);
+  assert.equal(asked.length, 6);
+  // Each question is a card in the chat: signing in, the sign-in elsewhere, then the card to fill.
+  assert.deepEqual(cards.map(item => [item.conversationId, item.kind, item.title, item.action]), [
+    ["chat-1", "use", "Sign in to example.com?", "Sign in"], ["chat-1", "use", "Sign in to example.com?", "Sign in"], ["chat-2", "use", "Sign in to example.com?", "Sign in"],
+    ["chat-1", "use", "Use your example.com sign-in here?", "Use sign-in"],
+    ["chat-1", "pay", "Fill your Visa ending 4242?", "Fill card"], ["chat-1", "pay", "Fill your Visa ending 4242?", "Fill card"],
+  ]);
+  assert.ok(!JSON.stringify(cards).includes("4242424242424242"), "a card never shows the number");
 
   const saved = await call("save_sign_in", { site: "new.example", username: "ada", password: "generated-1" });
   assert.match(saved.contentItems[0].text, /Saved the sign-in for https:\/\/new\.example/);
@@ -217,11 +234,13 @@ test("a field in a frame from another site needs the user's say for a sign-in, a
   const browserTools = { pageUrl: () => "https://example.com/login", fieldUrl: (_conversation, { ref }) => frames[ref], fillSecret: async (_conversation, { ref, value }) => { typed.push([ref, value]); } };
   const tools = createVaultTools({ vault, browserTools, ask: async message => { asked.push(message); return allow; } });
   const call = (tool, args) => tools.call("chat-1", { tool, arguments: args }, { ...store.agents.get("agent-1"), vaultAccess: true });
+  allow = true;
   await call("fill_sign_in", { item: login.id, username_ref: "e1", password_ref: "e2" });
-  assert.deepEqual(asked, [], "Page and fields on the sign-in's site");
+  assert.deepEqual(asked, ["Nova wants to sign in to example.com as ada."], "Page and fields on the sign-in's site: once in this chat");
+  allow = false;
   const refused = await call("fill_sign_in", { item: login.id, username_ref: "e1", password_ref: "e9" });
   assert.equal(refused.success, false);
-  assert.deepEqual(asked, ["Nova wants to use your example.com sign-in on example.com (in a form from widgets.other.test)."]);
+  assert.deepEqual(asked.slice(1), ["Nova wants to use your example.com sign-in on example.com (in a form from widgets.other.test)."]);
   assert.ok(!typed.some(([ref]) => ref === "e9"), "Nothing typed into the other site's frame");
   allow = true;
   await call("fill_card", { item: card.id, number_ref: "e9" });

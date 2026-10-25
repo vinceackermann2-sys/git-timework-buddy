@@ -2,7 +2,7 @@
 // switches), --flag=value, and everything after `--` kept as is.
 import { UsageError } from './errors.js';
 
-const SWITCHES = new Set(['json', 'help', 'live', 'print', 'global', 'unread', 'all', 'yes', 'version', 'local', 'project', 'quiet', 'here', 'test']);
+const SWITCHES = new Set(['json', 'help', 'live', 'print', 'global', 'unread', 'all', 'yes', 'version', 'local', 'project', 'quiet', 'here', 'test', 'code']);
 const REPEATABLE = new Set(['attach']);
 
 export function parseArgs(argv) {

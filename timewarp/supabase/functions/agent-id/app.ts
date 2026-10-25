@@ -14,11 +14,15 @@ import { jwks } from './passport.ts';
 import type { AgentRow, Ctx } from './context.ts';
 import { ownerRoutes } from './owner.ts';
 import { agentRoutes, RAW_ROUTES } from './agent.ts';
+import { vaultAgentRoutes } from './vault.ts';
+import { connectorAgentRoutes } from './connectors.ts';
+import { automationAgentRoutes } from './automations.ts';
 import { publicAllowedSigners, publicVerify, relyingPartyRoutes } from './relying.ts';
-import { handleMcp } from './mcp.ts';
+import { allMcpTools, handleMcp } from './mcp.ts';
 import { handleWebhook } from './webhooks.ts';
-import { collectClaim, confirmClaimEmail, getClaim, sendClaimCode, startClaim, verifyClaimIdentity } from './claims.ts';
+import { acceptClaimTerms, collectClaim, confirmClaimEmail, getClaim, sendClaimCode, startClaim } from './claims.ts';
 import { autoSetup } from './admin.ts';
+import { providerMark, publicCheck, publicTrace, traceAgentRoutes } from './tracing.ts';
 
 export type Owner = { kind: 'owner'; userId: string; email: string | null; via: 'session' | 'key'; keyId?: string };
 export type AgentCaller = { kind: 'agent'; userId: string; agent: AgentRow; via: 'key' | 'owner'; keyId?: string };
@@ -53,6 +57,14 @@ function match(pattern: string, path: string) {
 }
 
 const bearer = (req: Request) => (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+
+// Where an agent's request came from: the network address it reached us from
+// and the computer's name the CLI sends (Timewarp-Device).
+export function whereFrom(req: Request) {
+  const ip = (req.headers.get('cf-connecting-ip') || req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '').split(',')[0].trim().slice(0, 45);
+  const device = (req.headers.get('timewarp-device') || '').replace(/[^\w .@()-]/g, '').trim().slice(0, 64);
+  return { ip: ip || null, device: device || null };
+}
 
 async function touchKey(ctx: Ctx, key: { id: string; last_used_at: string | null }) {
   if (key.last_used_at && ctx.now() - Date.parse(key.last_used_at) < 60_000) return;
@@ -112,21 +124,25 @@ export async function authenticate(ctx: Ctx, req: Request): Promise<Caller> {
 async function claimRoute(ctx: Ctx, req: Request, path: string) {
   if (path === '/v1/claims' && req.method === 'POST') return startClaim(ctx, req, await readBody(req));
   if (path === '/v1/claims/collect' && req.method === 'POST') return collectClaim(ctx, await readBody(req));
-  const m = /^\/v1\/claims\/([a-z0-9]{1,60})(\/email|\/email\/confirm|\/identity)?$/.exec(path);
+  const m = /^\/v1\/claims\/([a-z0-9]{1,60})(\/email|\/email\/confirm|\/terms|\/identity)?$/.exec(path);
   if (!m) return null;
   const [, code, step] = m;
   if (!step && req.method === 'GET') return getClaim(ctx, req, code);
   if (step === '/email' && req.method === 'POST') return sendClaimCode(ctx, code, await readBody(req));
   if (step === '/email/confirm' && req.method === 'POST') return confirmClaimEmail(ctx, code, await readBody(req));
-  if (step === '/identity' && req.method === 'POST') return verifyClaimIdentity(ctx, req, code, await readBody(req));
+  // /identity is the older name of /terms: identity is checked later now.
+  if ((step === '/terms' || step === '/identity') && req.method === 'POST') return acceptClaimTerms(ctx, req, code, await readBody(req));
   throw fail(405, 'method_not_allowed', 'Not available for this method.');
 }
 
 export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch; now?: () => number; sleep?: (ms: number) => Promise<void>; signIn?: Ctx['signIn']; background?: Ctx['background'] }) {
   const config = loadConfig(deps.env);
-  const ctx: Ctx = { admin: deps.admin, config, fetch: deps.fetch || fetch, now: deps.now || Date.now, sleep: deps.sleep || (ms => new Promise(r => setTimeout(r, ms))), signIn: deps.signIn, background: deps.background || (work => { work.catch(error => console.error('[agent-id] background', error?.message)); }) };
+  const shared: Ctx = { admin: deps.admin, config, fetch: deps.fetch || fetch, now: deps.now || Date.now, sleep: deps.sleep || (ms => new Promise(r => setTimeout(r, ms))), signIn: deps.signIn, background: deps.background || (work => { work.catch(error => console.error('[agent-id] background', error?.message)); }) };
   let setupStarted = false;
   return async (req: Request): Promise<Response> => {
+    // Each request gets its own context: what one sets (the app and model it
+    // came through, an approval it carries out) never reaches another.
+    const ctx: Ctx = { ...shared };
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
     // Registers the deployment's own webhooks once, so mail and identity
     // results arrive without anyone setting them up by hand.
@@ -138,20 +154,30 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
       if (req.method === 'GET' && path === '/.well-known/jwks.json') return json(await jwks(config), 200, { 'cache-control': 'public, max-age=300' });
       if (req.method === 'GET' && path === '/v1/config') return json(publicConfig(config));
       if (path.startsWith('/webhooks/')) return await handleWebhook(ctx, req, path);
+      // What the MCP tools are, open like the config: they hold nothing of anyone's.
+      if (req.method === 'GET' && path === '/v1/mcp/tools') return json({ tools: allMcpTools() }, 200, { 'cache-control': 'public, max-age=3600' });
       // Open to every service and repository, no account needed: checking a
       // passport shown to you, and an organization's Git signers.
       if (path === '/v1/verify' && req.method === 'POST' && !bearer(req)) return json(await publicVerify(ctx, await readBody(req)));
       if (path.startsWith('/v1/claims')) { const result = await claimRoute(ctx, req, path); if (result) return json(result); }
+      // Open too: checking whether a picture, sound or text was made by an
+      // agent, one trace by its id, and model makers marking for an agent.
+      if (path === '/v1/trace/check' && req.method === 'POST') return json(await publicCheck(ctx, req));
+      if (path === '/v1/trace/mark' && req.method === 'POST') return await providerMark(ctx, req, url.searchParams);
+      const traced = /^\/v1\/trace\/(tr_[0-9a-f]{16})$/.exec(path);
+      if (traced && req.method === 'GET') return json(await publicTrace(ctx, traced[1]), 200, { 'cache-control': 'public, max-age=60' });
       const signers = /^\/v1\/orgs\/([0-9a-f-]{36})\/allowed-signers$/.exec(path);
       if (signers && req.method === 'GET') { const result = await publicAllowedSigners(ctx, signers[1], Object.fromEntries(url.searchParams)); return result instanceof Response ? result : json(result); }
       if (path === '/mcp') {
         if (req.method !== 'POST') return json({ error: { code: 'method_not_allowed', message: 'Use POST for MCP.' } }, 405, { allow: 'POST' });
         const caller = await authenticate(ctx, req);
         if (caller.kind !== 'agent') throw fail(403, 'agent_only', 'The MCP server acts as an agent: use an agent key, or name the agent in a Timewarp-Agent header.');
+        ctx.where = whereFrom(req);
         return await handleMcp(ctx, caller, req);
       }
       const caller = await authenticate(ctx, req);
-      const routes: Route<any>[] = caller.kind === 'agent' ? agentRoutes : caller.kind === 'owner' ? ownerRoutes : relyingPartyRoutes;
+      if (caller.kind === 'agent') ctx.where = whereFrom(req);
+      const routes: Route<any>[] = caller.kind === 'agent' ? [...agentRoutes, ...vaultAgentRoutes, ...traceAgentRoutes, ...connectorAgentRoutes, ...automationAgentRoutes] : caller.kind === 'owner' ? ownerRoutes : relyingPartyRoutes;
       for (const [method, pattern, handler] of routes) {
         if (method !== req.method) continue;
         const params = match(pattern, path);
@@ -160,7 +186,7 @@ export function createHandler(deps: { admin: any; env: Env; fetch?: typeof fetch
         const result = await handler(ctx, caller, input, params, req);
         return result instanceof Response ? result : json(result);
       }
-      const other = [ownerRoutes, agentRoutes, relyingPartyRoutes].some(list => list.some(([, pattern]) => match(pattern, path)));
+      const other = [ownerRoutes, agentRoutes, vaultAgentRoutes, traceAgentRoutes, connectorAgentRoutes, automationAgentRoutes, relyingPartyRoutes].some(list => list.some(([, pattern]) => match(pattern, path)));
       throw other ? fail(403, 'wrong_credential', caller.kind === 'agent' ? 'Agents can\'t use this endpoint; it needs the owner.' : caller.kind === 'owner' ? 'This endpoint acts as an agent: use an agent key or a Timewarp-Agent header.' : 'Company secrets can only check passports and signing keys.') : fail(404, 'not_found', 'This endpoint does not exist.');
     } catch (error) {
       if (error instanceof ApiError) return json({ error: { code: error.code, message: error.message, ...error.extra } }, error.status);

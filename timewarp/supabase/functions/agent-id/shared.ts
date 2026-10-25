@@ -3,7 +3,7 @@
 import { checked, fail, money } from './util.ts';
 import type { AgentRow, Ctx, ResourceRow } from './context.ts';
 import type { Kind } from './config.ts';
-import { appsView, originView } from './origin.ts';
+import { appsView, modelView, originView } from './origin.ts';
 
 // The service's own stored values (agent_id_settings), such as the signing
 // secrets of webhooks it registered itself.
@@ -16,7 +16,10 @@ export async function putSetting(ctx: Ctx, key: string, value: unknown) {
 }
 
 export async function audit(ctx: Ctx, ownerId: string, agentId: string | null, actor: 'owner' | 'agent' | 'system' | 'provider' | 'relying_party', action: string, detail: Record<string, unknown> = {}, { required = false } = {}) {
-  const { error } = await ctx.admin.from('agent_id_audit').insert({ owner_user_id: ownerId, agent_id: agentId, actor, action, detail });
+  // What an agent does is recorded with the app and model it did it through,
+  // and where from: so whoever answers for it can see what ran, and where.
+  const via = actor === 'agent' ? { ...(ctx.via ? { via: ctx.via } : {}), ...(ctx.where ? { where: ctx.where } : {}) } : {};
+  const { error } = await ctx.admin.from('agent_id_audit').insert({ owner_user_id: ownerId, agent_id: agentId, actor, action, detail: { ...detail, ...via } });
   if (error) {
     console.error('[agent-id] audit failed', action, error.message);
     if (required) throw fail(503, 'unavailable', 'Agent ID could not record this action, so it was not done.');
@@ -80,7 +83,8 @@ export async function membership(ctx: Ctx, userId: string, workspaceId: string) 
 export const principalOf = (ctx: Ctx, agent: AgentRow) => `${agent.id}@${ctx.config.principalDomain}`;
 
 export function resourceView(row: ResourceRow) {
-  const { cvc: _cvc, ...state } = row.state || {};
+  // The card's code, and a test computer's vault key, are never shown.
+  const { cvc: _cvc, testVault: _testVault, ...state } = row.state || {};
   return {
     id: row.id, kind: row.kind, mode: row.mode, provider: row.provider, status: row.status,
     address: row.address, label: row.label, settings: row.settings || {}, details: state,
@@ -95,12 +99,38 @@ export async function resourcesOf(ctx: Ctx, agentIds: string[]) {
 }
 
 // apps: from appsOf(), the apps this Agent ID is used in.
+// Every agent's face is one of Timewarp's mascots: the one its owner picked,
+// else one that follows from its id (or its claim's code), so it never changes.
+export const MASCOTS = ['orbit', 'nova', 'cosmo'] as const;
+export function mascotOf(key: string) {
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return MASCOTS[hash % MASCOTS.length];
+}
+
+// Which of an agent's actions wait for its owner's yes (ask.ts). Unless the
+// owner chose otherwise, texts and calls to real numbers ask first.
+export const ASK_KINDS = ['mail', 'sms', 'call', 'contacts', 'vault'] as const;
+export type AskKind = typeof ASK_KINDS[number];
+export function asksFirst(agent: AgentRow, kind: AskKind, mode?: string) {
+  const chosen = agent.ask_first?.[kind];
+  if (typeof chosen === 'boolean') return chosen;
+  return (kind === 'sms' || kind === 'call') && mode === 'live';
+}
+// Each kind as it applies now (texts and calls with the phone's mode).
+export function askFirstView(agent: AgentRow, resources: ResourceRow[]) {
+  const phone = resources.find(r => r.agent_id === agent.id && r.kind === 'phone' && r.status !== 'released');
+  return Object.fromEntries(ASK_KINDS.map(kind => [kind, asksFirst(agent, kind, kind === 'sms' || kind === 'call' ? phone?.mode : undefined)])) as Record<AskKind, boolean>;
+}
+
 export function agentView(ctx: Ctx, agent: AgentRow, resources: ResourceRow[] = [], apps?: Map<string, any[]>) {
   return {
-    id: agent.id, name: agent.name, handle: agent.handle, runtime: agent.runtime, origin: originView(agent), apps: appsView(agent, apps?.get(agent.id)), status: agent.status,
+    id: agent.id, name: agent.name, handle: agent.handle, mascot: agent.mascot || mascotOf(agent.id), runtime: agent.runtime, origin: originView(agent), apps: appsView(agent, apps?.get(agent.id)), status: agent.status,
+    model: modelView(agent),
     organizationId: agent.workspace_id, desktopAgentId: agent.desktop_agent_id,
     gitPrincipal: principalOf(ctx, agent),
     createdAt: agent.created_at, lastSeenAt: agent.last_seen_at,
+    askFirst: askFirstView(agent, resources),
     resources: Object.fromEntries(resources.filter(r => r.agent_id === agent.id).map(r => [r.kind, resourceView(r)])),
   };
 }

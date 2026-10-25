@@ -34,6 +34,9 @@
   --aid-warning-bg: #fff4d9;
   --aid-danger: #b02a45;
   --aid-danger-bg: #fdecef;
+  /* The wallet's balance line: up, down. */
+  --aid-up: #16a34a;
+  --aid-down: #e5484d;
   --aid-test: #5d6474;
   --aid-test-bg: #f1f2f5;
   --aid-code-bg: #f8f7fb;
@@ -109,6 +112,8 @@
     --aid-warning-bg: #33280f;
     --aid-danger: #f28da0;
     --aid-danger-bg: #3a1a22;
+    --aid-up: #4ade80;
+    --aid-down: #f87171;
     --aid-test: #c0c8d6;
     --aid-test-bg: #262c38;
     --aid-code-bg: #141820;
@@ -118,8 +123,8 @@
 }
 .agent-id[data-theme="dark"] {
   --background: #171b23;
-    --aid-canvas: #171b23;
-    --aid-glow: rgb(233 210 255 / 0.07);
+  --aid-canvas: #171b23;
+  --aid-glow: rgb(233 210 255 / 0.07);
   --foreground: #f3f5fa;
   --card: #1c212a;
   --card-foreground: #f3f5fa;
@@ -143,6 +148,8 @@
   --aid-warning-bg: #33280f;
   --aid-danger: #f28da0;
   --aid-danger-bg: #3a1a22;
+  --aid-up: #4ade80;
+  --aid-down: #f87171;
   --aid-test: #c0c8d6;
   --aid-test-bg: #262c38;
   --aid-code-bg: #141820;
@@ -261,4 +268,16 @@ html.agent-id [role="alertdialog"]:focus {
 /* Address suggestions without Chrome's dropdown arrow, like a mail app's To field. */
 .agent-id input[list]::-webkit-calendar-picker-indicator {
   display: none !important;
+}
+
+/* The public site: a soft dotted backdrop, fading out from the top, behind
+   heroes and inside tiles. */
+.agent-id .aid-dots {
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--aid-ink) 16%, transparent) 1px,
+    transparent 1.3px
+  );
+  background-size: 18px 18px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 35%, transparent 80%);
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 35%, transparent 80%);
 }

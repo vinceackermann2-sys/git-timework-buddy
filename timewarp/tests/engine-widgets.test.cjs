@@ -115,6 +115,10 @@ test("links resolve to pages, files, tabs, workers and app pages", async () => {
   assert.deepEqual(resolveLink("energy://conversation/c1"), { type: "conversation", conversationId: "c1" });
   assert.deepEqual(resolveLink("timewarp://subagents/019a-b"), { type: "subagent", threadId: "019a-b" });
   assert.deepEqual(resolveLink("timewarp://customize/tools"), { type: "app", route: "/customize/tools" });
+  // The chat's agent's own page, at one of its parts.
+  assert.deepEqual(resolveLink("timewarp://agent"), { type: "agent", section: null });
+  assert.deepEqual(resolveLink("timewarp://agent/wallet"), { type: "agent", section: "wallet" });
+  assert.deepEqual(resolveLink("timewarp://agent/wallet/extra"), { type: "app", route: "/agent/wallet/extra" });
   assert.deepEqual(resolveLink("file:///C:/Users/me/My%20report.md"), { type: "file", path: "C:\\Users\\me\\My report.md" });
   assert.deepEqual(resolveLink("file:///home/me/a.md"), { type: "file", path: "/home/me/a.md" });
   // markdown-it encodes link destinations.

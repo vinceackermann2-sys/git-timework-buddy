@@ -233,7 +233,11 @@ function createComposio({ cloud, userId, storage, getAgent, listAgents=async()=>
   async function searchTools({ assistantId, toolkit, query = '' }) {
     await ownedAgent(assistantId);
     const accounts = (await connections(assistantId)).filter(account => !toolkit || account.toolkit === toolkit);
-    if (!accounts.length) return { accounts: [], tools: [], message: "Connect an app from this agent’s Tools settings first." };
+    // The app is connected in the chat itself, on its connect card (widgets.jsx), rather than in settings.
+    const app = String(toolkit || '').toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (!accounts.length) return { accounts: [], tools: [], message: app
+      ? `${app} isn't connected for this agent (or needs signing in again). Put <connect-plugin plugin-id="${app}" /> on its own line in your reply so the user can connect it right there, then stop and wait: when it connects, their next message says so.`
+      : 'No apps are connected for this agent. Put <connect-plugin plugin-id="<app id>" /> for the app the task needs (such as gmail or slack) on its own line in your reply, then stop and wait: when it connects, their next message says so.' };
     const results = await Promise.all(accounts.slice(0, 8).map(async account => {
       const result = await call({ action: 'list-tools', toolkit: account.toolkit, query, connectedAccountId: account.connectionId, limit: 12 });
       return { ...account, tools: result.tools || [] };

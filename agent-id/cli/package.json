@@ -1,8 +1,8 @@
 {
   "name": "@timewarp/agent-id",
   "version": "1.0.0",
-  "description": "Timewarp Agent ID from the command line: give your AI agents their own identity, mail, phone, wallet, card and machine, and use them from Claude Code, Codex, Claude Desktop and Cursor over MCP.",
-  "keywords": ["ai-agents", "agent-identity", "mcp", "claude-code", "codex", "cursor", "timewarp"],
+  "description": "Give your AI agent its own email, wallet, phone number and computer. Run `npx @timewarp/agent-id` to set up Claude Code, Codex, Cursor and other AI apps.",
+  "keywords": ["agent-id", "ai-agents", "agent-identity", "mcp", "mcp-server", "claude-code", "claude", "codex", "cursor", "gemini-cli", "agent-email", "agent-wallet", "timewarp", "cli"],
   "homepage": "https://timewarpdev.com/agent-id",
   "repository": {
     "type": "git",
@@ -20,5 +20,8 @@
   "files": ["bin", "src", "README.md"],
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,17 +1,21 @@
 // The agent's wallet, like a modern bank app: a dollar balance, round quick
 // actions, and transactions by day. Live wallets hold USDC and USDT 1:1.
-import { useState } from "react";
+import { Suspense, lazy, useDeferredValue, useId, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownLeft,
+  ArrowLeftRight,
   ArrowDownToLine,
   ArrowUpRight,
+  BadgeCheck,
   ExternalLink,
   Info,
+  Landmark,
   Loader2,
   Plus,
+  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -21,6 +25,8 @@ import { Input } from "@/components/ui/input";
 import { errorMessage } from "@/lib/agent-id/client";
 import {
   amountValue,
+  balanceHistory,
+  balanceTrend,
   counterpartyLabel,
   eventStatusLabel,
   formatDateTime,
@@ -29,9 +35,12 @@ import {
   groupByDay,
   parseAmount,
   shortAddress,
+  walletHolds,
 } from "@/lib/agent-id/format";
 import {
   queryKeys,
+  useAccount,
+  useAgent,
   useAgents,
   useApprovals,
   useContacts,
@@ -41,23 +50,36 @@ import {
   useWalletSummary,
 } from "@/lib/agent-id/queries";
 import { api } from "@/lib/agent-id/session";
-import type { Agent, AgentEvent, WalletSummary } from "@/lib/agent-id/types";
+import type { Agent, AgentEvent, BankPayin, WalletSummary } from "@/lib/agent-id/types";
 import {
+  AgentAvatar,
   Avatar,
   Chip,
   CopyButton,
+  Empty,
   ErrorState,
   Field,
   LoadingRows,
   Muted,
   Notice,
-  SidePanel,
+  Popup,
 } from "../ui";
 import { BlockedNotice, LoadMore, NoResource, blockedReason } from "./common";
 import { AddMoney, AmountField, Withdraw } from "./WalletMoney";
-import { bankPayoutLabel } from "./BankMoney";
+import {
+  PayinDetails,
+  bankPayoutLabel,
+  formatEur,
+  payinOpen,
+  payinStateLabel,
+  usePayins,
+} from "./BankMoney";
 import { PendingApprovals } from "../ApprovalList";
+import { useAgentIdTheme } from "../AgentIdShell";
 import { LimitsEditor } from "./LimitsEditor";
+
+// Privy's SDK is large: it loads only when someone pays by card.
+const PrivyCardFlow = lazy(() => import("./PrivyCardPay"));
 
 const NETWORK_LABELS: Record<string, string> = {
   base: "Base",
@@ -70,36 +92,61 @@ export function WalletTab({ agent }: { agent: Agent }) {
   const wallet = agent.resources.wallet;
   const blocked = blockedReason(agent, wallet);
   const summary = useWalletSummary(agent.id, !!wallet && !blocked);
+  const detail = useAgent(agent.id);
   const pages = useEventPages(agent.id, { kind: ["wallet"] }, { enabled: !!wallet });
   const approvals = useApprovals();
   const [panel, setPanel] = useState<"add" | "send" | "withdraw" | "details" | null>(null);
   const [openTx, setOpenTx] = useState<AgentEvent | null>(null);
+  const [openPayin, setOpenPayin] = useState<string | null>(null);
+  // A card payment through Privy: its app, and a number that starts each one.
+  const [privy, setPrivy] = useState<{ appId: string; request: number } | null>(null);
+  const { choice } = useAgentIdTheme();
+  const dark =
+    choice === "dark" ||
+    (choice === "system" &&
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
   const testMode = useTestMode();
+  const bankOn = useAccount().data?.config.bank?.available === true && wallet?.mode === "live";
+  // SEPA transfers on their way in: shown above the transactions until they arrive.
+  const payins = usePayins(agent.id, bankOn && !!wallet);
 
   if (!wallet) return <NoResource agent={agent} kind="wallet" />;
 
   const balance = summary.data?.balance ?? wallet.balance ?? null;
   const test = wallet.mode === "test";
+  // Money comes in at once; it leaves a live wallet once the owner is verified.
+  const mustVerify = !test && detail.data?.verification.verified === false;
   const events = pages.data?.pages.flatMap((p) => p.events) ?? [];
   const waiting = (approvals.data ?? []).filter((a) => a.agentId === agent.id);
   const network = summary.data?.network ?? wallet.details.network;
+  const incoming = (payins.data ?? []).filter(payinOpen);
+  const shownPayin = payins.data?.find((p) => p.id === openPayin) ?? null;
+  // The last 30 days, walked back from the balance through the transfers loaded.
+  const history = balanceHistory(balance?.amount ?? 0, pages.isPending ? [] : events, {
+    complete: !pages.hasNextPage,
+  });
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="space-y-6">
       <BlockedNotice reason={blocked} />
+      {mustVerify && <VerifyToMoveMoney />}
 
-      <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-[#f6ecff] via-[#efe0ff] to-[#e3ccff] p-6 text-[#172033] shadow-[0_1px_2px_rgba(23,32,51,0.06)] sm:p-8">
-        <p className="text-sm font-medium text-[#172033]/70">Balance</p>
-        <p className="mt-1 text-5xl font-semibold tracking-tight tabular-nums">
-          {balance ? formatUsd(balance.amount) : summary.isPending && !blocked ? "…" : "—"}
-        </p>
-        <p className="mt-2 text-sm text-[#172033]/70">
-          {test ? "Test dollars" : "USD · backed 1:1 by USDC and USDT"}
+      <section aria-label="Balance" className="aid-card p-6 sm:p-8">
+        <p className="text-sm font-medium text-[var(--muted-foreground)]">Balance</p>
+        <p className="mt-1 flex flex-wrap items-baseline gap-x-2">
+          <span className="text-5xl font-semibold tracking-tight tabular-nums">
+            {balance ? formatUsd(balance.amount) : summary.isPending && !blocked ? "…" : "—"}
+          </span>
+          <span className="text-lg font-medium text-[var(--muted-foreground)]">
+            {test ? "test USD" : "USD"}
+          </span>
         </p>
         {summary.data?.balanceError && (
           <p className="mt-1 text-xs text-[var(--aid-danger)]">{summary.data.balanceError}</p>
         )}
-        <div className="mt-7 flex gap-5 sm:gap-6">
+        <BalanceChart points={history} />
+        <div className="mt-7 flex justify-between gap-2 sm:justify-start sm:gap-8">
           <QuickAction
             label="Add money"
             icon={<Plus className="h-5 w-5" />}
@@ -140,12 +187,19 @@ export function WalletTab({ agent }: { agent: Agent }) {
             <LoadingRows rows={4} />
           ) : pages.isError ? (
             <ErrorState error={pages.error} onRetry={() => void pages.refetch()} />
-          ) : events.length === 0 ? (
-            <p className="px-5 py-14 text-center text-sm text-[var(--muted-foreground)]">
-              No transactions yet
-            </p>
+          ) : events.length === 0 && incoming.length === 0 ? (
+            <Empty icon={ArrowLeftRight}>
+              No transactions yet. Money in and out shows up here.
+            </Empty>
           ) : (
             <>
+              {incoming.length > 0 && (
+                <ul aria-label="On the way">
+                  {incoming.map((p) => (
+                    <PayinRow key={p.id} payin={p} onOpen={() => setOpenPayin(p.id)} />
+                  ))}
+                </ul>
+              )}
               {groupByDay(events).map((group) => (
                 <div key={group.day}>
                   <p className="bg-[var(--muted)]/60 px-5 py-1.5 text-xs font-semibold text-[var(--muted-foreground)]">
@@ -168,50 +222,70 @@ export function WalletTab({ agent }: { agent: Agent }) {
         </div>
       </section>
 
-      <SidePanel
+      <Popup
         open={panel === "send"}
         onOpenChange={(open) => setPanel(open ? "send" : null)}
         title="Send"
-        trigger={<span className="hidden" />}
       >
-        <SendForm agent={agent} onDone={() => setPanel(null)} />
-      </SidePanel>
-      <SidePanel
+        {mustVerify ? (
+          <VerifyToMoveMoney inPanel />
+        ) : (
+          <SendForm agent={agent} onDone={() => setPanel(null)} />
+        )}
+      </Popup>
+      <Popup
         open={panel === "add"}
         onOpenChange={(open) => setPanel(open ? "add" : null)}
         title={test ? "Add test money" : "Add money"}
-        trigger={<span className="hidden" />}
       >
         {test ? (
           <TestMoney agent={agent} onDone={() => setPanel(null)} />
         ) : (
-          <AddMoney agent={agent} />
+          <AddMoney
+            agent={agent}
+            onPrivyPay={(appId) => {
+              // Privy's own windows take over from here.
+              setPanel(null);
+              setPrivy((current) => ({ appId, request: (current?.request ?? 0) + 1 }));
+            }}
+          />
         )}
-      </SidePanel>
-      <SidePanel
+      </Popup>
+      <Popup
         open={panel === "withdraw"}
         onOpenChange={(open) => setPanel(open ? "withdraw" : null)}
         title={test ? "Withdraw test money" : "Withdraw"}
-        trigger={<span className="hidden" />}
       >
-        <Withdraw agent={agent} balance={balance} onDone={() => setPanel(null)} />
-      </SidePanel>
-      <SidePanel
+        {mustVerify ? (
+          <VerifyToMoveMoney inPanel />
+        ) : (
+          <Withdraw agent={agent} balance={balance} onDone={() => setPanel(null)} />
+        )}
+      </Popup>
+      <Popup
         open={panel === "details"}
         onOpenChange={(open) => setPanel(open ? "details" : null)}
         title="Wallet details"
-        trigger={<span className="hidden" />}
       >
         <Details agent={agent} summary={summary.data} network={network} />
-      </SidePanel>
-      <SidePanel
-        open={!!openTx}
-        onOpenChange={(open) => !open && setOpenTx(null)}
-        title="Transaction"
-        trigger={<span className="hidden" />}
+      </Popup>
+      <Popup
+        open={!!shownPayin}
+        onOpenChange={(open) => !open && setOpenPayin(null)}
+        title="Bank transfer"
       >
+        {shownPayin && (
+          <PayinDetails agent={agent} payin={shownPayin} onBack={() => setOpenPayin(null)} />
+        )}
+      </Popup>
+      <Popup open={!!openTx} onOpenChange={(open) => !open && setOpenTx(null)} title="Transaction">
         {openTx && <TransactionDetail event={openTx} network={network} />}
-      </SidePanel>
+      </Popup>
+      {privy && (
+        <Suspense fallback={null}>
+          <PrivyCardFlow agent={agent} appId={privy.appId} dark={dark} request={privy.request} />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -232,9 +306,9 @@ function QuickAction({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="group flex flex-col items-center gap-2 text-xs font-medium text-[#172033] disabled:opacity-40"
+      className="group flex flex-col items-center gap-2 text-xs font-medium disabled:opacity-40"
     >
-      <span className="grid h-12 w-12 place-items-center rounded-full bg-white/80 shadow-sm transition group-hover:bg-white group-active:scale-95">
+      <span className="grid h-12 w-12 place-items-center rounded-full bg-[var(--muted)] transition group-hover:bg-[var(--border)] group-active:scale-95">
         {icon}
       </span>
       {label}
@@ -242,7 +316,133 @@ function QuickAction({
   );
 }
 
+// The balance over the last 30 days as a line: green when it went up, red when
+// it went down, a grey dashed line when nothing changed.
+function BalanceChart({ points }: { points: (number | null)[] }) {
+  const id = useId().replace(/:/g, "");
+  const trend = balanceTrend(points);
+  const known = points.flatMap((p, i) => (p === null ? [] : [[i, p] as const]));
+  const first = known[0]?.[1] ?? 0;
+  const change = (known.at(-1)?.[1] ?? 0) - first;
+  const color =
+    trend === "up"
+      ? "var(--aid-up)"
+      : trend === "down"
+        ? "var(--aid-down)"
+        : "var(--muted-foreground)";
+  const [W, H, PAD] = [300, 72, 6];
+  const values = known.map(([, p]) => p);
+  const [min, max] = [Math.min(...values), Math.max(...values)];
+  const x = (i: number) => (i / Math.max(points.length - 1, 1)) * W;
+  const y = (v: number) =>
+    max === min ? H / 2 : PAD + (H - 2 * PAD) * (1 - (v - min) / (max - min));
+  const line =
+    known.length < 2
+      ? `M0 ${H / 2}H${W}`
+      : known.map(([i, p], n) => `${n ? "L" : "M"}${x(i).toFixed(1)} ${y(p).toFixed(1)}`).join("");
+  const area =
+    known.length < 2
+      ? ""
+      : `${line}L${x(known.at(-1)![0]).toFixed(1)} ${H}L${x(known[0]![0]).toFixed(1)} ${H}Z`;
+  const said =
+    trend === "flat"
+      ? "No change in the last 30 days"
+      : `${trend === "up" ? "Up" : "Down"} ${formatUsd(Math.abs(change))} in the last 30 days`;
+  return (
+    <div className="mt-5">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={said}
+        className="h-20 w-full overflow-visible"
+      >
+        <defs>
+          <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" style={{ stopColor: color, stopOpacity: 0.16 }} />
+            <stop offset="1" style={{ stopColor: color, stopOpacity: 0 }} />
+          </linearGradient>
+        </defs>
+        {trend !== "flat" && area && <path d={area} fill={`url(#${id}-fill)`} />}
+        <path
+          d={line}
+          fill="none"
+          style={{ stroke: color }}
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeDasharray={trend === "flat" ? "5 5" : undefined}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <p className="mt-2 flex justify-between text-xs text-[var(--muted-foreground)]">
+        <span>Last 30 days</span>
+        {trend !== "flat" && (
+          <span className="font-medium tabular-nums" style={{ color }}>
+            {trend === "up" ? "+" : "−"}
+            {formatUsd(Math.abs(change))}
+          </span>
+        )}
+      </p>
+    </div>
+  );
+}
+
 const isIn = (e: AgentEvent) => e.direction === "in";
+
+// Before the owner's one identity check: what it unlocks, and the way to it.
+function VerifyToMoveMoney({ inPanel = false }: { inPanel?: boolean }) {
+  return (
+    <section
+      className={cn(
+        "flex flex-col gap-3 sm:flex-row sm:items-center",
+        inPanel ? "py-2" : "aid-card px-5 py-4",
+      )}
+    >
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--accent)] text-[var(--aid-ink)]">
+        <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">Verify once to send and withdraw</p>
+        <p className="text-sm text-[var(--muted-foreground)]">
+          Money can already come in. A two-minute check of your ID unlocks sending and withdrawing.
+        </p>
+      </div>
+      <Button asChild className={cn(inPanel && "w-full")}>
+        <Link to="/agent-id/verify">Verify</Link>
+      </Button>
+    </section>
+  );
+}
+
+// A SEPA transfer on its way in: the amount in euros, and where it is.
+function PayinRow({ payin, onOpen }: { payin: BankPayin; onOpen: () => void }) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full items-center gap-3 border-b border-[var(--border)] px-5 py-3 text-left transition-colors hover:bg-[var(--muted)]/60"
+      >
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]">
+          <Landmark className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-medium">Bank transfer</span>
+          <span className="block truncate text-xs text-[var(--muted-foreground)]">
+            {payinStateLabel(payin.state)}
+          </span>
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-1">
+          <span className="text-[15px] font-semibold tabular-nums text-[var(--muted-foreground)]">
+            +{formatEur(payin.amount)}
+          </span>
+          <Chip tone="warning">{payin.state === "awaiting_funds" ? "Waiting" : "On its way"}</Chip>
+        </span>
+      </button>
+    </li>
+  );
+}
 
 function TransactionRow({ event, onOpen }: { event: AgentEvent; onOpen: () => void }) {
   const name = counterpartyLabel(event.counterparty);
@@ -364,6 +564,18 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
       .map((c) => ({ value: c.name, label: c.wallet ?? "" })),
   ];
 
+  // An agent's id or handle: who it is, as payment apps show who you pay.
+  const named = useDeferredValue(to.trim().toLowerCase());
+  const lookup = useQuery({
+    queryKey: ["agent-id", "recipient", named],
+    queryFn: () => api.recipient(named),
+    enabled: /^agt_[a-z0-9]{24}$/.test(named) || /^[a-z0-9][a-z0-9-]{1,39}$/.test(named),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const payee = lookup.data?.found ? lookup.data.agent : null;
+  const noWallet = payee && payee.wallet !== wallet?.mode;
+
   const send = useMutation({
     mutationFn: () =>
       api.asAgent(agent.id).sendMoney({
@@ -403,7 +615,7 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
           id="send-to"
           list="send-suggestions"
           autoComplete="off"
-          placeholder="Agent, contact or wallet address"
+          placeholder="Agent ID, handle, contact or 0x address"
           value={to}
           onChange={(e) => setTo(e.target.value)}
         />
@@ -414,6 +626,36 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
             </option>
           ))}
         </datalist>
+        {payee && (
+          <div className="mt-2 flex items-center gap-2.5 rounded-xl border border-[var(--border)] p-2.5">
+            <AgentAvatar mascot={payee.mascot} id={payee.id} size="sm" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">
+                {payee.name}
+                {payee.yours && (
+                  <span className="font-normal text-[var(--muted-foreground)]"> · yours</span>
+                )}
+              </p>
+              <p className="aid-mono truncate text-xs text-[var(--muted-foreground)]">{payee.id}</p>
+            </div>
+            {noWallet ? (
+              <Chip tone="danger">
+                {payee.wallet === "test"
+                  ? "Only a test wallet"
+                  : payee.wallet
+                    ? "Only a live wallet"
+                    : "No wallet"}
+              </Chip>
+            ) : payee.verified ? (
+              <Chip tone="success">
+                <BadgeCheck className="h-3 w-3" aria-hidden="true" />
+                Verified owner
+              </Chip>
+            ) : (
+              <Chip>Owner not verified</Chip>
+            )}
+          </div>
+        )}
       </Field>
       <Field id="send-note" label="What's it for?">
         <Input
@@ -431,7 +673,7 @@ function SendForm({ agent, onDone }: { agent: Agent; onDone: () => void }) {
         type="submit"
         size="lg"
         className="h-12 rounded-full"
-        disabled={!to.trim() || !value || send.isPending}
+        disabled={!to.trim() || !value || !!noWallet || send.isPending}
       >
         {send.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
         Send{value ? ` ${formatUsd(cents)}` : ""}
@@ -466,11 +708,12 @@ function Details({
             }
           />
         )}
+        <Row term="Holds" value={walletHolds(wallet.mode)} />
         {network && network !== "test" && (
           <Row term="Network" value={NETWORK_LABELS[network] ?? network} />
         )}
         {(summary?.assets ?? []).map((a) => (
-          <Row key={a.asset} term={a.asset} value={formatUsd(a.amount)} />
+          <Row key={a.asset} term={a.asset} value={formatUsd(a.amount?.amount)} />
         ))}
         {summary?.sent.last24Hours && (
           <Row term="Sent today" value={formatUsd(summary.sent.last24Hours.amount)} />
@@ -487,6 +730,12 @@ function Details({
         )}
         {testMode && <Row term="Mode" value={wallet.mode === "test" ? "Test" : "Live"} />}
       </dl>
+      {wallet.mode === "live" && (
+        <Muted>
+          This address only takes USDC and USDT on Base. Bitcoin, ETH or coins sent on another
+          network can't be received and may be lost.
+        </Muted>
+      )}
       <div>
         <h4 className="mb-3 text-sm font-semibold">Spending limits</h4>
         <LimitsEditor

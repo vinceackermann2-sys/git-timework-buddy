@@ -51,6 +51,13 @@ const PAGES = {
   "/encyclopedia": `<!doctype html><title>Timewarp test encyclopedia</title><h1>Encyclopedia</h1>
     <form action="/article"><input type="search" name="search" aria-label="Search the encyclopedia"><button>Go</button></form>`,
   "/article": `<!doctype html><title>Timewarp test article</title><h1>Article</h1>${"<p>Light travels fast.</p>".repeat(60)}`,
+  // The page an MCP server asks the user to open (mcpRequests).
+  "/approve": `<!doctype html><title>Timewarp test approval</title><h1>Approve the booking</h1>`,
+  // A checkout and a chat box: buying and sending ask on a card first (pageCards).
+  "/shop": `<!doctype html><title>Timewarp test shop</title><h1>Checkout</h1><p>Blue mug · $12.00</p>
+    <button onclick="document.getElementById('state').textContent='Order placed'">Place order</button> <button onclick="document.getElementById('state').textContent='Next step'">Next</button>
+    <p id="state">Not ordered</p>
+    <input aria-label="Type a message" onkeydown="if(event.key==='Enter'){document.getElementById('sent').textContent='Sent: '+this.value}"><p id="sent">Nothing sent</p>`,
 };
 // Answered after a delay, like a page's request to a slow server.
 const SLOW = { "/slow": [400, "Loaded 42"] };
@@ -62,6 +69,39 @@ rl.on("line", line => { let m; try { m = JSON.parse(line); } catch { return; } i
   if (m.method === "initialize") return reply({ protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "echo", version: "1.0.0" } });
   if (m.method === "tools/list") return reply({ tools: [{ name: "echo", description: "Echo text back.", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } }] });
   if (m.method === "tools/call") return reply({ content: [{ type: "text", text: "echo: " + m.params.arguments.text }] });
+  reply({}); });`;
+
+// An MCP server whose tools ask the user (MCP elicitation): "book" for a form
+// with required fields, "approve" for a page to open (APPROVE_URL). Each
+// returns the answer it got.
+const BOOKING_SCHEMA = {
+  type: "object",
+  properties: {
+    full_name: { type: "string", title: "Full name", minLength: 2 },
+    email: { type: "string", format: "email", title: "Email" },
+    guests: { type: "integer", title: "Guests", minimum: 1, maximum: 8, default: 2 },
+    room: { type: "string", title: "Room", oneOf: [{ const: "single", title: "Single room" }, { const: "double", title: "Double room" }] },
+    extras: { type: "array", title: "Extras", items: { anyOf: [{ const: "breakfast", title: "Breakfast" }, { const: "parking", title: "Parking" }] } },
+    newsletter: { type: "boolean", title: "Send me offers" },
+  },
+  required: ["full_name", "email", "guests", "room"],
+};
+const BOOKING_SERVER = `const rl = require("readline").createInterface({ input: process.stdin });
+const write = message => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+const waiting = new Map(); let next = 1;
+const ask = params => new Promise(resolve => { const id = "ask-" + next++; waiting.set(id, resolve); write({ id, method: "elicitation/create", params }); });
+rl.on("line", async line => { let m; try { m = JSON.parse(line); } catch { return; }
+  if (!m.method && waiting.has(m.id)) { waiting.get(m.id)(m.result || { error: m.error }); waiting.delete(m.id); return; }
+  if (m.id === undefined) return;
+  const reply = result => write({ id: m.id, result });
+  if (m.method === "initialize") return reply({ protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "booking", version: "1.0.0" } });
+  if (m.method === "tools/list") return reply({ tools: ["book", "approve"].map(name => ({ name, description: "Ask the user.", inputSchema: { type: "object", properties: {} } })) });
+  if (m.method === "tools/call") {
+    const answer = await ask(m.params.name === "approve"
+      ? { mode: "url", message: "Approve the booking on its page.", url: process.env.APPROVE_URL, elicitationId: "approval-1" }
+      : { mode: "form", message: "Who is staying?", requestedSchema: ${JSON.stringify(BOOKING_SCHEMA)} });
+    return reply({ content: [{ type: "text", text: "answer: " + JSON.stringify(answer) }] });
+  }
   reply({}); });`;
 
 // env: more settings for this instance, such as a cloud file shared with another.
@@ -421,7 +461,10 @@ async function main() {
       // values masked, so it reads "[filled from vault]" there.
       if (!/filled as \[filled from vault\] with a 13-character password/.test(value.page)) throw new Error("The sign-in wasn't filled: " + JSON.stringify(value));
       if (value.leaked) throw new Error("The password was shown to the agent.");
-      return "the agent filled a saved sign-in without seeing the password";
+      // Signing in asked once, on a card naming the site and the account.
+      const asked = result.approvals.filter(item => item.method === "timewarp/confirm");
+      if (asked.length !== 1 || asked[0].params.title !== "Sign in to 127.0.0.1?" || !asked[0].params.lines.some(line => line.value === "ada@example.com")) throw new Error("The sign-in didn't ask once on its card: " + JSON.stringify(asked.map(item => item.params)));
+      return "the agent filled a saved sign-in, after its card, without seeing the password";
     },
     async connectors() {
       const id = await chat();
@@ -456,6 +499,202 @@ async function main() {
       await call("mcp.remove", { name: "echo" });
       fs.rmSync(directory, { recursive: true, force: true });
       return `an added MCP server's tool (${value.name}) was called by the agent`;
+    },
+    // An MCP server asking the user (elicitation), answered on the chat's card
+    // as a person would: a form whose required fields are checked before it
+    // goes, then a page to open in the chat's pane. The app log names both
+    // requests and how they ended, without the answers.
+    async mcpRequests() {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-e2e-booking-"));
+      fs.writeFileSync(path.join(directory, "server.js"), BOOKING_SERVER);
+      await call("mcp.add", { name: "booking", transport: "stdio", command: process.execPath, args: [path.join(directory, "server.js")], env: { ELECTRON_RUN_AS_NODE: "1", APPROVE_URL: site + "/approve" } });
+      try {
+        let listed;
+        for (const deadline = Date.now() + 30000; !listed?.tools && Date.now() < deadline; await pause(1000)) listed = (await call("mcp.list")).find(server => server.name === "booking");
+        if (!listed?.tools) throw new Error("The booking MCP server didn't start: " + JSON.stringify(listed));
+        const id = await chat();
+        await app.evaluate(`location.hash = "#/conversation/${id}"; true`);
+        const ask = tool => script(`
+          const name = ALL_TOOLS.map(tool => tool.name).find(name => /booking/.test(name) && name.endsWith("${tool}"));
+          text(name ? out(await tools[name]({})) : "No ${tool} tool");
+        `);
+        // Other requests on the way (Codex asking before an MCP tool runs) get the answer their card's first button sends.
+        const others = async () => {
+          for (const request of (await call("conversations.status", { id })).approvals || []) {
+            if (request.method === "mcpServer/elicitation/request" && (request.params.mode === "url" || Object.keys(request.params.requestedSchema?.properties || {}).length)) continue;
+            await call("approvals.respond", { id: request.id, response: request.method === "mcpServer/elicitation/request" ? { action: "accept", content: {}, _meta: null } : { decision: "accept" } });
+          }
+        };
+        const card = async selector => {
+          for (const deadline = Date.now() + 60000; Date.now() < deadline; await pause(300)) {
+            if (await app.evaluate(`!!document.querySelector(${JSON.stringify(selector)})`)) return;
+            await others();
+          }
+          throw new Error("The card didn't show: " + selector);
+        };
+        const press = label => app.evaluate(`(() => { const button = [...document.querySelectorAll(".tw-approval button")].find(item => item.textContent === ${JSON.stringify(label)}); button?.click(); return !!button; })()`);
+        // The form: Send with required fields empty names them and moves to the first.
+        const booking = turn(id, ask("book"), { approve: false });
+        await card(".tw-approval form.tw-request-form");
+        if (!await press("Send")) throw new Error("The form has no Send button.");
+        await pause(300);
+        const checked = await app.evaluate(`({ invalid: [...document.querySelectorAll('.tw-approval [data-invalid="true"]')].map(item => item.dataset.field), focused: document.activeElement?.closest("[data-field]")?.dataset.field, optional: document.querySelectorAll(".tw-approval .tw-optional").length })`);
+        if (checked.invalid.join() !== "full_name,email,room" || checked.focused !== "full_name" || checked.optional !== 1) throw new Error("The missing fields weren't named: " + JSON.stringify(checked));
+        await app.evaluate(`(() => {
+          const type = (key, value) => { const input = document.querySelector('.tw-approval [data-field="' + key + '"] input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); };
+          const pick = (key, label) => [...document.querySelectorAll('.tw-approval [data-field="' + key + '"] button')].find(item => item.textContent.includes(label)).click();
+          type("full_name", "Ada Lovelace"); type("email", "ada@example.com"); type("guests", "3"); pick("room", "Double room"); pick("extras", "Breakfast");
+          return true;
+        })()`);
+        await pause(300);
+        const still = await app.evaluate(`[...document.querySelectorAll('.tw-approval [data-invalid="true"]')].map(item => item.dataset.field)`);
+        if (still.length) throw new Error("Filled fields still show as missing: " + still.join());
+        await press("Send");
+        const booked = await booking;
+        const answer = JSON.parse(/answer: (\{.*\})/.exec(booked.reply)?.[1] || "null");
+        const expected = { full_name: "Ada Lovelace", email: "ada@example.com", guests: 3, room: "double", extras: ["breakfast"], newsletter: false };
+        if (answer?.action !== "accept" || !require("node:util").isDeepStrictEqual(answer.content, expected)) throw new Error("The server didn't get the typed answer: " + booked.reply.slice(0, 400));
+        // The page: its host on the card, opened in the chat's pane on Open page.
+        const approving = turn(id, ask("approve"), { approve: false });
+        await card(".tw-approval .tw-request-host");
+        const host = await app.evaluate(`document.querySelector(".tw-approval .tw-request-host").textContent`);
+        if (host !== new URL(site).host) throw new Error("The card didn't name the page's host: " + host);
+        await press("Open page");
+        const approved = await approving;
+        if (JSON.parse(/answer: (\{.*\})/.exec(approved.reply)?.[1] || "null")?.action !== "accept") throw new Error("The server wasn't told the page opened: " + approved.reply.slice(0, 300));
+        const tabs = (await call("browser.state", { conversationId: id })).tabs || [];
+        if (!tabs.some(tab => String(tab.url).startsWith(site + "/approve"))) throw new Error("The page didn't open in the chat's pane: " + JSON.stringify(tabs.map(tab => tab.url)));
+        // The app log: kind, app and outcome; never what was typed.
+        const log = fs.readFileSync(path.join(app.profile, "runtime", "logs", "main.log"), "utf8").split("\n").filter(line => line.includes("[request]"));
+        const has = (...parts) => log.some(line => parts.every(part => line.includes(part)));
+        if (!has("Request shown", '"kind":"form"', '"server":"booking"', '"fields":6', '"required":4') || !has("Request answered", '"kind":"form"', '"outcome":"accept"')
+          || !has("Request shown", '"kind":"page"') || !has("Request answered", '"kind":"page"', '"outcome":"accept"')) throw new Error("The app log doesn't name the requests: " + log.join("\n"));
+        if (log.some(line => /Ada|ada@example|Who is staying|Approve the booking/.test(line))) throw new Error("The app log holds request text or answers: " + log.join("\n"));
+        return `a form's missing fields were named (${checked.invalid.join(", ")}) and its typed answer reached the server; a page opened in the chat's pane; ${log.length} request lines in the app log, without answers`;
+      } finally {
+        await call("mcp.remove", { name: "booking" }).catch(() => {});
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    // Sending, paying and deleting wait for the user's OK on a card written
+    // from the call itself (approvals.cjs), answered as a person would: a
+    // connected app's email (Don't allow, then Send), an Agent ID for the
+    // agent, its mail (Agent ID's own hold is answered by the same card), and
+    // the wallet card with the live balance. The chat's sidebar row shows a
+    // card is waiting.
+    async actionCards() {
+      const id = await chat();
+      await app.evaluate(`location.hash = "#/conversation/${id}"; true`);
+      const use = (part, args) => `(await tools[ALL_TOOLS.map(tool => tool.name).find(name => name.includes(${JSON.stringify(part)}))](${args}))`;
+      const shownCard = async () => {
+        for (const deadline = Date.now() + 60000; Date.now() < deadline; await pause(300)) {
+          const value = await app.evaluate(`(() => { const card = document.querySelector(".tw-action-card"); return card ? { title: card.querySelector("h3").textContent, app: card.querySelector(".tw-action-app")?.textContent || "", lines: [...card.querySelectorAll(".tw-action-lines > div")].map(row => row.children[0].textContent + ": " + row.children[1].textContent), body: card.querySelector(".tw-action-body")?.textContent || "", buttons: [...card.querySelectorAll("button")].map(item => item.textContent), waiting: !!document.querySelector('a[href="#/conversation/${id}"] .tw-needs-you') } : null; })()`);
+          if (value) return value;
+        }
+        throw new Error("No action card was shown.");
+      };
+      const press = label => app.evaluate(`(() => { const button = [...document.querySelectorAll(".tw-action-card button")].find(item => item.textContent === ${JSON.stringify(label)}); button?.click(); return !!button; })()`);
+      // A connected app's email: Don't allow sends nothing; Send sends it.
+      const email = script(`
+        const gmail = JSON.parse(out(${use("list_connections", `{ assistantId: ${JSON.stringify(agent.id)} }`)})).find(item => item.toolkit === "gmail");
+        text(out(${use("composio_execute", `{ assistantId: ${JSON.stringify(agent.id)}, connectedAccountId: gmail.connectionId, toolSlug: "GMAIL_SEND_EMAIL", arguments: { recipient_email: "ada@example.com", subject: "Timeline", body: "Here is the timeline." } }`)}));
+      `);
+      const refusing = turn(id, email, { approve: false });
+      const mail = await shownCard();
+      if (mail.title !== "Send this email?" || !/Gmail/.test(mail.app) || !mail.lines.includes("To: ada@example.com") || !mail.lines.includes("Subject: Timeline") || mail.body !== "Here is the timeline." || mail.buttons.join() !== "Send,Don't allow") throw new Error("The email card didn't show the email: " + JSON.stringify(mail));
+      if (!mail.waiting) throw new Error("The chat's sidebar row didn't show a card waiting.");
+      await press("Don't allow");
+      const refused = await refusing;
+      if (!/nothing was sent/.test(refused.reply)) throw new Error("The agent wasn't told nothing was sent: " + refused.reply.slice(0, 300));
+      const sending = turn(id, email, { approve: false });
+      await shownCard();
+      await press("Send");
+      const sent = await sending;
+      if (/nothing was sent|isError/.test(sent.reply)) throw new Error("The email wasn't sent after Send: " + sent.reply.slice(0, 300));
+      // An Agent ID for the agent, agreed on a card.
+      const getting = turn(id, script(`text(out(${use("app_action", `{ action: "get_agent_id" }`)}));`), { approve: false });
+      const terms = await shownCard();
+      if (terms.title !== `Get an Agent ID for ${agent.name}?`) throw new Error("No card for the Agent ID: " + JSON.stringify(terms));
+      await press("Get Agent ID");
+      const got = await getting;
+      if (!/agentId/.test(got.reply)) throw new Error("The agent didn't get an Agent ID: " + got.reply.slice(0, 300));
+      // Its mail asks on a card; Agent ID's own hold (ask first) is approved by that same yes.
+      const mailing = turn(id, script(`text(out(${use("agent_id", `{ action: "mail_send", arguments: { to: "ada@example.com", subject: "Hello", text: "Hi Ada" } }`)}));`), { approve: false });
+      const own = await shownCard();
+      if (own.title !== "Send this email?" || !/Agent ID/.test(own.app) || own.body !== "Hi Ada") throw new Error("The Agent ID mail card didn't show the email: " + JSON.stringify(own));
+      await press("Send");
+      const mailed = await mailing;
+      if (!/allowed it on a card/.test(mailed.reply)) throw new Error("Agent ID's hold wasn't approved by the card: " + mailed.reply.slice(0, 300));
+      if ((await call("agentId.call", { agentId: agent.id, op: "approvals.list" })).approvals.length) throw new Error("The mail still waits on Agent ID.");
+      // The wallet card: the owner verifies (the preview's check passes after a few seconds) and adds a wallet.
+      await call("agentId.verify", {});
+      await pause(4500);
+      await call("agentId.call", { agentId: agent.id, op: "resource.add", input: { kind: "wallet" } });
+      await turn(id, "Show it here <wallet />");
+      let wallet = null;
+      for (const deadline = Date.now() + 15000; !wallet?.balance && Date.now() < deadline; await pause(300)) wallet = await app.evaluate(`(() => { const card = [...document.querySelectorAll('[data-card="wallet"]')].at(-1); return card ? { balance: card.querySelector("strong")?.textContent, buttons: [...card.querySelectorAll("button")].map(item => item.textContent) } : null; })()`);
+      // In the computer's own money format, as the agent's page shows it.
+      if (!/12[.,]40/.test(wallet?.balance || "") || wallet.buttons.join() !== "Withdraw,Add money") throw new Error("The wallet card didn't show the balance: " + JSON.stringify(wallet));
+      const log = fs.readFileSync(path.join(app.profile, "runtime", "logs", "main.log"), "utf8").split("\n").filter(line => line.includes("[request]"));
+      if (!log.some(line => line.includes("Request answered") && line.includes('"about":"send"') && line.includes('"outcome":"decline"'))) throw new Error("The app log doesn't name the refused email: " + log.join("\n"));
+      if (log.some(line => /ada@example|Timeline|Hi Ada/.test(line))) throw new Error("The app log holds an email's details.");
+      return `a connected app's email waited for its card (refused, then sent), an Agent ID came after its card, its mail's own hold was approved by the card, and the wallet card shows ${wallet.balance}`;
+    },
+    // In a web page, a click that buys and Enter that sends a message wait for
+    // the user's OK on a card with the page's site and a picture of it; an
+    // ordinary button doesn't ask.
+    async pageCards() {
+      const id = await chat();
+      await call("browser.show", { conversationId: id });
+      await app.evaluate(`location.hash = "#/conversation/${id}"; true`);
+      const shop = JSON.stringify(site + "/shop");
+      const clickScript = label => script(`
+        await tools.mcp__timewarp_browser__open({ url: ${shop} });
+        const outline = out(await tools.mcp__timewarp_browser__snapshot({}));
+        const ref = (outline.match(/button "${label}" \\[ref=(e\\d+)\\]/) || [])[1];
+        const clicked = out(await tools.mcp__timewarp_browser__click({ ref }));
+        const page = out(await tools.mcp__timewarp_browser__read({}));
+        text(JSON.stringify({ clicked: clicked.slice(0, 200), state: (page.match(/Not ordered|Order placed|Next step/) || [""])[0] }));
+      `);
+      const shownCard = async () => {
+        for (const deadline = Date.now() + 60000; Date.now() < deadline; await pause(300)) {
+          const value = await app.evaluate(`(() => { const card = document.querySelector(".tw-action-card"); return card ? { title: card.querySelector("h3").textContent, app: card.querySelector(".tw-action-app")?.textContent || "", body: card.querySelector(".tw-action-body")?.textContent || "", image: !!card.querySelector("img.tw-action-shot"), buttons: [...card.querySelectorAll("button")].map(item => item.textContent) } : null; })()`);
+          if (value) return value;
+        }
+        throw new Error("No card was shown.");
+      };
+      const press = label => app.evaluate(`(() => { const button = [...document.querySelectorAll(".tw-action-card button")].find(item => item.textContent === ${JSON.stringify(label)}); button?.click(); return !!button; })()`);
+      // Don't allow: the order isn't placed.
+      const refusing = turn(id, clickScript("Place order"), { approve: false });
+      const order = await shownCard();
+      if (order.title !== "Click “Place order”?" || order.app !== new URL(site).host || order.buttons.join() !== "Place order,Don't allow") throw new Error("The order card didn't show the page's button: " + JSON.stringify(order));
+      await press("Don't allow");
+      const refused = json((await refusing).reply);
+      if (refused.state !== "Not ordered" || !/nothing was paid/.test(refused.clicked)) throw new Error("The order was placed without the user's OK: " + JSON.stringify(refused));
+      // Place order on the card: it's clicked.
+      const placing = turn(id, clickScript("Place order"), { approve: false });
+      await shownCard();
+      await press("Place order");
+      const placed = json((await placing).reply);
+      if (placed.state !== "Order placed") throw new Error("The order wasn't placed after the card: " + JSON.stringify(placed));
+      // An ordinary button asks nothing.
+      const next = await turn(id, clickScript("Next"));
+      if (next.approvals.length || json(next.reply).state !== "Next step") throw new Error("An ordinary button asked or didn't click: " + next.reply.slice(0, 300));
+      // A message typed and sent with Enter: the card shows it.
+      const sending = turn(id, script(`
+        await tools.mcp__timewarp_browser__open({ url: ${shop} });
+        const outline = out(await tools.mcp__timewarp_browser__snapshot({}));
+        const ref = (outline.match(/textbox "Type a message" \\[ref=(e\\d+)\\]/) || [])[1];
+        await tools.mcp__timewarp_browser__type({ ref, text: "On my way", submit: true });
+        const page = out(await tools.mcp__timewarp_browser__read({}));
+        text(JSON.stringify({ sent: (page.match(/Sent: [^\\n]*|Nothing sent/) || [""])[0] }));
+      `), { approve: false });
+      const message = await shownCard();
+      if (message.title !== "Send this message?" || message.body !== "On my way") throw new Error("The message card didn't show the message: " + JSON.stringify(message));
+      await press("Send");
+      const sent = json((await sending).reply);
+      if (sent.sent !== "Sent: On my way") throw new Error("The message wasn't sent after the card: " + JSON.stringify(sent));
+      return `a purchase click waited for its card (refused, then placed${order.image ? ", with a picture of the page" : ""}), an ordinary button didn't ask, and a message sent with Enter showed on its card`;
     },
     async files() {
       const id = await chat();

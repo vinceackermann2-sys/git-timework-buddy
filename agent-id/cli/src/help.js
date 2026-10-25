@@ -1,13 +1,47 @@
-// Help text, per command.
+// Help text, per command. `bin` is how the person started it: `timewarp-id`,
+// or `npx @timewarp/agent-id` (what they type to run it again).
 
-export const MAIN = `timewarp-id: identities for your AI agents, with their own mail, phone,
-wallet, card and machine, traced back to a verified person or business.
+export const WELCOME = 'Timewarp Agent ID gives your AI agent its own email, wallet, phone number and computer.';
 
+// With no command and no terminal to ask in (a pipe, a script, an agent's shell).
+export const quickHelp = bin => `${WELCOME}
+
+Get started: run \`${bin}\` in a terminal and follow the steps.
+Without a terminal, name the apps: \`${bin} attach claude codex\`
+(\`${bin} agents scan\` lists what it can find here).
+
+All commands: ${bin} help`;
+
+const aligned = rows => {
+  const width = Math.max(...rows.map(([command]) => command.length)) + 3;
+  return rows.map(([command, what]) => `  ${command.padEnd(width)}${what}`).join('\n');
+};
+
+// `timewarp-id help`: what a person needs first, then everything else.
+export const fullHelp = (bin = 'timewarp-id') => `${WELCOME}
+
+Get started: run \`${bin}\` and follow the steps.
+It finds the AI apps on this computer and gives them an Agent ID.
+
+Also useful:
+${aligned([
+  [`${bin} me`, 'What your agent has'],
+  [`${bin} approvals`, 'Payments waiting for your OK'],
+  [`${bin} detach`, 'Undoes the setup (your Agent ID stays)'],
+  [`${bin} help <command>`, 'More about one command'],
+])}
+
+Works with Claude Code (and its subagents), Codex, Cursor, Claude Desktop,
+Gemini CLI, Antigravity, Windsurf, opencode, Grok, Kiro, Qwen Code, Factory,
+Copilot CLI, Amazon Q, Continue, Cline, Roo, Kilo, Timewarp and OpenClaw
+agents, and your own agent in any folder (\`${bin} attach --here\`
+in that folder).
+
+Advanced and developer commands
+-------------------------------
 Usage: timewarp-id <command> [options]
 
-Your existing agents (Claude Code and its subagents, Codex, Cursor, Claude
-Desktop, Gemini, Antigravity, Windsurf, opencode, Grok, Kiro, Copilot,
-Continue, Cline, Timewarp and OpenClaw agents, any folder):
+Agents on this computer:
   attach [what…] [--give mail,wallet]  Give them an Agent ID, wired in
   detach [what…]                   Undo exactly what attach wrote
   agents scan                      What attach can find here
@@ -17,19 +51,20 @@ Your account (owner key from the Agent ID dashboard):
   terms                            Read and accept Agent ID's terms (needed once)
   logout [--all]                   Forget it (--all: and every agent key)
   whoami                           Your account and the agent you act as
-  agents list|create|show|key|pause|resume|revoke
+  agents list|create|show|model|key|pause|resume|revoke
   give <mail|phone|wallet|vm>      Give an agent a mail inbox, number, wallet or machine
   card apply                       Apply for a virtual card for an agent
   take <kind>                      Take it away again
   limits <wallet|card>             Spending limits, in dollars
   approvals | approve <id> | deny <id>
-
-Which agent you act as:
   use <agent> [--project]          Default agent (or this project's agent)
 
 Act as the agent:
   me, mail, sms, call, contacts, wallet, card, vm
+  vault list|save|request          Keys and sign-ins, sealed on this computer
   passport --audience <aud>        Prints a passport for a service
+  mark <file> | --text "…"         Mark what it made, so it traces back to it
+  check <file> | --text "…"        Was it made by an agent with an Agent ID?
 
 Connect tools:
   mcp                              Agent ID as a stdio MCP server
@@ -49,13 +84,18 @@ default set with \`timewarp-id use\`.
 Developing locally: \`give --test\` and \`attach --give … --test\` give test
 resources that work only inside Agent ID; \`fund <dollars>\` adds test money and
 \`card test-charge\` tries a test card; AGENT_ID_API points at a local Agent ID.`;
+export const MAIN = fullHelp();
+
+// A command's usage lines (its help's first paragraph), shown after a mistyped command.
+export const usageOf = command => COMMANDS[command]?.split(/\n\s*\n/)[0] || null;
 
 export const COMMANDS = {
   attach: `Usage: timewarp-id attach [what…] [--agent <handle>] [--give mail,phone,wallet,vm]
                           [--name "…"] [--origin <app>] [--here] [--yes] [--claim twc_…]
 
 Gives agents you already have an Agent ID and wires it into them. Without
-[what], lists what it finds here and asks (in a terminal). [what] is a number
+[what], lists what it finds here and asks (in a terminal; Enter, or --yes,
+takes each app's main agent, not projects or subagents). [what] is a number
 or ref from \`timewarp-id agents scan\`, a subagent or Timewarp agent's name, or
 a folder:
   claude            Claude Code, every project (~/.claude.json, ~/.claude/CLAUDE.md)
@@ -70,26 +110,31 @@ a folder:
   openclaw          an OpenClaw workspace
   <folder>, --here  any folder, for a custom agent (AGENTS.md)
 
-Each gets a new Agent ID named after it (or --agent, an existing one, which
-gets a key here if it has none; an agent attached before keeps its own), and
-attach writes: a short identity block in its instructions, .timewarp-id.json
-in its folder, and the timewarp-id MCP server in the tool's config (a
-subagent gets its own, timewarp-id-<handle>, and its tools: list). Agent ID
-is told where the agent comes from (--origin overrides the app); Timewarp
-agents are linked to their desktop agent. Tools it sees but can't wire up are
-listed by \`agents scan\` as manual setup, with the MCP entry to paste.
+Signed in, each gets a new Agent ID named after it (or --agent, an existing
+one, which gets a key here if it has none; an agent attached before keeps its
+own), and attach writes: a short identity block in its instructions,
+.timewarp-id.json in its folder, and the timewarp-id MCP server in the tool's
+config (a subagent gets its own, timewarp-id-<handle>, and its tools: list).
+Agent ID is told where the agent comes from (--origin overrides the app);
+Timewarp agents are linked to their desktop agent. Tools it sees but can't
+wire up are listed by \`agents scan\` as manual setup, with the MCP entry to
+paste.
 
-Not signed in here? attach prints a link (and opens it): you confirm your
-email and verify who you are, which makes your account, and the Agent ID
-comes back here. Everything you attach in one go shares that one Agent ID.
---claim twc_… finishes one started on the Agent ID website.
+Not signed in here? attach uses the Agent ID already set up on this computer,
+or prints a link (and opens it) where you confirm your email, which makes your
+account; the Agent ID then comes back here. Everything you attach in one go
+shares that one Agent ID. --claim twc_… finishes one started on the Agent ID
+website.
+
 Running it again updates in place. Config files are edited in place and
 backed up once, as <file>.timewarp-id.bak.`,
   detach: `Usage: timewarp-id detach [what…|<agent handle>] [--all]
 
 Removes exactly what attach wrote (the identity block, .timewarp-id.json, the
-MCP server, subagent tools) and leaves everything else as it is. The Agent ID
-itself stays; \`timewarp-id agents revoke\` ends it.`,
+MCP server, subagent tools) and leaves everything else as it is. Without
+[what], lists what is attached and asks (Enter for all of it). The Agent ID
+itself stays; end it on the Agent ID dashboard, or with
+\`timewarp-id agents revoke\`.`,
   login: `Usage: timewarp-id login --owner-key two_… [--api <url>]
 
 Saves your owner key (create one on the Agent ID dashboard, under Keys) in
@@ -111,6 +156,12 @@ Forgets the owner key. --all also forgets every agent key on this computer.`,
                                                   Creates an agent and saves its key here; --origin
                                                   is the app it lives in (claude-code, codex, cursor,
                                                   gemini, grok, openclaw, strawberry, custom, …)
+         [--kind <kind>] [--provider "…"] [--model "…"]
+                                                  What kind of AI it is: agent, llm, image, voice,
+                                                  video, code, text, decision or other, and whose
+                                                  model (e.g. --kind image --provider Google)
+  timewarp-id agents model <agent> --kind <kind> [--provider "…"] [--model "…"]
+                                                  Changes what kind of AI it is
   timewarp-id agents show <agent>                 Everything about one agent
   timewarp-id agents key <agent>                  A new key for an agent (e.g. on another computer)
   timewarp-id agents pause|resume <agent>         Stop or allow everything it does
@@ -119,8 +170,9 @@ Forgets the owner key. --all also forgets every agent key on this computer.`,
          [--size small|medium] [--country US] [--area-code 415]
 
 Gives the agent its own mail inbox, phone number (texts and calls), wallet
-(USDC/USDT on Base) or Linux machine. Cards are applied for instead:
-\`timewarp-id card apply\`. While developing locally, --test gives a test one.`,
+(USDC/USDT on Base) or Linux machine (it also gets one the first time it uses
+one). Cards are applied for instead: \`timewarp-id card apply\`. While
+developing locally, --test gives a test one.`,
   take: 'Usage: timewarp-id take <mail|phone|wallet|card|vm> [--agent <agent>]\n\nReleases it (a phone number or machine goes back to the provider).',
   limits: `Usage:
   timewarp-id limits wallet [--agent <agent>] [--per-transfer 50] [--daily 100] [--approval-above 25]
@@ -169,7 +221,38 @@ Developing locally, a test card tries payments against its limits:
   vm: `Usage:
   timewarp-id vm status|start|stop|history
   timewarp-id vm files [path]          What is in a folder on the machine (default: home)
-  timewarp-id vm exec [--cwd /dir] [--timeout 120] -- <command…>`,
+  timewarp-id vm exec [--cwd /dir] [--timeout 120] -- <command…>
+
+The agent's computer starts the first time it is used: there is nothing to
+set up first.`,
+  vault: `Usage:
+  timewarp-id vault list
+  timewarp-id vault save --label <name> --for <site,…> [--as bearer|header:<Name>|query:<name>|basic:<user>]
+  timewarp-id vault save --label <name> --site <https address> [--username <user>]
+  timewarp-id vault request <item> <https address> [--method POST] [--data <text>|-] [--type application/json]
+
+Keys and sign-ins in the vault on the agent's computer. save reads the key or
+password from stdin, or asks for it without showing it (never from a flag:
+shell history would keep it), and seals it on this computer before it's sent,
+so Timewarp never has it. A key goes only to the sites given with --for, and
+is taken back out of what comes back:
+  printf %s "$RESEND_KEY" | timewarp-id vault save --label "Resend" --for api.resend.com
+  timewarp-id vault request vlt_… https://api.resend.com/domains`,
+  mark: `Usage: timewarp-id mark <file> [--out <file>]
+       timewarp-id mark --text "…" [--code]       (--text - reads stdin)
+
+Marks something the agent made so anyone can trace it back to the agent and
+who answers for it, like a watermark. A PNG picture or a WAV sound gets a
+mark you can't see or hear, written to the file (or --out). A text file gets
+an invisible mark. Code is left exactly as it is and kept as a fingerprint.
+Other files are recorded by their exact bytes. Mail, texts and calls the
+agent sends through Agent ID are marked for it.`,
+  check: `Usage: timewarp-id check <file>
+       timewarp-id check --text "…"               (--text - reads stdin)
+
+Asks Agent ID whether a picture (PNG), a sound (WAV), a text or code was made
+by an agent with an Agent ID, and who answers for it. Finding no mark doesn't
+prove a person made it. No key needed.`,
   passport: `Usage: timewarp-id passport --audience <audience>
 
 Prints only a short-lived signed passport for the service, so you can write

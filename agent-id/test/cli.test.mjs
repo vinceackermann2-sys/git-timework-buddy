@@ -68,11 +68,13 @@ describe('timewarp-id CLI', () => {
 
   it('explains itself and refuses to act without an owner key', async () => {
     const help = await ok(['--help']);
+    assert.match(help.stdout, /^Get started: run `\S+` and follow the steps\.$/m);
     assert.match(help.stdout, /Usage: timewarp-id <command>/);
     assert.match((await ok(['mail', '--help'])).stdout, /mail send --to/);
     const unknown = await cli(['frobnicate']);
     assert.equal(unknown.code, 2);
     assert.match(unknown.stderr, /no command "frobnicate"/);
+    assert.match(unknown.stderr, /See all commands: \S+ help/);
     const notSignedIn = await cli(['agents', 'list']);
     assert.equal(notSignedIn.code, 1);
     assert.match(notSignedIn.stderr, /not signed in/i);
@@ -240,7 +242,7 @@ describe('timewarp-id CLI', () => {
     assert.equal(pending.approvals.length, 1);
     assert.equal(pending.approvals[0].id, approvalId);
     assert.equal(pending.approvals[0].request.amount, 3000);
-    assert.match((await ok(['approvals'])).stdout, /Alice\s+\$30\.00\s+Bob Builder \(agt_/);
+    assert.match((await ok(['approvals'])).stdout, /Alice\s+\$30\.00 to Bob Builder \(agt_/);
     assert.match((await ok(['deny', approvalId])).stdout, /Denied/);
     assert.equal((await json(['approvals'])).approvals.length, 0);
 

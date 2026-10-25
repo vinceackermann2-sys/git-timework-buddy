@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { appLabel, groupApps, listLabel, markOf, type MarkId } from "@/lib/agent-id/apps";
-import { avatarColors } from "@/lib/agent-id/format";
+import { avatarColors, modelLabel } from "@/lib/agent-id/format";
 import type { AgentApp } from "@/lib/agent-id/types";
 
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -235,14 +235,43 @@ export function AppIconRow({
 }
 
 // An app with its name, as a pill ("Used in" on an agent's page).
-export function AppChip({ app, label }: { app: string; label?: string | null }) {
+// The app (the harness) and the model the agent last said it ran as there;
+// every model it has run as is in the tooltip.
+export function AppChip({
+  app,
+  label,
+  model,
+  models,
+}: {
+  app: string;
+  label?: string | null | undefined;
+  model?: string | null | undefined;
+  models?: string[] | undefined;
+}) {
   const name = appLabel(app, label);
-  return (
+  const chip = (
     <span className="inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--border)] bg-[var(--card)] pl-1 pr-2.5 text-xs font-medium">
       <span aria-hidden="true" className="inline-flex">
         <AppIcon app={app} label={name} size="xs" tooltip={false} className="border-0" />
       </span>
       {name}
+      {model && (
+        <span className="font-normal text-[var(--muted-foreground)]">· {modelLabel(model)}</span>
+      )}
     </span>
+  );
+  const seen = (models ?? []).filter(Boolean);
+  if (seen.length < 2) return chip;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span tabIndex={0} className="rounded-full">
+          {chip}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="bg-[var(--foreground)] text-[var(--background)]">
+        Models in {name}: {seen.map(modelLabel).join(", ")}
+      </TooltipContent>
+    </Tooltip>
   );
 }
