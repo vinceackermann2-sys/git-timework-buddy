@@ -52,7 +52,7 @@ node node_modules/electron/install.js
 npm run verify:upstream
 ```
 
-Release staging uses official Electron 43.7.7 with updated Chromium/Node, explicit
+Release staging uses official Electron 43.8.3 with updated Chromium/Node, explicit
 security fuses and Windows ASAR integrity. The legacy in-place development build
 keeps its vendor runtime. Branding comes from tracked `timewarp/assets`.
 An upstream distribution is still required; this repository does not contain

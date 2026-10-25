@@ -81,7 +81,7 @@ excluded because these patch contracts target 0.8.20.
 
 The Mac archive passes shared application contracts and Timewarp-only service
 routing checks. Its 130 shipped npm modules have zero reported audit findings.
-Packaging uses official Electron 43.7.7, the Mac icon and native Git/browser/Codex
+Packaging uses official Electron 43.8.3, the Mac icon and native Git/browser/Codex
 tools, ASAR integrity, hardened fuses and an isolated preview profile. The
 `macos-15` hosted runner builds a DMG and checks cold startup, native tool
 architecture, the Git binding, deep code signatures and entitlements.

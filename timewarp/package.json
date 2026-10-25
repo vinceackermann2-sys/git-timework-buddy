@@ -70,7 +70,7 @@
     "@resvg/resvg-js": "2.6.2",
     "7zip-bin": "5.2.0",
     "acorn": "8.15.0",
-    "electron": "43.7.7",
+    "electron": "43.8.3",
     "electron-builder": "26.15.3",
     "electron-updater": "6.8.9",
     "esbuild": "0.28.2",
@@ -87,7 +87,7 @@
     "react-dom": "19.3.0",
     "resedit": "3.1.0",
     "sharp": "0.35.5",
-    "undici": "6.28.1"
+    "undici": "6.29.1"
   },
   "overrides": {
     "global-agent": "4.1.3",
