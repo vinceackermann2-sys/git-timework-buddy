@@ -28,7 +28,7 @@ function setup(t, settings = {}) {
   const state = { mode: "enabled", private: false, ...settings };
   const writer = createMemoryWriter({
     store, knowledge, runner, userId: () => "user-1", memoryMode: () => state.mode, privateMode: () => state.private,
-    idleMs: 20, now: () => new Date(2026, 9, 10, 15), log: () => {},
+    quiet: turnId => !!state.quiet?.has(turnId), idleMs: 20, now: () => new Date(2026, 9, 10, 15), log: () => {},
   });
   t.after(() => writer.stop());
   const say = (author, text) => store.messages.append({ conversationId: conversation.id, authorId: author, text });
@@ -94,6 +94,33 @@ test("the memory writer runs once a chat has been quiet, not while it works", as
   writer.observe("conversation.event", { conversationId: id, method: "turn/completed", params: {} });
   await new Promise(resolve => setTimeout(resolve, 120));
   assert.equal(jobs.length, 1);
+});
+
+test("an automation's run that found nothing to report starts no memory job, and its messages aren't sent later", async t => {
+  const { writer, jobs, id, store, state } = setup(t, { quiet: new Set(["run-1"]) });
+  const say = (turnId, author, text) => store.messages.append({ conversationId: id, authorId: author, text, turnId });
+  const ended = turnId => writer.observe("conversation.event", { conversationId: id, method: "turn/completed", params: { turn: { id: turnId } } });
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  say("run-1", "user-1", "Check the inbox for a reply from Ada.");
+  say("run-1", "agent-1", "No reply yet.");
+  ended("run-1");
+  await wait(80);
+  assert.equal(jobs.length, 0);
+  say("turn-2", "user-1", "Remember that I like tea.");
+  ended("turn-2");
+  await wait(120);
+  assert.equal(jobs.length, 1);
+  assert.doesNotMatch(jobs[0].prompt, /Check the inbox/);
+  assert.match(jobs[0].prompt, /I like tea/);
+  // The user's own words the writer hasn't seen yet still reach it after a quiet run.
+  say("turn-3", "user-1", "I moved to Porto.");
+  say("run-4", "user-1", "Check the inbox.");
+  say("run-4", "agent-1", "Nothing new.");
+  state.quiet.add("run-4");
+  ended("run-4");
+  await wait(120);
+  assert.equal(jobs.length, 2);
+  assert.match(jobs[1].prompt, /I moved to Porto/);
 });
 
 test("a new chat gets a short title unless the user renamed it", async t => {

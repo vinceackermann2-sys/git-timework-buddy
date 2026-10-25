@@ -668,6 +668,86 @@ async function main() {
       if (!/Preview Slack/.test(announced) || !/slack@preview\.invalid/.test(announced)) throw new Error("The app didn't announce the connected account: " + announced);
       return "the sign-in opened in an app window with the browser profile, closed when it returned to Timewarp, and the account was connected at once as Preview Slack · slack@preview.invalid with no reconnect shown";
     },
+    // Connecting an app from a chat shows its sign-in in that chat: a tab of
+    // the chat's pane, which opens for it, never a window. Once the sign-in is
+    // back the tab goes and the pane, opened just for it, closes again.
+    async chatSignIn() {
+      const ready = async () => ((await call("integrations.list", {})).items.find(item => /slack/i.test(item.displayName))?.accounts || []).filter(account => account.authStatus === "ready").length;
+      const slack = (await call("integrations.list", {})).items.find(item => /slack/i.test(item.displayName));
+      if (!slack) throw new Error("The preview Slack app is missing.");
+      const readyBefore = await ready();
+      const id = await chat();
+      await app.evaluate(`location.hash = ${JSON.stringify("#/conversation/" + id)}; true`);
+      for (const deadline = Date.now() + 10000; Date.now() < deadline && !await app.evaluate(`!!document.querySelector(".tw-composer textarea, .tw-chat textarea")`); await pause(200));
+      if (await app.evaluate(`!!document.querySelector(".tw-pane")`)) throw new Error("The pane was open before the sign-in.");
+      const pages = async () => (await app.targets()).filter(item => item.type === "page");
+      const before = (await pages()).length;
+      const started = await call("integrations.beginConnect", { integrationId: slack.id, conversationId: id });
+      if (!started.inChat) throw new Error("The sign-in didn't open in the chat: " + JSON.stringify(started));
+      let tab = null;
+      for (const deadline = Date.now() + 10000; !tab && Date.now() < deadline; await pause(300)) tab = (await call("browser.state", { conversationId: id })).tabs.find(item => item.signin);
+      if (!tab) throw new Error("The chat has no sign-in tab.");
+      let shown = false;
+      for (const deadline = Date.now() + 10000; !shown && Date.now() < deadline; await pause(300)) shown = await app.evaluate(`!!document.querySelector(".tw-pane .tw-pane-tab[aria-selected=true]")`);
+      if (!shown) throw new Error("The chat's pane didn't open on the sign-in.");
+      // One page more (the tab), no window: a window would be a second new page target with the app's own preload.
+      let target = null;
+      for (const deadline = Date.now() + 20000; !target && Date.now() < deadline; await pause(500)) target = (await pages()).find(item => /example\.com\/\?timewarp-connect=1/.test(item.url));
+      if (!target) throw new Error("The sign-in page didn't load in the tab.");
+      if ((await pages()).length !== before + 1) throw new Error("Something besides the chat's tab opened.");
+      // Composio sends the browser back to Timewarp's callback after approval.
+      await app.evaluateIn(target, `location.href = "http://127.0.0.1:17654/connector-callback?status=success"`);
+      let gone = false;
+      for (const deadline = Date.now() + 15000; !gone && Date.now() < deadline; await pause(500)) gone = !(await call("browser.state", { conversationId: id })).tabs.some(item => item.id === tab.id);
+      if (!gone) throw new Error("The sign-in tab didn't close after the callback.");
+      let closed = false;
+      for (const deadline = Date.now() + 5000; !closed && Date.now() < deadline; await pause(200)) closed = !await app.evaluate(`!!document.querySelector(".tw-pane")`);
+      if (!closed) throw new Error("The pane opened for the sign-in stayed open.");
+      let readyAfter = 0;
+      for (const deadline = Date.now() + 10000; readyAfter <= readyBefore && Date.now() < deadline; await pause(500)) readyAfter = await ready();
+      if (readyAfter !== readyBefore + 1) throw new Error(`The new account isn't ready (${readyBefore} ready before, ${readyAfter} after).`);
+      if ((await call("browser.recent", { conversationId: id })).some(site => /timewarp-connect|connector-callback/.test(site.url))) throw new Error("The sign-in's pages became recommended sites.");
+      return `${slack.displayName}'s sign-in opened as a tab of the chat's pane, not a window; the tab closed when it returned, the pane closed again and the account was ready`;
+    },
+    // Each message carries the memory in three parts (knowledge.cjs
+    // contextParts) that Codex sends again only when they change: a new line
+    // in today's log is sent with the next message, the notes aren't again.
+    async memoryContext() {
+      const dumps = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-e2e-requests-"));
+      const desk = await launch({ TIMEWARP_FIXTURE_DUMP: path.join(dumps, "request-%n.json") });
+      try {
+        await desk.call("memory.save", { notes: "# User\n\n- Prefers metric units. Marker NOTES-7731.\n" });
+        const id = (await desk.call("conversations.create", { agentId: (await desk.call("agents.list"))[0].id })).id;
+        const send = async text => {
+          const before = (await desk.call("conversations.history", { id })).turns?.length || 0;
+          await desk.call("conversations.send", { id, text, images: [], files: [], clientId: crypto.randomUUID() });
+          for (const deadline = Date.now() + 60000; Date.now() < deadline; await pause(400)) {
+            const history = await desk.call("conversations.history", { id });
+            if (!(await desk.call("conversations.status", { id })).running && (history.turns?.length || 0) > before && history.turns.at(-1).status !== "inProgress") return;
+          }
+          throw new Error(`No reply to "${text}".`);
+        };
+        // The chat's own requests, not background jobs (titles), oldest first.
+        const requests = () => fs.readdirSync(dumps).map(name => ({ n: Number(/\d+/.exec(name)[0]), body: JSON.parse(fs.readFileSync(path.join(dumps, name), "utf8")) }))
+          .sort((a, b) => a.n - b.n).map(item => item.body).filter(body => !/timewarp_background/.test(JSON.stringify([body.instructions || "", body.input || []])));
+        const count = (text, marker) => text.split(marker).length - 1;
+        await send("Hello, first message");
+        const first = JSON.stringify(requests().at(-1)?.input || []);
+        if (count(first, "NOTES-7731") !== 1) throw new Error("The first message didn't carry the notes once.");
+        const notesFile = /Notes \((.+?user\.md), full file\)/.exec(first)?.[1]?.replace(/\\\\/g, "\\");
+        if (!notesFile) throw new Error("The notes' file isn't named in the context.");
+        // Today's log gets a line, as the memory writer adds after a chat.
+        const now = new Date(), day = [now.getFullYear(), now.getMonth() + 1, now.getDate()].map(part => String(part).padStart(2, "0")).join("-");
+        const logs = path.join(path.dirname(notesFile), "daily-logs");
+        fs.mkdirSync(logs, { recursive: true });
+        fs.appendFileSync(path.join(logs, day + ".md"), "- Asked about the weather. Marker LOG-5521.\n");
+        await send("Second message");
+        const second = JSON.stringify(requests().at(-1)?.input || []);
+        if (count(second, "LOG-5521") !== 1) throw new Error("The new log line wasn't sent once with the next message: " + count(second, "LOG-5521"));
+        if (count(second, "NOTES-7731") !== 1) throw new Error(`The notes went again with the log line (${count(second, "NOTES-7731")} copies in the conversation).`);
+        return `the first message carried the notes; after a line was added to today's log, the next request held that line once and the notes still once (${Math.round(second.length / 1000)}k characters of input)`;
+      } finally { await desk.close(); fs.rmSync(dumps, { recursive: true, force: true }); }
+    },
     // Connecting ChatGPT happens in a Timewarp window. The provider's redirect to
     // Codex's callback (port 1455) is handed to Codex from Timewarp, and the
     // window shows Timewarp's page, never Codex's, which opens the ChatGPT app.

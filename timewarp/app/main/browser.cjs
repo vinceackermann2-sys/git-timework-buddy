@@ -232,6 +232,8 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     loading: !!tab.loading, canGoBack: !!tab.view?.webContents.navigationHistory.canGoBack(),
     canGoForward: !!tab.view?.webContents.navigationHistory.canGoForward(), agent: tab.agent || null, muted: tab.muted !== false,
     pinned: !!tab.pinned,
+    // A sign-in the user started in the chat (openSignin): theirs, never the agent's.
+    ...(tab.signin ? { signin: true } : {}),
     // A dialog the page is showing: forAgent when the agent answers it, else the user is being asked.
     dialog: tab.dialog ? { type: tab.dialog.type, message: tab.dialog.message, site: tab.dialog.site, forAgent: tab.dialog.forAgent } : null,
   });
@@ -284,7 +286,8 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     let saved;
     try { saved = { ...(store.settings.get(SAVED_KEY, {}) || {}) }; } catch { return; }
     for (const conversationId of dirty) {
-      const list = chatTabs(conversationId).slice(-SAVED_TABS);
+      // A sign-in's page can't be used again after a restart.
+      const list = chatTabs(conversationId).filter(tab => !tab.signin).slice(-SAVED_TABS);
       if (!list.length) { delete saved[conversationId]; continue; }
       const active = groups.get(conversationId)?.active;
       saved[conversationId] = { savedAt: Date.now(), tabs: list.map(tab => {
@@ -371,9 +374,9 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     contents.on("did-stop-loading", () => { tab.loading = false; changed(tab.conversationId); });
     contents.on("page-title-updated", (_event, title) => {
       tab.title = title;
-      // Recommended sites show the page's title, as before.
+      // Recommended sites show the page's title, as before. A sign-in's pages aren't recommended.
       const url = contents.getURL();
-      if (title && recordable(url)) store.recentSites.record(tab.profileId, tab.conversationId, url, title);
+      if (title && recordable(url) && !tab.signin) store.recentSites.record(tab.profileId, tab.conversationId, url, title);
       changed(tab.conversationId);
     });
     contents.on("page-favicon-updated", (_event, favicons) => { tab.favicon = favicons.find(icon => /^https:/.test(icon)) || null; changed(tab.conversationId); });
@@ -383,7 +386,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
       // A new page: nothing typed in it yet, no sound, and it may ask again for what was refused.
       Object.assign(tab, { edited: false, playing: false, mediaRefused: null, dialogs: 0, quiet: false });
       // The title arrives later (page-title-updated); until then the page has none.
-      if (recordable(url)) store.recentSites.record(tab.profileId, tab.conversationId, url, null);
+      if (recordable(url) && !tab.signin) store.recentSites.record(tab.profileId, tab.conversationId, url, null);
       changed(tab.conversationId);
     });
     contents.on("media-started-playing", () => { tab.playing = true; });
@@ -568,6 +571,8 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     const tab = {
       id: crypto.randomUUID(), conversationId: opener.conversationId, profileId: opener.profileId, kind: "web", url: url === "about:blank" ? null : url, title: "",
       order: orderAfter(opener), usedAt: Date.now(), openerId: opener.id, worker: opener.worker, agent: opener.agent || null,
+      // A sign-in's pop-up ("Sign in with Google") is part of the sign-in.
+      ...(opener.signin ? { signin: true } : {}),
     };
     tabs.set(tab.id, tab);
     opener.usedAt = Date.now(); // kept open while the pop-up may answer it
@@ -592,8 +597,8 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
   // tab stays, with its history, and its page comes back when used. A page is
   // kept open when it's on screen or pinned, loading, playing sound or video,
   // has input not yet sent, a dialog or a download, is a pop-up or has pop-ups
-  // open, or an agent is working in it.
-  const keepsPage = tab => (tab.conversationId === shown && groups.get(shown)?.active === tab.id) || tab.pinned || tab.loading || tab.playing || tab.edited || tab.dialog || tab.downloads > 0 || tab.agent
+  // open, an agent is working in it, or it's a sign-in.
+  const keepsPage = tab => (tab.conversationId === shown && groups.get(shown)?.active === tab.id) || tab.pinned || tab.loading || tab.playing || tab.edited || tab.dialog || tab.downloads > 0 || tab.agent || tab.signin
     || !!(tab.openerId && tabs.get(tab.openerId)?.view) || [...tabs.values()].some(other => other.openerId === tab.id && other.view);
   function evict(spare = null) {
     const live = [...tabs.values()].filter(tab => tab.view);
@@ -624,6 +629,26 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     if (group?.active === tab.id) group.active = (tabs.get(tab.openerId)?.conversationId === tab.conversationId ? tab.openerId : null) || chatTabs(tab.conversationId).sort((a, b) => b.usedAt - a.usedAt)[0]?.id || null;
     layout();
     changed(tab.conversationId);
+    signinGone(tab);
+  }
+  // A sign-in's tab went, however it went: whoever started it hears once.
+  function signinGone(tab) {
+    if (!tab.signin) return;
+    const closed = tab.onClosed;
+    tab.onClosed = null;
+    try { closed?.(); } catch {}
+  }
+
+  // A sign-in started in a chat (connecting an app, ChatGPT or an MCP server)
+  // opens as the user's own tab in front in the chat's pane, in the chat's
+  // profile. The caller follows its page (signin-window.cjs); onClosed runs
+  // when the tab goes.
+  function openSignin(conversationId, url, { onClosed = null } = {}) {
+    const state = openTab(conversationId, { url });
+    const tab = tabs.get(state.id);
+    Object.assign(tab, { signin: true, onClosed });
+    changed(conversationId);
+    return { id: tab.id, contents: tab.view.webContents, close: () => { if (tabs.get(tab.id) === tab) remove(tab); } };
   }
 
   function tabFor(conversationId, tabId) {
@@ -685,7 +710,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
       applyZoom(tab);
       return true;
     },
-    openTab, navigate, close, sessionFor,
+    openTab, navigate, close, sessionFor, openSignin,
     activate(conversationId, tabId) { const tab = tabFor(conversationId, tabId); groups.get(conversationId).active = tab.id; if (tab.kind === "web" && !tab.view) { attach(tab); evict(tab); } layout(); changed(conversationId); return groupState(conversationId); },
     // Shows the chat's new tab page: the one used last, else a new one. The
     // web tab stays as it was, with its page and history.
@@ -717,6 +742,8 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
       const open = [...tabs.values()].filter(tab => tab.conversationId === conversationId && tab.profileId !== profileId).sort((a, b) => a.order - b.order);
       const active = groups.get(conversationId)?.active;
       for (const tab of open) {
+        // A sign-in can't move to another profile midway: it's closed.
+        if (tab.signin) { remove(tab); continue; }
         const url = tab.kind === "web" ? (tab.view ? tab.view.webContents.getURL() : tab.url) : null;
         discard(tab);
         tabs.delete(tab.id);
@@ -835,7 +862,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
       if (moved) layout();
       changed(conversationId);
     },
-    closeConversation(conversationId) { restored.add(conversationId); for (const tab of [...tabs.values()]) if (tab.conversationId === conversationId) { discard(tab); tabs.delete(tab.id); } groups.delete(conversationId); downloads.delete(conversationId); remember(conversationId); },
+    closeConversation(conversationId) { restored.add(conversationId); for (const tab of [...tabs.values()]) if (tab.conversationId === conversationId) { discard(tab); tabs.delete(tab.id); signinGone(tab); } groups.delete(conversationId); downloads.delete(conversationId); remember(conversationId); },
     // Preview builds only: where the active page view is and what it shows.
     async inspect(conversationId) {
       const tab = tabs.get(groups.get(conversationId)?.active);
@@ -843,7 +870,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
       const image = await tab.view.webContents.capturePage();
       return { bounds: tab.view.getBounds(), visible: tab.view.getVisible(), image: image.resize({ width: 480 }).toDataURL() };
     },
-    destroy() { if (saveTimer) { clearTimeout(saveTimer); save(); } for (const tab of tabs.values()) discard(tab); tabs.clear(); groups.clear(); },
+    destroy() { if (saveTimer) { clearTimeout(saveTimer); save(); } const gone = [...tabs.values()]; for (const tab of gone) discard(tab); tabs.clear(); groups.clear(); for (const tab of gone) signinGone(tab); },
     // Another account signed in: every tab closes, and each chat's tabs come
     // back when its account opens it again.
     closeAll() { this.destroy(); restored.clear(); notes.clear(); userControl.clear(); shown = null; },

@@ -292,8 +292,16 @@ async function boot() {
       broadcast("account.changed", { signedIn: !!services.auth.user() });
     },
     onCodexConnected: async () => { await booted; services.funding.invalidate(); await selectModel().catch(() => console.error("[timewarp] The default model could not be updated.")); fundingChanged(); },
-    // An app just connected or removed: the next message names the agent's accounts afresh.
-    onIntegrationsChanged: () => { void booted.then(() => appAccounts.clear()); },
+    // An app just connected or removed: the next message names the agent's
+    // accounts afresh. Agents that had a list start loading the new one at
+    // once, so the "<App> connected" message that follows doesn't wait for it.
+    onIntegrationsChanged: () => {
+      void booted.then(() => {
+        const known = [...appAccounts.keys()];
+        appAccounts.clear();
+        for (const id of known) { const agent = store.agents.get(id); if (agent && !agent.archivedAt) void connectedApps(agent); }
+      });
+    },
   });
   userId = () => services.auth.userId();
 
@@ -487,9 +495,11 @@ async function boot() {
   function connectedApps(agent) {
     const known = appAccounts.get(agent.id);
     if (!known?.loading && (!known || Date.now() - known.at > 60000)) {
-      const loading = services.integrations.list({ agentId: agent.id }).then(accountsText).catch(() => known?.text ?? null)
-        .then(text => { appAccounts.set(agent.id, { at: Date.now(), text }); return text; });
-      appAccounts.set(agent.id, { ...known, loading });
+      // A list that was loading as the apps changed (the map was cleared) isn't kept.
+      const entry = { ...known };
+      entry.loading = services.integrations.list({ agentId: agent.id }).then(accountsText).catch(() => known?.text ?? null)
+        .then(text => { if (appAccounts.get(agent.id) === entry) appAccounts.set(agent.id, { at: Date.now(), text }); return text; });
+      appAccounts.set(agent.id, entry);
     }
     const entry = appAccounts.get(agent.id);
     // A known list answers at once while a fresh one loads.
@@ -504,11 +514,15 @@ async function boot() {
     const mode = memoryMode(store.settings.get("memory")?.mode);
     // The first list for an agent is waited for briefly; without it the message goes as it is.
     const apps = agent ? await Promise.race([connectedApps(agent), new Promise(resolve => { const timer = setTimeout(resolve, 1500, null); timer.unref?.(); })]) : null;
-    const memory = knowledge.context(mode);
+    // The memory in three entries (knowledge.cjs contextParts): the notes,
+    // today's log and earlier days. Each is sent again only when it changed,
+    // so a new line in today's log doesn't send the whole notes file again.
+    const memory = knowledge.contextParts(mode);
     return {
       timewarp_message_time: `The user's message was sent on ${local} (${zone}, ${utc}).`,
       ...(account ? { timewarp_account: [`Signed in to Timewarp as ${account.name ? account.name + ", " : ""}${account.email || "an account without an email address"}.`, ...(apps ? [apps] : [])].join("\n") } : {}),
-      timewarp_memory: memory || (mode === "enabled" || mode === "read" ? "No notes about the user yet." : "Memory is off for reading: don't rely on memory shown earlier in this chat."),
+      timewarp_memory: memory ? memory.notes || "No notes about the user yet." : "Memory is off for reading: don't rely on memory shown earlier in this chat.",
+      ...(memory ? { timewarp_memory_today: memory.today || "Nothing in today's log yet.", timewarp_memory_days: memory.earlier || "No earlier days in the log yet." } : {}),
     };
   }
 
@@ -590,6 +604,7 @@ async function boot() {
       store, knowledge, runner, userId: () => userId(),
       memoryMode: () => memoryMode(store.settings.get("memory")?.mode), privateMode: () => store.settings.get("privacy")?.mode === "private",
       running: conversationId => { try { return harness.conversations.status(conversationId).running; } catch { return false; } },
+      quiet: turnId => !!harness.isQuietRun(turnId),
       log: message => appLog.warn("background", message),
     });
     return { observe: (name, payload) => { titles.observe(name, payload); writer.observe(name, payload); }, stop: () => writer.stop() };
@@ -678,21 +693,34 @@ async function boot() {
     },
   });
 
-  // ChatGPT, app and MCP server sign-ins open in a Timewarp window
-  // (signin-window.cjs), never in the system browser or another app.
+  // ChatGPT, app and MCP server sign-ins open in Timewarp (signin-window.cjs),
+  // never in the system browser or another app: one started in a chat opens
+  // in that chat's pane, beside the agent; others in a Timewarp window.
   const signin = require("./signin-window.cjs").createSigninWindows({
     BrowserWindow, session: () => browser.sessionFor(store.browserProfiles.ensureDefault().id), parent: () => mainWindow, icon: appIcon, log: appLog,
     logo: (() => { try { return nativeImage.createFromPath(path.join(assetsDir, "app-icon.png")).resize({ width: 96, quality: "best" }).toDataURL(); } catch { return ""; } })(),
     css: (() => { try { return fs.readFileSync(path.join(assetsDir, "auth-bridge.css"), "utf8"); } catch { return ""; } })(),
+    // A chat of this account, with the app's window there to show it; the
+    // interface opens the chat's pane on the sign-in's tab.
+    chat: (conversationId, link, hooks) => {
+      const conversation = store.conversations.get(conversationId);
+      if (!conversation || !userId() || conversation.ownerId !== userId() || conversation.archivedAt || !mainWindow || mainWindow.isDestroyed()) return null;
+      const tab = browser.openSignin(conversationId, link, hooks);
+      broadcast("browser.signin", { conversationId, tabId: tab.id });
+      return tab;
+    },
+    onResult: result => broadcast("signin.finished", result),
   });
-  function openConnector(link, title = "Connect an app") { signin.open(link, { title }); return { opened: true }; }
+  // conversationId: the chat the sign-in was started in. inChat tells whether it opened there.
+  function openConnector(link, title = "Connect an app", conversationId = null) { return { opened: true, inChat: !!signin.open(link, { title, conversationId }).inChat }; }
   // Codex finishes the sign-in, and Timewarp shows how it went. Closing the
-  // window before it comes back stops waiting for it; a new Connect replaces it.
+  // window (or the chat's tab) before it comes back stops waiting for it; a
+  // new Connect replaces it.
   let chatgptSignin = null;
-  function openChatgpt({ authUrl, loginId }) {
+  function openChatgpt({ authUrl, loginId }, { conversationId = null } = {}) {
     chatgptSignin?.close();
     chatgptSignin = signin.open(authUrl, {
-      title: "Connect ChatGPT",
+      title: "Connect ChatGPT", conversationId,
       finish: {
         done: answer => answer.status === 200 && answer.path === "/success",
         pending: { title: "Connecting ChatGPT", message: "Finishing your ChatGPT sign-in…" },
@@ -701,7 +729,7 @@ async function boot() {
       },
       onClose: ({ returned }) => { if (!returned) return services.chatgpt.cancelLogin(loginId); },
     });
-    return { opened: true };
+    return { opened: true, inChat: !!chatgptSignin.inChat };
   }
   // The end-to-end check of a preview build answers the command confirmation;
   // other builds always ask.
@@ -709,8 +737,8 @@ async function boot() {
   const mcpChanged = (name, payload) => { if (name === "mcp.changed" && (!payload?.name || payload.success)) harness?.discardSpares(); broadcast(name, payload); };
   const mcp = createMcp({
     client, notify: mcpChanged, ...(fixture && process.env.TIMEWARP_FIXTURE_CONFIRM === "allow" ? { confirmCommand: async () => true } : {}),
-    openExternal: url => signin.open(url, {
-      title: "Sign in to a server",
+    openExternal: (url, { conversationId = null } = {}) => signin.open(url, {
+      title: "Sign in to a server", conversationId,
       finish: {
         done: answer => answer.status === 200,
         pending: { title: "Signing in", message: "Finishing your sign-in to the server…" },

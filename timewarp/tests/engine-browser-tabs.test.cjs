@@ -550,3 +550,55 @@ test("an agent's downloads go to its workspace without a dialog; the user's own 
   assert.equal(report.path, path.join(folder, "report.csv"));
   browser.destroy();
 });
+
+test("a sign-in started in a chat opens in front as the user's own tab; it isn't kept or recommended, and its starter hears when it goes", () => {
+  const store = memoryStore(), recorded = [];
+  store.recentSites.record = (...args) => recorded.push(args);
+  const browser = createBrowser({ window: () => null, store });
+  const page = browser.openTab("chat-1", { url: "https://example.com/" });
+  let closed = 0;
+  const signin = browser.openSignin("chat-1", "https://connect.example.com/link", { onClosed: () => closed++ });
+  let state = browser.state("chat-1");
+  assert.equal(state.active, signin.id, "It's in front in the chat's pane");
+  assert.deepEqual(state.tabs.map(tab => [tab.id, !!tab.signin, !!tab.agent]), [[page.id, false, false], [signin.id, true, false]]);
+  assert.equal(signin.contents.getURL(), "https://connect.example.com/link");
+  // Its pages, the callback with its code included, aren't recommended sites.
+  recorded.length = 0;
+  signin.contents.url = "http://127.0.0.1:17654/connector-callback?code=private";
+  signin.contents.emit("did-navigate", {}, signin.contents.url);
+  signin.contents.emit("page-title-updated", {}, "Your app is connected");
+  assert.deepEqual(recorded, []);
+  // A pop-up it opens ("Sign in with Google") is part of the sign-in.
+  const answer = signin.contents.openHandler({ url: "about:blank" });
+  answer.createWindow({ webContents: new FakeContents(), webPreferences: answer.overrideBrowserWindowOptions.webPreferences });
+  state = browser.state("chat-1");
+  assert.equal(state.tabs.find(tab => ![page.id, signin.id].includes(tab.id)).signin, true);
+  // Done: its tab goes once, and the chat's page is in front again.
+  signin.close();
+  signin.close();
+  assert.equal(closed, 1);
+  assert.ok(!browser.state("chat-1").tabs.some(tab => tab.id === signin.id));
+  // A sign-in's page that closes itself goes the same way.
+  const other = browser.openSignin("chat-1", "https://auth.example.com/authorize", { onClosed: () => closed++ });
+  other.contents.close();
+  assert.equal(closed, 2);
+  // One still open when Timewarp quits isn't restored with the chat's tabs.
+  browser.openSignin("chat-1", "https://auth.openai.com/oauth/authorize?state=private", { onClosed: () => closed++ });
+  browser.destroy();
+  assert.equal(closed, 3);
+  const next = createBrowser({ window: () => null, store });
+  assert.ok(next.state("chat-1").tabs.every(tab => !/connect\.example|auth\.(example|openai)/.test(tab.url || "")), JSON.stringify(next.state("chat-1").tabs));
+  next.destroy();
+});
+
+test("a sign-in tab moving to another profile is closed rather than reopened midway", () => {
+  const browser = createBrowser({ window: () => null, store: memoryStore() });
+  browser.openTab("chat-1", { url: "https://example.com/" });
+  let closed = 0;
+  const signin = browser.openSignin("chat-1", "https://connect.example.com/link", { onClosed: () => closed++ });
+  const state = browser.setProfile("chat-1", "work");
+  assert.equal(closed, 1);
+  assert.ok(!state.tabs.some(tab => tab.id === signin.id || tab.signin));
+  assert.deepEqual(state.tabs.map(tab => tab.url), ["https://example.com/"]);
+  browser.destroy();
+});

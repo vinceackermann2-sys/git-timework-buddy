@@ -330,7 +330,10 @@ function ConnectCard({ card }) {
   const connect = () => {
     waiting.current = ready.map(account => account.id);
     setConnecting(true);
-    call("integrations.beginConnect", { integrationId: app.id, agentId }).then(() => toast("Finish connecting in the window that opened.")).catch(failure => { waiting.current = null; setConnecting(false); setError(errorText(failure)); });
+    // The sign-in opens beside the chat; in a window only when the chat can't show it.
+    call("integrations.beginConnect", { integrationId: app.id, agentId, ...(chat?.conversation?.id ? { conversationId: chat.conversation.id } : {}) })
+      .then(result => { if (!result?.inChat) toast("Finish connecting in the window that opened."); })
+      .catch(failure => { waiting.current = null; setConnecting(false); setError(errorText(failure)); });
   };
   const busy = connecting || !agentId;
   const action = ready.length ? (
@@ -395,8 +398,8 @@ function McpCard({ card }) {
       const entry = list.find(item => item.name === added);
       if (entry?.authStatus === "notLoggedIn") {
         waiting.current = added;
-        await call("mcp.signIn", { name: added });
-        toast("Finish signing in in the window that opened.");
+        const opened = await call("mcp.signIn", { name: added, ...(chat?.conversation?.id ? { conversationId: chat.conversation.id } : {}) });
+        if (!opened?.inChat) toast("Finish signing in in the window that opened.");
       } else connected(added);
     } catch (failure) { setError(errorText(failure) || "Could not connect this MCP server."); }
     finally { setBusy(false); }

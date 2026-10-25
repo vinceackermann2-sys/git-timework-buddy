@@ -443,7 +443,10 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
     let counter = 0, size = 0;
     const visitTree = (tree, depth) => {
       const byId = new Map(tree.nodes.map(node => [node.nodeId, node]));
-      const visit = (node, depth) => {
+      // within: the name and value of the nearest line shown above. A link,
+      // button, heading or cell is named by its text (a field shows its
+      // value), so that text isn't listed again under it.
+      const visit = (node, depth, within = "") => {
         if (!node || size > MAX_SNAPSHOT) return;
         const role = node.role?.value || "";
         // A field filled from the vault, or one the page copied a short vault
@@ -456,7 +459,8 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
         const name = redact(conversationId, (filled && raw ? label.split(raw).join("[filled from vault]") : label).replace(/\s+/g, " ").trim()).slice(0, 160);
         const value = raw && filled ? "[filled from vault]" : redact(conversationId, raw).slice(0, 120);
         let shown = false;
-        if (!node.ignored && (INTERACTIVE.has(role) || (STRUCTURE.has(role) && name))) {
+        const repeated = role === "StaticText" && !!name && within.includes(name);
+        if (!node.ignored && !repeated && (INTERACTIVE.has(role) || (STRUCTURE.has(role) && name))) {
           let line = `${"  ".repeat(Math.min(depth, 12))}- ${role === "StaticText" ? "text" : role}${name ? ` "${name}"` : ""}`;
           if (value && value !== name) line += ` value="${value}"`;
           const level = node.properties?.find(item => item.name === "level")?.value?.value;
@@ -470,7 +474,8 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
           lines.push(line); size += line.length + 1; shown = true;
         }
         if (filled) return;
-        for (const child of node.childIds || []) visit(byId.get(child), depth + (shown ? 1 : 0));
+        const said = shown && (name || value) ? [name, value].filter(Boolean).join("\n") : within;
+        for (const child of node.childIds || []) visit(byId.get(child), depth + (shown ? 1 : 0), said);
         const frame = node.backendDOMNodeId && nested.get(elementKey({ session: tree.session, node: node.backendDOMNodeId }));
         if (frame && !placed.has(frame)) frameOutline(frame, depth + (shown ? 1 : 0));
       };
@@ -677,6 +682,11 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
   const text = value => ({ contentItems: [{ type: "inputText", text: String(value) }], success: true });
   // Chat links to a tab, opened in the pane when the user clicks them.
   const tabLink = (conversationId, tabId) => `timewarp://conversation/${conversationId}/browser/${tabId}`;
+  // A sign-in the user started in the chat (browser.openSignin) has a tab of
+  // its own that agents leave alone; one that names no tab works elsewhere.
+  const SIGNIN_TAB = "The user is signing in to an app in this tab. Leave it to them: use another tab, or open one with new_tab.";
+  const signinTab = (conversationId, tabId) => { const state = browser.state(conversationId); return !!state.tabs.find(item => item.id === (tabId || state.active))?.signin; };
+  const contentsFor = (conversationId, tabId) => { const found = browser.webContents(conversationId, tabId); if (found.tab.signin) throw fail(409, SIGNIN_TAB); return found; };
   // Read with room for the longest vault value past the limit, so a value at
   // the cut is hidden before the text is shortened.
   async function pageText(conversationId, contents) {
@@ -701,7 +711,7 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
   async function act(conversationId, params, agent, scope = new Set()) {
     const name = params.tool, input = params.arguments || {};
     const own = workerKey(conversationId, params), mine = ownTab(conversationId, params);
-    const target = () => { const found = browser.webContents(conversationId, input.tab || mine || undefined); scope.add(found.tab.id); return found; };
+    const target = () => { const found = contentsFor(conversationId, input.tab || mine || undefined); scope.add(found.tab.id); return found; };
     const note = (tabId, action) => { browser.markAgent(conversationId, tabId, action ? { name: agent?.name, avatarUrl: agent?.avatarUrl, action } : null); onActivity(conversationId, action); };
     const failed = message => ({ contentItems: [{ type: "inputText", text: message }], success: false });
     // While the user has taken over, the agent can look but not act.
@@ -716,7 +726,8 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
     }
     switch (name) {
       case "open": {
-        const state = input.new_tab || (own && !mine) ? browser.openTab(conversationId, { url: input.url, activate: !own, worker: !!own }) : browser.navigate(conversationId, { tabId: mine || undefined, url: input.url });
+        const fresh = input.new_tab || (own && !mine) || (!mine && signinTab(conversationId));
+        const state = fresh ? browser.openTab(conversationId, { url: input.url, activate: !own, worker: !!own }) : browser.navigate(conversationId, { tabId: mine || undefined, url: input.url });
         scope.add(state.id);
         if (own) workerTabs.set(own, state.id);
         note(state.id, "Opening " + state.url);
@@ -875,7 +886,10 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
           else await sleep(state, Math.min(left, 400), at);
         }
       }
-      case "close_tab": { const state = browser.close(conversationId, input.tab || mine || undefined); return text(`Closed the tab. ${state.tabs.length} tab(s) remain.`); }
+      case "close_tab": {
+        if (signinTab(conversationId, input.tab || mine)) return failed(SIGNIN_TAB);
+        const state = browser.close(conversationId, input.tab || mine || undefined); return text(`Closed the tab. ${state.tabs.length} tab(s) remain.`);
+      }
       case "dialog": {
         // The given tab, the agent's own or the active one, else any page waiting for the agent.
         const open = browser.dialogs?.(conversationId) || [], tabId = input.tab || mine || browser.state(conversationId).active;
@@ -958,11 +972,11 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
     // into a password field, so it can't land in a search box or address.
     // field: "password", "secret", "username" (not hidden) or "detail" (a
     // card's expiry or name: hidden, but not looked for elsewhere on the page).
-    pageUrl(conversationId, tabId) { return browser.webContents(conversationId, tabId).contents.getURL(); },
+    pageUrl(conversationId, tabId) { return contentsFor(conversationId, tabId).contents.getURL(); },
     // choose: pick the list option with this value (an expiry month or year) instead of typing.
     async fillSecret(conversationId, { ref: id, tab: tabId, value, agent, field = "secret", choose = false }) {
       if (browser.userInControl(conversationId)) throw fail(409, "The user has taken control of the browser.");
-      const { tab: item, contents } = browser.webContents(conversationId, tabId);
+      const { tab: item, contents } = contentsFor(conversationId, tabId);
       const element = nodeFor(contents, id);
       if (field === "password") {
         const { result } = await callOn(contents, element, PASSWORD_FIELD_IN_PAGE, { returnByValue: true });
@@ -998,12 +1012,12 @@ function createBrowserTools({ browser, onActivity = () => {} }) {
     // The address of the page or frame a field from the latest snapshot is in,
     // as the browser reported it when the snapshot was taken.
     fieldUrl(conversationId, { ref: id, tab: tabId }) {
-      const { contents } = browser.webContents(conversationId, tabId);
+      const { contents } = contentsFor(conversationId, tabId);
       return nodeFor(contents, id).url || contents.getURL();
     },
     // What a field from the latest snapshot is and holds now (see FIELD_IN_PAGE).
     async inspectField(conversationId, { ref: id, tab: tabId }) {
-      const { contents } = browser.webContents(conversationId, tabId);
+      const { contents } = contentsFor(conversationId, tabId);
       const { result } = await callOn(contents, nodeFor(contents, id), FIELD_IN_PAGE, { returnByValue: true });
       return result?.value || null;
     },

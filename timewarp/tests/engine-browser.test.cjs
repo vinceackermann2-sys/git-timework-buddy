@@ -129,7 +129,7 @@ test("a short vault value (a PIN) doesn't show through the text in its field or 
   assert.match(outline, /textbox "PIN" value="\[filled from vault\]"/);
   assert.match(outline, /textbox "Repeat PIN" value="\[filled from vault\]"/);
   assert.match(outline, /textbox "Order number" value="1007"/, "Other fields read as before");
-  assert.match(outline, /- text "1007"/);
+  assert.doesNotMatch(outline, /- text "1007"/, "Its value shows once, on the field's line");
 });
 
 test("a page showing a filled value again isn't captured, and needs the window to be captured", async () => {
@@ -454,4 +454,37 @@ test("snapshots show where links go and which element has focus", async () => {
   const browser = { webContents: () => ({ tab: { id: "tab-1" }, contents, onScreen: false, inWindow: true }), markAgent() {}, userInControl: () => false, state: () => ({ tabs: [], active: "tab-1" }) };
   const outline = (await createBrowserTools({ browser }).call("chat-1", { tool: "snapshot", arguments: {} }, { name: "Orbit" })).contentItems[0].text;
   assert.match(outline, /\n- link "Pricing" url="https:\/\/example\.com\/pricing" \[ref=e1\]\n- link "Run" \[ref=e2\]\n- textbox "Search" \(focused\) \[ref=e3\]$/);
+});
+
+test("snapshots don't list a link's, button's, heading's or field's own text again under it", async () => {
+  const { createBrowserTools } = require("../app/main/browser-tools.cjs");
+  const text = (id, parentId, value) => ({ nodeId: id, parentId, role: { value: "StaticText" }, name: { value } });
+  const nodes = [
+    { nodeId: "r", role: { value: "RootWebArea" }, childIds: ["h", "a", "b", "p", "x", "f"] },
+    { nodeId: "h", parentId: "r", role: { value: "heading" }, name: { value: "Plans and pricing" }, properties: [{ name: "level", value: { value: 1 } }], childIds: ["h1"] }, text("h1", "h", "Plans and pricing"),
+    // A link's text sits in a span of its own (a node that isn't listed).
+    { nodeId: "a", parentId: "r", role: { value: "link" }, name: { value: "Compare plans" }, backendDOMNodeId: 5, childIds: ["a1"] },
+    { nodeId: "a1", parentId: "a", role: { value: "generic" }, childIds: ["a2"] }, text("a2", "a1", "Compare plans"),
+    { nodeId: "b", parentId: "r", role: { value: "button" }, name: { value: "Buy Pro $20" }, backendDOMNodeId: 6, childIds: ["b1", "b2"] }, text("b1", "b", "Buy Pro"), text("b2", "b", "$20"),
+    // A paragraph has no name of its own: its text is the page's.
+    { nodeId: "p", parentId: "r", role: { value: "paragraph" }, childIds: ["p1"] }, text("p1", "p", "Prices include VAT."),
+    // A label that doesn't come from the text keeps the text that differs.
+    { nodeId: "x", parentId: "r", role: { value: "button" }, name: { value: "Close dialog" }, backendDOMNodeId: 7, childIds: ["x1"] }, text("x1", "x", "×"),
+    { nodeId: "f", parentId: "r", role: { value: "textbox" }, name: { value: "Coupon" }, value: { value: "SPRING" }, backendDOMNodeId: 8, childIds: ["f1"] }, text("f1", "f", "SPRING"),
+  ];
+  const contents = {
+    debugger: { isAttached: () => true, attach() {}, on() {}, sendCommand: async method => method === "Accessibility.getFullAXTree" ? { nodes } : method === "Page.getFrameTree" ? { frameTree: { frame: { id: "main" } } } : {} },
+    getURL: () => "https://example.com/", getTitle: () => "Example", isLoading: () => false,
+  };
+  const browser = { webContents: () => ({ tab: { id: "tab-1" }, contents, onScreen: false, inWindow: true }), markAgent() {}, userInControl: () => false, state: () => ({ tabs: [], active: "tab-1" }) };
+  const outline = (await createBrowserTools({ browser }).call("chat-1", { tool: "snapshot", arguments: {} }, { name: "Orbit" })).contentItems[0].text;
+  assert.equal(outline.split("\n\n").slice(1).join("\n\n"), [
+    '- heading "Plans and pricing" (level 1)',
+    '- link "Compare plans" [ref=e1]',
+    '- button "Buy Pro $20" [ref=e2]',
+    '- text "Prices include VAT."',
+    '- button "Close dialog" [ref=e3]',
+    '  - text "×"',
+    '- textbox "Coupon" value="SPRING" [ref=e4]',
+  ].join("\n"));
 });
