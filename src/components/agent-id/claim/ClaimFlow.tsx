@@ -1,26 +1,28 @@
-// Setting up an Agent ID from its link: confirm an email, verify who you
-// are, done. The browser that confirmed the email holds the claim session
-// (sessionStorage); without it the link starts at the email step.
+// Setting up an Agent ID from its link: an email and a code, and it's ready.
+// The terms are ticked next to the email. Identity is checked later, the
+// first time money leaves a wallet. The browser that confirmed the email
+// holds the claim session (sessionStorage); without it the link starts at
+// the email step.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleCheck, Loader2, ShieldCheck } from "lucide-react";
+import { Check, Copy, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CommandLine, Field, Muted, Notice } from "../ui";
+import { AgentAvatar, Field, Notice } from "../ui";
+import { AppIcon } from "../AppIcons";
 import { ReadyList } from "../ReadyList";
 import { ClaimAgent, ClaimHeading, ClaimLayout } from "./ClaimLayout";
 import {
   claimCommand,
   claimScreen,
-  claimStepIndex,
   cleanCode,
-  isCountryCode,
   readClaimMemory,
   resendWait,
   writeClaimMemory,
@@ -33,8 +35,8 @@ import { claimsApi, signInWithClaim } from "@/lib/agent-id/session";
 
 const TERMS_URL = "/legal/agent-id-terms";
 const PRIVACY_URL = "/legal/privacy-policy";
-
-type Provider = "stripe_identity" | "manual" | "test";
+// A code sent from the start page is still worth entering for ten minutes.
+const CODE_MINUTES = 10;
 
 // The link expired or someone finished it meanwhile: load it again, so the
 // page says so instead of an error under a form.
@@ -52,7 +54,38 @@ function useReloadWhenStale(code: string) {
   );
 }
 
-export function ClaimFlow({ code, checked }: { code: string; checked: boolean }) {
+// The current version of the Agent ID Terms, for the box next to the email.
+export function useTermsVersion() {
+  const config = useQuery({
+    queryKey: ["agent-id", "public-config"],
+    queryFn: () => claimsApi.config(),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  return config.data?.legal?.termsVersion ?? null;
+}
+
+// Starting a claim from an email: the link and the code at once. Terms not
+// ticked yet are asked for with the code. Resolves to the claim's code.
+export function useStartClaim() {
+  const termsVersion = useTermsVersion();
+  return useMutation({
+    mutationFn: async ({ email, agreed }: { email: string; agreed: boolean }) => {
+      const started = await claimsApi.start();
+      const sent = await claimsApi.sendCode(started.claim.code, email);
+      writeClaimMemory(started.claim.code, {
+        secret: started.secret,
+        sentEmail: sent.email,
+        sentAt: String(Date.now()),
+        terms: agreed ? termsVersion : null,
+        devCode: sent.devCode ?? null,
+      });
+      return started.claim.code;
+    },
+  });
+}
+
+export function ClaimFlow({ code }: { code: string }) {
   const queryClient = useQueryClient();
   // Read after mounting: the server has no sessionStorage.
   const [memory, setMemory] = useState<ClaimMemory | null>(null);
@@ -65,8 +98,6 @@ export function ClaimFlow({ code, checked }: { code: string; checked: boolean })
 
   const session = memory?.session ?? null;
   const queryKey = ["agent-id", "claim", code, session ? "session" : "open"] as const;
-  // Back from Stripe: the result arrives by webhook, so wait a little for it.
-  const [waitingSince] = useState(() => Date.now());
   const query = useQuery({
     queryKey,
     enabled: memory !== null,
@@ -74,24 +105,12 @@ export function ClaimFlow({ code, checked }: { code: string; checked: boolean })
     queryFn: async () => (await claimsApi.get(code, session)).claim,
     refetchInterval: (q) => {
       const claim = q.state.data;
-      if (!claim) return false;
-      const screen = claimScreen(claim);
-      if (screen === "checking") return 4000;
-      // Its mail, wallet and so on are still being set up.
-      if (
-        screen === "done" &&
-        Object.values(claim.agent?.resources ?? {}).some((r) => r?.status === "provisioning")
-      )
+      if (!claim || claimScreen(claim) !== "done") return false;
+      // Its email and wallet are still being set up.
+      if (Object.values(claim.agent?.resources ?? {}).some((r) => r?.status === "provisioning"))
         return 2500;
-      if (checked && screen === "identity" && Date.now() - waitingSince < 120_000) return 3000;
       // Showing the command: notice when the agent has collected its key.
-      if (
-        screen === "done" &&
-        claim.startedBy === "person" &&
-        memory?.secret &&
-        !claim.keyCollected
-      )
-        return 5000;
+      if (claim.startedBy === "person" && memory?.secret && !claim.keyCollected) return 5000;
       return false;
     },
   });
@@ -102,15 +121,6 @@ export function ClaimFlow({ code, checked }: { code: string; checked: boolean })
   useEffect(() => {
     if (lostSession) remember({ session: null });
   }, [lostSession, remember]);
-
-  const config = useQuery({
-    queryKey: ["agent-id", "public-config"],
-    queryFn: () => claimsApi.config(),
-    staleTime: 5 * 60_000,
-    retry: false,
-  });
-  // Someone who left Stripe's check before finishing can start it again.
-  const [restart, setRestart] = useState(false);
 
   const setClaim = (claim: Claim) =>
     queryClient.setQueryData(["agent-id", "claim", code, "session"], claim);
@@ -150,19 +160,7 @@ export function ClaimFlow({ code, checked }: { code: string; checked: boolean })
   }
 
   const claim = query.data;
-  let screen = claimScreen(claim);
-  const stillChecking =
-    checked &&
-    screen === "identity" &&
-    claim.person?.status !== "rejected" &&
-    !claim.person?.lastError &&
-    Date.now() - waitingSince < 120_000;
-  if (stillChecking) screen = "checking";
-  if (restart && screen === "checking") screen = "identity";
-  const provider: Provider =
-    (claim.person?.provider as Provider | undefined) ??
-    config.data?.verification.person ??
-    "stripe_identity";
+  const screen = claimScreen(claim);
 
   if (screen === "expired") {
     return (
@@ -194,38 +192,24 @@ export function ClaimFlow({ code, checked }: { code: string; checked: boolean })
     );
   }
 
+  const onConfirmed = async (result: Awaited<ReturnType<typeof claimsApi.confirmEmail>>) => {
+    remember({ session: result.session, sentEmail: null, sentAt: null, devCode: null });
+    setClaim(result.claim);
+    await signInWithClaim(result.auth);
+  };
+
   return (
     <ClaimLayout
-      step={claimStepIndex(screen)}
+      wide={screen === "done"}
       footer={screen === "email" ? "Have a Timewarp account? Use its email." : undefined}
     >
-      {screen === "email" && (
-        <EmailStep
-          claim={claim}
-          onConfirmed={async (result) => {
-            remember({ session: result.session });
-            setClaim(result.claim);
-            await signInWithClaim(result.auth);
-          }}
-        />
-      )}
-      {screen === "identity" && session && (
-        <IdentityStep
+      {screen === "email" && <EmailStep claim={claim} memory={memory} onConfirmed={onConfirmed} />}
+      {screen === "terms" && session && (
+        <TermsStep
           claim={claim}
           session={session}
-          provider={provider}
-          onDone={(next) => {
-            setRestart(false);
-            setClaim(next);
-          }}
+          onDone={setClaim}
           onLostSession={() => remember({ session: null })}
-        />
-      )}
-      {screen === "checking" && (
-        <Checking
-          claim={claim}
-          provider={provider}
-          onRestart={session && provider === "stripe_identity" ? () => setRestart(true) : null}
         />
       )}
       {screen === "done" && <Done claim={claim} secret={memory.secret ?? null} />}
@@ -233,17 +217,104 @@ export function ClaimFlow({ code, checked }: { code: string; checked: boolean })
   );
 }
 
-// --- Step 1: email ------------------------------------------------------------------
+// --- The email -----------------------------------------------------------------------
+
+// The tick next to the email: the terms are accepted with the code.
+export function TermsBox({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-3 text-sm leading-relaxed">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(v) => onChange(v === true)}
+        className="mt-0.5 h-5 w-5 rounded-md"
+      />
+      <span>
+        I agree to the{" "}
+        <a href={TERMS_URL} target="_blank" rel="noreferrer" className="aid-link">
+          Agent ID Terms
+        </a>{" "}
+        and the{" "}
+        <a href={PRIVACY_URL} target="_blank" rel="noreferrer" className="aid-link">
+          Privacy Policy
+        </a>
+      </span>
+    </label>
+  );
+}
+
+// An email address and the terms, the one form of the start page and of a link.
+export function EmailForm({
+  pending,
+  error,
+  onSubmit,
+}: {
+  pending: boolean;
+  error: string | null;
+  onSubmit: (email: string, agreed: boolean) => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [agreed, setAgreed] = useState(false);
+  const ready = !!email.trim() && agreed;
+  return (
+    <form
+      className="grid gap-5"
+      noValidate
+      onSubmit={(e: FormEvent) => {
+        e.preventDefault();
+        if (ready && !pending) onSubmit(email.trim(), agreed);
+      }}
+    >
+      <Field id="claim-email" label="Email">
+        <Input
+          id="claim-email"
+          type="email"
+          autoComplete="email"
+          inputMode="email"
+          placeholder="you@example.com"
+          className="h-11"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoFocus
+        />
+      </Field>
+      <TermsBox checked={agreed} onChange={setAgreed} />
+      {error && <Notice tone="danger">{error}</Notice>}
+      <Button type="submit" className="h-11 w-full" disabled={!ready || pending}>
+        {pending && <Loader2 className="animate-spin" aria-hidden="true" />}
+        Send code
+      </Button>
+    </form>
+  );
+}
 
 function EmailStep({
   claim,
+  memory,
   onConfirmed,
 }: {
   claim: Claim;
+  memory: ClaimMemory;
   onConfirmed: (result: Awaited<ReturnType<typeof claimsApi.confirmEmail>>) => Promise<void>;
 }) {
-  const [email, setEmail] = useState("");
-  const [sent, setSent] = useState<(SentCode & { at: number }) | null>(null);
+  const termsVersion = useTermsVersion();
+  // A code sent from the start page a moment ago: straight to it.
+  const fromStart =
+    memory.sentEmail && Date.now() - Number(memory.sentAt) < CODE_MINUTES * 60_000
+      ? {
+          sent: true,
+          email: memory.sentEmail,
+          ...(memory.devCode ? { devCode: memory.devCode } : {}),
+          at: Number(memory.sentAt),
+        }
+      : null;
+  const [sent, setSent] = useState<(SentCode & { at: number }) | null>(fromStart);
+  const [terms, setTerms] = useState<string | null>(memory.terms ?? null);
   const reloadWhenStale = useReloadWhenStale(claim.code);
 
   const send = useMutation({
@@ -257,6 +328,7 @@ function EmailStep({
       <CodeForm
         claim={claim}
         sent={sent}
+        terms={terms}
         resend={() => send.mutate(sent.email)}
         resending={send.isPending}
         resendError={send.isError ? errorMessage(send.error) : null}
@@ -271,37 +343,30 @@ function EmailStep({
 
   return (
     <>
-      <ClaimHeading title="What's your email?">
-        We'll send you a code. It also makes your Timewarp account, so you can manage {claim.name}{" "}
-        later.
-      </ClaimHeading>
-      <ClaimAgent name={claim.name} app={claim.app} device={claim.device} />
-      {claim.startedBy === "agent" && <StartedByAgent claim={claim} />}
-      <form
-        className="grid gap-4"
-        noValidate
-        onSubmit={(e: FormEvent) => {
-          e.preventDefault();
-          if (email.trim() && !send.isPending) send.mutate(email.trim());
-        }}
+      <ClaimHeading
+        title={claim.startedBy === "agent" ? `Set up ${claim.name}` : "Get your Agent ID"}
       >
-        <Field id="claim-email" label="Email">
-          <Input
-            id="claim-email"
-            type="email"
-            autoComplete="email"
-            inputMode="email"
-            className="h-11"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+        Enter your email. We'll send a code, and that's it.
+      </ClaimHeading>
+      {claim.startedBy === "agent" && (
+        <>
+          <ClaimAgent
+            name={claim.name}
+            app={claim.app}
+            device={claim.device}
+            mascot={claim.mascot}
           />
-        </Field>
-        {send.isError && <Notice tone="danger">{errorMessage(send.error)}</Notice>}
-        <Button type="submit" className="h-11 w-full" disabled={!email.trim() || send.isPending}>
-          {send.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
-          Send code
-        </Button>
-      </form>
+          <StartedByAgent claim={claim} />
+        </>
+      )}
+      <EmailForm
+        pending={send.isPending}
+        error={send.isError ? errorMessage(send.error) : null}
+        onSubmit={(email, agreed) => {
+          setTerms(agreed ? termsVersion : null);
+          send.mutate(email);
+        }}
+      />
     </>
   );
 }
@@ -310,21 +375,20 @@ function EmailStep({
 // what continuing means.
 function StartedByAgent({ claim }: { claim: Claim }) {
   return (
-    <div className="mb-6 rounded-xl border border-[var(--border)] p-4 text-sm">
-      <p>
-        Check that your agent shows{" "}
-        <strong className="aid-mono whitespace-nowrap tracking-wider">{claim.matchCode}</strong>.
-      </p>
-      <p className="mt-1.5 text-[var(--muted-foreground)]">
-        Only continue if you started this. You'll be responsible for what {claim.name} does.
-      </p>
-    </div>
+    <p className="-mt-3 mb-6 text-sm text-[var(--muted-foreground)]">
+      Check that your agent shows{" "}
+      <strong className="aid-mono whitespace-nowrap tracking-wider text-[var(--foreground)]">
+        {claim.matchCode}
+      </strong>
+      . Only continue if you started this: you're responsible for what {claim.name} does.
+    </p>
   );
 }
 
 function CodeForm({
   claim,
   sent,
+  terms,
   resend,
   resending,
   resendError,
@@ -333,6 +397,7 @@ function CodeForm({
 }: {
   claim: Claim;
   sent: SentCode & { at: number };
+  terms: string | null;
   resend: () => void;
   resending: boolean;
   resendError: string | null;
@@ -351,7 +416,7 @@ function CodeForm({
   }, [wait, now]);
 
   const confirm = useMutation({
-    mutationFn: (value: string) => claimsApi.confirmEmail(claim.code, value),
+    mutationFn: (value: string) => claimsApi.confirmEmail(claim.code, value, terms ?? undefined),
     onSuccess: (result) => onConfirmed(result),
     // A wrong code: clear it and let them type again straight away.
     onError: (error) => {
@@ -366,9 +431,9 @@ function CodeForm({
 
   return (
     <>
-      <ClaimHeading title="Enter the code">
-        We sent a 6-digit code to <strong className="text-[var(--foreground)]">{sent.email}</strong>
-        .
+      <ClaimHeading title="Check your email">
+        Enter the 6-digit code we sent to{" "}
+        <strong className="text-[var(--foreground)]">{sent.email}</strong>.
       </ClaimHeading>
       {sent.devCode && (
         <Notice className="mb-4">
@@ -435,227 +500,158 @@ function CodeForm({
   );
 }
 
-// --- Step 2: identity ----------------------------------------------------------------
+// --- The terms, when the code was confirmed without them ----------------------------
 
-function Consent({
-  checked,
-  onChange,
-  children,
-}: {
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  children: ReactNode;
-}) {
-  return (
-    <label className="flex cursor-pointer items-start gap-3 text-sm leading-relaxed">
-      <Checkbox
-        checked={checked}
-        onCheckedChange={(v) => onChange(v === true)}
-        className="mt-0.5 h-5 w-5 rounded-md"
-      />
-      <span>{children}</span>
-    </label>
-  );
-}
-
-function IdentityStep({
+function TermsStep({
   claim,
   session,
-  provider,
   onDone,
   onLostSession,
 }: {
   claim: Claim;
   session: string;
-  provider: Provider;
   onDone: (claim: Claim) => void;
   onLostSession: () => void;
 }) {
-  const stripe = provider === "stripe_identity";
+  const [agreed, setAgreed] = useState(false);
   const reloadWhenStale = useReloadWhenStale(claim.code);
-  const needsTerms = !claim.terms?.accepted;
-  const [terms, setTerms] = useState(false);
-  const [consent, setConsent] = useState(false);
-  const [legalName, setLegalName] = useState(claim.person?.legalName ?? "");
-  const [country, setCountry] = useState(claim.person?.country ?? "");
-  const detailsOk = stripe || (!!legalName.trim() && isCountryCode(country));
-  const ready = (!needsTerms || terms) && consent && detailsOk;
-
-  const verify = useMutation({
-    mutationFn: () =>
-      claimsApi.verifyIdentity(claim.code, session, {
-        consent: true,
-        ...(claim.terms?.current ? { terms: claim.terms.current } : {}),
-        ...(stripe ? {} : { legalName: legalName.trim(), country: country.trim().toUpperCase() }),
-      }),
-    onSuccess: (result) => {
-      if (result.url) {
-        window.location.assign(result.url);
-        return;
-      }
-      onDone(result.claim);
-    },
+  const accept = useMutation({
+    mutationFn: () => claimsApi.acceptTerms(claim.code, session, claim.terms?.current ?? ""),
+    onSuccess: (result) => onDone(result.claim),
     onError: (error) => {
       if (error instanceof AgentIdError && error.code === "claim_session") onLostSession();
       reloadWhenStale(error);
     },
   });
-
-  const failed = claim.person?.status === "rejected" || !!claim.person?.lastError;
-
   return (
     <>
-      <ClaimHeading title="Verify it's you">
-        {stripe
-          ? "Agent ID ties every agent to a real person. Stripe checks your ID and a selfie; it takes about two minutes."
-          : "Agent ID ties every agent to a real person. Enter your name and country as they are on your ID."}
+      <ClaimHeading title="One last thing">
+        Agree to the terms and {claim.name} is ready.
       </ClaimHeading>
-      <ClaimAgent name={claim.name} app={claim.app} device={claim.device} />
-      {failed && (
-        <Notice tone="danger" className="mb-4">
-          That check didn't go through{claim.person?.lastError ? `: ${claim.person.lastError}` : ""}
-          . Try again.
-        </Notice>
-      )}
-      <form
-        className="grid gap-5"
-        noValidate
-        onSubmit={(e: FormEvent) => {
-          e.preventDefault();
-          if (ready && !verify.isPending) verify.mutate();
-        }}
-      >
-        {!stripe && (
-          <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-3">
-            <Field id="claim-legal-name" label="Legal name">
-              <Input
-                id="claim-legal-name"
-                autoComplete="name"
-                className="h-11"
-                maxLength={200}
-                value={legalName}
-                onChange={(e) => setLegalName(e.target.value)}
-              />
-            </Field>
-            <Field
-              id="claim-country"
-              label="Country"
-              error={country.trim() && !isCountryCode(country) ? "Two letters" : null}
-            >
-              <Input
-                id="claim-country"
-                autoComplete="country"
-                placeholder="US"
-                className="h-11 uppercase"
-                maxLength={2}
-                value={country}
-                onChange={(e) => setCountry(e.target.value.toUpperCase())}
-              />
-            </Field>
-          </div>
-        )}
-        <div className="grid gap-3 rounded-xl bg-[var(--muted)] p-4">
-          {needsTerms && (
-            <Consent checked={terms} onChange={setTerms}>
-              I agree to the{" "}
-              <a href={TERMS_URL} target="_blank" rel="noreferrer" className="aid-link">
-                Agent ID Terms
-              </a>
-            </Consent>
-          )}
-          <Consent checked={consent} onChange={setConsent}>
-            {stripe ? (
-              <>
-                I agree to Stripe checking my ID and a selfie (biometric data) to verify me.{" "}
-                <a href={PRIVACY_URL} target="_blank" rel="noreferrer" className="aid-link">
-                  Privacy
-                </a>
-              </>
-            ) : (
-              "These are my real details"
-            )}
-          </Consent>
-        </div>
-        {verify.isError && <Notice tone="danger">{errorMessage(verify.error)}</Notice>}
-        <Button type="submit" className="h-11 w-full" disabled={!ready || verify.isPending}>
-          {verify.isPending ? (
-            <Loader2 className="animate-spin" aria-hidden="true" />
-          ) : (
-            <ShieldCheck aria-hidden="true" />
-          )}
-          {stripe ? "Verify with Stripe" : "Continue"}
+      <div className="grid gap-5">
+        <TermsBox checked={agreed} onChange={setAgreed} />
+        {accept.isError && <Notice tone="danger">{errorMessage(accept.error)}</Notice>}
+        <Button
+          className="h-11 w-full"
+          disabled={!agreed || accept.isPending}
+          onClick={() => accept.mutate()}
+        >
+          {accept.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
+          Continue
         </Button>
-      </form>
+      </div>
     </>
   );
 }
 
-function Checking({
-  claim,
-  provider,
-  onRestart,
-}: {
-  claim: Claim;
-  provider: Provider;
-  onRestart: (() => void) | null;
-}) {
-  return (
-    <div className="flex flex-col items-center py-4 text-center" role="status">
-      <Loader2 className="h-10 w-10 animate-spin text-[var(--aid-ink)]" aria-hidden="true" />
-      <h1 className="mt-5 text-2xl font-semibold tracking-tight">
-        {provider === "manual" ? "We're checking your details" : "Checking your ID"}
-      </h1>
-      <p className="mt-2 text-sm text-[var(--muted-foreground)]">
-        {provider === "manual"
-          ? `A person at Timewarp reviews it, usually within a day. ${claim.name} is set up as soon as you're verified.`
-          : `This usually takes a minute or two. You can close this page; ${claim.name} is set up as soon as you're verified.`}
-      </p>
-      {onRestart && (
-        <button type="button" className="aid-link mt-6 text-sm" onClick={onRestart}>
-          Didn't finish the check? Start it again
-        </button>
-      )}
-    </div>
-  );
-}
-
-// --- Done ------------------------------------------------------------------------------
+// --- Ready ------------------------------------------------------------------------------
 
 function Done({ claim, secret }: { claim: Claim; secret: string | null }) {
   const byAgent = claim.startedBy === "agent";
   const showCommand = !byAgent && !!secret && !claim.keyCollected;
+  const name = claim.agent?.name ?? claim.name;
+  const app = claim.app?.label;
   return (
-    <div>
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
       <div className="flex flex-col items-center text-center">
-        <CircleCheck className="h-12 w-12 text-[var(--aid-success)]" aria-hidden="true" />
-        <h1 className="mt-4 text-2xl font-semibold tracking-tight">{claim.name} is ready</h1>
-        <p className="mt-2 text-sm text-[var(--muted-foreground)]">
-          {byAgent
-            ? `Go back to ${claim.app?.label ?? "your agent"}. It's set up.`
-            : showCommand
-              ? `Last step: run this on the computer where you use ${claim.name}.`
-              : claim.keyCollected
-                ? `${claim.name} is connected.`
-                : `Open Agent ID to connect ${claim.name} to your apps.`}
+        <span className="relative">
+          <AgentAvatar
+            mascot={claim.agent?.mascot ?? claim.mascot}
+            id={claim.agent?.id}
+            size="xl"
+          />
+          <span className="absolute bottom-1 right-1 grid h-8 w-8 place-items-center rounded-full border-4 border-[var(--card)] bg-[var(--aid-success)] text-white">
+            <Check className="h-4 w-4" strokeWidth={3} aria-hidden="true" />
+          </span>
+        </span>
+        <h1 className="mt-3 text-2xl font-semibold tracking-tight text-balance">{name} is ready</h1>
+        <p className="mt-1.5 text-sm text-[var(--muted-foreground)]">
+          Its own email address and wallet, a phone number when you want one, and a computer.
         </p>
       </div>
-      {claim.agent?.resources && Object.keys(claim.agent.resources).length > 0 && (
-        <div className="mt-6">
-          <ReadyList resources={claim.agent.resources} />
-        </div>
+
+      {claim.agent && (
+        <ReadyList resources={claim.agent.resources ?? {}} agentId={claim.agent.id} />
       )}
-      {showCommand && secret && (
-        <div className="mt-6 space-y-2">
-          <CommandLine command={claimCommand(secret)} />
-          <Muted>
-            It connects {claim.name} to Claude Code, Codex, Cursor or wherever you use it. The
-            command works once.
-          </Muted>
-        </div>
-      )}
-      <Button asChild variant={showCommand ? "outline" : "default"} className="mt-6 h-11 w-full">
+
+      {byAgent ? (
+        <NextStep title={`Go back to ${app ?? "your agent"}`}>
+          {claim.keyCollected ? "It's connected." : "It finishes connecting there in a moment."}{" "}
+          Then try asking it: “What's my Agent ID email address?”
+        </NextStep>
+      ) : showCommand && secret ? (
+        <ConnectModel command={claimCommand(secret)} />
+      ) : claim.keyCollected ? (
+        <NextStep title={`${name} is connected`}>
+          You'll find everything it does in Agent ID.
+        </NextStep>
+      ) : null}
+
+      <Button asChild variant={showCommand ? "outline" : "default"} className="h-11 w-full">
         <Link to="/agent-id/dashboard">Open Agent ID</Link>
       </Button>
     </div>
+  );
+}
+
+// Connecting the new Agent ID to the AI models on this computer: one button that
+// copies the setup line, and plain words on where to paste it. The line itself
+// stays out of the way until someone wants to see it.
+function ConnectModel({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  const [shown, setShown] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+    } catch {
+      setShown(true);
+      return;
+    }
+    setCopied(true);
+    toast.success("Copied. Paste it in Terminal and press Enter.");
+  };
+  return (
+    <section className="rounded-2xl border border-[var(--border)] p-5 text-center">
+      <div className="flex justify-center gap-2" aria-hidden="true">
+        {["claude", "chatgpt", "gemini", "grok"].map((app) => (
+          <AppIcon key={app} app={app} size="lg" tooltip={false} />
+        ))}
+      </div>
+      <h2 className="mt-3 text-lg font-semibold">Connect it to your AI model</h2>
+      <p className="mx-auto mt-1 max-w-sm text-sm text-[var(--muted-foreground)]">
+        Copy this, paste it in Terminal on your computer and press Enter. It connects to Claude,
+        ChatGPT, Gemini, Grok and others on your computer by itself.
+      </p>
+      <Button
+        size="lg"
+        className="mt-4 h-12 w-full rounded-full text-base"
+        onClick={() => void copy()}
+      >
+        {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+        {copied ? "Copied" : "Copy setup"}
+      </Button>
+      {shown ? (
+        <code className="aid-code aid-mono mt-3 block break-all px-3 py-2 text-left text-xs">
+          {command}
+        </code>
+      ) : (
+        <button
+          type="button"
+          className="mt-3 text-xs text-[var(--muted-foreground)] underline-offset-2 hover:underline"
+          onClick={() => setShown(true)}
+        >
+          Show what it runs
+        </button>
+      )}
+    </section>
+  );
+}
+
+function NextStep({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="rounded-xl bg-[var(--muted)] p-4 text-sm">
+      <h2 className="font-semibold">{title}</h2>
+      <div className="mt-1 text-[var(--muted-foreground)]">{children}</div>
+    </section>
   );
 }

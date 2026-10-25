@@ -7,6 +7,14 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { startLocal } = require("../scripts/agent-id-local.cjs");
 
+// The agent's own command inside the wrapper that runs it as the agent's
+// ordinary account (vault/shell.ts), and the folder it runs in.
+function agentPart(body) {
+  const { command } = JSON.parse(body);
+  const match = /runuser -u agent -- .* bash -lc '[^']*' _ '((?:[^']|'\\'')*)' ([A-Za-z0-9+/=]+); else/.exec(command);
+  return match ? { cwd: match[1].replace(/'\\''/g, "'"), command: Buffer.from(match[2], "base64").toString() } : null;
+}
+
 // A provider network: [method, url pattern, handler(url, init, body)].
 function network() {
   const routes = [], calls = [];
@@ -57,11 +65,6 @@ test("live mail: sent through Resend from the agent's own address; signed inboun
   const { local, net, ok, agent } = await setup(t, { AGENT_ID_LIVE: "mail", RESEND_API_KEY: "re_live_key", AGENT_ID_RESEND_WEBHOOK_SECRET: svixSecret });
   const alice = await local.user();
   const bot = await agent(alice, "Sales Bot");
-  // An address the previous Timewarp app already gave out is refused.
-  await local.db.exec("create table public.timewarp_personal_agents(id text, email text)");
-  await local.db.query("insert into public.timewarp_personal_agents values('old', $1)", [`${bot.handle}@agents.timewarpdev.com`]);
-  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "mail", mode: "live" } })).body.error.code, "address_taken");
-  await local.db.exec("delete from public.timewarp_personal_agents");
   const mail = (await ok("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "mail", mode: "live" } })).resource;
   assert.equal(mail.address, `${bot.handle}@agents.timewarpdev.com`);
   assert.equal(mail.provider, "resend");
@@ -145,6 +148,11 @@ test("live phone: a Twilio number with forge-proof webhooks for texts, calls and
   assert.equal(texts.messages.length, 1, "Twilio's retries are recorded once.");
   assert.equal(texts.messages[0].text, "Is the shop open?");
 
+  // Real texts and calls wait for the owner unless they say otherwise.
+  const asked = await ok("POST", "/v1/me/sms", { token: bot.key, body: { to: "+46701234567", text: "Yes, until 6." } });
+  assert.equal(asked.status, "needs_approval");
+  assert.equal(net.find("POST", /Messages\.json$/).length, 0, "Nothing sent while it waits.");
+  await ok("PATCH", `/v1/agents/${bot.id}`, { token: alice.session, body: { askFirst: { sms: false, call: false } } });
   net.on("POST", /Messages\.json$/, () => ({ sid: "SMout1", status: "queued" }));
   await ok("POST", "/v1/me/sms", { token: bot.key, body: { to: "+46701234567", text: "Yes, until 6." } });
   const message = formOf(net.find("POST", /Messages\.json$/)[0].body);
@@ -250,11 +258,14 @@ test("live wallets: Privy server wallets holding USDC and USDT, shown as US doll
   const basic = "Basic " + Buffer.from("privy-app:privy-secret").toString("base64");
   const alice = await local.user();
   const bot = await agent(alice, "Treasurer");
-  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "wallet", mode: "live" } })).body.error.code, "verification_required", "Real money needs a verified owner.");
-  await verify(alice);
   const address = "0x" + "ab".repeat(20);
   net.on("POST", /api\.privy\.io\/v1\/wallets$/, () => ({ id: "w_treasurer", address, chain_type: "ethereum" }));
+  // Given before the owner is verified: it can receive, but nothing leaves it yet.
   const wallet = (await ok("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "wallet", mode: "live", settings: { approvalAbove: null } } })).resource;
+  const early = (await local.call("POST", "/v1/me/wallet/transfers", { token: bot.key, body: { to: "0x" + "12".repeat(20), value: "1" } })).body.error;
+  assert.equal(early.code, "verification_required", "Money leaves a live wallet only once its owner is verified.");
+  assert.match(early.message, /Your owner needs to verify/);
+  await verify(alice);
   assert.deepEqual([wallet.address, wallet.provider, wallet.currency, wallet.details.chain], [address, "privy", "USD", "base"]);
   const [create] = net.find("POST", /v1\/wallets$/);
   assert.equal(create.headers.get("authorization"), basic);
@@ -318,7 +329,8 @@ test("live wallets: Privy server wallets holding USDC and USDT, shown as US doll
 test("live machines: Azure sandboxes started for each command and charged in credits", async t => {
   let state = "Creating";
   const azure = { AZURE_TENANT_ID: "tenant", AZURE_CLIENT_ID: "client", AZURE_CLIENT_SECRET: "secret", AZURE_SUBSCRIPTION_ID: "sub", AZURE_SANDBOX_RESOURCE_GROUP: "rg", AZURE_SANDBOX_GROUP: "agents" };
-  const { local, net, ok, agent } = await setup(t, { AGENT_ID_LIVE: "vm", ...azure });
+  // Credits from the first second here (the free hours are their own test).
+  const { local, net, ok, agent } = await setup(t, { AGENT_ID_LIVE: "vm", AGENT_ID_FREE_COMPUTE_HOURS: "0", ...azure });
   net.on("POST", /login\.microsoftonline\.com\/tenant\/oauth2\/v2\.0\/token$/, () => ({ access_token: "azure-token", expires_in: 3600 }));
   net.on("PUT", /\/sandboxGroups\/agents\/sandboxes\?api-version=/, () => ({ id: "sbx-1", state }));
   net.on("GET", /\/sandboxes\/sbx-1\?api-version=/, () => ({ id: "sbx-1", state }));
@@ -339,7 +351,7 @@ test("live machines: Azure sandboxes started for each command and charged in cre
   assert.equal((await ok("GET", "/v1/me/vm", { token: bot.key })).machine.status, "active");
   const run = await ok("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "uname -a", cwd: "/root" } });
   assert.deepEqual([run.exitCode, run.stdout], [0, "Linux sbx-1\n"]);
-  assert.deepEqual(JSON.parse(net.find("POST", /executeShellCommand/)[0].body), { command: "uname -a", workingDirectory: "/root" });
+  assert.deepEqual(agentPart(net.find("POST", /executeShellCommand/)[0].body), { cwd: "/root", command: "uname -a" }, "Run as the agent's ordinary account, in its folder.");
   assert.equal(state, "Suspended", "The machine stops after the command.");
   assert.equal(net.find("POST", /\/resume\?/)[0].headers.get("authorization"), "Bearer azure-token");
   const { rows: [reservation] } = await local.db.query("select status, model, cost, credits from test_reservations");
@@ -363,4 +375,51 @@ test("live machines: Azure sandboxes started for each command and charged in cre
   net.on("DELETE", /\/sandboxes\/sbx-1\?/, () => new Response(null, { status: 204 }));
   await ok("DELETE", `/v1/agents/${bot.id}/resources/vm`, { token: alice.session });
   assert.equal(net.find("DELETE", /sandboxes\/sbx-1/).length, 1);
+});
+
+test("free machine hours: an account's first hours are free, then machine time is paid in credits", async t => {
+  let state = "Suspended";
+  const azure = { AZURE_TENANT_ID: "tenant", AZURE_CLIENT_ID: "client", AZURE_CLIENT_SECRET: "secret", AZURE_SUBSCRIPTION_ID: "sub", AZURE_SANDBOX_RESOURCE_GROUP: "rg", AZURE_SANDBOX_GROUP: "agents" };
+  const { local, net, ok, agent } = await setup(t, { AGENT_ID_LIVE: "vm", ...azure });
+  net.on("POST", /login\.microsoftonline\.com\/tenant\/oauth2\/v2\.0\/token$/, () => ({ access_token: "azure-token", expires_in: 3600 }));
+  net.on("PUT", /\/sandboxes\?api-version=/, () => ({ id: "sbx-1", state: "Suspended" }));
+  net.on("GET", /\/sandboxes\/sbx-1\?api-version=/, () => ({ id: "sbx-1", state }));
+  net.on("POST", /\/sandboxes\/sbx-1\/resume\?/, () => { state = "Running"; return {}; });
+  net.on("POST", /\/sandboxes\/sbx-1\/stop\?/, () => { state = "Suspended"; return {}; });
+  net.on("POST", /\/sandboxes\/sbx-1\/executeShellCommand\?/, () => ({ exitCode: 0, stdout: "ok\n", stderr: "" }));
+  const config = await ok("GET", "/v1/config");
+  assert.equal(config.pricing.computeFreeHours, 5, "Five free hours by default.");
+  assert.ok(config.pricing.computeCreditsPerHour > 0);
+  assert.deepEqual(config.pricing.creditPacks[0], { credits: 180, priceUsd: 15 });
+  const alice = await local.user({ credits: 0 });
+  const bot = await agent(alice, "Builder");
+  await ok("POST", `/v1/agents/${bot.id}/resources`, { token: alice.session, body: { kind: "vm", mode: "live" } });
+  await ok("GET", "/v1/me/vm", { token: bot.key });
+  // No credits at all, and the command still runs: it's free time.
+  const run = await ok("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "echo ok" } });
+  assert.equal(run.stdout, "ok\n");
+  assert.equal((await local.db.query("select count(*)::int as n from test_reservations")).rows[0].n, 0, "Nothing reserved from credits.");
+  const used = async () => (await local.db.query("select used_seconds from agent_id_compute_allowance where user_id=$1", [alice.id])).rows[0].used_seconds;
+  const afterOne = await used();
+  assert.ok(afterOne >= 1 && afterOne < 60, `Only the time used counts (${afterOne} s), not the most it could have taken.`);
+  const account = await ok("GET", "/v1/account", { token: alice.session });
+  assert.deepEqual(account.compute, { freeSeconds: 5 * 3600, usedSeconds: afterOne });
+  const history = (await ok("GET", "/v1/me/vm/commands", { token: bot.key })).commands[0];
+  assert.deepEqual([history.data.freeSeconds > 0, history.data.credits], [true, 0]);
+  // The free hours used up: without credits nothing runs, and nothing is taken.
+  await local.db.query("update agent_id_compute_allowance set used_seconds = $2 where user_id=$1", [alice.id, 5 * 3600]);
+  const refused = await local.call("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "ls" } });
+  assert.equal(refused.body.error.code, "credits_required");
+  assert.match(refused.body.error.message, /5 free machine hours are used up/);
+  assert.equal(await used(), 5 * 3600);
+  // With credits, the time beyond the free hours is charged.
+  await local.db.query("update test_credits set credits=100 where user_id=$1", [alice.id]);
+  await ok("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "ls" } });
+  const { rows: [reservation] } = await local.db.query("select status, cost from test_reservations");
+  assert.equal(reservation.status, "settled");
+  assert.ok(Number(reservation.cost) > 0);
+  // The last free seconds go first, then credits; what isn't used goes back.
+  await local.db.query("update agent_id_compute_allowance set used_seconds = $2 where user_id=$1", [alice.id, 5 * 3600 - 2]);
+  await ok("POST", "/v1/me/vm/exec", { token: bot.key, body: { command: "ls" } });
+  assert.ok(await used() <= 5 * 3600 && await used() >= 5 * 3600 - 2);
 });

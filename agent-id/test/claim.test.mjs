@@ -1,6 +1,7 @@
 // `timewarp-id attach` on a computer that isn't signed in: it prints a link,
-// the person confirms their email and verifies who they are there (which
-// makes their account), and the one Agent ID comes back to every app chosen.
+// the person confirms their email there and accepts the terms (which makes
+// their account; who they are is checked later, when money first leaves),
+// and the one Agent ID comes back to every app chosen.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +18,7 @@ const until = async (check, what) => {
 describe('timewarp-id attach without an account', () => {
   let api, home, env;
   before(async () => {
-    api = await startApi({ env: { AGENT_ID_KYC: 'test' } });
+    api = await startApi();
     home = tempDir('claim');
     env = cliEnv(api.base, { idHome: path.join(home, 'id'), codexHome: path.join(home, 'codex'), home });
     write(path.join(home, '.claude.json'), `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`);
@@ -28,13 +29,20 @@ describe('timewarp-id attach without an account', () => {
     if (home) fs.rmSync(home, { recursive: true, force: true });
   });
 
-  // The person's side, as the claim page does it.
-  async function finishAsPerson(code, email) {
+  // The person's side, as the claim page does it: the emailed code, with the
+  // terms ticked (or, from an older page, the terms as a step of their own).
+  // Nothing else: the agent is ready then.
+  async function finishAsPerson(code, email, { termsWithCode = true } = {}) {
     const sent = await api.call('POST', `/v1/claims/${code}/email`, { body: { email } });
-    const confirmed = await api.call('POST', `/v1/claims/${code}/email/confirm`, { body: { code: sent.devCode } });
     const terms = (await api.call('GET', '/v1/config')).legal.termsVersion;
-    const result = await api.local.call('POST', `/v1/claims/${code}/identity`, { headers: { 'timewarp-claim-session': confirmed.session }, body: { terms, consent: true, legalName: 'Ada Lovelace', country: 'GB' } });
-    assert.equal(result.status, 200, JSON.stringify(result.body));
+    const confirmed = await api.call('POST', `/v1/claims/${code}/email/confirm`, { body: { code: sent.devCode, ...(termsWithCode ? { terms } : {}) } });
+    let { claim } = confirmed;
+    if (!termsWithCode) {
+      const result = await api.local.call('POST', `/v1/claims/${code}/terms`, { headers: { 'timewarp-claim-session': confirmed.session }, body: { terms } });
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      claim = result.body.claim;
+    }
+    assert.equal(claim.status, 'claimed', 'the agent is ready once the email is confirmed');
     return confirmed.auth.access_token;
   }
 
@@ -51,8 +59,9 @@ describe('timewarp-id attach without an account', () => {
     const session = await finishAsPerson(claim.code, 'ada@example.test');
     const result = await running;
     assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(result.stderr, /open this link/i);
+    assert.match(result.stderr, /Open this link to confirm your email:/);
     assert.match(result.stderr, new RegExp(claim.matchCode));
+    assert.doesNotMatch(result.stderr, /verif/i, 'no identity check before the agent is ready');
     const attached = JSON.parse(result.stdout).attached;
     assert.deepEqual(attached.map(a => a.tool), ['Claude Code', 'Codex']);
     assert.equal(new Set(attached.map(a => a.agent.id)).size, 1, 'One Agent ID for both apps.');
@@ -67,9 +76,20 @@ describe('timewarp-id attach without an account', () => {
     assert.deepEqual(agents.map(a => [a.name, a.apps.map(x => x.app).sort()]), [['Ada\'s helper', ['claude-code', 'codex']]]);
   });
 
+  it('gives an app added later the same Agent ID, with no new link', async () => {
+    const claims = () => api.requests.filter(r => r.method === 'POST' && r.path === '/v1/claims').length;
+    const before = claims();
+    const folder = path.join(home, 'bot');
+    fs.mkdirSync(folder, { recursive: true });
+    const result = await runCli(['attach', '--here', '--json'], { env, cwd: folder });
+    assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(claims(), before, 'no second link to confirm');
+    assert.equal(JSON.parse(result.stdout).attached[0].agent.handle, json(path.join(home, 'id', 'config.json')).default);
+  });
+
   it('finishes a claim started on the website with --claim', async () => {
     const started = await api.call('POST', '/v1/claims', { body: { name: 'Website agent', startedBy: 'person' } });
-    await finishAsPerson(started.claim.code, 'grace@example.test');
+    await finishAsPerson(started.claim.code, 'grace@example.test', { termsWithCode: false });
     const project = path.join(home, 'proj');
     fs.mkdirSync(project, { recursive: true });
     const result = await runCli(['attach', '--here', '--claim', started.secret, '--json'], { env, cwd: project });

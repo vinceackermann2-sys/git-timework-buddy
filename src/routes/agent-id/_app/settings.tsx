@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, Plus } from "lucide-react";
+import { Check, KeyRound, Loader2, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -219,7 +219,7 @@ function SignInKeys() {
       ) : keys.isError ? (
         <ErrorState error={keys.error} onRetry={() => void keys.refetch()} />
       ) : keys.data.length === 0 ? (
-        <Empty>No keys yet.</Empty>
+        <Empty icon={KeyRound}>No keys yet.</Empty>
       ) : (
         <Rows label="Sign-in keys">
           {keys.data.map((key) => (

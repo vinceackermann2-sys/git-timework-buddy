@@ -89,6 +89,19 @@ test("the memory context has today's log and the latest days' summaries, the pre
   assert.match(context, /- 2026-10-01 \(.*timewarp-previous.*\): Sent the invoice to Avery\./);
   assert.equal((context.match(/^- \d{4}-/gm) || []).length, 7, "The latest seven earlier days");
   assert.doesNotMatch(context, /Day 11\./);
+  // A turn carries the parts as entries of their own: a new line in today's
+  // log changes that part only, so the notes aren't sent again with it.
+  knowledge.saveNotes("Prefers metric units.");
+  const at = new Date(2026, 9, 10, 12), before = knowledge.contextParts("enabled", at);
+  assert.match(before.notes, /<user_notes>\nPrefers metric units\.\n<\/user_notes>/);
+  assert.doesNotMatch(before.notes, /dentist|Rome/);
+  assert.match(before.today, /^Today's log .*\n[\s\S]*Friday/);
+  assert.match(before.earlier, /^Earlier days[\s\S]*Planned the Rome trip/);
+  assert.equal(knowledge.context("enabled", at), [before.notes, before.today, before.earlier].join("\n\n"));
+  fs.appendFileSync(path.join(logs, "2026-10-10.md"), "- Asked about a hotel.\n");
+  const after = knowledge.contextParts("enabled", at);
+  assert.deepEqual([after.notes === before.notes, after.today === before.today, after.earlier === before.earlier], [true, false, true]);
+  assert.equal(knowledge.contextParts("disabled", at), null);
 });
 
 test("placeholder notes are replaced by imported notes, keeping setup's blocks", t => {

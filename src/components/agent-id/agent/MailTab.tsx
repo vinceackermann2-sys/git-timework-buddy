@@ -137,6 +137,10 @@ export function MailTab({
   }, [live, pages.data, history.data, folder, q]);
   const list = live ? pages : history;
   const selected = messages.find((m) => m.id === selectedId) ?? null;
+  const box = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (selectedId) box.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [selectedId]);
 
   // Your own agents show by name, like contacts in a mail app.
   const nameOf = (address: string | null) => {
@@ -175,8 +179,10 @@ export function MailTab({
   return (
     <div className="space-y-4">
       <BlockedNotice reason={blocked} />
-      <section className="aid-card overflow-hidden">
-        <div className="grid h-[calc(100svh-10rem)] max-h-[54rem] min-h-[34rem] grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[13rem_minmax(0,1fr)] lg:grid-rows-1 xl:grid-cols-[13rem_minmax(0,23rem)_minmax(0,1fr)]">
+      <section ref={box} className="aid-card scroll-mt-4 overflow-hidden">
+        {/* Like Gmail: the folders, then the list; an opened message takes the
+            list's place, from its top, with a way back. */}
+        <div className="grid h-[calc(100svh-10rem)] max-h-[54rem] min-h-[34rem] grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[13rem_minmax(0,1fr)] lg:grid-rows-1">
           {/* Rail */}
           <nav
             aria-label="Mail folders"
@@ -221,12 +227,7 @@ export function MailTab({
           </nav>
 
           {/* Message list */}
-          <div
-            className={cn(
-              "flex min-h-0 min-w-0 flex-col border-[var(--border)] xl:border-r",
-              selected && "hidden xl:flex",
-            )}
-          >
+          <div className={cn("flex min-h-0 min-w-0 flex-col", selected && "hidden")}>
             <div className="flex items-center gap-2 border-b border-[var(--border)] p-3">
               <label className="relative flex-1">
                 <Search
@@ -289,9 +290,9 @@ export function MailTab({
             </div>
           </div>
 
-          {/* Reading pane */}
-          <div className={cn("min-h-0 min-w-0", !selected && "hidden xl:block")}>
-            {selected ? (
+          {/* The open message */}
+          {selected && (
+            <div className="min-h-0 min-w-0">
               <Reader
                 agent={agent}
                 message={selected}
@@ -318,18 +319,8 @@ export function MailTab({
                   })
                 }
               />
-            ) : (
-              <div className="grid h-full place-items-center p-8 text-center">
-                <div>
-                  <MailOpen
-                    className="mx-auto mb-3 h-8 w-8 text-[var(--muted-foreground)]/50"
-                    aria-hidden="true"
-                  />
-                  <p className="text-sm text-[var(--muted-foreground)]">No message selected</p>
-                </div>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -524,11 +515,9 @@ function Reader({
   return (
     <article className="flex h-full flex-col" aria-label="Message">
       <div className="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2">
-        <span className="xl:hidden">
-          <IconButton label="Back" onClick={onBack}>
-            <ArrowLeft className="h-4 w-4" />
-          </IconButton>
-        </span>
+        <IconButton label="Back to the list" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" />
+        </IconButton>
         {live && (
           <>
             <IconButton label="Reply" onClick={onReply}>

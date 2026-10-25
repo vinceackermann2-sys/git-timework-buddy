@@ -18,8 +18,10 @@ function sameToken(expected, header) {
 }
 
 // cloudSafe: the privacy check, which tells cloud() a payload was checked so
-// it isn't walked twice (services.cjs).
-function createModelBridge({ token, cloud, cloudSafe = assertCloudSafe, funding, chatgpt, integrations, mascots, toolServer = () => null, port = PORT }) {
+// it isn't walked twice (services.cjs). gate({ conversationId, agent,
+// arguments }): before a connected app's action runs, null to go ahead or an
+// MCP result to answer instead (the user didn't allow it on its card).
+function createModelBridge({ token, cloud, cloudSafe = assertCloudSafe, funding, chatgpt, integrations, mascots, toolServer = () => null, gate = null, port = PORT }) {
   const reply = (res, status, value) => {
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(value));
@@ -39,10 +41,10 @@ function createModelBridge({ token, cloud, cloudSafe = assertCloudSafe, funding,
   // one agent can't use another's apps, and the agent list shows only itself.
   // Composio's handler then checks the token and the agent's app access.
   const rpc = (res, id, value) => reply(res, 200, { jsonrpc: "2.0", id: id ?? null, ...value });
-  function callingAgent(params) {
+  function callingChat(params) {
     const { threadsOf } = require("./tool-server.cjs");
     const { threadId, rootThreadId } = threadsOf(params);
-    try { return toolServer()?.resolve?.(threadId, rootThreadId)?.agent || null; } catch { return null; }
+    try { return toolServer()?.resolve?.(threadId, rootThreadId) || null; } catch { return null; }
   }
   // Composio's handler, given the request body already read; the response is
   // kept when `hold` is set, so it can be replaced.
@@ -58,7 +60,7 @@ function createModelBridge({ token, cloud, cloudSafe = assertCloudSafe, funding,
     if (req.method !== "POST") return integrations.mcp(req, res);
     const input = await body(req);
     if (input?.method !== "tools/call" || !input.params || typeof input.params !== "object") return forward(req, res, input);
-    const agent = callingAgent(input.params);
+    const chat = callingChat(input.params), agent = chat?.agent || null;
     if (!agent) return rpc(res, input.id, { result: { isError: true, content: [{ type: "text", text: "Connected apps work only in a Timewarp chat." }] } });
     if (input.params.name === "composio_list_assistants") {
       // The token is checked with a ping before answering.
@@ -66,7 +68,13 @@ function createModelBridge({ token, cloud, cloudSafe = assertCloudSafe, funding,
       if (held.status !== 200) { res.writeHead(held.status).end(); return; }
       return rpc(res, input.id, { result: { content: [{ type: "text", text: JSON.stringify([{ id: agent.id, name: agent.name }]) }] } });
     }
-    return forward(req, res, { ...input, params: { ...input.params, arguments: { ...(input.params.arguments || {}), assistantId: agent.id } } });
+    const args = { ...(input.params.arguments || {}), assistantId: agent.id };
+    // Sending, paying and deleting wait for the user's OK on a card in the chat (approvals.cjs).
+    if (input.params.name === "composio_execute" && gate) {
+      const refused = await gate({ conversationId: chat.conversationId, agent, arguments: args });
+      if (refused) return rpc(res, input.id, { result: refused });
+    }
+    return forward(req, res, { ...input, params: { ...input.params, arguments: args } });
   }
   const server = http.createServer(async (req, res) => {
     try {

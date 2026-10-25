@@ -24,26 +24,26 @@ export class ApiError extends Error {
 const HINTS = {
   owner: {
     unauthenticated: 'Run `timewarp-id login --owner-key two_…` with a key from the Agent ID dashboard.',
-    invalid_key: 'Your owner key was revoked or is wrong. Create a new one on the Agent ID dashboard and run `timewarp-id login --owner-key two_…`.',
+    invalid_key: 'Your sign-in here no longer works: the owner key was revoked or is wrong. Create a new one on the Agent ID dashboard and run `timewarp-id login --owner-key two_…`.',
   },
   agent: {
     unauthenticated: 'This agent has no working key here. Get a new one with `timewarp-id agents key <agent>`.',
-    invalid_key: 'This agent\'s key was revoked or is wrong. Get a new one with `timewarp-id agents key <agent>`.',
+    invalid_key: 'This agent\'s key here no longer works (it was revoked or replaced). Get a new one with `timewarp-id agents key <agent>`.',
     agent_revoked: 'This agent was revoked by its owner; create a new agent with `timewarp-id agents create <name>`.',
     agent_suspended: 'Its owner can resume it with `timewarp-id agents resume <agent>`.',
   },
   any: {
-    verification_required: 'Verify your identity on the Agent ID dashboard first.',
+    verification_required: 'This needs your identity verified, once: do it on the Agent ID dashboard, then try again.',
     terms_required: 'Run `timewarp-id terms` to read and accept Agent ID\'s terms of service, then try again.',
     provider_unavailable: 'This Agent ID can\'t give out real ones of these yet; add --test for a test one while developing.',
     plan_required: 'This needs a paid Timewarp plan.',
     live_unavailable: 'This Agent ID can\'t give out real ones of these yet; add --test for a test one while developing.',
     session_required: 'Create owner keys on the Agent ID dashboard.',
     no_mail: 'Give it one with `timewarp-id give mail --agent <agent>`.',
-    no_phone: 'Give it one with `timewarp-id give phone --agent <agent>`.',
+    no_phone: 'Apply for a phone number for it on the Agent ID dashboard.',
     no_wallet: 'Give it one with `timewarp-id give wallet --agent <agent>`.',
     no_card: 'Apply for one with `timewarp-id card apply --agent <agent> --use-case "…" --monthly 200 --country US`.',
-    no_vm: 'Give it one with `timewarp-id give vm --agent <agent>`.',
+    machine_not_ready: 'Its computer is starting for the first time; try again in a minute.',
     test_machine: 'This is a test machine. Give it a real one: `timewarp-id take vm --agent <agent>`, then `timewarp-id give vm --agent <agent>`.',
   },
 };

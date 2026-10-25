@@ -2,6 +2,8 @@
 // Automation tools for agents: schedule work for the agent itself, as the
 // previous app's "Add automation" asked agents to do. An automation an agent
 // creates runs in the chat it was asked in, while Timewarp is open (see automations.cjs).
+const { scheduleText } = require("./agent-id.cjs");
+const { refusal } = require("./approvals.cjs");
 const fail = (status, message) => Object.assign(new Error(message), { status });
 
 const schedule = {
@@ -40,7 +42,9 @@ function toolSpecs() {
 const when = value => value ? new Date(value).toLocaleString() : "—";
 const describe = item => `${item.id} | ${item.name} | ${item.enabled ? "on" : "off"} | ${JSON.stringify(item.schedule)} | last ${when(item.lastRunAt)} | next ${when(item.nextRunAt)}\n  ${item.instructions.replace(/\s+/g, " ").slice(0, 300)}`;
 
-function createAutomationTools({ automations }) {
+// confirm(conversationId, card): the user's answer to a card in the chat;
+// deleting an automation waits for it (approvals.cjs).
+function createAutomationTools({ automations, confirm = null }) {
   const text = value => ({ contentItems: [{ type: "inputText", text: String(value) }], success: true });
   // An agent sees and changes only its own automations.
   const own = (agent, automationId) => {
@@ -68,7 +72,15 @@ function createAutomationTools({ automations }) {
           const patch = Object.fromEntries(["name", "instructions", "schedule", "enabled"].filter(key => input[key] !== undefined).map(key => [key, input[key]]));
           return text("Updated:\n" + describe(automations.update(input.id, patch)));
         }
-        case "delete": { own(agent, input.id); automations.remove(input.id); return text("Deleted."); }
+        case "delete": {
+          const item = own(agent, input.id);
+          if (confirm) {
+            const answer = await confirm(conversationId, { kind: "delete", title: "Delete this automation?", agent: agent.name, app: "Automations", lines: [{ label: "Name", value: item.name }, ...(scheduleText(item.schedule) ? [{ label: "When", value: scheduleText(item.schedule) }] : [])], body: null, action: "Delete" });
+            if (answer.decision !== "accept") return refusal(answer, "delete");
+          }
+          automations.remove(input.id);
+          return text("Deleted.");
+        }
         case "run_now": {
           own(agent, input.id);
           const record = await automations.runNow(input.id);

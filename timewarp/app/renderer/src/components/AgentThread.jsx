@@ -79,7 +79,7 @@ function Paused({ onContinue }) {
 }
 
 // A turn error in the previous app's words, with what can be done about it.
-export function TurnError({ error, onContinue, funding, onSettings }) {
+export function TurnError({ error, onContinue, funding, onSettings, conversationId = null }) {
   const [retry, retrying] = useOnce(source => onContinue(source));
   const [connecting, setConnecting] = useState(false);
   const [problem, setProblem] = useState("");
@@ -107,7 +107,8 @@ export function TurnError({ error, onContinue, funding, onSettings }) {
   }
   const reconnect = () => {
     setConnecting(true); setProblem("");
-    request("connectChatgpt").catch(failure => setProblem(failure?.message || String(failure))).finally(() => setConnecting(false));
+    // The sign-in opens beside the chat (or in a window when it can't).
+    request("connectChatgpt", conversationId ? { conversationId } : {}).catch(failure => setProblem(failure?.message || String(failure))).finally(() => setConnecting(false));
   };
   return (
     <div className="tw-turn-problem">
@@ -126,7 +127,7 @@ export function TurnError({ error, onContinue, funding, onSettings }) {
 // Below the last message: what the agent is doing, or why it stopped.
 // state comes from threadState(); workers are the chat's subagents. Drawn
 // again only when one of these changes, not for each streamed token.
-export const AgentActivity = React.memo(function AgentActivity({ state, commentary, workers, browserTab, working, onOpenThread, onOpenBrowser, onContinue, funding, onSettings }) {
+export const AgentActivity = React.memo(function AgentActivity({ state, commentary, workers, browserTab, working, onOpenThread, onOpenBrowser, onContinue, funding, onSettings, conversationId = null }) {
   const active = state.status === "running" || state.status === "paused";
   const waiting = workers.filter(worker => ["running", "paused", "starting"].includes(workerState(worker.status)));
   const showWaiting = !commentary && waiting.length > 0;
@@ -142,7 +143,7 @@ export const AgentActivity = React.memo(function AgentActivity({ state, commenta
       ) : null}
       {!active && !showWaiting && state.status !== "interrupted" && state.status !== "failed" && working ? <WorkingLine text="Working..." /> : null}
       {state.status === "interrupted" ? <Paused onContinue={onContinue} /> : null}
-      {state.status === "failed" ? <div className="tw-activity-error"><TurnError key={state.turnId || "failed"} error={state.error} onContinue={onContinue} funding={funding} onSettings={onSettings} /></div> : null}
+      {state.status === "failed" ? <div className="tw-activity-error"><TurnError key={state.turnId || "failed"} error={state.error} onContinue={onContinue} funding={funding} onSettings={onSettings} conversationId={conversationId} /></div> : null}
     </div>
   );
 });

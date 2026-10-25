@@ -1,15 +1,15 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { BookMarked, CalendarClock, Check, ChevronLeft, ChevronRight, FileText, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pencil, Pin, PinOff, Plus, RotateCw, Settings, Share, Trash2, UserRound, Volume2, VolumeX, X } from "lucide-react";
-import { accountText, call, relativeTime, useEvent } from "../api.js";
-import { Markdown } from "../markdown.jsx";
-import { Avatar, ContextMenu, Dialog, Menu, Switch, useConfirm, useToast } from "./common.jsx";
-import { AppIcon, useApps } from "./Composer.jsx";
-import { AutomationDialog, describeSchedule } from "./Automations.jsx";
-import { shareItem } from "./Share.jsx";
-import { Files, recentFiles } from "./Files.jsx";
+import { Check, ChevronLeft, ChevronRight, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pin, PinOff, Plus, RotateCw, Settings, UserRound, Volume2, VolumeX, X } from "lucide-react";
+import { call, useEvent } from "../api.js";
+import { Avatar, ContextMenu, Menu, useToast } from "./common.jsx";
+import { Files } from "./Files.jsx";
+import { AGENT_SECTIONS, AgentPage } from "./AgentId.jsx";
 
 const host = url => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url || ""; } };
-const TOOLS = { agent: "Agent", files: "Files" };
+// The agent page opens at its instructions ("agent") or at one of its
+// sections ("agent:mail" and so on).
+const agentSection = tool => tool === "agent" ? "instructions" : typeof tool === "string" && tool.startsWith("agent:") && AGENT_SECTIONS.includes(tool.slice(6)) ? tool.slice(6) : null;
+const toolTitle = tool => agentSection(tool) ? "Agent" : tool === "files" ? "Files" : null;
 
 // The site's own icon, never a third-party favicon service; a letter otherwise.
 // A page's title, or its address when only that was saved (titles saved before the page had one).
@@ -65,182 +65,6 @@ function Home({ conversation, agent, onOpen, onTool }) {
           </div>
         ) : <p className="tw-hint">Your recent websites will appear here.</p>}
       </section>
-    </div>
-  );
-}
-
-// The agent: picture, instructions, the connected apps it can use and vault access.
-// What "Add workflow" and "Add automation" ask, in the chat the pane belongs to.
-const AUTOMATION_PROMPT = "Help me set up an automation for this agent. Work out with me whether it should run on a schedule or when something happens.";
-const WORKFLOW_PROMPT = "Help me create a new workflow for this agent. Work out the steps with me, then save it as a skill in your workspace so you can repeat it.";
-const within = (root, file) => {
-  const norm = value => String(value || "").replace(/\\/g, "/").replace(/\/+$/, "");
-  const [base, target] = window.tw?.platform === "win32" ? [norm(root).toLowerCase(), norm(file).toLowerCase()] : [norm(root), norm(file)];
-  return !!base && target.startsWith(base + "/");
-};
-const relativeTo = (root, file) => String(file).replace(/\\/g, "/").slice(String(root).replace(/\\/g, "/").replace(/\/+$/, "").length + 1);
-
-// A workflow (a skill in the agent's workspace) and what it does.
-function WorkflowDialog({ skill, onClose }) {
-  const [text, setText] = useState(null);
-  useEffect(() => { setText(null); if (skill) call("skills.read", { path: skill.path }).then(value => setText(value.text || "")).catch(() => setText("")); }, [skill?.path]);
-  return (
-    <Dialog open={!!skill} onClose={onClose} title={skill?.title} description={skill?.description}>
-      {skill ? (text === null ? <p className="tw-hint">Loading workflow…</p> : <div className="tw-skill-text"><Markdown text={text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")} /></div>) : null}
-    </Dialog>
-  );
-}
-
-function AgentPage({ agent, conversationId, onEditAgent, onAgentChanged, onSettings, onArchiveAgent, onAsk, onOpenFiles }) {
-  const [automations, setAutomations] = useState([]);
-  useEffect(() => { call("automations.list").then(setAutomations).catch(() => setAutomations([])); }, [agent.id]);
-  useEvent("automations.changed", () => { call("automations.list").then(setAutomations).catch(() => {}); });
-  const mine = automations.filter(item => item.agentId === agent.id);
-  // An automation's row opens its details, as before; it closes if the automation goes.
-  const [openAutomation, setOpenAutomation] = useState(null);
-  const detail = mine.find(item => item.id === openAutomation) || null;
-  const [instructions, setInstructions] = useState(null);
-  const [access, setAccess] = useState(undefined);
-  const { items } = useApps();
-  const toast = useToast();
-  // Its workspace AGENTS.md, as the previous app showed it.
-  useEffect(() => { call("agents.workspaceInstructions", { id: agent.id }).then(value => setInstructions(value.instructions || "")).catch(() => setInstructions("")); }, [agent.id, agent.name, agent.updatedAt]);
-  useEffect(() => { call("integrations.getAccess", { agentId: agent.id }).then(value => setAccess(value.items ?? null)).catch(() => setAccess(null)); }, [agent.id, items]);
-  const accounts = (items || []).filter(app => app.accounts?.length).flatMap(app => app.accounts.map(account => ({ app, account })));
-  const allowed = entry => access == null || access.some(item => item.integrationId === entry.app.id && item.accountId === entry.account.id);
-  const save = async next => {
-    const value = next.length === accounts.length ? null : next.map(entry => ({ kind: "integration", owner: "user", integrationId: entry.app.id, accountId: entry.account.id }));
-    const previous = access;
-    setAccess(value);
-    try { await call("integrations.setAccess", { agentId: agent.id, items: value }); } catch (error) { setAccess(previous); toast(error, "error"); }
-  };
-  const using = accounts.filter(allowed), other = accounts.filter(entry => !allowed(entry));
-  // Accounts waiting to reconnect are listed too, as before; choosing one reconnects it.
-  const waiting = (items || []).filter(app => app.pendingAccounts?.length).flatMap(app => app.pendingAccounts.map(account => ({ app, account, pending: true })));
-  const rows = [...using, ...waiting].sort((a, b) => a.app.displayName.localeCompare(b.app.displayName));
-  // The account comes back connected for this agent.
-  const reconnect = entry => call("integrations.beginConnect", { integrationId: entry.app.id, agentId: agent.id, reconnectAccountId: entry.account.id }).then(() => toast("Finish connecting in the window that opened.")).catch(error => toast(error, "error"));
-  const setVault = value => call("agents.update", { id: agent.id, vaultAccess: value }).then(() => onAgentChanged?.()).catch(error => toast(error, "error"));
-  const confirm = useConfirm();
-  // Instructions are its AGENTS.md, edited here as Markdown, as before.
-  const [draft, setDraft] = useState(null);
-  const [savingInstructions, setSavingInstructions] = useState(false);
-  const saveInstructions = () => {
-    setSavingInstructions(true);
-    call("agents.saveWorkspaceInstructions", { id: agent.id, instructions: draft }).then(value => { setInstructions(value.instructions || ""); setDraft(null); })
-      .catch(error => toast(error, "error")).finally(() => setSavingInstructions(false));
-  };
-  // Workflows are the skills kept in its workspace.
-  const [workflows, setWorkflows] = useState(null);
-  const [workflow, setWorkflow] = useState(null);
-  useEffect(() => {
-    call("skills.list").then(value => setWorkflows((value.skills || []).filter(skill => within(agent.workspace, skill.path)))).catch(() => setWorkflows([]));
-  }, [agent.id, agent.workspace]);
-  // Files opened from its workspace, newest first.
-  const [recent, setRecent] = useState(() => recentFiles(agent.id));
-  useEffect(() => {
-    setRecent(recentFiles(agent.id));
-    const update = ({ detail }) => { if (detail?.agentId === agent.id) setRecent(recentFiles(agent.id)); };
-    window.addEventListener("tw:recent-files", update);
-    return () => window.removeEventListener("tw:recent-files", update);
-  }, [agent.id]);
-  const remove = async () => {
-    if (await confirm({ title: `Remove ${agent.name}?`, body: "This removes the agent and its conversations from your sidebar. Its workspace folder stays on this computer.", action: "Remove", danger: true })) onArchiveAgent(agent);
-  };
-  return (
-    <div className="tw-agent-page">
-      <div className="tw-agent-page-head">
-        <button type="button" className="tw-agent-picture" title="Edit agent" aria-label="Edit agent picture" onClick={() => onEditAgent(agent)}>
-          <Avatar agent={agent} /><span className="badge"><Pencil size={14} /></span>
-        </button>
-        <button type="button" className="tw-agent-name" title="Edit agent" onClick={() => onEditAgent(agent)}><span>{agent.name}</span><Pencil size={14} /></button>
-      </div>
-      <div className="tw-agent-page-row first">
-        <h3>Instructions</h3>
-        {draft === null && instructions !== null ? <button type="button" className="tw-agent-add" onClick={() => setDraft(instructions)}>Edit</button> : null}
-      </div>
-      {draft !== null ? (
-        <div className="tw-agent-editor">
-          <textarea className="tw-textarea" autoFocus value={draft} maxLength={50000} aria-label="Instructions (Markdown)" disabled={savingInstructions} onChange={event => setDraft(event.target.value)}
-            onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setDraft(null); } if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) saveInstructions(); }} />
-          <div className="tw-dialog-actions">
-            <button type="button" className="tw-btn" disabled={savingInstructions} onClick={() => setDraft(null)}>Cancel</button>
-            <button type="button" className="tw-btn primary" disabled={savingInstructions || draft === instructions} onClick={saveInstructions}>{savingInstructions ? "Saving…" : "Save"}</button>
-          </div>
-        </div>
-      ) : (
-        <div className="tw-agent-card tw-agent-instructions">
-          {instructions === null ? <p className="tw-hint">…</p> : instructions ? <Markdown text={instructions} /> : <p className="tw-hint">No instructions yet.</p>}
-        </div>
-      )}
-      <div className="tw-agent-page-row">
-        <h3>Tools</h3>
-        <Menu align="right" width={260} trigger={({ toggle }) => <button type="button" className="tw-agent-add" onClick={toggle}><Plus size={12} />Add</button>}>
-          {other.map(entry => (
-            <button key={entry.app.id + entry.account.id} type="button" className="tw-menu-item" data-close onClick={() => void save([...using, entry])}>
-              <AppIcon app={entry.app} /><span className="grow">{entry.app.displayName}<small>{accountText(entry.account)}</small></span>
-            </button>
-          ))}
-          {other.length ? <div className="tw-menu-sep" /> : null}
-          <button type="button" className="tw-menu-item" data-close onClick={() => onSettings?.("tools")}><Plus size={15} /><span className="grow">Connect a tool</span></button>
-        </Menu>
-      </div>
-      <div className="tw-agent-card tw-agent-tools">
-        {rows.map(entry => entry.pending ? (
-          <button key={entry.app.id + entry.account.id} type="button" className="tw-agent-tool tw-agent-tool-button" title="Reconnect" onClick={() => void reconnect(entry)}>
-            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc" title={accountText(entry.account)}>{accountText(entry.account)} (Authentication expired — reconnect required)</span>
-          </button>
-        ) : (
-          <div key={entry.app.id + entry.account.id} className="tw-agent-tool">
-            <AppIcon app={entry.app} /><strong>{entry.app.displayName}</strong><span className="desc" title={accountText(entry.account)}>{accountText(entry.account)}</span>
-            <button type="button" className="tw-icon-button" title="Remove" aria-label={`Remove ${entry.app.displayName} ${entry.account.displayName}`} onClick={() => void save(using.filter(item => item !== entry))}><X size={12} /></button>
-          </div>
-        ))}
-        <div className="tw-agent-tool">
-          <KeyRound size={16} strokeWidth={1.7} /><strong>Vault access</strong><span className="desc">Use all vault credentials and create passkeys without asking again</span>
-          <Switch label={`${agent.name} can use the vault`} checked={!!agent.vaultAccess} onChange={setVault} />
-        </div>
-      </div>
-      <div className="tw-agent-page-row">
-        <h3>Workflows</h3>
-        {workflows?.length ? <button type="button" className="tw-agent-add" onClick={() => onAsk(WORKFLOW_PROMPT)}><Plus size={12} />New</button> : null}
-      </div>
-      <div className="tw-agent-card">
-        {(workflows || []).map(skill => (
-          <button key={skill.path} type="button" className="tw-agent-tool tw-agent-tool-button" onClick={() => setWorkflow(skill)}>
-            <BookMarked size={16} strokeWidth={1.7} /><strong>{skill.title}</strong><span className="desc">{skill.description}</span>
-          </button>
-        ))}
-        {workflows === null ? <p className="tw-hint tw-agent-note">Loading…</p> : workflows.length ? null : <button type="button" className="tw-agent-action" onClick={() => onAsk(WORKFLOW_PROMPT)}><Plus size={16} />Add workflow</button>}
-      </div>
-      <WorkflowDialog skill={workflow} onClose={() => setWorkflow(null)} />
-      <h3 className="tw-agent-section">Automations</h3>
-      <div className="tw-agent-card">
-        {mine.map(item => (
-          <button key={item.id} type="button" className="tw-agent-tool tw-agent-tool-button tw-agent-automation" onClick={() => setOpenAutomation(item.id)}>
-            <CalendarClock size={16} strokeWidth={1.7} /><strong>{item.name}</strong><span className="desc">{item.enabled ? describeSchedule(item.schedule) : "Paused"}</span>
-          </button>
-        ))}
-        <button type="button" className={"tw-agent-action" + (mine.length ? " inner" : "")} onClick={() => onAsk(AUTOMATION_PROMPT)}><Plus size={16} />Add automation</button>
-      </div>
-      <AutomationDialog automation={detail} onClose={() => setOpenAutomation(null)} onRan={ranIn => { if (ranIn) location.hash = "#/conversation/" + ranIn; }} />
-      <div className="tw-agent-page-row">
-        <h3>Recent files</h3>
-        <button type="button" className="tw-agent-add" onClick={() => onOpenFiles(null)}>View all</button>
-      </div>
-      <div className="tw-agent-card">
-        {recent.map(item => (
-          <button key={item.path} type="button" className="tw-agent-tool tw-agent-tool-button" title={item.path} onClick={() => onOpenFiles(item.path)}>
-            <FileText size={16} strokeWidth={1.7} /><strong className="tw-ellipsis">{item.path.split("/").pop()}</strong><span className="desc" /><time className="tw-hint">{relativeTime(item.openedAt)}</time>
-          </button>
-        ))}
-        {recent.length ? null : <button type="button" className="tw-agent-action" onClick={() => onOpenFiles(null)}><Plus size={16} />Add files</button>}
-      </div>
-      <h3 className="tw-agent-section">Manage agent</h3>
-      <div className="tw-agent-card">
-        <button type="button" className="tw-agent-action" onClick={() => shareItem("agent", agent.id, agent.name)}><Share size={16} />Share agent</button>
-        <button type="button" className="tw-agent-action inner tw-danger-hover" onClick={() => void remove()}><Trash2 size={16} />Remove agent</button>
-      </div>
     </div>
   );
 }
@@ -314,14 +138,14 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
   }, [id]);
   useEvent("browser.state", value => { if (value.conversationId === id) setState(value); });
   // A tool opens on the new tab page that's showing, or in a new tab.
-  const showTool = async (name, files, snapshot = null) => {
+  const showTool = async (name, snapshot = null) => {
     const now = snapshot?.tabs ? snapshot : latestState.current, used = latestTools.current;
     const current = now.tabs.find(tab => tab.id === now.active);
-    let tabId = current?.kind === "home" && (!used[current.id] || used[current.id] === name) ? current.id : null;
+    const same = tool => tool === name || (agentSection(name) && agentSection(tool));
+    let tabId = current?.kind === "home" && (!used[current.id] || same(used[current.id])) ? current.id : null;
     if (!tabId) { const tab = await call("browser.newTab", { conversationId: id }).catch(error => { toast(error, "error"); return null; }); tabId = tab?.id; }
     if (!tabId) return;
     setTools(value => ({ ...value, [tabId]: name }));
-    if (files) setFileStates(value => ({ ...value, [tabId]: files(value[tabId] || { open: [], active: null }) }));
   };
   const [fileTab, setFileTab] = useState(null);
   useEffect(() => {
@@ -336,9 +160,9 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
   useEffect(() => {
     if (!openTool?.tool) return;
     onToolOpened?.();
-    void Promise.resolve(shown.current).then(value => showTool(openTool.tool, null, value));
+    void Promise.resolve(shown.current).then(value => showTool(openTool.tool, value));
   }, [openTool?.at]);
-  // "Add workflow" and "Add automation" ask in this chat, which then shows, as before.
+  // "Add automation" asks in this chat, which then shows, as before.
   const ask = text => {
     const event = new CustomEvent("tw:chat-send", { detail: { conversationId: id, text }, cancelable: true });
     window.dispatchEvent(event);
@@ -412,7 +236,7 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
   };
   useEffect(() => { onRegisterClose?.(() => latest.current()); return () => onRegisterClose?.(null); }, []);
   const profile = profiles.find(item => item.id === (profileId || active?.profileId || conversation.browserProfileId)) || profiles.find(item => item.isDefault) || profiles[0];
-  const tabTitle = tab => (tab.kind === "home" ? TOOLS[tools[tab.id]] || "New tab" : tab.title || host(tab.url) || "New tab");
+  const tabTitle = tab => (tab.kind === "home" ? toolTitle(tools[tab.id]) || "New tab" : tab.title || host(tab.url) || "New tab");
   const menuTab = tabMenu && state.tabs.find(tab => tab.id === tabMenu.tabId);
   return (
     <aside className="tw-pane" aria-label="Browser and files">
@@ -428,12 +252,14 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
               }}
               onContextMenu={event => { event.preventDefault(); setTabMenu({ x: event.clientX, y: event.clientY, tabId: tab.id }); }}
               onAuxClick={event => { if (event.button === 1 && !tab.pinned) void closeTab(tab); }}>
-              {tab.kind === "web" && tab.favicon ? <img src={tab.favicon} alt="" width="14" height="14" /> : tab.kind === "home" && tools[tab.id] === "agent" ? <Avatar agent={agent} size="tiny" /> : tab.kind === "home" && tools[tab.id] === "files" ? <FilesIcon size={14} strokeWidth={1.7} /> : <Globe size={14} strokeWidth={1.7} />}
+              {tab.kind === "web" && tab.favicon ? <img src={tab.favicon} alt="" width="14" height="14" /> : tab.kind === "home" && agentSection(tools[tab.id]) ? <Avatar agent={agent} size="tiny" /> : tab.kind === "home" && tools[tab.id] === "files" ? <FilesIcon size={14} strokeWidth={1.7} /> : <Globe size={14} strokeWidth={1.7} />}
               <span>{tabTitle(tab)}</span>
               {tab.pinned ? <Pin size={11} className="tw-pin-mark" aria-label="Pinned" /> : <button type="button" aria-label={"Close " + tabTitle(tab)} onClick={event => { event.stopPropagation(); void closeTab(tab); }}><X size={12} /></button>}
             </div>
           ))}
         </div>
+        {/* Right after the newest tab, as in Chrome. */}
+        <button type="button" className="tw-icon-button tw-pane-add" aria-label="Add browser tab" title="New tab" onClick={() => void run("browser.newTab")}><Plus size={12} strokeWidth={2} /></button>
         <ContextMenu at={menuTab ? tabMenu : null} onClose={closeTabMenu}>
           {menuTab ? (
             <>
@@ -444,7 +270,6 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
           ) : null}
         </ContextMenu>
         <div className="tw-pane-controls">
-          <button type="button" className="tw-icon-button add" aria-label="Add browser tab" title="New tab" onClick={() => void run("browser.newTab")}><Plus size={12} strokeWidth={2} /></button>
           {narrow ? null : <button type="button" className="tw-icon-button" aria-label={expanded ? "Restore secondary pane" : "Expand secondary pane"} title={expanded ? "Restore" : "Expand"} onClick={onExpand}>{expanded ? <Minimize2 size={16} strokeWidth={1.7} /> : <Maximize2 size={16} strokeWidth={1.7} />}</button>}
           <button type="button" className="tw-icon-button" aria-label="Hide pane" title="Hide pane" onClick={onClose}><PanelRight size={16} strokeWidth={1.7} /></button>
         </div>
@@ -479,8 +304,8 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
       </form>
       <div className="tw-pane-content" ref={content}>
         {tool === "files" ? <ToolPage title="Files" onBack={() => setTool(null)}><Files key={active.id} agent={agent} files={filesOf(active.id)} onChange={value => setFilesOf(active.id, value)} openPath={fileTab?.tabId === active?.id ? fileTab : null} /></ToolPage>
-          : tool === "agent" ? <ToolPage title="Agent" onBack={() => setTool(null)}><AgentPage agent={agent} conversationId={id} onEditAgent={onEditAgent} onAgentChanged={onAgentChanged} onSettings={onSettings} onArchiveAgent={onArchiveAgent} onAsk={ask}
-            onOpenFiles={file => void showTool("files", file ? current => ({ open: current.open.includes(file) ? current.open : [...current.open, file], active: file }) : null)} /></ToolPage>
+          : agentSection(tool) ? <ToolPage title="Agent" onBack={() => setTool(null)}><AgentPage agent={agent} conversationId={id} section={agentSection(tool)} onSection={section => setTool(section === "instructions" ? "agent" : "agent:" + section)}
+            onEditAgent={onEditAgent} onAgentChanged={onAgentChanged} onSettings={onSettings} onArchiveAgent={onArchiveAgent} onAsk={ask} /></ToolPage>
           : !active || active.kind === "home" ? <Home conversation={conversation} agent={agent} onOpen={open} onTool={setTool} /> : null}
       </div>
     </aside>

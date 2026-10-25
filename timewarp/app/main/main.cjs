@@ -213,7 +213,7 @@ async function boot() {
   const { CODEX_FEATURES, WINDOWS_SANDBOX_FEATURES, PERMISSIONS, agentThreadConfig, workspaceRoots, toolServers, REPLACED_SKILLS } = require("./codex-config.cjs");
   // Timewarp's base prompt, in place of Codex's own.
   const { BASE_INSTRUCTIONS } = require("./base-instructions.cjs");
-  const { createToolServer } = require("./tool-server.cjs");
+  const { createToolServer, mcpResult } = require("./tool-server.cjs");
   // The cards agents can put in their messages (widgets.jsx).
   const { WIDGETS } = require("./widget-instructions.cjs");
   const { createBrowser } = require("./browser.cjs");
@@ -224,6 +224,9 @@ async function boot() {
   const { createSandbox } = require("./sandbox.cjs");
   const { createMcp } = require("./mcp.cjs");
   const { createVault, safeStorageCipher } = require("./vault.cjs");
+  const { createAgentIds, createAutomationSync, agentIdApi } = require("./agent-id.cjs");
+  const { createAgentIdTools } = require("./agent-id-tools.cjs");
+  const { protectedStore } = require("../../desktop/protected-store.cjs");
   const { createVaultTools } = require("./vault-tools.cjs");
   const { migrateAppearance, defaultAccent } = require("../../shared/appearance.cjs");
 
@@ -284,7 +287,9 @@ async function boot() {
       if (changedUser) {
         sandboxArmed = false;
         accountSync?.stop(); accountSync = null;
-        await client.stop().catch(() => {}); harness.reset(); toolsRegistered = false;
+        await client.stop().catch(() => {}); harness.reset(); toolsRegistered = false; agentIdTools.reset();
+        // Signed out, the Agent ID window's website session goes too.
+        if (services.auth.user()) agentIdWindows.close(); else await agentIdWindows.forget(path.join(app.getPath("userData"), "Partitions"));
         browser.closeAll(); replies.clear();
         applyThemeSource(store.settings.get("appearance")?.scheme);
       }
@@ -292,8 +297,16 @@ async function boot() {
       broadcast("account.changed", { signedIn: !!services.auth.user() });
     },
     onCodexConnected: async () => { await booted; services.funding.invalidate(); await selectModel().catch(() => console.error("[timewarp] The default model could not be updated.")); fundingChanged(); },
-    // An app just connected or removed: the next message names the agent's accounts afresh.
-    onIntegrationsChanged: () => { void booted.then(() => appAccounts.clear()); },
+    // An app just connected or removed: the next message names the agent's
+    // accounts afresh. Agents that had a list start loading the new one at
+    // once, so the "<App> connected" message that follows doesn't wait for it.
+    onIntegrationsChanged: () => {
+      void booted.then(() => {
+        const known = [...appAccounts.keys()];
+        appAccounts.clear();
+        for (const id of known) { const agent = store.agents.get(id); if (agent && !agent.archivedAt) void connectedApps(agent); }
+      });
+    },
   });
   userId = () => services.auth.userId();
 
@@ -328,7 +341,9 @@ async function boot() {
   const knowledge = new Proxy({}, { get: (_target, name) => accountKnowledge()[name] });
   fs.mkdirSync(path.join(runtimeDir, "codex-app-server-cwd"), { recursive: true });
   // The local endpoint Codex uses for Timewarp models and connected apps.
-  const bridge = createModelBridge({ token: bridgeToken, cloud: services.cloud, cloudSafe: services.cloudSafe, funding: services.funding, chatgpt: services.chatgpt, integrations: services.integrations, mascots: require("../../desktop/mascots.cjs"), toolServer: () => toolServer });
+  // Sending, paying and deleting in connected apps wait for the user's card (connectedAppGate, below).
+  let connectedAppGate = null;
+  const bridge = createModelBridge({ token: bridgeToken, cloud: services.cloud, cloudSafe: services.cloudSafe, funding: services.funding, chatgpt: services.chatgpt, integrations: services.integrations, mascots: require("../../desktop/mascots.cjs"), toolServer: () => toolServer, gate: call => connectedAppGate ? connectedAppGate(call) : { isError: true, content: [{ type: "text", text: "Timewarp is still starting; try again in a moment." }] } });
   const bridgeReady = bridge.listen();
   bridgeReady.catch(error => console.error("[timewarp]", error.message));
   const vendor = vendorRoot();
@@ -487,9 +502,11 @@ async function boot() {
   function connectedApps(agent) {
     const known = appAccounts.get(agent.id);
     if (!known?.loading && (!known || Date.now() - known.at > 60000)) {
-      const loading = services.integrations.list({ agentId: agent.id }).then(accountsText).catch(() => known?.text ?? null)
-        .then(text => { appAccounts.set(agent.id, { at: Date.now(), text }); return text; });
-      appAccounts.set(agent.id, { ...known, loading });
+      // A list that was loading as the apps changed (the map was cleared) isn't kept.
+      const entry = { ...known };
+      entry.loading = services.integrations.list({ agentId: agent.id }).then(accountsText).catch(() => known?.text ?? null)
+        .then(text => { if (appAccounts.get(agent.id) === entry) appAccounts.set(agent.id, { at: Date.now(), text }); return text; });
+      appAccounts.set(agent.id, entry);
     }
     const entry = appAccounts.get(agent.id);
     // A known list answers at once while a fresh one loads.
@@ -504,24 +521,62 @@ async function boot() {
     const mode = memoryMode(store.settings.get("memory")?.mode);
     // The first list for an agent is waited for briefly; without it the message goes as it is.
     const apps = agent ? await Promise.race([connectedApps(agent), new Promise(resolve => { const timer = setTimeout(resolve, 1500, null); timer.unref?.(); })]) : null;
-    const memory = knowledge.context(mode);
+    // The memory in three entries (knowledge.cjs contextParts): the notes,
+    // today's log and earlier days. Each is sent again only when it changed,
+    // so a new line in today's log doesn't send the whole notes file again.
+    const memory = knowledge.contextParts(mode);
     return {
       timewarp_message_time: `The user's message was sent on ${local} (${zone}, ${utc}).`,
       ...(account ? { timewarp_account: [`Signed in to Timewarp as ${account.name ? account.name + ", " : ""}${account.email || "an account without an email address"}.`, ...(apps ? [apps] : [])].join("\n") } : {}),
-      timewarp_memory: memory || (mode === "enabled" || mode === "read" ? "No notes about the user yet." : "Memory is off for reading: don't rely on memory shown earlier in this chat."),
+      timewarp_memory: memory ? memory.notes || "No notes about the user yet." : "Memory is off for reading: don't rely on memory shown earlier in this chat.",
+      ...(memory ? { timewarp_memory_today: memory.today || "Nothing in today's log yet.", timewarp_memory_days: memory.earlier || "No earlier days in the log yet." } : {}),
     };
   }
 
   const browser = createBrowser({ window: () => mainWindow, store, notify: broadcast, log: appLog, zoom: () => mainWindow?.webContents.getZoomFactor() ?? 1 });
   pane = browser;
   if (windowZoom) browser.setPageFit(windowZoom.fit());
-  const browserTools = createBrowserTools({ browser, onActivity: (conversationId, action) => broadcast("browser.agent", { conversationId, action }) });
+  // A click or Enter in a page that sends, pays or deletes asks on a card in the chat (confirmInChat, below).
+  const browserTools = createBrowserTools({ browser, onActivity: (conversationId, action) => broadcast("browser.agent", { conversationId, action }), confirm: (conversationId, card) => confirmInChat(conversationId, card) });
   // Raise when the tool set changes: chats then continue in a new thread.
   const cipher = safeStorageCipher(safeStorage);
   const vault = createVault({ store, cipher, userId: () => userId() });
+  // Each agent's Agent ID, its key encrypted on this computer (agent-id.cjs).
+  // Preview builds answer it themselves, or use a local Agent ID (scripts/
+  // agent-id-dev.cjs) with one of its session tokens, and its local website.
+  const localAgentId = fixture && process.env.TIMEWARP_FIXTURE_AGENT_ID_URL ? { base: process.env.TIMEWARP_FIXTURE_AGENT_ID_URL, token: process.env.TIMEWARP_FIXTURE_AGENT_ID_TOKEN || "", site: process.env.TIMEWARP_FIXTURE_AGENT_ID_SITE || "http://localhost:8093" } : null;
+  const agentIdRequest = localAgentId ? agentIdApi({ config, base: localAgentId.base, auth: { accessToken: async () => localAgentId.token } })
+    : fixture ? fixture.agentId : agentIdApi({ config, auth: services.auth });
+  const agentIdSite = localAgentId?.site || "https://timewarpdev.com";
+  // The owner's own Agent ID pages, in a window no agent reaches (agent-id-window.cjs).
+  const agentIdWindows = require("./agent-id-window.cjs").createAgentIdWindows({
+    BrowserWindow, session, dialog, icon: appIcon, userId: () => userId(), request: agentIdRequest, site: agentIdSite, supabaseUrl: config.supabaseUrl, loopback: !!fixture,
+    onClosed: () => broadcast("agentId.changed", {}), log: (message, detail) => appLog.warn("agent-id", message, { detail }),
+  });
+  const agentIds = createAgentIds({
+    request: agentIdRequest,
+    storage: protectedStore(path.join(profile, "agent-ids.bin"), safeStorage), encryption: safeStorage,
+    agents, userId: () => userId(), openPage: url => agentIdWindows.open(url), site: agentIdSite, log: (message, detail) => appLog.warn("agent-id", message, { detail }),
+  });
+  // Each agent's own Agent ID as tools in its chats (agent-id-tools.cjs).
+  const agentIdToolsFile = path.join(profile, "agent-id-tools.json");
+  const agentIdTools = createAgentIdTools({
+    request: agentIdRequest, agentIds, version: VERSION,
+    cache: { load: () => JSON.parse(fs.readFileSync(agentIdToolsFile, "utf8")), save: value => fs.writeFileSync(agentIdToolsFile, JSON.stringify(value)) },
+    modelOf: conversationId => store.conversations.get(conversationId)?.modelSettings?.name || store.settings.get("modelSettings")?.name || null,
+    // Sending, paying and deleting ask on a card in the chat (confirmInChat, below).
+    confirm: (conversationId, card) => confirmInChat(conversationId, card),
+    log: (message, detail) => appLog.warn("agent-id", message, { detail }),
+  });
+  void agentIdTools.refresh();
   const vaultTools = createVaultTools({
     vault, browserTools,
-    ask: async (message, detail) => {
+    // A card in the chat, as for sending and paying; a dialog only outside a chat.
+    ask: async (message, detail, card) => {
+      if (card?.conversationId) {
+        const { conversationId, ...question } = card;
+        return (await confirmInChat(conversationId, question)).decision === "accept";
+      }
       focusApp();
       const result = await dialog.showMessageBox(mainWindow, { type: "question", title: "Timewarp vault", message, detail, buttons: ["Allow", "Don't allow"], defaultId: 1, cancelId: 1, noLink: true });
       return result.response === 0;
@@ -578,6 +633,10 @@ async function boot() {
     // Late Codex events during quit find the database closed: they're dropped.
     notify: (name, payload) => { if (storeClosed) return; broadcast(name, payload); automations?.observe(name, payload); replies.observe(name, payload); background?.observe(name, payload); teamTools?.observe(name, payload); },
     log: (...args) => console.error("[timewarp]", ...args),
+    // Approvals, questions and app forms in chats: kind, app, timing and outcome, never their text or answers.
+    record: (level, message, facts) => appLog[level === "warn" ? "warn" : "info"]("request", message, facts),
+    // Codex asking before a connected app or Agent ID action that Timewarp's own card asks about.
+    answerFor: (method, params) => method === "mcpServer/elicitation/request" && require("./approvals.cjs").asksItself(params) ? { action: "accept", content: null, _meta: null } : null,
   });
   // Chat titles and the memory writer run in the background on a small model (memory-writer.cjs).
   background = (() => {
@@ -590,12 +649,16 @@ async function boot() {
       store, knowledge, runner, userId: () => userId(),
       memoryMode: () => memoryMode(store.settings.get("memory")?.mode), privateMode: () => store.settings.get("privacy")?.mode === "private",
       running: conversationId => { try { return harness.conversations.status(conversationId).running; } catch { return false; } },
+      quiet: turnId => !!harness.isQuietRun(turnId),
       log: message => appLog.warn("background", message),
     });
     return { observe: (name, payload) => { titles.observe(name, payload); writer.observe(name, payload); }, stop: () => writer.stop() };
   })();
-  automations = createAutomations({ store, harness, userId: () => userId(), notify: broadcast, log: (...args) => console.error("[timewarp]", ...args) });
-  automationTools = require("./automation-tools.cjs").createAutomationTools({ automations });
+  // Automations show on each agent's Agent ID, and its website's requests come back here (agent-id.cjs).
+  let automationSync = null;
+  automations = createAutomations({ store, harness, userId: () => userId(), notify: (name, payload) => { broadcast(name, payload); if (name === "automations.changed") automationSync?.changed(); }, log: (...args) => console.error("[timewarp]", ...args) });
+  automationSync = createAutomationSync({ request: agentIdRequest, automations, userId: () => userId(), log: (message, detail) => appLog.warn("agent-id", message, { detail }) });
+  automationTools = require("./automation-tools.cjs").createAutomationTools({ automations, confirm: (conversationId, card) => confirmInChat(conversationId, card) });
   // The browser, vault, automation and chat tools for every agent thread, workers
   // included. A call acts for the chat its thread (or its parent) belongs to.
   const automationSpecs = require("./automation-tools.cjs").toolSpecs;
@@ -621,6 +684,22 @@ async function boot() {
       } catch (error) { appLog.warn("notifications", "A card notification couldn't be shown: " + error.message); }
     }
     return asked;
+  };
+  // A connected app's action that sends, pays or deletes runs only after the
+  // user's OK on a card written from its own arguments (approvals.cjs),
+  // even when the user asked for it.
+  const approvals = require("./approvals.cjs");
+  connectedAppGate = async ({ conversationId, agent, arguments: args }) => {
+    const kind = approvals.composioKind(args.toolSlug, args.arguments || {});
+    if (!kind) return null;
+    let account = null;
+    try {
+      const apps = (await services.integrations.list({}))?.items || [];
+      const found = apps.flatMap(app => app.accounts || []).find(item => item.id === args.connectedAccountId);
+      account = found?.email || found?.displayName || null;
+    } catch {}
+    const answer = await confirmInChat(conversationId, approvals.composioCard({ slug: args.toolSlug, args: args.arguments || {}, kind, agent: agent?.name, account }));
+    return answer.decision === "accept" ? null : mcpResult(approvals.refusal(answer, kind));
   };
   const appTools = require("./app-tools.cjs").createAppTools({
     store, harness, userId: () => userId(),
@@ -659,6 +738,8 @@ async function boot() {
       };
     },
     confirm: confirmInChat,
+    // What the other screens do (app_action): MCP servers, new agents, Agent ID.
+    mcp: () => mcp, agents, agentIds,
   });
   toolServer = createToolServer({
     token: toolsToken,
@@ -669,6 +750,7 @@ async function boot() {
       timewarp_chats: { title: "Timewarp chats", instructions: chatTools.specs()[0].description, specs: chatTools.specs, call: chatTools.call, readOnly: new Set(["search_conversations", "search_messages", "read_conversation"]) },
       timewarp_team: { title: "Timewarp team", instructions: teamTools.specs()[0].description, specs: teamTools.specs, call: teamTools.call, readOnly: new Set(["list_agents"]) },
       timewarp_app: { title: "Timewarp app", instructions: appTools.specs()[0].description, specs: appTools.specs, call: appTools.call, readOnly: new Set(["get_usage", "get_settings", "get_status"]) },
+      timewarp_agent_id: { title: "Timewarp Agent ID", specs: agentIdTools.specs, call: agentIdTools.call, readOnly: agentIdTools.readOnly },
     },
     resolve: (threadId, rootThreadId) => {
       const conversationId = harness.conversationFor(threadId) || harness.conversationFor(rootThreadId);
@@ -678,21 +760,34 @@ async function boot() {
     },
   });
 
-  // ChatGPT, app and MCP server sign-ins open in a Timewarp window
-  // (signin-window.cjs), never in the system browser or another app.
+  // ChatGPT, app and MCP server sign-ins open in Timewarp (signin-window.cjs),
+  // never in the system browser or another app: one started in a chat opens
+  // in that chat's pane, beside the agent; others in a Timewarp window.
   const signin = require("./signin-window.cjs").createSigninWindows({
     BrowserWindow, session: () => browser.sessionFor(store.browserProfiles.ensureDefault().id), parent: () => mainWindow, icon: appIcon, log: appLog,
     logo: (() => { try { return nativeImage.createFromPath(path.join(assetsDir, "app-icon.png")).resize({ width: 96, quality: "best" }).toDataURL(); } catch { return ""; } })(),
     css: (() => { try { return fs.readFileSync(path.join(assetsDir, "auth-bridge.css"), "utf8"); } catch { return ""; } })(),
+    // A chat of this account, with the app's window there to show it; the
+    // interface opens the chat's pane on the sign-in's tab.
+    chat: (conversationId, link, hooks) => {
+      const conversation = store.conversations.get(conversationId);
+      if (!conversation || !userId() || conversation.ownerId !== userId() || conversation.archivedAt || !mainWindow || mainWindow.isDestroyed()) return null;
+      const tab = browser.openSignin(conversationId, link, hooks);
+      broadcast("browser.signin", { conversationId, tabId: tab.id });
+      return tab;
+    },
+    onResult: result => broadcast("signin.finished", result),
   });
-  function openConnector(link, title = "Connect an app") { signin.open(link, { title }); return { opened: true }; }
+  // conversationId: the chat the sign-in was started in. inChat tells whether it opened there.
+  function openConnector(link, title = "Connect an app", conversationId = null) { return { opened: true, inChat: !!signin.open(link, { title, conversationId }).inChat }; }
   // Codex finishes the sign-in, and Timewarp shows how it went. Closing the
-  // window before it comes back stops waiting for it; a new Connect replaces it.
+  // window (or the chat's tab) before it comes back stops waiting for it; a
+  // new Connect replaces it.
   let chatgptSignin = null;
-  function openChatgpt({ authUrl, loginId }) {
+  function openChatgpt({ authUrl, loginId }, { conversationId = null } = {}) {
     chatgptSignin?.close();
     chatgptSignin = signin.open(authUrl, {
-      title: "Connect ChatGPT",
+      title: "Connect ChatGPT", conversationId,
       finish: {
         done: answer => answer.status === 200 && answer.path === "/success",
         pending: { title: "Connecting ChatGPT", message: "Finishing your ChatGPT sign-in…" },
@@ -701,7 +796,7 @@ async function boot() {
       },
       onClose: ({ returned }) => { if (!returned) return services.chatgpt.cancelLogin(loginId); },
     });
-    return { opened: true };
+    return { opened: true, inChat: !!chatgptSignin.inChat };
   }
   // The end-to-end check of a preview build answers the command confirmation;
   // other builds always ask.
@@ -709,8 +804,8 @@ async function boot() {
   const mcpChanged = (name, payload) => { if (name === "mcp.changed" && (!payload?.name || payload.success)) harness?.discardSpares(); broadcast(name, payload); };
   const mcp = createMcp({
     client, notify: mcpChanged, ...(fixture && process.env.TIMEWARP_FIXTURE_CONFIRM === "allow" ? { confirmCommand: async () => true } : {}),
-    openExternal: url => signin.open(url, {
-      title: "Sign in to a server",
+    openExternal: (url, { conversationId = null } = {}) => signin.open(url, {
+      title: "Sign in to a server", conversationId,
       finish: {
         done: answer => answer.status === 200,
         pending: { title: "Signing in", message: "Finishing your sign-in to the server…" },
@@ -804,10 +899,14 @@ async function boot() {
     const account = userId();
     if (!account) { history?.stop(); history = null; historyStatus = { state: "signed-out" }; accountSync?.stop(); accountSync = null; accountSyncStatus = { state: "signed-out" }; return; }
     if (!history) {
+      // A chat changed here goes to the account's other computers a few
+      // seconds later; what changed there comes at each pass.
       history = require("../../desktop/local-history.cjs").createLocalHistory({
-        ...adapter, userId: () => userId(), cloud: services.cloudJson,
+        ...adapter, userId: () => userId(), cloud: services.cloudJson, pushDelayMs: 3000,
         onStatus: state => { historyStatus = state; broadcast("history.status", state); },
+        onRestored: ids => broadcast("history.restored", { ids }),
         onError: () => console.error("[timewarp] Chat history sync is pending; local chats are preserved."),
+        log: message => appLog.info("history", message),
       });
     }
     try { importLegacyVault({ store, vault, decrypt: cipher.decrypt, runtimeDir, log: (...args) => console.error("[timewarp]", ...args) }); }
@@ -904,7 +1003,7 @@ async function boot() {
   const shares = require("./shares.cjs").createShares({ store, agents, harness, automations, accountRpc: (rpc, input) => services.accountRpc(rpc, input), userId: () => userId() });
   const methods = require("./methods.cjs").createMethods({
     app, dialog, shell, store, services, agents, harness, client, guard, browser, version: VERSION, profile, runtimeDir,
-    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, assistantImport, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates, shares,
+    modelChoices, selectModel, registerTools, historyStatus: () => historyStatus, flushHistory: () => history?.sync(), defaultAppearance, knowledge, assistantImport, onboarding, automations, mcp, codexHome, vault, agentIds, clipboard, diagnostics, logs: appLog, openConnector, previousSessionUnclean, browserImport, browserTools, sandbox, updates, shares,
   });
   if (fixture) methods["debug.browserFrame"] = ({ conversationId }) => browser.inspect(conversationId);
   if (fixture) methods["debug.diagnostics"] = () => diagnostics();
@@ -973,6 +1072,7 @@ async function boot() {
   trace("services wired");
   markBooted();
   automations.start();
+  automationSync.start();
   createWindow();
   // After the window exists: on Windows a window without a title bar only gets
   // the menu's shortcuts when the menu is set once it's open.
@@ -983,9 +1083,21 @@ async function boot() {
   await accountReady().catch(error => console.error("[timewarp] Account startup failed:", error.message));
   trace("account ready");
   startUpdates();
+  // Besides the passes every 30 seconds, the account's chats and data are
+  // brought up to date as the window gets the focus (at most every 15
+  // seconds), as the computer wakes or unlocks, and as it sleeps or locks, so
+  // the next computer picks up where this one left off.
+  let caughtUp = 0;
+  const catchUp = ({ now = false } = {}) => {
+    if (!userId() || (!now && Date.now() - caughtUp < 15000)) return;
+    caughtUp = Date.now();
+    void history?.sync(); void accountSync?.sync();
+  };
+  app.on("browser-window-focus", (_event, window) => { if (window === mainWindow) catchUp(); });
+  for (const name of ["resume", "unlock-screen", "suspend", "lock-screen"]) require("electron").powerMonitor.on(name, () => catchUp({ now: true }));
   app.on("will-quit", () => { appLog.info("shutdown", "Timewarp quit"); try { fs.rmSync(sessionMarker, { force: true }); } catch {} });
   // Quitting waits (a few seconds at most) for Codex to stop and chat history
-  // to save, then closes the database, so nothing writes to it once closed.
+  // and account data to save, then closes the database, so nothing writes to it once closed.
   // An update's installer starts as Timewarp quits, so that quit doesn't wait.
   let quitting = false, installing = false;
   try { require("electron").autoUpdater.on("before-quit-for-update", () => { installing = true; }); } catch {}
@@ -1006,8 +1118,8 @@ async function boot() {
     automations.stop(); browser.destroy(); clearTimeout(executionNotice); guard.stop?.();
     const within = (promise, ms) => Promise.race([Promise.resolve(promise).catch(() => {}), new Promise(resolve => setTimeout(resolve, ms))]);
     void (async () => {
-      await within(history?.sync(), 2000);
-      history?.stop(); services.close(); bridge.close();
+      await within(Promise.all([history?.sync(), accountSync?.sync()]), 2000);
+      history?.stop(); accountSync?.stop(); services.close(); bridge.close();
       await within(client.stop(), 3000);
       storeClosed = true;
       try { store.close(); } catch {}

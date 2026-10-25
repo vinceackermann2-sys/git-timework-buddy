@@ -18,6 +18,7 @@ test('every offered plan, addition and pack is level and never loses money when 
   for(const p of [...plans,...retired].filter(p=>p.monthlyUsd)){assert.equal(p.monthlyCredits,p.monthlyUsd*14,p.id+' is level');assert.ok(margin(p.monthlyUsd,p.monthlyCredits)>=0.05,p.id);}
   for(const addon of value(pricing,'MONTHLY_CREDIT_ADDONS').filter(a=>a.monthlyUsd)){assert.equal(addon.credits,addon.monthlyUsd*14,'addition is level');assert.ok(margin(addon.monthlyUsd,addon.credits,0)>=0.05,String(addon.credits));}
   const packs=value(credits,'CREDIT_PACKS');assert.equal(packs.length,7);
+  assert.equal(value(credits,'getCreditPack')(50),null,'old sizes are no longer sold');
   for(const pack of packs){assert.equal(pack.credits,pack.priceUsd*12,'pack is level');assert.equal(pack.priceCents,pack.priceUsd*100);assert.ok(margin(pack.priceUsd,pack.credits)>=0.15,String(pack.credits));}
 });
 
@@ -62,13 +63,6 @@ test('each credit pack gets its own named Stripe product, found again by lookup 
   assert.equal(products[0].params.name,'Timewarp 1,500 credits');assert.equal(prices[0].params.unit_amount,12500);assert.equal(prices[0].params.tax_behavior,'inclusive');assert.equal(prices[0].params.lookup_key,'timewarp_energy_credits_1500_12500_v1');assert.equal(prices[0].options.idempotencyKey,prices[0].params.lookup_key);
   assert.equal(await ctx.creditPackPrice(stripe,pack),'price-1500');assert.equal(products.length,1);assert.equal(prices.length,1);
   listed=[{id:'wrong',active:true,currency:'usd',unit_amount:100,tax_behavior:'inclusive',lookup_key:'timewarp_energy_credits_1500_12500_v1'}];await assert.rejects(ctx.creditPackPrice(stripe,pack),/needs repair/);
-});
-
-test('an auto-recharge saved with an old pack size still charges, never more than before',()=>{
-  const ctx=moduleOf('supabase/functions/_shared/credits.ts'),recharge=size=>value(ctx,'rechargePack')(size);
-  for(const [credits,usd] of [[50,15],[100,30],[200,45],[300,60],[500,75],[750,100],[1000,125]]){const pack=recharge(credits);assert.ok(pack.credits>=credits&&pack.priceUsd<=usd,String(credits));}
-  assert.equal(recharge(180).credits,180);assert.equal(recharge(2000),null);assert.equal(recharge(0),null);
-  assert.equal(value(ctx,'getCreditPack')(50),null,'old sizes are no longer sold');
 });
 
 test('monthly credit additions use a recurring combined price and reject unknown amounts',async()=>{

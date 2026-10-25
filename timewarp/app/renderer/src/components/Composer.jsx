@@ -243,8 +243,9 @@ export function AgentPicker({ agents, value, onChange, onNewAgent }) {
 
 // Connected-app accounts that need signing in again, above the composer as in
 // the previous app. Skip removes the account that needs signing in again, as
-// the previous app's Skip did. Reconnecting names the chat's agent.
-export function ReconnectBanner({ agentId = null }) {
+// the previous app's Skip did. Reconnecting names the chat's agent, and its
+// sign-in opens beside the chat (conversationId) or, without one, in a window.
+export function ReconnectBanner({ agentId = null, conversationId = null }) {
   const { items, reload } = useApps();
   const [busy, setBusy] = useState(null);
   const toast = useToast();
@@ -261,7 +262,7 @@ export function ReconnectBanner({ agentId = null }) {
           <span className="tw-reconnect-face">{initials(account.displayName).slice(0, 1)}</span>
           <span className="grow">Reconnect {accountText(account)} to {app.displayName}</span>
           <button type="button" className="tw-btn ghost" disabled={busy === account.id} onClick={() => skip(app, account)}>Skip</button>
-          <button type="button" className="tw-btn" disabled={busy === account.id} onClick={() => call("integrations.beginConnect", { integrationId: app.id, agentId, reconnectAccountId: account.id }).then(() => toast("Finish connecting in the window that opened.")).catch(error => toast(error, "error"))}>Reconnect</button>
+          <button type="button" className="tw-btn" disabled={busy === account.id} onClick={() => call("integrations.beginConnect", { integrationId: app.id, agentId, reconnectAccountId: account.id, ...(conversationId ? { conversationId } : {}) }).then(result => { if (!result?.inChat) toast("Finish connecting in the window that opened."); }).catch(error => toast(error, "error"))}>Reconnect</button>
         </div>
       ))}
     </div>
@@ -270,7 +271,7 @@ export function ReconnectBanner({ agentId = null }) {
 
 // The strip above the composer when AI usage can't be funded; "See options"
 // explains why and offers ChatGPT or a paid plan.
-export function FundingBanner({ funding, onOptions }) {
+export function FundingBanner({ funding, onOptions, conversationId = null }) {
   const [open, setOpen] = useState(false);
   const toast = useToast();
   if (!funding || funding.canFundUsage !== false) return null;
@@ -279,7 +280,7 @@ export function FundingBanner({ funding, onOptions }) {
   const title = reconnect ? "Reconnect ChatGPT" : funding.subscriptionAllowed ? "You're out of free credits" : "You're out of credits";
   const description = reconnect ? "Your ChatGPT plan needs you to sign in again before Timewarp can use it."
     : funding.subscriptionAllowed ? "Use your ChatGPT plan with Timewarp, or choose a paid plan." : "Add credits or change your plan to keep going.";
-  const connect = () => { setOpen(false); request("connectChatgpt").then(() => toast("Finish connecting ChatGPT in the window that opened.")).catch(error => toast(error, "error")); };
+  const connect = () => { setOpen(false); request("connectChatgpt", conversationId ? { conversationId } : {}).then(result => { if (!result?.inChat) toast("Finish connecting ChatGPT in the window that opened."); }).catch(error => toast(error, "error")); };
   return (
     <>
       <button type="button" className="tw-banner" onClick={() => setOpen(true)}>

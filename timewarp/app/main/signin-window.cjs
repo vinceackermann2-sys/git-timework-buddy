@@ -10,6 +10,10 @@
 // own on this computer (the link's redirect_uri). For those, the window hands
 // the callback to Codex itself and shows Timewarp's page instead of Codex's.
 // Other sign-ins return to Timewarp's own callback page, and the window closes.
+//
+// A sign-in started in a chat opens in that chat instead: a tab of its own in
+// the chat's pane (browser.cjs openSignin), followed the same way. When it
+// comes back the tab closes, and the chat hears how it went (onResult).
 const http = require("node:http");
 const { authPage } = require("../../desktop/auth-page.cjs");
 
@@ -47,26 +51,91 @@ function relayCallback(address, { timeout = 90000, hops = 3 } = {}) {
 }
 
 // session: the browser profile's session. logo (a data URL) and css make
-// Timewarp's pages, which have no server behind them.
-function createSigninWindows({ BrowserWindow, session, parent = () => null, icon, logo, css, log = { info() {}, warn() {} }, relay = relayCallback, closeDelay = 1500 }) {
+// Timewarp's pages, which have no server behind them. chat(conversationId,
+// link, { onClosed }), when given, opens a sign-in in that chat's pane and
+// returns { contents, close }, or null when the chat can't show it.
+// onResult({ conversationId, ok, title, message }) tells a chat how a sign-in
+// Codex completes went.
+function createSigninWindows({ BrowserWindow, session, parent = () => null, icon, logo, css, log = { info() {}, warn() {} }, relay = relayCallback, closeDelay = 1500, chat = null, onResult = () => {} }) {
   const page = ({ title, message, hint }, state) => "data:text/html;charset=utf-8;base64," + Buffer.from(authPage({ title, message, hint, success: state === "done", pending: state === "pending", logo, css })).toString("base64");
+
+  // Follows a sign-in's page, in a window or a chat's tab. With back, the
+  // provider's return to Codex's callback is handed to Codex from here, and
+  // answer gets "pending", then "done" or "failed". Without it, a return to
+  // Timewarp's own callback page calls home. progress.returned: whether the
+  // sign-in came back to this computer.
+  function follow(contents, { back, finish, answer, home, progress }) {
+    const handOver = (event, next, mainFrame) => {
+      if (!back || !mainFrame || !sameServer(next, back)) return;
+      event.preventDefault();
+      if (progress.returned) return;
+      progress.returned = true;
+      log.info("connector", "Sign-in returned to Timewarp");
+      answer("pending");
+      relay(next).then(result => !!finish.done(result), error => { log.warn("connector", "Codex didn't take the sign-in", { message: error.message }); return false; })
+        .then(ok => answer(ok ? "done" : "failed"));
+    };
+    contents.on("will-navigate", (event, next) => {
+      const address = event.url || next;
+      if (!isWeb(address)) return event.preventDefault();
+      handOver(event, address, true);
+    });
+    contents.on("will-redirect", (event, next, _inPlace, isMainFrame) => handOver(event, event.url || next, event.isMainFrame ?? isMainFrame));
+    // Timewarp's own callback page (127.0.0.1:17654) says the sign-in is done.
+    contents.on("did-navigate", (_event, next) => {
+      if (back || !isLoopback(next)) return;
+      progress.returned = true;
+      log.info("connector", "Sign-in returned to Timewarp");
+      home();
+    });
+    contents.on("did-fail-load", (_event, code, description, next, isMainFrame) => { if (isMainFrame && code !== -3) log.warn("connector", "The sign-in page didn't load", { code, description, origin: (() => { try { return new URL(next).origin; } catch { return null; } })() }); });
+  }
+
+  // In the chat: its tab closes once the sign-in is back, and a sign-in Codex
+  // completes tells the chat how it went.
+  function openInChat(conversationId, url, { back, finish, onClose }) {
+    const progress = { returned: false };
+    const tab = chat(conversationId, url.href, { onClosed: () => { void Promise.resolve().then(() => onClose({ returned: progress.returned })).catch(() => {}); } });
+    if (!tab) return null;
+    follow(tab.contents, {
+      back, finish, progress,
+      answer: state => {
+        if (state === "pending") return;
+        const ok = state === "done", shown = ok ? finish.success : finish.failure;
+        onResult({ conversationId, ok, title: shown.title, message: ok ? "" : shown.message });
+        tab.close();
+      },
+      // Timewarp's page shows a moment first.
+      home: () => setTimeout(tab.close, closeDelay),
+    });
+    log.info("connector", "Sign-in opened in the chat", { origin: url.origin });
+    return { opened: true, inChat: true, close: tab.close };
+  }
 
   // finish, for a sign-in Codex completes: done(answer) tells whether its
   // callback's answer means success, and pending, success and failure are the
   // pages shown meanwhile and after. onClose({ returned }) runs when the window
-  // closes; returned is whether the sign-in came back to this computer.
-  function open(link, { title = "Connect an app", finish = null, onClose = () => {} } = {}) {
+  // or the chat's tab closes; returned is whether the sign-in came back to this
+  // computer. conversationId: the chat it was started in, where it opens when
+  // that chat can show it.
+  function open(link, { title = "Connect an app", finish = null, onClose = () => {}, conversationId = null } = {}) {
     let url;
     try { url = new URL(link); } catch { throw new Error("The sign-in link isn't valid."); }
     if (url.protocol !== "https:" || url.username || url.password) throw new Error("The sign-in link isn't valid.");
     // A server set up with a callback elsewhere ends on its own page there.
     const back = finish ? callbackOf(url.href) : null;
+    if (conversationId && chat) {
+      let opened = null;
+      try { opened = openInChat(conversationId, url, { back, finish, onClose }); }
+      catch (error) { log.warn("connector", "The sign-in couldn't open in the chat", { message: error.message }); }
+      if (opened) return opened;
+    }
     const profile = session();
     const window = new BrowserWindow({
       parent: parent() || undefined, width: 560, height: 780, minWidth: 420, minHeight: 560, title, icon, autoHideMenuBar: true, backgroundColor: "#ffffff", show: false,
       webPreferences: { session: profile, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
     });
-    let returned = false;
+    const progress = { returned: false };
     const show = (content, state) => { if (!window.isDestroyed()) void window.loadURL(page(content, state)).catch(() => {}); };
     const closeSoon = () => setTimeout(() => { if (!window.isDestroyed()) window.close(); }, closeDelay);
     window.once("ready-to-show", () => window.show());
@@ -85,33 +154,14 @@ function createSigninWindows({ BrowserWindow, session, parent = () => null, icon
       : { action: "deny" });
 
     // The provider sends the window to Codex's callback, by a link or a
-    // redirect. Codex gets the request from here; the window never shows its page.
-    const handOver = (event, next, mainFrame) => {
-      if (!back || !mainFrame || !sameServer(next, back)) return;
-      event.preventDefault();
-      if (returned) return;
-      returned = true;
-      log.info("connector", "Sign-in returned to Timewarp");
-      show(finish.pending, "pending");
-      relay(next).then(answer => !!finish.done(answer), error => { log.warn("connector", "Codex didn't take the sign-in", { message: error.message }); return false; })
-        .then(ok => { show(ok ? finish.success : finish.failure, ok ? "done" : "failed"); if (ok) closeSoon(); });
-    };
-    window.webContents.on("will-navigate", (event, next) => {
-      const address = event.url || next;
-      if (!isWeb(address)) return event.preventDefault();
-      handOver(event, address, true);
+    // redirect. Codex gets the request from here; the window never shows its
+    // page but Timewarp's. After Timewarp's own callback page the window
+    // closes, as in the previous app.
+    follow(window.webContents, {
+      back, finish, progress, home: closeSoon,
+      answer: state => { show(state === "pending" ? finish.pending : state === "done" ? finish.success : finish.failure, state); if (state === "done") closeSoon(); },
     });
-    window.webContents.on("will-redirect", (event, next, _inPlace, isMainFrame) => handOver(event, event.url || next, event.isMainFrame ?? isMainFrame));
-    // Timewarp's own callback page (127.0.0.1:17654) says the sign-in is done;
-    // the window closes after it, as in the previous app.
-    window.webContents.on("did-navigate", (_event, next) => {
-      if (back || !isLoopback(next)) return;
-      returned = true;
-      log.info("connector", "Sign-in returned to Timewarp");
-      closeSoon();
-    });
-    window.webContents.on("did-fail-load", (_event, code, description, next, isMainFrame) => { if (isMainFrame && code !== -3) log.warn("connector", "The sign-in page didn't load", { code, description, origin: (() => { try { return new URL(next).origin; } catch { return null; } })() }); });
-    window.on("closed", () => { void Promise.resolve().then(() => onClose({ returned })).catch(() => {}); });
+    window.on("closed", () => { void Promise.resolve().then(() => onClose({ returned: progress.returned })).catch(() => {}); });
     log.info("connector", "Sign-in window opened", { origin: url.origin });
     void window.loadURL(url.href).catch(() => {});
     return { opened: true, close: () => { if (!window.isDestroyed()) window.close(); } };

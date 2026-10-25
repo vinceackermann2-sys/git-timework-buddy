@@ -10,7 +10,7 @@ import { APPS, sendWithOrigin } from '../origin.js';
 import { withTerms } from '../terms.js';
 
 const KINDS = ['mail', 'phone', 'wallet', 'card', 'vm'];
-const KIND_NAMES = { mail: 'mail inbox', phone: 'phone number', wallet: 'wallet', card: 'virtual card', vm: 'virtual machine' };
+const KIND_NAMES = { mail: 'mail inbox', phone: 'phone number', wallet: 'wallet', card: 'virtual card', vm: 'computer' };
 const RUNTIMES = [...APPS, 'other', 'any'];
 
 const kindArg = (ctx, verb) => {
@@ -89,7 +89,17 @@ export function saveProfile(ctx, agent, secret) {
   ctx.save();
 }
 
-const confirm = async (ctx, question) => ctx.interactive && /^y(es)?$/i.test((await ctx.ask(`${question} [y/N] `)).trim());
+// What kind of AI an agent is, and whose model (--kind, --provider, --model).
+export const MODEL_KINDS = ['agent', 'llm', 'image', 'voice', 'video', 'code', 'text', 'decision', 'other'];
+function modelFlags(ctx) {
+  const { kind, provider, model: name } = ctx.flags;
+  if (kind !== undefined && !MODEL_KINDS.includes(kind)) throw new UsageError(`--kind is one of ${MODEL_KINDS.join(', ')}.`);
+  const model = Object.fromEntries(Object.entries({ kind, provider, name }).filter(([, v]) => typeof v === 'string'));
+  return Object.keys(model).length ? { model } : {};
+}
+const modelText = m => m ? [m.label, [m.provider, m.name].filter(Boolean).join(' ')].filter(Boolean).join(' · ') : null;
+
+const confirm = async (ctx, question) => ctx.interactive && /^y(es)?$/i.test((await ctx.ask(`${question} [y/N] `) ?? '').trim());
 
 export async function agents(ctx) {
   const [sub = 'list', ...rest] = ctx.args;
@@ -100,7 +110,7 @@ export async function agents(ctx) {
     const data = await ctx.owner.get('/v1/agents', { query: { status: ctx.flags.all ? 'all' : undefined } });
     return ctx.print(data, ({ agents }) => agents.length ? table(agents, [
       ['', a => a.handle === ctx.config.default ? '*' : ''],
-      ['HANDLE', a => a.handle], ['NAME', a => a.name], ['STATUS', a => a.status], ['RUNTIME', a => a.runtime],
+      ['HANDLE', a => a.handle], ['NAME', a => a.name], ['STATUS', a => a.status], ['KIND', a => a.model?.kind || 'agent'], ['RUNTIME', a => a.runtime],
       ['HAS', a => Object.keys(a.resources || {}).join(' ')],
       ['KEY HERE', a => (Object.values(ctx.config.profiles).some(p => p.agentId === a.id) ? 'yes' : 'no')],
       ['ID', a => a.id],
@@ -115,7 +125,8 @@ export async function agents(ctx) {
     const app = typeof ctx.flags.origin === 'string' ? ctx.flags.origin : APPS.includes(runtime) ? runtime : ctx.tool && APPS.includes(ctx.tool) ? ctx.tool : 'custom';
     if (!APPS.includes(app)) throw new UsageError(`--origin is one of ${APPS.join(', ')}.`);
     const origin = { app, detail: typeof ctx.flags['origin-detail'] === 'string' ? ctx.flags['origin-detail'] : null };
-    const created = await withTerms(ctx, () => sendWithOrigin(body => ctx.owner.post('/v1/agents', body), { name, ...(runtime || app !== 'custom' ? { runtime: runtime || app } : {}), origin,...(ctx.flags.org ? { organizationId: ctx.flags.org } : {}), keyName: ctx.hostname() }));
+    const model = modelFlags(ctx);
+    const created = await withTerms(ctx, () => sendWithOrigin(body => ctx.owner.post('/v1/agents', body), { name, ...(runtime || app !== 'custom' ? { runtime: runtime || app } : {}), origin, ...model, ...(ctx.flags.org ? { organizationId: ctx.flags.org } : {}), keyName: ctx.hostname() }));
     if (created.secret) saveProfile(ctx, created.agent, created.secret);
     const { secret: _secret, ...shown } = created;
     return ctx.print({ ...shown, profile: created.agent.handle, default: ctx.config.default === created.agent.handle }, () => [
@@ -131,7 +142,7 @@ export async function agents(ctx) {
     const data = await ctx.owner.get(`/v1/agents/${id}`);
     return ctx.print(data, ({ agent, keys, signingKeys, verification }) => [
       fields([
-        ['Agent', `${agent.name} (${agent.handle})`], ['Id', agent.id], ['Status', agent.status], ['Runtime', agent.runtime],
+        ['Agent', `${agent.name} (${agent.handle})`], ['Id', agent.id], ['Status', agent.status], ['Kind', modelText(agent.model)], ['Runtime', agent.runtime],
         ['Organization', agent.organizationId], ['Git identity', agent.gitPrincipal], ['Owner verified', verification ? `${verification.verified ? 'yes' : 'no'} (${verification.level})` : null],
         ['Created', when(agent.createdAt)], ['Last seen', when(agent.lastSeenAt)],
         ['Keys', `${keys.length} active${Object.values(ctx.config.profiles).some(p => p.agentId === agent.id) ? ', one saved on this computer' : ''}`],
@@ -139,6 +150,14 @@ export async function agents(ctx) {
       ]),
       ...Object.values(agent.resources || {}).map(r => `  ${describeResource(r)}`),
     ].join('\n'));
+  }
+
+  if (sub === 'model' || sub === 'kind') {
+    const id = await ctx.agentIdFor(needRef());
+    const model = modelFlags(ctx);
+    if (!model.model) throw new UsageError(`Say what it is: timewarp-id agents model <agent> --kind ${MODEL_KINDS.join('|')} [--provider "…"] [--model "…"].`);
+    const data = await ctx.owner.patch(`/v1/agents/${id}`, model);
+    return ctx.print(data, ({ agent }) => `${agent.name} is now: ${modelText(agent.model)}.`);
   }
 
   if (sub === 'key') {
@@ -237,7 +256,19 @@ export async function fund(ctx) {
 }
 
 // --- Approvals ------------------------------------------------------------------------
-const describeRequest = r => `${cents(r?.amount)}${r?.to ? ` to ${r.to}` : ''}${r?.memo ? ` (${r.memo})` : ''}`;
+// A payment, or an action the owner asked to approve first.
+const ACTIONS = { mail: 'email', sms: 'text', call: 'call', contacts: 'contacts', vault: 'vault' };
+function describeRequest(r) {
+  if (!r?.action) return `${cents(r?.amount)}${r?.to ? ` to ${r.to}` : ''}${r?.memo ? ` (${r.memo})` : ''}`;
+  const s = r.summary || {};
+  const to = Array.isArray(s.to) ? s.to.join(', ') : s.to;
+  if (r.kind === 'mail') return `email to ${to}: "${s.subject}"`;
+  if (r.kind === 'sms') return `text to ${to}: "${String(s.text || '').slice(0, 80)}"`;
+  if (r.kind === 'call') return `call to ${to}: "${String(s.say || '').slice(0, 80)}"`;
+  if (r.kind === 'contacts') return `${s.change} contact ${s.name || ''}`.trim();
+  if (r.kind === 'vault') return `save "${s.label}" to its vault`;
+  return ACTIONS[r.kind] || r.kind;
+}
 
 // Waiting transfers; in a terminal, answered one by one.
 export async function approvals(ctx) {
@@ -246,12 +277,12 @@ export async function approvals(ctx) {
   const data = await ctx.owner.get('/v1/approvals', { query: { status: ctx.flags.all ? 'all' : undefined } });
   const rows = data.approvals || [];
   ctx.print(data, () => rows.length ? `${rows.length} waiting for your approval:\n${table(rows, [
-    ['AGENT', a => a.agentName || a.agentId], ['AMOUNT', a => cents(a.request?.amount)], ['TO', a => a.request?.to],
-    ['MEMO', a => a.request?.memo], ...(ctx.flags.all ? [['STATUS', a => a.status]] : []), ['EXPIRES', a => when(a.expiresAt)], ['ID', a => a.id],
+    ['AGENT', a => a.agentName || a.agentId], ['WHAT', a => describeRequest(a.request)],
+    ...(ctx.flags.all ? [['STATUS', a => a.status]] : []), ['EXPIRES', a => when(a.expiresAt)], ['ID', a => a.id],
   ])}${ctx.interactive ? '' : '\n\nAnswer with `timewarp-id approve <id>` or `timewarp-id deny <id>`.'}` : 'Nothing is waiting for your approval.');
   if (ctx.json || !ctx.interactive) return;
   for (const row of rows.filter(r => r.status === 'pending')) {
-    const answer = (await ctx.ask(`${row.agentName || row.agentId}: ${describeRequest(row.request)}. [a]pprove, [d]eny or [s]kip? `)).trim().toLowerCase();
+    const answer = (await ctx.ask(`${row.agentName || row.agentId}: ${describeRequest(row.request)}. [a]pprove, [d]eny or [s]kip? `) ?? '').trim().toLowerCase();
     if (answer === 'a' || answer === 'approve') await decide(ctx, 'approve', row.id, { confirmed: true });
     else if (answer === 'd' || answer === 'deny') await decide(ctx, 'deny', row.id);
   }
@@ -267,13 +298,14 @@ async function decide(ctx, decision, id, { confirmed = false } = {}) {
     const { approvals: waiting } = await ctx.owner.get('/v1/approvals');
     const row = (waiting || []).find(a => a.id === id);
     if (row) {
-      const answer = (await ctx.ask(`Approve ${row.agentName || row.agentId}: ${describeRequest(row.request)}? [y/N] `)).trim().toLowerCase();
+      const answer = (await ctx.ask(`Approve ${row.agentName || row.agentId}: ${describeRequest(row.request)}? [y/N] `) ?? '').trim().toLowerCase();
       if (!/^y(es)?$/.test(answer)) { ctx.out('Not approved.'); return; }
     }
   }
   const data = await ctx.owner.post(`/v1/approvals/${encodeURIComponent(id)}`, { decision });
-  ctx.print(data, result => decision === 'deny' ? 'Denied. The agent is told the transfer was not approved.'
-    : result.status === 'completed' ? `Approved and sent${result.transfer?.amount ? ` ${money(result.transfer.amount)}` : ''}${result.transfer?.counterparty ? ` to ${result.transfer.counterparty}` : ''}.` : `Approved (${result.status}).`);
+  ctx.print(data, result => decision === 'deny' ? 'Denied. The agent is told it was not approved.'
+    : result.transfer && result.status === 'completed' ? `Approved and sent${result.transfer?.amount ? ` ${money(result.transfer.amount)}` : ''}${result.transfer?.counterparty ? ` to ${result.transfer.counterparty}` : ''}.`
+    : result.status === 'completed' ? 'Approved and done.' : `Approved (${result.status}).`);
 }
 
 export const approve = ctx => decide(ctx, 'approve', ctx.args[0]);

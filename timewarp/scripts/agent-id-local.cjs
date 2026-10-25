@@ -69,6 +69,28 @@ begin
   end if;
   return jsonb_build_object('allowed',true);
 end $$;
+-- Account data the app syncs (20261012160000_account_data_sync.sql, without its policies).
+create table public.timewarp_energy_account_data_revisions(user_id uuid primary key references auth.users(id) on delete cascade, revision bigint not null);
+create table public.timewarp_energy_account_data(user_id uuid not null references auth.users(id) on delete cascade, kind text not null, key text not null, value jsonb, revision bigint not null, updated_at timestamptz not null default now(), primary key (user_id,kind,key));
+create function public.timewarp_energy_put_account_data(p_user uuid,p_items jsonb) returns jsonb language plpgsql as $$
+declare item jsonb; results jsonb := '[]'::jsonb; current_revision bigint; stored record; existed boolean;
+begin
+  insert into public.timewarp_energy_account_data_revisions as counter(user_id,revision) values(p_user,0) on conflict(user_id) do update set revision=counter.revision returning counter.revision into current_revision;
+  for item in select value from jsonb_array_elements(p_items) loop
+    select d.revision,d.value into stored from public.timewarp_energy_account_data d where d.user_id=p_user and d.kind=item->>'kind' and d.key=item->>'key';
+    existed := found;
+    if existed and stored.revision<>coalesce((item->>'base')::bigint,0) then
+      results := results || jsonb_build_array(jsonb_build_object('kind',item->>'kind','key',item->>'key','conflict',true,'revision',stored.revision,'value',stored.value));
+      continue;
+    end if;
+    current_revision := current_revision+1;
+    insert into public.timewarp_energy_account_data(user_id,kind,key,value,revision,updated_at) values(p_user,item->>'kind',item->>'key',case when jsonb_typeof(item->'value')='null' then null else item->'value' end,current_revision,now())
+      on conflict(user_id,kind,key) do update set value=excluded.value,revision=excluded.revision,updated_at=excluded.updated_at;
+    results := results || jsonb_build_array(jsonb_build_object('kind',item->>'kind','key',item->>'key','revision',current_revision));
+  end loop;
+  update public.timewarp_energy_account_data_revisions set revision=current_revision where user_id=p_user;
+  return results;
+end $$;
 grant usage on schema public, auth to anon, authenticated, service_role;
 `;
 
@@ -259,6 +281,10 @@ async function startLocal(options = {}) {
       let parsed = text;
       try { parsed = JSON.parse(text); } catch { /* text responses */ }
       return { status: response.status, body: parsed, headers: response.headers };
+    },
+    // The response itself, for answers that aren't JSON (files, marked bytes).
+    async fetch(method, url, { token, raw, headers = {} } = {}) {
+      return handler(new Request(`http://127.0.0.1:54329/agent-id${url}`, { method, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers }, ...(raw !== undefined ? { body: raw } : {}) }));
     },
     close: () => db.close(),
   };

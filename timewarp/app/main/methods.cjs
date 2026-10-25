@@ -69,7 +69,7 @@ function fillSignIn(username, password, origin) {
   return !!(secret || (user && username));
 }
 
-function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, assistantImport = null, onboarding, automations, mcp, codexHome, vault, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null, updates = null, shares = null }) {
+function createMethods({ app, dialog, shell, store, services, agents, harness, client, browser, version, profile, modelChoices, selectModel, registerTools, historyStatus, flushHistory, defaultAppearance, knowledge, assistantImport = null, onboarding, automations, mcp, codexHome, vault, agentIds, clipboard, diagnostics, logs = null, openConnector = null, previousSessionUnclean = false, browserImport = null, browserTools = null, sandbox = null, updates = null, shares = null }) {
   const signedIn = () => { if (!services.auth.userId()) throw fail(401, "Sign in to Timewarp."); };
   // A chat's browser, or the tabs of First steps' browser step, which belong to no chat.
   const browserOf = conversationId => { if (conversationId !== FIRST_STEPS_BROWSER) harness.conversations.get(conversationId); };
@@ -281,12 +281,14 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     },
 
     "integrations.list": input => { signedIn(); return services.integrations.list(input); },
-    "integrations.beginConnect": async input => {
+    // conversationId: the chat the connection was started in, where its sign-in opens (inChat).
+    "integrations.beginConnect": async ({ conversationId, ...input } = {}) => {
       signedIn();
       await services.ensureCallback();
       const result = await services.integrations.beginConnect(input);
-      if (result?.connectUrl) await (openConnector ? openConnector(result.connectUrl) : services.openExternal(result.connectUrl));
-      return result;
+      if (!result?.connectUrl) return result;
+      const opened = openConnector ? openConnector(result.connectUrl, undefined, typeof conversationId === "string" ? conversationId : null) : await services.openExternal(result.connectUrl);
+      return { ...result, ...(opened?.inChat ? { inChat: true } : {}) };
     },
     "integrations.disconnect": input => { signedIn(); return services.integrations.disconnect(input); },
     "integrations.getAccess": input => { signedIn(); return services.integrations.getAccess(input); },
@@ -476,7 +478,7 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "mcp.add": input => { signedIn(); return mcp.add(input); },
     "mcp.setEnabled": ({ name, enabled }) => { signedIn(); return mcp.setEnabled(name, enabled); },
     "mcp.remove": ({ name }) => { signedIn(); return mcp.remove(name); },
-    "mcp.signIn": ({ name }) => { signedIn(); return mcp.signIn(name); },
+    "mcp.signIn": ({ name, conversationId }) => { signedIn(); return mcp.signIn(name, { conversationId: typeof conversationId === "string" ? conversationId : null }); },
     // The signed-in account's own (codexHome() is its Codex home).
     "instructions.get": () => { signedIn(); try { return { text: fs.readFileSync(path.join(codexHome(), "AGENTS.md"), "utf8") }; } catch { return { text: "" }; } },
     "instructions.save": ({ text: value }) => {
@@ -488,6 +490,16 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       fs.renameSync(temporary, file);
       return { text: fs.readFileSync(file, "utf8") };
     },
+    // An agent's Agent ID and what it has there. Its key never leaves the main
+    // process; the page's requests are the named ones agent-id.cjs allows.
+    "agentId.get": ({ agentId }) => { signedIn(); return agentIds.get(agentId); },
+    "agentId.glance": ({ agentId, kinds }) => { signedIn(); return agentIds.glance(agentId, kinds); },
+    "agentId.call": ({ agentId, op, input }) => { signedIn(); return agentIds.call(agentId, op, input); },
+    "agentId.create": ({ agentId }) => { signedIn(); return agentIds.create(agentId); },
+    // The owner's identity check and their pages on the Agent ID website open
+    // in the Agent ID window, never in an agent's browser.
+    "agentId.verify": ({ legalName, country } = {}) => { signedIn(); return agentIds.verify({ legalName, country }); },
+    "agentId.open": ({ agentId, page, tab } = {}) => { signedIn(); return agentIds.openSite(agentId, { page, tab }); },
     // Vault. Values leave the main process only when the user copies or shows
     // one, or fills a sign-in into the page they are looking at.
     "vault.list": () => { signedIn(); return { available: vault.available(), items: vault.list() }; },

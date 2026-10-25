@@ -11,7 +11,7 @@ async function until(check, what) {
   assert.fail("Timed out waiting for " + what);
 }
 
-function fixture() {
+function fixture(options = {}) {
   const windows = [], closed = [];
   class FakeWindow extends EventEmitter {
     constructor(options) {
@@ -29,7 +29,7 @@ function fixture() {
     setTitle(title) { this.title = title; }
     show() {}
   }
-  const signin = createSigninWindows({ BrowserWindow: FakeWindow, session: () => ({ id: "default-profile" }), logo: "data:image/png;base64,AA==", css: ".timewarp-auth-page{}", closeDelay: 0 });
+  const signin = createSigninWindows({ BrowserWindow: FakeWindow, session: () => ({ id: "default-profile" }), logo: "data:image/png;base64,AA==", css: ".timewarp-auth-page{}", closeDelay: 0, ...options });
   // A navigation the page or the provider starts; prevented tells whether the window stopped it.
   const navigate = (window, name, url) => {
     const event = { url, isMainFrame: true, prevented: false, preventDefault() { this.prevented = true; } };
@@ -147,4 +147,81 @@ test("the callback is the link's redirect_uri on this computer", () => {
   assert.equal(callbackOf("https://auth.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback").port, "1455");
   assert.equal(callbackOf("https://auth.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A1457%2Fauth%2Fcallback").port, "1457");
   for (const link of ["https://example.com/authorize?redirect_uri=https%3A%2F%2Fexample.com%2Fcallback", "https://example.com/authorize?redirect_uri=http%3A%2F%2F192.168.1.2%3A80%2Fcallback", "https://example.com/authorize"]) assert.equal(callbackOf(link), null);
+});
+
+// A chat's pane, as browser.openSignin opens a sign-in there: its page, and
+// closing its tab tells the sign-in. show false: the chat can't show it.
+function chatPane({ show = true } = {}) {
+  const tabs = [], results = [];
+  const chat = (conversationId, link, { onClosed }) => {
+    if (!show) return null;
+    const tab = { conversationId, link, contents: new EventEmitter(), closed: false, close: () => { if (tab.closed) return; tab.closed = true; onClosed(); } };
+    tabs.push(tab);
+    return tab;
+  };
+  return { tabs, results, options: { chat, onResult: result => results.push(result) } };
+}
+
+test("a ChatGPT sign-in started in a chat opens in its pane; Codex gets the callback from Timewarp, the tab closes and the chat hears it worked", async t => {
+  const codex = await codexServer(t), pane = chatPane(), f = fixture(pane.options);
+  let closedWith = null;
+  const link = `https://auth.openai.com/oauth/authorize?client_id=codex&redirect_uri=${encodeURIComponent(`http://127.0.0.1:${codex.port}/auth/callback`)}&state=abc`;
+  const opened = f.signin.open(link, { title: "Connect ChatGPT", finish: chatgpt, conversationId: "chat-1", onClose: value => { closedWith = value; } });
+  assert.equal(opened.inChat, true);
+  assert.equal(f.windows.length, 0, "No window opens");
+  const [tab] = pane.tabs;
+  assert.deepEqual([tab.conversationId, tab.link], ["chat-1", link]);
+  const navigate = (name, url, isMainFrame = true) => { const event = { url, isMainFrame, prevented: false, preventDefault() { this.prevented = true; } }; tab.contents.emit(name, event, url, false, isMainFrame); return event.prevented; };
+  assert.equal(navigate("will-navigate", "https://auth.openai.com/log-in"), false);
+  assert.equal(navigate("will-navigate", "codex://threads/new"), true, "The tab opens no other apps");
+  assert.equal(navigate("will-redirect", `http://127.0.0.1:${codex.port}/auth/callback?code=c`, false), false, "A frame's redirect isn't the sign-in's");
+  assert.equal(navigate("will-redirect", `http://127.0.0.1:${codex.port}/auth/callback?code=c&state=abc`), true);
+  await until(() => tab.closed, "the tab to close");
+  assert.deepEqual(codex.requests, ["/auth/callback?code=c&state=abc", "/success?id_token=secret"]);
+  assert.deepEqual(pane.results, [{ conversationId: "chat-1", ok: true, title: "ChatGPT is connected", message: "" }]);
+  await tick();
+  assert.deepEqual(closedWith, { returned: true });
+});
+
+test("a sign-in Codex rejects in a chat closes its tab and tells the chat why", async t => {
+  const codex = await codexServer(t, (_request, response) => { response.writeHead(200, { "content-type": "text/html" }); response.end("<title>Sign-in failed</title>"); });
+  const pane = chatPane(), f = fixture(pane.options);
+  f.signin.open(`https://auth.openai.com/oauth/authorize?redirect_uri=${encodeURIComponent(`http://127.0.0.1:${codex.port}/auth/callback`)}`, { finish: chatgpt, conversationId: "chat-1" });
+  const [tab] = pane.tabs;
+  const event = { url: `http://127.0.0.1:${codex.port}/auth/callback?error=access_denied`, isMainFrame: true, preventDefault() {} };
+  tab.contents.emit("will-navigate", event, event.url);
+  await until(() => tab.closed, "the tab to close");
+  assert.deepEqual(pane.results, [{ conversationId: "chat-1", ok: false, title: "ChatGPT couldn't connect", message: "The sign-in didn't finish." }]);
+});
+
+test("an app connection in a chat ends on Timewarp's callback page, then its tab closes", async () => {
+  const pane = chatPane(), f = fixture(pane.options);
+  let closedWith = null;
+  f.signin.open("https://connect.composio.dev/link/abc", { title: "Connect an app", conversationId: "chat-1", onClose: value => { closedWith = value; } });
+  const [tab] = pane.tabs;
+  tab.contents.emit("did-navigate", {}, "https://accounts.google.com/o/oauth2/auth");
+  assert.equal(tab.closed, false);
+  tab.contents.emit("did-navigate", {}, "http://127.0.0.1:17654/connector-callback?status=success");
+  await until(() => tab.closed, "the tab to close");
+  await tick();
+  assert.deepEqual(closedWith, { returned: true });
+  assert.deepEqual(pane.results, [], "The app's own connection says it connected");
+});
+
+test("closing a chat's sign-in tab before it returns says so; a chat that can't show it gets a window", async () => {
+  const pane = chatPane(), f = fixture(pane.options);
+  let closedWith = null;
+  f.signin.open("https://auth.openai.com/oauth/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback", { finish: chatgpt, conversationId: "chat-1", onClose: value => { closedWith = value; } });
+  pane.tabs[0].close();
+  await tick();
+  assert.deepEqual(closedWith, { returned: false });
+  // A chat that can't show it (or a sign-in started outside a chat) opens in a window, as before.
+  const hidden = chatPane({ show: false }), g = fixture(hidden.options);
+  const opened = g.signin.open("https://connect.composio.dev/link/abc", { conversationId: "chat-2" });
+  assert.equal(opened.inChat, undefined);
+  assert.equal(g.windows.length, 1);
+  g.signin.open("https://connect.composio.dev/link/def");
+  assert.equal(g.windows.length, 2);
+  assert.equal(f.signin.open("https://connect.composio.dev/link/ghi").inChat, undefined, "Without a chat, a window even when a pane could show it");
+  assert.equal(f.windows.length, 1);
 });

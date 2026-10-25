@@ -2,16 +2,18 @@
 // stops after. A terminal to run commands, and its files.
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, File, Folder, Loader2, Play, Square } from "lucide-react";
+import { ChevronRight, File, Folder, Loader2, Play, Square, SquareTerminal } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { AgentIdError } from "@/lib/agent-id/client";
-import { formatBytes, formatListTime } from "@/lib/agent-id/format";
+import { formatBytes, formatListTime, formatTimeLeft } from "@/lib/agent-id/format";
 import {
   queryKeys,
   shouldRetry,
+  useAccount,
   useEventPages,
   useMachineFiles,
   useRefreshAgent,
@@ -50,7 +52,7 @@ export function MachineTab({ agent }: { agent: Agent }) {
         refresh(agent.id),
       ]);
     },
-    onError: (error) => toastError(error, "The machine didn't respond"),
+    onError: (error) => toastError(error, "The computer didn't respond"),
   });
 
   if (!vm) return <NoResource agent={agent} kind="vm" />;
@@ -81,8 +83,9 @@ export function MachineTab({ agent }: { agent: Agent }) {
           </div>
           <p className="mt-1 text-sm text-[var(--muted-foreground)]">
             {SIZE_LABELS[vm.details.size ?? ""] ?? vm.details.size ?? "Machine"} · Your agent's
-            files stay on this machine.
+            files stay on this computer.
           </p>
+          {live && <FreeTime />}
         </div>
         <Button
           variant="outline"
@@ -109,7 +112,7 @@ export function MachineTab({ agent }: { agent: Agent }) {
         </>
       ) : (
         <>
-          <Muted>Test machines don't run commands or keep files.</Muted>
+          <Muted>Test computers don't run commands or keep files.</Muted>
           <History agent={agent} />
         </>
       )}
@@ -152,7 +155,7 @@ function Terminal({ agent, disabled }: { agent: Agent; disabled: boolean }) {
         className="aid-mono max-h-96 min-h-48 overflow-y-auto p-4 text-[13px] leading-relaxed"
       >
         {session.length === 0 && !run.isPending && (
-          <p className="text-white/40">Run a command on {agent.name}'s machine.</p>
+          <p className="text-white/40">Run a command on {agent.name}'s computer.</p>
         )}
         {session.map((entry, i) => (
           <div key={i} className="mb-3">
@@ -188,7 +191,7 @@ function Terminal({ agent, disabled }: { agent: Agent; disabled: boolean }) {
         <input
           aria-label="Command"
           className="aid-mono min-w-0 flex-1 bg-transparent text-[13px] text-[#e6e9ef] outline-none placeholder:text-white/30"
-          placeholder={disabled ? "The machine isn't ready" : "ls -la"}
+          placeholder={disabled ? "The computer isn't ready" : "ls -la"}
           disabled={disabled}
           value={command}
           onChange={(e) => setCommand(e.target.value)}
@@ -236,11 +239,11 @@ function Files({ agent, enabled }: { agent: Agent; enabled: boolean }) {
       }
     >
       {!enabled ? (
-        <Empty>Files show when the machine is ready.</Empty>
+        <Empty>Files show when the computer is ready.</Empty>
       ) : files.isPending ? (
         <LoadingRows rows={4} />
       ) : unavailable ? (
-        <Empty>Files aren't available for this machine yet.</Empty>
+        <Empty>Files aren't available for this computer yet.</Empty>
       ) : files.isError ? (
         <ErrorState error={files.error} onRetry={() => void files.refetch()} />
       ) : files.data.entries.length === 0 ? (
@@ -303,7 +306,7 @@ function History({ agent }: { agent: Agent }) {
       {pages.isPending ? (
         <LoadingRows rows={2} />
       ) : events.length === 0 ? (
-        <Empty>No commands yet.</Empty>
+        <Empty icon={SquareTerminal}>No commands yet. Commands your agent runs show up here.</Empty>
       ) : (
         <>
           <ul className="divide-y divide-[var(--border)]">
@@ -340,5 +343,31 @@ function History({ agent }: { agent: Agent }) {
         </>
       )}
     </Section>
+  );
+}
+
+// The account's free machine time, and where credits take over.
+function FreeTime() {
+  const account = useAccount();
+  const compute = account.data?.compute;
+  if (!compute) return null;
+  const left = Math.max(0, compute.freeSeconds - compute.usedSeconds);
+  return (
+    <p className="mt-1 text-sm">
+      {left > 0 ? (
+        <>
+          <span className="font-medium">{formatTimeLeft(left)}</span>
+          <span className="text-[var(--muted-foreground)]"> of free time left, then credits.</span>
+        </>
+      ) : (
+        <span className="text-[var(--muted-foreground)]">
+          The free hours are used. It runs on your credits:{" "}
+          <Link to="/agent-id/pricing" className="aid-link">
+            add credits
+          </Link>
+          .
+        </span>
+      )}
+    </p>
   );
 }

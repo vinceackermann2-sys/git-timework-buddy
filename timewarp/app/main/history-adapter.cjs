@@ -1,7 +1,18 @@
 "use strict";
 // Presents the engine store through the interface of Timewarp's chat history
 // sync (desktop/local-history.cjs), so the cloud history format is unchanged.
+const crypto = require("node:crypto");
 const { AGENT_MESSAGE } = require("./harness.cjs");
+
+// The cloud takes messages whose ids are UUIDs. A reply's id is the one its
+// model gave it, which for Claude's ("msg_…") isn't, so it goes under a UUID
+// made from it: the same one on every computer, so the reply is never added twice.
+const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+function entryId(conversationId, id) {
+  if (UUID.test(id)) return id;
+  const hex = crypto.createHash("sha256").update(conversationId + "\0" + id).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${(8 | parseInt(hex[16], 16) & 3).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 
 function createHistoryAdapter({ store, createAgent, settings }) {
   // The cloud keeps a chat's messages from its user and its agent only. One
@@ -9,7 +20,7 @@ function createHistoryAdapter({ store, createAgent, settings }) {
   // it goes under the user; its text says which agent sent it.
   const authorOf = (message, conversation) => message.authorId !== conversation.agentId && AGENT_MESSAGE.test(message.text) ? conversation.ownerId : message.authorId;
   const entryOf = conversation => message => ({
-    id: message.id, kind: "message", authorId: authorOf(message, conversation), createdAt: message.createdAt,
+    id: entryId(conversation.id, message.id), kind: "message", authorId: authorOf(message, conversation), createdAt: message.createdAt,
     parts: [{ type: "text", text: message.text }], suggestedReplies: [], replyToMessageId: null,
     forwardedFromMessageId: null, deliveryStatus: message.status === "failed" ? "failed" : null,
   });
@@ -77,4 +88,4 @@ function createHistoryAdapter({ store, createAgent, settings }) {
   };
 }
 
-module.exports = { createHistoryAdapter };
+module.exports = { createHistoryAdapter, entryId };

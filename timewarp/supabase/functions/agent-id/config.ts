@@ -2,6 +2,8 @@
 // kind is listed in AGENT_ID_LIVE: before that, every resource is a test one
 // that only works inside Agent ID, so a deploy never starts spending money.
 
+import { AI_COST_MARKUP, CREDIT_PACKS, FREE_COMPUTE_HOURS, MEMORY_GIB_USD_PER_SECOND, USD_PER_CREDIT, VCPU_USD_PER_SECOND } from './pricing.ts';
+
 export type Kind = 'mail' | 'phone' | 'wallet' | 'card' | 'vm';
 export const KINDS: Kind[] = ['mail', 'phone', 'wallet', 'card', 'vm'];
 export type Env = (name: string) => string;
@@ -15,8 +17,13 @@ export function loadConfig(env: Env) {
   const siteUrl = (get('AGENT_ID_SITE_URL') || get('TIMEWARP_SITE_URL') || 'https://timewarpdev.com').replace(/\/+$/, '');
   const mailDomain = (get('AGENT_ID_MAIL_DOMAIN') || get('TIMEWARP_AGENT_MAIL_DOMAIN') || 'agents.timewarpdev.com').toLowerCase();
   const live = new Set(list(get('AGENT_ID_LIVE')));
-  const required = new Set(list(get('AGENT_ID_REQUIRE_VERIFICATION') || 'wallet,card'));
-  const paid = new Set(list(get('AGENT_ID_PAID_PLAN_KINDS') || 'phone,card'));
+  // Live wallets are given unverified (they can receive); money leaving one
+  // needs a verified owner (verifyToMoveMoney). Cards need one up front.
+  const required = new Set(list(get('AGENT_ID_REQUIRE_VERIFICATION') || 'card'));
+  // No subscription is needed for anything: what isn't free is paid in
+  // credits. AGENT_ID_PAID_PLAN_KINDS can still reserve kinds for paid plans.
+  const paid = new Set(list(get('AGENT_ID_PAID_PLAN_KINDS')));
+  const freeHours = get('AGENT_ID_FREE_COMPUTE_HOURS');
 
   // Each kind's live provider, and whether its secrets are present.
   // Phone numbers from Telnyx or Twilio: AGENT_ID_PHONE_PROVIDER, else
@@ -33,6 +40,8 @@ export function loadConfig(env: Env) {
   } as Record<Kind, { provider: string; configured: boolean }>;
 
   const kyc = get('AGENT_ID_KYC').toLowerCase();
+  // Bank transfers through Bridge (needs its key, live wallets on Base mainnet).
+  const bankOn = get('AGENT_ID_BANK') !== 'off' && !!get('BRIDGE_API_KEY') && live.has('wallet') && providers.wallet.configured && get('AGENT_ID_WALLET_CHAIN') !== 'base_sepolia';
   const kyb = get('AGENT_ID_KYB').toLowerCase();
   return {
     env: get,
@@ -54,8 +63,17 @@ export function loadConfig(env: Env) {
     // creating an agent does (the future default).
     verificationRequired: (what: Kind | 'agent') => required.has(what) || required.has('all'),
     paidPlanRequired: (kind: Kind) => paid.has(kind),
-    kycProvider: kyc === 'stripe_identity' || kyc === 'test' ? kyc : 'manual',
-    kybProvider: kyb === 'test' ? 'test' : 'manual',
+    // One identity check per person. Where Bridge moves money to and from
+    // banks it must check people itself, so its check is the one Agent ID
+    // uses too; Stripe Identity is for deployments without Bridge.
+    kycProvider: (kyc === 'test' ? 'test'
+      : bankOn && (kyc === '' || kyc === 'bridge' || kyc === 'stripe_identity') ? 'bridge'
+      : kyc === 'stripe_identity' ? 'stripe_identity' : 'manual') as 'test' | 'bridge' | 'stripe_identity' | 'manual',
+    // Sending or withdrawing from a live wallet needs a verified owner.
+    verifyToMoveMoney: get('AGENT_ID_VERIFY_TO_SEND') !== 'false',
+    // Businesses the same way: Bridge's business check where it moves money,
+    // else Timewarp reviews the registration details by hand.
+    kybProvider: (kyb === 'test' ? 'test' : bankOn && (kyb === '' || kyb === 'bridge') ? 'bridge' : 'manual') as 'test' | 'bridge' | 'manual',
     reviewers: new Set(list(get('AGENT_ID_REVIEWERS'))),
     maxAgents: Math.max(1, Math.min(1000, Number(get('AGENT_ID_MAX_AGENTS')) || 25)),
     // Privy's chain for live wallets: Base, or Base Sepolia (testnet) for trials.
@@ -76,9 +94,12 @@ export function loadConfig(env: Env) {
     // agent already has stay.
     phonesWaitlist: get('AGENT_ID_PHONES') === 'waitlist' || (get('AGENT_ID_ALLOW_TEST') === 'false' && !(live.has('phone') && providers.phone.configured)),
     passportSeconds: Math.max(60, Math.min(3600, Number(get('AGENT_ID_PASSPORT_SECONDS')) || 300)),
+    // Free machine time per account before credits (AGENT_ID_FREE_COMPUTE_HOURS).
+    computeFreeHours: freeHours === '' ? FREE_COMPUTE_HOURS : Math.max(0, Number(freeHours) || 0),
     // What a new Agent ID comes with (provisioning.ts): 'none' for nothing.
     autoGive: get('AGENT_ID_AUTO_GIVE') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE') || 'mail,wallet'),
-    autoGivePaid: get('AGENT_ID_AUTO_GIVE_PAID') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE_PAID') || 'phone,vm'),
+    // Machines aren't given up front: an agent gets one the first time it uses it.
+    autoGivePaid: get('AGENT_ID_AUTO_GIVE_PAID') === 'none' ? [] as string[] : list(get('AGENT_ID_AUTO_GIVE_PAID') || 'phone'),
     // Registering its own webhooks on first use (admin.ts); tests turn it off.
     autoSetup: get('AGENT_ID_AUTO_SETUP') !== 'false',
     // Bank transfers in and out of live wallets through Bridge, once its key
@@ -116,6 +137,18 @@ export function publicConfig(config: Config) {
     testMode: config.testMode,
     legal: { termsVersion: config.termsVersion, termsUrl: `${config.siteUrl}/legal/agent-id-terms`, privacyUrl: `${config.siteUrl}/legal/privacy-policy` },
     passports: { available: !!config.signingKey, lifetimeSeconds: config.passportSeconds },
+    // Tracing what agents make: anyone checks; model makers mark for an agent
+    // that gives them a passport for this audience.
+    trace: { audience: `${config.issuer}/trace`, check: `${config.publicUrl}/v1/trace/check`, mark: `${config.publicUrl}/v1/trace/mark` },
     bank: { available: bankAvailable(config) },
+    // The owner's connected apps (Composio), usable by their agents anywhere.
+    connectors: { available: !!config.env('COMPOSIO_API_KEY') },
+    // No subscription: free mail and wallets, free machine hours, then credits.
+    pricing: {
+      computeFreeHours: config.computeFreeHours,
+      // The standard machine (1 vCPU, 2 GiB), as charged per hour.
+      computeCreditsPerHour: Math.round(3600 * ((Number(config.env('AZURE_SANDBOX_VCPU_USD_PER_SECOND')) || VCPU_USD_PER_SECOND) + 2 * (Number(config.env('AZURE_SANDBOX_MEMORY_GIB_USD_PER_SECOND')) || MEMORY_GIB_USD_PER_SECOND)) * AI_COST_MARKUP / USD_PER_CREDIT * 10) / 10,
+      creditPacks: CREDIT_PACKS.map(({ credits, priceUsd }) => ({ credits, priceUsd })),
+    },
   };
 }

@@ -234,7 +234,7 @@ describe('timewarp-id attach and detach', () => {
     assert.match(afterAttach.stderr, /1 approval waiting/);
     const list = await ok(['approvals']);
     assert.match(list.stdout, /1 waiting for your approval/);
-    assert.match(list.stdout, /code-reviewer\s+\$30\.00\s+Research Assistant.*datasets/);
+    assert.match(list.stdout, /code-reviewer\s+\$30\.00 to Research Assistant \(.*datasets/);
     assert.doesNotMatch(list.stderr, /approval waiting/, 'no notice on the list itself');
     assert.equal((await cli(['approve', waiting.approval])).code, 1, 'Approving needs a person at a terminal (or the website).');
     assert.equal((await api.call('POST', `/v1/approvals/${waiting.approval}`, { token: ownerKey, body: { decision: 'approve' } })).status, 'completed');

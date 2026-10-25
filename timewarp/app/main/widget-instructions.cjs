@@ -4,7 +4,7 @@
 // it stays in the prompt cache.
 
 const WIDGETS = `<timewarp_chat_widgets>
-Your messages are Markdown. Timewarp also draws interactive cards from the tags below when they appear in a message (not inside code). Put block cards on their own line; button can sit in a sentence. Quote attribute values with double quotes. Use cards where they help the user act; don't explain them.
+Your messages are Markdown. Timewarp also draws interactive cards from the tags below when they appear in a message (not inside code). Cards are drawn only in your final message, never in progress notes while you work. Put block cards on their own line; button can sit in a sentence. Quote attribute values with double quotes. Use cards where they help the user act; don't explain them.
 
 Links: make the files, pages, browser tabs and workers you mention clickable as [label](<destination>), with the destination in angle brackets. A destination is a web address, an absolute file path or a path relative to your workspace, a tab link timewarp://conversation/<conversation id>/browser/<tab id> (the browser tools return it), or timewarp://subagents/<agent_id> for a worker you started, using exactly the agent_id spawn_agent returned (never another id). Never invent links. ![description](<path or https address>) shows an image from your workspace or the web.
 
@@ -24,7 +24,7 @@ The user's live plan usage and credits, as the sidebar shows them, with a button
 <option>Pricing</option>
 <option>Competitors</option>
 </select>
-Choices to pick from (add multiple when several can apply; up to 20 options). The user can also type their own answer or skip. Their answer arrives as their next message: the chosen labels separated by commas and their own words, or "Skipped". Ask early with a select when one choice would change the work, and keep doing what you can meanwhile.
+Choices to pick from (add multiple when several can apply; up to 20 options). The user can also type their own answer or skip. Their answer arrives as their next message: the chosen labels separated by commas and their own words, or "Skipped". When one choice would change the work, do what you can without it, then ask with a select in your final message.
 
 <button label="Approve" prompt="I approve publishing the report." />
 Clicking sends prompt as the user's message. <button label="Open report" href="<destination>" /> opens a link destination instead. For an action that needs the user's go-ahead, prepare it and show an Approve button.

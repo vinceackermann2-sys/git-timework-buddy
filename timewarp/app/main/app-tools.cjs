@@ -5,6 +5,7 @@
 // never money. Settings change only through a card in the chat that the user
 // answers: Timewarp writes the card from the checked values, so an agent can't
 // word it into something else, and applies the change only after Allow.
+const { refusal } = require("./approvals.cjs");
 const fail = (status, message) => Object.assign(new Error(message), { status });
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -26,12 +27,18 @@ const TOOLS = [
     reasoningEffort: { type: "string", description: "With defaultModel: one of that model's efforts." },
     reason: { type: "string", description: "One short sentence for the user on why, shown on the card." },
   }, ["reason"]],
+  // What the other screens do, as one tool so it costs little in each request.
+  ["app_action", "Do what Timewarp's screens do. action: tool_servers (list MCP servers), add_tool_server (name; url, or command and args), remove_tool_server (name), new_agent (name, instructions), get_agent_id (one for you: mail and a wallet), verify_identity (the user's identity check). Changes ask the user on a card.", {
+    action: { type: "string", enum: ["tool_servers", "add_tool_server", "remove_tool_server", "new_agent", "get_agent_id", "verify_identity"] },
+    name: { type: "string" }, url: { type: "string" }, command: { type: "string" }, args: { type: "array", items: { type: "string" } }, instructions: { type: "string" },
+    reason: { type: "string", description: "Shown on the card." },
+  }, ["action"]],
 ];
 
 function toolSpecs() {
   return [{
     type: "namespace", name: "timewarp_app",
-    description: "Timewarp itself: the user's plan and usage, settings and the app's state. Reading is free; settings change only when the user allows it on the card Timewarp shows. Billing, plans, credits, connected apps, the vault and sign-ins are the user's to change in Settings: link them there, for example [Billing](<timewarp://customize/billing>).",
+    description: "Timewarp itself: the user's plan and usage, settings, the app's state and what its screens do (app_action). Reading is free; changes happen only when the user allows them on the card Timewarp shows. Billing, plans, credits, the vault and sign-ins are the user's to change in Settings: link them there, for example [Billing](<timewarp://customize/billing>).",
     tools: TOOLS.map(([name, description, properties, required]) => ({ type: "function", name, description, inputSchema: { type: "object", properties, required, additionalProperties: false } })),
   }];
 }
@@ -44,7 +51,8 @@ const credits = value => Number.isFinite(Number(value)) ? Math.floor(Number(valu
 // settings: { read(), write(key, value) } as Settings → General uses them.
 // models: { choices(), choose(choices, wanted), select(choices) }.
 // status(): the app's state. confirm(conversationId, card): the user's answer.
-function createAppTools({ store, harness, userId, usage, settings, models, status, confirm, now = () => Date.now() }) {
+// For app_action: mcp() (mcp.cjs), agents (agents.cjs) and agentIds (agent-id.cjs).
+function createAppTools({ store, harness, userId, usage, settings, models, status, confirm, mcp = () => null, agents = null, agentIds = null, now = () => Date.now() }) {
   const text = value => ({ contentItems: [{ type: "inputText", text: typeof value === "string" ? value : JSON.stringify(value) }], success: true });
   const owner = () => { const value = userId(); if (!value) throw fail(401, "Sign in to Timewarp."); return value; };
 
@@ -129,6 +137,63 @@ function createAppTools({ store, harness, userId, usage, settings, models, statu
     return changes;
   }
 
+  // A card the user answers before an action; null when allowed, else what the agent hears.
+  async function allowed(conversationId, agent, card, kind) {
+    const answer = await confirm(conversationId, { agent: agent?.name || "Your agent", ...card });
+    return answer.decision === "accept" ? null : refusal(answer, kind);
+  }
+  const serverLines = server => [{ label: "Name", value: server.name }, server.url ? { label: "Address", value: server.url } : { label: "Command", value: [server.command, ...(server.args || [])].join(" ").slice(0, 600) }];
+
+  async function appAction(conversationId, input, agent) {
+    owner();
+    const reason = String(input.reason || "").replace(/\s+/g, " ").trim().slice(0, 300) || null;
+    switch (input.action) {
+      case "tool_servers": {
+        const servers = await mcp().list();
+        return text(servers.length ? servers.map(server => ({ name: server.name, transport: server.transport, enabled: server.enabled, tools: server.tools, ...(server.reauthenticationRequired ? { needsSignIn: true } : {}), ...(server.error ? { error: server.error } : {}) })) : "The user has no MCP servers of their own.");
+      }
+      case "add_tool_server": {
+        const name = String(input.name || "").trim().toLowerCase();
+        const server = input.url ? { name, transport: "http", url: String(input.url).trim() } : { name, transport: "stdio", command: String(input.command || "").trim(), args: Array.isArray(input.args) ? input.args.map(String) : [] };
+        if (!server.url && !server.command) throw fail(400, "Give the server's url, or its command and args.");
+        const refused = await allowed(conversationId, agent, { kind: "use", title: "Add this tool server?", app: "Tool servers", lines: serverLines(server), body: server.url ? "Its tools become available to your agents." : "Timewarp runs this program on this computer, and its tools become available to your agents. Add only programs you trust.", action: "Add server", reason }, "use");
+        if (refused) return refused;
+        const added = (await mcp().add(server, { confirmed: true })).find(item => item.name === name);
+        return text({ added: name, tools: added?.tools ?? null, ...(added?.authStatus === "notLoggedIn" || added?.reauthenticationRequired ? { signIn: `It needs a sign-in: show <widget-mcp-connection url="${server.url}" /> on its own line.` } : {}), note: "New chats get its tools; this chat gets them after its next restart." });
+      }
+      case "remove_tool_server": {
+        const server = (await mcp().list()).find(item => item.name === String(input.name || ""));
+        if (!server) throw fail(404, "There's no MCP server with that name. List them with tool_servers.");
+        const refused = await allowed(conversationId, agent, { kind: "delete", title: "Remove this tool server?", app: "Tool servers", lines: serverLines(server), body: null, action: "Remove", reason }, "delete");
+        if (refused) return refused;
+        await mcp().remove(server.name);
+        return text(`Removed ${server.name}.`);
+      }
+      case "new_agent": {
+        if (!agents) throw fail(400, "Agents can't be made here.");
+        const made = agents.create({ name: String(input.name || "").trim().slice(0, 60) || "Agent", instructions: typeof input.instructions === "string" ? input.instructions.slice(0, 20000) : "" });
+        return text({ agent: { id: made.id, name: made.name }, note: "It's in the user's sidebar. Message it with the team tools." });
+      }
+      case "get_agent_id": {
+        if (!agentIds) throw fail(400, "Agent ID isn't available here.");
+        const current = await agentIds.get(agent.id);
+        if (current.linked) return text({ alreadyHas: current.handle || current.id, mail: current.resources?.mail?.address || null });
+        const refused = await allowed(conversationId, agent, { kind: "use", title: `Get an Agent ID for ${agent.name}?`, app: "Agent ID", lines: [], body: "Your agent gets its own identity, email address and wallet, under your account. You agree to the Agent ID Terms.", action: "Get Agent ID", reason }, "use");
+        if (refused) return refused;
+        const made = await agentIds.create(agent.id);
+        return text({ agentId: made.handle || made.id, mail: made.resources?.mail?.address || null, wallet: made.resources?.wallet ? "ready" : null, note: "Use it with agent_id_tools and agent_id." });
+      }
+      case "verify_identity": {
+        if (!agentIds) throw fail(400, "Agent ID isn't available here.");
+        const refused = await allowed(conversationId, agent, { kind: "use", title: "Verify your identity?", app: "Agent ID", lines: [], body: "Agent ID checks an ID document and a selfie on its provider's page, in the Agent ID window. Your agents can send money once you're verified.", action: "Verify now", reason }, "use");
+        if (refused) return refused;
+        const result = await agentIds.verify({});
+        return text({ status: result.status, note: result.opened ? "The check opened in the Agent ID window for the user." : "The check started; its result shows on the agent's page." });
+      }
+      default: throw fail(400, "Unknown action. Use one of: tool_servers, add_tool_server, remove_tool_server, new_agent, get_agent_id, verify_identity.");
+    }
+  }
+
   return {
     specs: toolSpecs,
     async call(conversationId, params, agent) {
@@ -157,6 +222,7 @@ function createAppTools({ store, harness, userId, usage, settings, models, statu
           harness?.discardSpares?.();
           return text(applied.length ? "The user allowed it. Changed:\n" + applied.join("\n") : "The user allowed it; the settings were already like that.");
         }
+        case "app_action": return appAction(conversationId, input, agent);
         default: throw fail(404, "Unknown app tool: " + params.tool);
       }
     },

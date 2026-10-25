@@ -1,138 +1,127 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
-import { ArrowRight, BadgeCheck } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 
-import { Button } from "@/components/ui/button";
-import { AppIcon } from "@/components/agent-id/AppIcons";
-import { Brand, ThemeMenu } from "@/components/agent-id/Brand";
-import { Avatar, KIND_ICONS } from "@/components/agent-id/ui";
-import { useSession } from "@/lib/agent-id/session";
+import { ReasonLink, type AngleSlug } from "@/components/agent-id/site/angles";
+import {
+  CommitsViz,
+  GateViz,
+  HeroDemo,
+  RogueViz,
+  SwitchShot,
+  TracedViz,
+  Versus,
+} from "@/components/agent-id/site/demos";
+import { Closing, Hero, SitePage } from "@/components/agent-id/site/Site";
 
-export const Route = createFileRoute("/agent-id/")({ component: AgentIdLanding });
+export const Route = createFileRoute("/agent-id/")({
+  head: () => ({
+    meta: [{ title: "Timewarp Agent ID · Trust your AI agents with real work" }],
+  }),
+  component: AgentIdHome,
+});
 
-// One icon per maker (Codex stands for OpenAI).
-const WORKS_WITH = ["claude-code", "codex", "cursor", "gemini", "grok", "copilot"];
+// The front door, built like timewarpdev.com (Deus's homepage layout and
+// Copywriting Formula; plan in docs/agent-id-ladder.md): the promise with
+// Cosmo doing a real task under its own ID, others against Agent ID, every
+// reason as a card to its own page, one ID across apps, and the start.
 
-// Agent ID's home for everyone, signed in or not: what it is in one line, the
-// way to get one, and an agent's ID as it looks.
-function AgentIdLanding() {
-  const session = useSession();
-  const signedIn = session.status === "signed-in";
-
+function ReasonCard({
+  angle,
+  title,
+  line,
+  viz,
+}: {
+  angle: AngleSlug | "check";
+  title: string;
+  line: string;
+  viz: ReactNode;
+}) {
   return (
-    <div className="flex min-h-svh flex-col">
-      <header className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
-        <Brand />
-        <div className="flex items-center gap-1">
-          {!signedIn && (
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/agent-id/sign-in">Sign in</Link>
-            </Button>
-          )}
-          <ThemeMenu />
-        </div>
-      </header>
-
-      <main className="mx-auto grid w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)] items-center gap-12 overflow-x-clip px-4 py-12 sm:px-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16">
-        <section>
-          <h1 className="max-w-xl text-4xl font-semibold leading-[1.1] tracking-tight sm:text-6xl">
-            An identity for every AI agent.
-          </h1>
-          <p className="mt-5 max-w-lg text-lg text-[var(--muted-foreground)]">
-            Its own email, phone number, wallet and computer, in every app it works in, and always
-            traceable to you.
-          </p>
-          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <Button asChild size="lg" className="h-12 rounded-full px-7 text-base">
-              <Link to={signedIn ? "/agent-id/dashboard" : "/agent-id/claim"}>
-                {signedIn ? "Open Agent ID" : "Get an Agent ID"}
-                <ArrowRight aria-hidden="true" />
-              </Link>
-            </Button>
-            {!signedIn && (
-              <span className="text-sm text-[var(--muted-foreground)]">
-                Free to start. No sign-up needed.
-              </span>
-            )}
-          </div>
-          <div className="mt-12 flex items-center gap-3">
-            <span className="text-xs font-medium text-[var(--muted-foreground)]">Works with</span>
-            <span className="flex items-center gap-1.5">
-              {WORKS_WITH.map((app) => (
-                <AppIcon key={app} app={app} size="md" />
-              ))}
-            </span>
-          </div>
-        </section>
-
-        <section
-          aria-label="An agent's ID"
-          className="relative isolate mx-auto w-full max-w-md lg:max-w-none"
-        >
-          <div
-            aria-hidden="true"
-            className="absolute -inset-6 -z-10 rounded-[2.5rem] bg-[var(--aid-glow)] blur-3xl"
-          />
-          <SampleId />
-        </section>
-      </main>
-
-      <footer className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-xs text-[var(--muted-foreground)] sm:px-6">
-        <span>© 2026 Timewarp</span>
-        <nav className="flex gap-4" aria-label="Legal">
-          <a href="/legal/agent-id-terms" className="hover:text-[var(--foreground)]">
-            Agent ID Terms
-          </a>
-          <a href="/legal/privacy-policy" className="hover:text-[var(--foreground)]">
-            Privacy
-          </a>
-          <a href="/legal/terms-of-service" className="hover:text-[var(--foreground)]">
-            Terms
-          </a>
-        </nav>
-      </footer>
-    </div>
+    <ReasonLink angle={angle} className="q-card">
+      <div className="q-viz">{viz}</div>
+      <h3>{title}</h3>
+      <p>{line}</p>
+      <span className="more">See how →</span>
+    </ReasonLink>
   );
 }
 
-// What an agent's ID looks like in Agent ID: who it is, where it works, what it has.
-function SampleId() {
-  const rows: { icon: LucideIcon; label: string; value: string }[] = [
-    { icon: KIND_ICONS.mail, label: "Mail", value: "research@agents.timewarpdev.com" },
-    { icon: KIND_ICONS.phone, label: "Phone", value: "+1 415 555 0142" },
-    { icon: KIND_ICONS.wallet, label: "Wallet", value: "$1,240.00" },
-    { icon: KIND_ICONS.vm, label: "Computer", value: "Running" },
-  ];
+function AgentIdHome() {
   return (
-    <div className="aid-card overflow-hidden shadow-[0_24px_60px_-20px_rgba(23,32,51,0.25)]">
-      <div className="flex items-center gap-4 border-b border-[var(--border)] px-6 py-5">
-        <Avatar name="Research Assistant" size="lg" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-lg font-semibold">Research Assistant</p>
-          <p className="mt-0.5 flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">
-            <BadgeCheck className="h-4 w-4 text-[var(--aid-success)]" aria-hidden="true" />
-            Verified owner
-          </p>
+    <SitePage>
+      <Hero
+        title="Trust your AI agents with real work."
+        lede={
+          <>
+            Give every agent <b>its own ID, tied to you</b>. Everything it does, and everything it
+            makes, traces back to it.
+          </>
+        }
+      >
+        <HeroDemo />
+      </Hero>
+
+      <section className="section wrap" id="why" aria-label="Others compared with Agent ID">
+        <Versus />
+      </section>
+
+      <section className="section wrap" aria-labelledby="reasons-title">
+        <h2 id="reasons-title">
+          One ID for every agent.
+          <br />
+          Every move accounted for.
+        </h2>
+        <div className="quad">
+          <ReasonCard
+            angle="code"
+            title="Only your agents touch your code"
+            line="Every commit is signed. Ones from agents you don't know are blocked."
+            viz={<CommitsViz />}
+          />
+          <ReasonCard
+            angle="check"
+            title="Tell AI from real"
+            line="Pictures, voices and text carry a hidden mark. Anyone can check it."
+            viz={<TracedViz />}
+          />
+          <ReasonCard
+            angle="accountability"
+            title="Know whose agent it was"
+            line="Every action shows the person, the app and the computer."
+            viz={<RogueViz />}
+          />
+          <ReasonCard
+            angle="apis"
+            title="Let only verified agents in"
+            line="One line keeps unknown agents off your API and MCP server."
+            viz={<GateViz />}
+          />
         </div>
-        <span className="flex items-center gap-1">
-          {["claude-code", "codex", "cursor"].map((app) => (
-            <AppIcon key={app} app={app} size="sm" tooltip={false} />
-          ))}
-        </span>
-      </div>
-      <dl className="divide-y divide-[var(--border)]">
-        {rows.map(({ icon: Icon, label, value }) => (
-          <div key={label} className="flex items-center gap-4 px-6 py-4">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--accent)] text-[var(--aid-ink)]">
-              <Icon className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <dt className="sr-only w-20 shrink-0 text-sm text-[var(--muted-foreground)] sm:not-sr-only">
-              {label}
-            </dt>
-            <dd className="min-w-0 truncate text-sm font-medium">{value}</dd>
+      </section>
+
+      <section className="section wrap" aria-labelledby="switch-title">
+        <h2 id="switch-title">Switch apps. Keep your agent.</h2>
+        <div className="team-card">
+          <div className="team-copy">
+            <h3>One agent ID in Claude Code and Codex</h3>
+            <p>
+              Its email, wallet, computer and keys come along. Your agent picks up where it left
+              off.
+            </p>
+            <ReasonLink angle="claude-and-codex" className="more">
+              See how →
+            </ReasonLink>
           </div>
-        ))}
-      </dl>
-    </div>
+          <div className="team-shot">
+            <SwitchShot />
+          </div>
+        </div>
+      </section>
+
+      <Closing
+        title="Give your agents their ID."
+        lede="An ID, email, wallet and 5 hours of computer time, free. Pause or revoke any agent in one click."
+      />
+    </SitePage>
   );
 }

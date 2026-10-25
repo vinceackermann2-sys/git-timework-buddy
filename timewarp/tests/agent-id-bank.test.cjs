@@ -29,13 +29,10 @@ async function setup(t, env = LIVE) {
   t.after(() => local.close());
   const terms = (await local.call("GET", "/v1/config")).body.legal.termsVersion;
   const ok = async (method, url, init) => { const r = await local.call(method, url, init); assert.ok(r.status < 300, `${method} ${url} → ${r.status} ${JSON.stringify(r.body)}`); return r.body; };
+  // A new owner: terms accepted, identity not checked yet.
   const owner = async () => {
     const user = await local.user({ email: "ada@example.com" });
     await ok("POST", "/v1/account/terms", { token: user.session, body: { version: terms } });
-    const reviewer = await local.user();
-    local.setEnv({ AGENT_ID_REVIEWERS: reviewer.id });
-    await ok("POST", "/v1/account/verification", { token: user.session, body: { kind: "person", consent: true, legalName: "Ada Lovelace", country: "SE" } });
-    await ok("POST", `/v1/reviews/person/${user.id}`, { token: reviewer.session, body: { decision: "approve" } });
     return user;
   };
   net.on("POST", /api\.privy\.io\/v1\/wallets$/, () => ({ id: "w_1", address: WALLET, chain_type: "ethereum" }));
@@ -44,10 +41,29 @@ async function setup(t, env = LIVE) {
     await ok("POST", `/v1/agents/${agent.id}/resources`, { token: user.session, body: { kind: "wallet", mode: "live" } });
     return agent;
   };
-  return { local, net, ok, owner, liveWallet };
+  // Bridge approves the owner at once, for dollars and euros.
+  const verify = async (user, { customer = "cus_1", country = "SWE" } = {}) => {
+    const kyc = { id: `kyc_${customer}`, customer_id: customer, kyc_link: "https://bridge.withpersona.com/verify?x=1", tos_link: "https://dashboard.bridge.xyz/accept-terms?x=1", kyc_status: "approved", tos_status: "approved" };
+    net.on("POST", /\/v0\/kyc_links$/, () => kyc);
+    net.on("GET", new RegExp(`/v0/kyc_links/${kyc.id}$`), () => kyc);
+    net.on("GET", new RegExp(`/v0/customers/${customer}$`), () => ({ id: customer, status: "active", first_name: "Ada", last_name: "Lovelace", residential_address: { country }, endorsements: [{ name: "base", status: "approved" }, { name: "sepa", status: "approved" }] }));
+    await ok("POST", "/v1/account/bank/verify", { token: user.session, body: {} });
+  };
+  // Bridge's signed webhooks (its key set on first use).
+  let keys = null;
+  const hook = event => {
+    if (!keys) {
+      keys = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+      local.setEnv({ BRIDGE_WEBHOOK_PUBLIC_KEY: keys.publicKey.export({ type: "spki", format: "pem" }) });
+    }
+    const raw = JSON.stringify(event), at = String(Date.now());
+    const signature = crypto.sign("sha256", crypto.createHash("sha256").update(`${at}.${raw}`).digest(), keys.privateKey).toString("base64");
+    return local.call("POST", "/webhooks/bridge", { raw, headers: { "content-type": "application/json", "x-webhook-signature": `t=${at},v0=${signature}` } });
+  };
+  return { local, net, ok, owner, liveWallet, verify, hook };
 }
 
-test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank details, withdraw to the bank", async t => {
+test("bank transfers: one identity check (Bridge's), then an IBAN, a wallet's bank details, and withdrawing to the bank", async t => {
   const { local, net, ok, owner, liveWallet } = await setup(t);
   let now = Date.now();
   local.setClock(() => now);
@@ -55,11 +71,14 @@ test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank 
   local.setEnv({ BRIDGE_WEBHOOK_PUBLIC_KEY: bridgeKeys.publicKey.export({ type: "spki", format: "pem" }) });
   const ada = await owner();
   const bot = await liveWallet(ada);
-  assert.equal((await ok("GET", "/v1/config")).bank.available, true);
+  const config = await ok("GET", "/v1/config");
+  assert.deepEqual([config.bank.available, config.verification.person], [true, "bridge"], "Where Bridge moves money, its check is the identity check.");
   assert.equal((await ok("GET", `/v1/agents/${bot.id}/wallet/add-money`, { token: ada.session })).bank.available, true);
   assert.deepEqual(await ok("GET", "/v1/account/bank", { token: ada.session }), { available: true, status: "not_started", currencies: [], accounts: [] });
+  // The wallet was given unverified; money doesn't leave it yet.
+  assert.equal((await local.call("POST", `/v1/agents/${bot.id}/wallet/withdraw`, { token: ada.session, body: { to: "0x" + "34".repeat(20), value: "1" } })).body.error.code, "verification_required");
 
-  // Verifying: Bridge's hosted link, for the person Agent ID verified.
+  // Verifying: Bridge's hosted page, started from the wallet or the Verification page alike.
   let kyc = { id: "kyc_1", customer_id: "cus_1", kyc_link: "https://bridge.withpersona.com/verify?x=1", tos_link: "https://dashboard.bridge.xyz/accept-terms?x=1", kyc_status: "not_started", tos_status: "pending" };
   net.on("POST", /api\.sandbox\.bridge\.xyz\/v0\/kyc_links$/, () => kyc);
   net.on("GET", /\/v0\/kyc_links\/kyc_1$/, () => kyc);
@@ -68,15 +87,18 @@ test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank 
   const started = await ok("POST", "/v1/account/bank/verify", { token: ada.session, body: {} });
   assert.deepEqual([started.status, started.link], ["pending", kyc.kyc_link]);
   const created = net.find("POST", /kyc_links$/)[0];
-  assert.deepEqual(JSON.parse(created.body), { full_name: "Ada Lovelace", email: "ada@example.com", type: "individual", endorsements: ["base", "sepa"], redirect_uri: "https://timewarpdev.com/agent-id/dashboard" });
+  assert.deepEqual(JSON.parse(created.body), { email: "ada@example.com", type: "individual", endorsements: ["base", "sepa"], redirect_uri: "https://timewarpdev.com/agent-id/dashboard" });
   assert.equal(created.headers.get("api-key"), "sk-test-bridge");
   assert.equal(created.headers.get("idempotency-key"), `agent-id-kyc-${ada.id}`);
+  const fromVerifyPage = await ok("POST", "/v1/account/verification", { token: ada.session, body: { kind: "person" } });
+  assert.deepEqual([fromVerifyPage.url, fromVerifyPage.person.status, fromVerifyPage.person.provider], [kyc.kyc_link, "pending", "bridge"]);
+  assert.equal(net.find("POST", /kyc_links$/).length, 1, "One check, not a second one.");
   // Not approved yet: no bank accounts, no deposit details.
   assert.equal((await local.call("POST", "/v1/account/bank/accounts", { token: ada.session, body: { kind: "iban", ownerName: "Ada Lovelace", iban: "SE4550000000058398257466", address: HOME } })).body.error.code, "bank_not_verified");
 
   // Bridge approves, for euros (SEPA) and dollars, and says so (signed) right away.
   kyc = { ...kyc, kyc_status: "approved", tos_status: "approved" };
-  net.on("GET", /\/v0\/customers\/cus_1$/, () => ({ id: "cus_1", status: "active", endorsements: [{ name: "base", status: "approved" }, { name: "sepa", status: "approved" }] }));
+  net.on("GET", /\/v0\/customers\/cus_1$/, () => ({ id: "cus_1", status: "active", first_name: "Ada", last_name: "Lovelace", residential_address: { country: "SWE" }, endorsements: [{ name: "base", status: "approved" }, { name: "sepa", status: "approved" }] }));
   const hook = (event, key = bridgeKeys.privateKey) => {
     const raw = JSON.stringify(event), at = String(now);
     const signature = crypto.sign("sha256", crypto.createHash("sha256").update(`${at}.${raw}`).digest(), key).toString("base64");
@@ -87,6 +109,8 @@ test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank 
   assert.equal((await hook({ event_category: "kyc_link", event_type: "kyc_link.updated.status_transitioned", event_object: { id: "kyc_1", kyc_status: "approved" } })).status, 200);
   const approved = await ok("GET", "/v1/account/bank", { token: ada.session });
   assert.deepEqual([approved.status, approved.currencies, approved.link], ["approved", ["eur", "usd"], undefined]);
+  const person = (await ok("GET", "/v1/account", { token: ada.session })).person;
+  assert.deepEqual([person.status, person.provider, person.legalName, person.country], ["verified", "bridge", "Ada Lovelace", "SE"], "Bridge's approval verifies Ada on Agent ID too.");
 
   // An IBAN: checked here first, then saved at Bridge; only the last four stay here.
   assert.equal((await local.call("POST", "/v1/account/bank/accounts", { token: ada.session, body: { kind: "iban", ownerName: "Ada Lovelace", iban: "SE4550000000058398257467", address: HOME } })).body.error.message, "That IBAN isn't valid. Check it against your bank app.");
@@ -147,7 +171,7 @@ test("bank transfers: verify once with Bridge, add an IBAN, get a wallet's bank 
   await ok("DELETE", `/v1/account/bank/accounts/${account.id}`, { token: ada.session });
   assert.deepEqual((await ok("GET", "/v1/account/bank", { token: ada.session })).accounts, []);
   const log = (await ok("GET", "/v1/audit", { token: ada.session })).entries.map(e => e.action);
-  for (const action of ["bank.verification_started", "bank.account_added", "bank.deposit_details", "wallet.withdraw", "bank.account_removed"]) assert.ok(log.includes(action), action);
+  for (const action of ["verification.person.start", "verification.person.verified", "bank.account_added", "bank.deposit_details", "wallet.withdraw", "bank.account_removed"]) assert.ok(log.includes(action), action);
 });
 
 test("the deployment registers its own Bridge webhook and switches it on", async t => {
@@ -167,12 +191,195 @@ test("the deployment registers its own Bridge webhook and switches it on", async
   assert.equal((await ok("POST", "/v1/admin/setup", { token: operator.session })).setup.bridge, "kept");
 });
 
-test("bank transfers stay hidden without Bridge, and need a verified person", async t => {
+test("bank transfers stay hidden without Bridge, where Stripe Identity stays the identity check", async t => {
   const { local, ok } = await setup(t, { AGENT_ID_LIVE: "wallet", PRIVY_APP_ID: "privy-app", PRIVY_APP_SECRET: "privy-secret" });
   const user = await local.user();
   assert.equal((await ok("GET", "/v1/config")).bank.available, false);
   assert.deepEqual(await ok("GET", "/v1/account/bank", { token: user.session }), { available: false, status: "unavailable", currencies: [], accounts: [] });
   assert.equal((await local.call("POST", "/v1/account/bank/verify", { token: user.session, body: {} })).body.error.code, "bank_unavailable");
+  local.setEnv({ AGENT_ID_KYC: "stripe_identity" });
+  assert.equal((await ok("GET", "/v1/config")).verification.person, "stripe_identity");
   local.setEnv({ BRIDGE_API_KEY: "sk-test-bridge" });
-  assert.equal((await local.call("POST", "/v1/account/bank/verify", { token: user.session, body: {} })).body.error.code, "verification_required");
+  assert.equal((await ok("GET", "/v1/config")).verification.person, "bridge", "With Bridge, one check covers both.");
+});
+
+test("adding money by SEPA: an amount in a form opens one transfer to the wallet, followed until it arrives", async t => {
+  const { local, net, ok, owner, liveWallet, verify, hook } = await setup(t);
+  let now = Date.now();
+  local.setClock(() => now);
+  const ada = await owner();
+  const bot = await liveWallet(ada);
+  const payins = `/v1/agents/${bot.id}/wallet/bank-payins`;
+  assert.equal((await local.call("POST", payins, { token: ada.session, body: { amount: 5000 } })).body.error.code, "bank_not_verified", "The one identity check comes first.");
+  await verify(ada);
+  now += 6_000;
+  assert.deepEqual((await ok("GET", "/v1/account/bank", { token: ada.session })).currencies, ["eur", "usd"], "Approved, and its rails known soon after.");
+
+  let transfer = { id: "tr_in1", state: "awaiting_funds", source_deposit_instructions: { payment_rail: "sepa", currency: "eur", amount: "50.00", deposit_message: "BRGABC123", iban: "DE89 3704 0044 0532 0130 00", bic: "COBADEFFXXX", account_holder_name: "Bridge Building Sp. z o.o.", bank_name: "Commerzbank", bank_address: "Berlin, DE" } };
+  net.on("POST", /\/v0\/transfers$/, () => transfer);
+  const ownerKey = (await ok("POST", "/v1/keys", { token: ada.session, body: { name: "cli" } })).secret;
+  assert.equal((await local.call("POST", payins, { token: ownerKey, body: { amount: 5000 } })).body.error.code, "session_required");
+  assert.equal((await local.call("POST", payins, { token: ada.session, body: { amount: 50 } })).status, 400, "At least one euro.");
+  const { payin } = await ok("POST", payins, { token: ada.session, body: { amount: 5000 } });
+  assert.match(payin.id, /^pay_[a-z0-9]{24}$/);
+  assert.deepEqual([payin.amount, payin.currency, payin.state], [5000, "eur", "awaiting_funds"]);
+  assert.deepEqual(payin.instructions, { currency: "eur", amount: "50.00", beneficiary: "Bridge Building Sp. z o.o.", iban: "DE89370400440532013000", bic: "COBADEFFXXX", bankName: "Commerzbank", bankAddress: "Berlin, DE", reference: "BRGABC123" });
+  const sent = net.find("POST", /\/v0\/transfers$/)[0];
+  assert.deepEqual(JSON.parse(sent.body), {
+    on_behalf_of: "cus_1", amount: "50.00", client_reference_id: payin.id,
+    source: { payment_rail: "sepa", currency: "eur" }, destination: { payment_rail: "base", currency: "usdc", to_address: WALLET },
+  });
+  assert.equal(sent.headers.get("idempotency-key"), `agent-id-payin-${payin.id}`);
+
+  // Bridge says the euros arrived (signed); then it's looked up now and then.
+  assert.equal((await hook({ event_category: "transfer", event_object_id: "tr_in1", event_object: { id: "tr_in1", state: "funds_received" } })).status, 200);
+  assert.equal((await ok("GET", payins, { token: ada.session })).payins[0].state, "funds_received");
+  net.on("GET", /\/v0\/transfers\/tr_in1$/, () => ({ id: "tr_in1", state: "payment_processed" }));
+  now += 31_000;
+  assert.equal((await ok("GET", payins, { token: ada.session })).payins[0].state, "payment_processed");
+
+  // Changed their mind: one still waiting is closed at Bridge too; one on its way can't be.
+  transfer = { ...transfer, id: "tr_in2" };
+  const second = (await ok("POST", payins, { token: ada.session, body: { amount: 2500 } })).payin;
+  net.on("DELETE", /\/v0\/transfers\/tr_in2$/, () => ({ id: "tr_in2", state: "canceled" }));
+  await ok("DELETE", `${payins}/${second.id}`, { token: ada.session });
+  assert.equal(net.find("DELETE", /\/v0\/transfers\/tr_in2$/).length, 1);
+  assert.deepEqual((await ok("GET", payins, { token: ada.session })).payins.map(p => p.id), [payin.id]);
+  assert.equal((await local.call("DELETE", `${payins}/${payin.id}`, { token: ada.session })).body.error.code, "too_late");
+  const eve = await local.user({ email: "eve@example.com" });
+  assert.equal((await local.call("GET", payins, { token: eve.session })).status, 404, "Only the owner sees them.");
+  const log = (await ok("GET", "/v1/audit", { token: ada.session })).entries.map(e => e.action);
+  for (const action of ["bank.payin_started", "bank.payin_canceled"]) assert.ok(log.includes(action), action);
+});
+
+test("card payments through MoonPay: a signed page that pays into this wallet, for this buyer, in their money", async t => {
+  const { local, ok, owner, liveWallet, verify } = await setup(t, { ...LIVE, AGENT_ID_CARD_PROVIDER: "moonpay", MOONPAY_API_KEY: "pk_test_abc", MOONPAY_SECRET_KEY: "sk_test_secret" });
+  let now = Date.now();
+  local.setClock(() => now);
+  const ada = await owner();
+  const bot = await liveWallet(ada);
+  const addMoney = `/v1/agents/${bot.id}/wallet/add-money`;
+  assert.deepEqual((await ok("GET", addMoney, { token: ada.session })).card, { available: true, provider: "moonpay" });
+  const hmac = message => crypto.createHmac("sha256", "sk_test_secret").update(message).digest("base64");
+  const open = async () => {
+    const { provider, url } = await ok("POST", addMoney, { token: ada.session, body: {}, headers: { "x-forwarded-for": "203.0.113.9, 10.0.0.1" } });
+    assert.equal(provider, "moonpay");
+    const page = new URL(url);
+    const [query, signature] = page.search.split("&signature=");
+    assert.equal(decodeURIComponent(signature), hmac(query), "Signed with the secret key: the wallet can't be changed on the way.");
+    return { origin: page.origin, params: Object.fromEntries(page.searchParams) };
+  };
+  const { origin, params } = await open();
+  assert.equal(origin, "https://buy-sandbox.moonpay.com");
+  assert.deepEqual(
+    [params.apiKey, params.currencyCode, params.walletAddress, params.baseCurrencyCode, params.email, params.externalCustomerId],
+    ["pk_test_abc", "usdc_base", WALLET, "usd", "ada@example.com", ada.id],
+  );
+  assert.match(params.externalTransactionId, /^card_[a-z0-9]{24}$/);
+  assert.equal(params.allowedIpAddress, hmac("203.0.113.9"), "Bound to the buyer's IP address.");
+  assert.equal(params.redirectURL, `https://timewarpdev.com/agent-id/agents/${bot.id}?tab=wallet`);
+  // Verified as living in Sweden: paying in crowns.
+  await verify(ada);
+  now += 6_000;
+  await ok("GET", "/v1/account/bank", { token: ada.session });
+  assert.equal((await open()).params.baseCurrencyCode, "sek");
+  const log = (await ok("GET", "/v1/audit", { token: ada.session })).entries.filter(e => e.action === "wallet.add_money_card");
+  assert.equal(log.length, 2);
+  // Keys from different modes don't count.
+  local.setEnv({ MOONPAY_SECRET_KEY: "sk_live_secret" });
+  assert.equal((await ok("GET", addMoney, { token: ada.session })).card.available, false);
+});
+
+test("a business is checked by Bridge too, started by a verified person who may act for it", async t => {
+  const { local, net, ok, owner, verify, hook } = await setup(t);
+  let now = Date.now();
+  local.setClock(() => now);
+  const ada = await owner();
+  const org = await local.organization("Acme", [[ada, "owner"]]);
+  assert.equal((await ok("GET", "/v1/config")).verification.business, "bridge");
+  const body = { kind: "business", organizationId: org, legalName: "Acme AB", country: "SE", representativeRole: "CEO", attestation: true };
+  assert.equal((await local.call("POST", "/v1/account/verification", { token: ada.session, body })).body.error.code, "person_verification_required");
+  await verify(ada);
+  let kyb = { id: "kyb_1", customer_id: "cus_b1", kyc_link: "https://bridge.withpersona.com/verify?b=1", tos_link: "https://dashboard.bridge.xyz/accept-terms?b=1", kyc_status: "not_started", tos_status: "pending" };
+  net.on("POST", /\/v0\/kyc_links$/, () => kyb);
+  net.on("GET", /\/v0\/kyc_links\/kyb_1$/, () => kyb);
+  assert.equal((await local.call("POST", "/v1/account/verification", { token: ada.session, body: { ...body, attestation: false } })).body.error.code, "attestation_required");
+  const started = await ok("POST", "/v1/account/verification", { token: ada.session, body });
+  assert.deepEqual([started.url, started.business.status, started.business.provider, started.business.link], [kyb.kyc_link, "pending", "bridge", kyb.kyc_link]);
+  const created = net.find("POST", /kyc_links$/).at(-1);
+  assert.deepEqual(JSON.parse(created.body), { full_name: "Acme AB", email: "ada@example.com", type: "business", endorsements: ["base", "sepa"], redirect_uri: "https://timewarpdev.com/agent-id/verify?done=1" });
+  assert.equal(created.headers.get("idempotency-key"), `agent-id-kyc-business-${org}`);
+  const businessOf = async () => (await ok("GET", "/v1/account", { token: ada.session })).organizations.find(o => o.id === org).business;
+  assert.equal((await businessOf()).link, kyb.kyc_link, "The Verification page can pick it up again.");
+  await ok("POST", "/v1/account/verification", { token: ada.session, body });
+  assert.equal(net.find("POST", /kyc_links$/).filter(c => JSON.parse(c.body).type === "business").length, 1, "One check per business.");
+
+  // Bridge approves (signed webhook): the business is verified, and its agents show it.
+  kyb = { ...kyb, kyc_status: "approved", tos_status: "approved" };
+  assert.equal((await hook({ event_category: "kyc_link", event_object: { id: "kyb_1" } })).status, 200);
+  const business = await businessOf();
+  assert.deepEqual([business.status, business.link], ["verified", undefined]);
+  const agent = (await ok("POST", "/v1/agents", { token: ada.session, body: { name: "Acme bot", organizationId: org } })).agent;
+  const verification = (await ok("GET", `/v1/agents/${agent.id}`, { token: ada.session })).verification;
+  assert.deepEqual([verification.verified, verification.level], [true, "kyb"]);
+  const log = (await ok("GET", "/v1/audit", { token: ada.session })).entries.map(e => e.action);
+  for (const action of ["verification.business.start", "verification.business.verified"]) assert.ok(log.includes(action), action);
+});
+
+test("card payments through Privy's funding: the browser opens Privy's onramps for this wallet, recorded first", async t => {
+  const { local, ok, owner, liveWallet, verify } = await setup(t);
+  let now = Date.now();
+  local.setClock(() => now);
+  const ada = await owner();
+  const bot = await liveWallet(ada);
+  const addMoney = `/v1/agents/${bot.id}/wallet/add-money`;
+  // Privy is the default wherever its wallets are; development buys in the sandbox.
+  assert.deepEqual((await ok("GET", addMoney, { token: ada.session })).card, { available: true, provider: "privy", privy: { appId: "privy-app", environment: "sandbox" } });
+  const ownerKey = (await ok("POST", "/v1/keys", { token: ada.session, body: { name: "cli" } })).secret;
+  assert.equal((await local.call("POST", addMoney, { token: ownerKey, body: {} })).body.error.code, "session_required");
+  const opened = await ok("POST", addMoney, { token: ada.session, body: {} });
+  assert.deepEqual(
+    [opened.provider, opened.appId, opened.environment, opened.address, opened.chain, opened.asset, opened.currency, opened.email],
+    ["privy", "privy-app", "sandbox", WALLET, "eip155:8453", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "usd", "ada@example.com"],
+  );
+  assert.match(opened.reference, /^card_[a-z0-9]{24}$/);
+  // Verified as living in Sweden: euros (Privy's onramps take dollars and euros).
+  await verify(ada);
+  now += 6_000;
+  await ok("GET", "/v1/account/bank", { token: ada.session });
+  assert.equal((await ok("POST", addMoney, { token: ada.session, body: {} })).currency, "eur");
+  const log = (await ok("GET", "/v1/audit", { token: ada.session })).entries.filter(e => e.action === "wallet.add_money_card");
+  assert.deepEqual(log.map(e => [e.detail.provider, e.detail.currency, e.agentId]).sort(), [["privy", "eur", bot.id], ["privy", "usd", bot.id]], "Each card payment is recorded for the agent.");
+  // Production buys for real; a separate client app ID can be set for the browser.
+  local.setEnv({ AGENT_ID_ALLOW_TEST: "false", PRIVY_CLIENT_APP_ID: "privy-client" });
+  assert.deepEqual((await ok("GET", addMoney, { token: ada.session })).card.privy, { appId: "privy-client", environment: "production" });
+  local.setEnv({ AGENT_ID_CARD_PAYMENTS: "off" });
+  assert.equal((await ok("GET", addMoney, { token: ada.session })).card.available, false);
+});
+
+test("credits: a pack bought on the Agent ID website is a Stripe Checkout that Timewarp's webhook pays out", async t => {
+  const { local, net, ok, owner } = await setup(t, { ...LIVE, STRIPE_SECRET_KEY: "sk_test_x" });
+  const ada = await owner();
+  net.on("GET", /api\.stripe\.com\/v1\/prices\?/, () => ({ data: [{ id: "price_360", currency: "usd", unit_amount: 3000, recurring: null }] }));
+  net.on("POST", /api\.stripe\.com\/v1\/checkout\/sessions$/, () => ({ id: "cs_1", url: "https://checkout.stripe.com/c/pay/cs_1" }));
+  assert.equal((await local.call("POST", "/v1/account/credits", { token: ada.session, body: { credits: 100 } })).status, 400, "Only the packs.");
+  const ownerKey = (await ok("POST", "/v1/keys", { token: ada.session, body: { name: "cli" } })).secret;
+  assert.equal((await local.call("POST", "/v1/account/credits", { token: ownerKey, body: { credits: 360 } })).body.error.code, "session_required");
+  const { url } = await ok("POST", "/v1/account/credits", { token: ada.session, body: { credits: 360 } });
+  assert.equal(url, "https://checkout.stripe.com/c/pay/cs_1");
+  assert.match(net.find("GET", /\/v1\/prices\?/)[0].url, /lookup_keys%5B%5D=timewarp_energy_credits_360_3000_v1|lookup_keys\[\]=timewarp_energy_credits_360_3000_v1/, "The Timewarp app's own price for the pack.");
+  const sent = net.find("POST", /checkout\/sessions$/)[0];
+  const form = Object.fromEntries(new URLSearchParams(sent.body));
+  assert.deepEqual(
+    [form.mode, form["line_items[0][price]"], form["metadata[kind]"], form["metadata[pack_credits]"], form["metadata[supabase_user_id]"], form["metadata[workspace_id]"], form.client_reference_id, form.customer_email],
+    ["payment", "price_360", "credits", "360", ada.id, "", ada.id, "ada@example.com"],
+  );
+  assert.equal(form.success_url, "https://timewarpdev.com/agent-id/pricing?credits=added");
+  assert.ok(sent.headers.get("idempotency-key"), "A double click opens the same checkout.");
+  // Without the app's price, the same amount inline.
+  net.on("GET", /api\.stripe\.com\/v1\/prices\?/, () => ({ data: [] }));
+  await ok("POST", "/v1/account/credits", { token: ada.session, body: { credits: 180 } });
+  const inline = Object.fromEntries(new URLSearchParams(net.find("POST", /checkout\/sessions$/).at(-1).body));
+  assert.deepEqual([inline["line_items[0][price_data][unit_amount]"], inline["line_items[0][price_data][currency]"], inline["metadata[pack_credits]"]], ["1500", "usd", "180"]);
+  assert.ok((await ok("GET", "/v1/audit", { token: ada.session })).entries.some(e => e.action === "credits.checkout"));
 });

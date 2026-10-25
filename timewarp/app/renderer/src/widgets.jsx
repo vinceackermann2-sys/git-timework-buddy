@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import {
   ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CircleSlash, ExternalLink, Eye, EyeOff, File, FileArchive, FileAudio, FileCode, FileImage,
   FileSpreadsheet, FileText, FileVideo, FolderOpen, Globe, KeyRound, Link2, LoaderCircle, Mail, MessageSquare, Mic, Plus, Presentation, Puzzle, RefreshCw,
-  Send, Server, Sparkles, Square, UserRound, X,
+  Send, Server, Sparkles, Square, UserRound, Wallet, X,
 } from "lucide-react";
 import { accountText, avatarSrc, call, errorText, initials, request } from "./api.js";
 import { Dialog, Menu, useToast } from "./components/common.jsx";
@@ -330,7 +330,10 @@ function ConnectCard({ card }) {
   const connect = () => {
     waiting.current = ready.map(account => account.id);
     setConnecting(true);
-    call("integrations.beginConnect", { integrationId: app.id, agentId }).then(() => toast("Finish connecting in the window that opened.")).catch(failure => { waiting.current = null; setConnecting(false); setError(errorText(failure)); });
+    // The sign-in opens beside the chat; in a window only when the chat can't show it.
+    call("integrations.beginConnect", { integrationId: app.id, agentId, ...(chat?.conversation?.id ? { conversationId: chat.conversation.id } : {}) })
+      .then(result => { if (!result?.inChat) toast("Finish connecting in the window that opened."); })
+      .catch(failure => { waiting.current = null; setConnecting(false); setError(errorText(failure)); });
   };
   const busy = connecting || !agentId;
   const action = ready.length ? (
@@ -395,8 +398,8 @@ function McpCard({ card }) {
       const entry = list.find(item => item.name === added);
       if (entry?.authStatus === "notLoggedIn") {
         waiting.current = added;
-        await call("mcp.signIn", { name: added });
-        toast("Finish signing in in the window that opened.");
+        const opened = await call("mcp.signIn", { name: added, ...(chat?.conversation?.id ? { conversationId: chat.conversation.id } : {}) });
+        if (!opened?.inChat) toast("Finish signing in in the window that opened.");
       } else connected(added);
     } catch (failure) { setError(errorText(failure) || "Could not connect this MCP server."); }
     finally { setBusy(false); }
@@ -1014,6 +1017,9 @@ export function MarkdownLink({ href = "", title, children, pill = null }) {
   if (target.type === "tab") {
     return <a href={href} title={title} className={className} onClick={event => { event.preventDefault(); window.dispatchEvent(new CustomEvent("tw:open-tab", { detail: { conversationId: target.conversationId, tabId: target.tabId } })); }}><TabIcon conversationId={target.conversationId} tabId={target.tabId} />{children}</a>;
   }
+  if (target.type === "agent") {
+    return <a href={href} title={title} className={className} onClick={event => { event.preventDefault(); window.dispatchEvent(new CustomEvent("tw:open-agent", { detail: { conversationId, section: target.section } })); }}>{children}</a>;
+  }
   if (target.type === "conversation" || target.type === "app") {
     const route = target.type === "conversation" ? "/conversation/" + target.conversationId : target.route;
     return <a href={"#" + route} title={title} className={className} onClick={event => { event.preventDefault(); location.hash = "#" + route; }}>{children}</a>;
@@ -1065,13 +1071,53 @@ function UsageInChat() {
   );
 }
 
+// ── <wallet> ───────────────────────────────────────────────────────────────
+// The chat's agent's Agent ID wallet: its live balance, read as the card
+// shows (an agent can't put other numbers in it), with Add money and
+// Withdraw on the owner's own page in the Agent ID window.
+const dollars = money => money && Number.isFinite(money.amount) ? new Intl.NumberFormat(undefined, { style: "currency", currency: money.currency || "USD" }).format(money.amount / 100) : null;
+function WalletCard({ card }) {
+  const { chat } = useCard(card);
+  const toast = useToast();
+  const agentId = chat?.conversation?.agentId;
+  const [state, setState] = useState(null);
+  useEffect(() => {
+    if (!agentId) return undefined;
+    let live = true;
+    call("agentId.call", { agentId, op: "wallet.get" }).then(value => { if (live) setState({ wallet: value.wallet || null }); }, failure => { if (live) setState({ error: errorText(failure) }); });
+    return () => { live = false; };
+  }, [agentId]);
+  const open = () => void call("agentId.open", { agentId, page: "agent", tab: "wallet" }).catch(failure => toast(failure, "error"));
+  const setUp = () => window.dispatchEvent(new CustomEvent("tw:open-agent", { detail: { conversationId: chat?.id, section: "wallet" } }));
+  const wallet = state?.wallet;
+  const name = chat?.agent?.name ? `${chat.agent.name}'s wallet` : "Wallet";
+  const network = wallet?.network === "test" ? "Test money" : wallet?.network ? `USDC and USDT on ${wallet.network === "base" ? "Base" : wallet.network}` : "";
+  return (
+    <div className="tw-card-wrap" data-card="wallet">
+      <div className="tw-chat-card tw-row-card tw-wallet-card">
+        <span className="tw-card-icon"><Wallet size={18} /></span>
+        <span className="tw-card-text">
+          {!state ? <small>Loading the wallet…</small>
+            : state.error ? <><strong>{name}</strong><small>{state.error}</small></>
+              : <><strong>{wallet ? (wallet.balanceError ? "Balance unavailable" : dollars(wallet.balance) || dollars({ amount: 0, currency: "USD" })) : "No wallet yet"}</strong><small>{[name, network].filter(Boolean).join(" · ")}</small></>}
+        </span>
+        <span className="tw-card-action">
+          {!state ? <LoaderCircle size={14} className="tw-spin" />
+            : wallet ? <><button type="button" className="tw-card-pill outline small" onClick={open}>Withdraw</button><button type="button" className="tw-card-pill secondary" onClick={open}>Add money</button></>
+              : <button type="button" className="tw-card-pill secondary" onClick={setUp}>Set up</button>}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ── Registry ───────────────────────────────────────────────────────────────
 function InteractionSummary({ card }) { return card.attrs.summary ? <em className="tw-interaction">{card.attrs.summary}</em> : null; }
 
 const CARDS = {
   file: FileCard, "connect-plugin": ConnectCard, "widget-mcp-connection": McpCard, select: SelectCard, button: ButtonCard,
   conversation: ConversationCard, tabs: TabsCard, "widget-secret": SecretCard, citation: CitationPill, ref: RefChip,
-  "suggested-tasks": SuggestedTasksCard, assistants: AssistantsCard, "widget-interaction": InteractionSummary, usage: UsageInChat,
+  "suggested-tasks": SuggestedTasksCard, assistants: AssistantsCard, "widget-interaction": InteractionSummary, usage: UsageInChat, wallet: WalletCard,
   message: ({ card }) => <div className="tw-chat-card tw-convo-card bare" data-card="message"><ChatMessage item={{ attrs: card.attrs, body: card.text }} /></div>,
   "message-input": ({ card }) => <div className="tw-convo-card bare" data-card="message-input"><MessageInput card={card} item={{ attrs: card.attrs, body: card.text }} mode="chat" /></div>,
 };

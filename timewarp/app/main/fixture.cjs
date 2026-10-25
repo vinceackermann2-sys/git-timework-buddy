@@ -49,9 +49,14 @@ function scriptedResponse(body) {
   // Code mode exposes the tools through one "exec" JavaScript tool.
   const codeMode = (body.input || []).filter(item => item.type === "additional_tools").flatMap(item => item.tools || [])
     .flatMap(item => item.type === "namespace" ? item.tools || [] : [item]).some(item => item.type === "custom" && item.name === "exec");
-  // "%n" in the dump path numbers each request.
+  // TIMEWARP_FIXTURE_DUMP: each request as the model would get it; "%n" in the
+  // path numbers them, and without it the file holds the latest.
   if (process.env.TIMEWARP_FIXTURE_DUMP) require("node:fs").writeFileSync(process.env.TIMEWARP_FIXTURE_DUMP.replace("%n", String(++dumped)), JSON.stringify(body, null, 1));
-  if (process.env.TIMEWARP_FIXTURE_LOG) console.error("[timewarp] fixture request", JSON.stringify({ latest, codeMode, tools: (body.tools || []).map(item => item.name || item.type), inputs: (body.input || []).map(item => item.type + ":" + (item.role || "")), outputs: outputs.length }));
+  // described: which of Timewarp's tool servers the request describes anywhere (its
+  // tools or code mode's text), so ones left for tool search can be told apart.
+  const whole = process.env.TIMEWARP_FIXTURE_LOG ? JSON.stringify(body) : "";
+  const described = ["timewarp_browser", "timewarp_vault", "timewarp_app", "timewarp_agent_id", "tool_search"].filter(name => whole.includes(name));
+  if (process.env.TIMEWARP_FIXTURE_LOG) console.error("[timewarp] fixture request", JSON.stringify({ latest, codeMode, tools: (body.tools || []).map(item => item.name || item.type), described, inputs: (body.input || []).map(item => item.type + ":" + (item.role || "")), outputs: outputs.length }));
   const events = [{ type: "response.created", response: { id } }];
   // Background jobs (memory-writer.cjs) answer in JSON: a title from the
   // first words of the chat, and nothing new to remember.
@@ -178,6 +183,9 @@ function fixtureCloudStore(file) {
       if (input.operation === "list") return { protocol: 2, manifest: Object.values(chats).map(chat => ({ id: chat.conversation.id, version: chat.version })), nextOffset: null };
       if (input.operation === "get") return { protocol: 2, chats: (input.ids || []).map(id => chats[id]).filter(Boolean) };
       const { conversation, agents, entries } = input.snapshot;
+      // As the cloud (cloud/nativeHistory.ts), only ids that are UUIDs.
+      const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+      if (![conversation.id, ...agents.map(agent => agent.id), ...entries.map(entry => entry.id)].every(id => uuid.test(id))) throw Object.assign(new Error("Invalid chat identifier."), { status: 400 });
       const before = chats[conversation.id], merged = new Map((before?.entries || []).map(entry => [entry.id, entry]));
       for (const entry of entries) merged.set(entry.id, entry);
       chats[conversation.id] = {
@@ -304,7 +312,7 @@ function createFixture() {
     if (route === "/billing") return json({ plan, included: 504, purchased: 20, monthlyIncluded: 700, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
     if (route === "/billing/service") return json(billingStatus());
     if (route === "/billing/history") return json({ events: [{ id: "e1", kind: "usage", description: "AI usage", credits: -3.2, createdAt: new Date(Date.now() - 3600000).toISOString() }, { id: "e2", kind: "purchase", description: "Extra credits", credits: 20, createdAt: new Date(Date.now() - 86400000).toISOString() }] });
-    if (route === "/history") return json(shared.file ? shared.history(USER.id, payload || {}) : payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
+    if (route === "/history") { try { return json(shared.file ? shared.history(USER.id, payload || {}) : payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true }); } catch (error) { return json({ error: error.message }, error.status || 400); } }
     if (route === "/account-data") { try { return json(shared.accountData(USER.id, payload || {})); } catch (error) { return json({ error: error.message }, 400); } }
     if (route === "/native/rpc") return json(rpc(payload.rpc, payload.input || {}));
     if (route === "/v1/transcriptions") return json({ text: `Preview dictation (${payload?.length || 0} bytes of audio).` });
@@ -333,6 +341,193 @@ function createFixture() {
     }
     return json({ error: "Unavailable in preview mode." }, 404);
   }
+  // Agent ID as its API answers the account (agent-id.cjs), kept in memory:
+  // a new agent gets mail with two messages; a wallet needs a verified owner;
+  // cards and numbers are applied for; verifying finishes a few seconds after
+  // it starts. TIMEWARP_FIXTURE_AGENT_ID=offline: it can't be reached.
+  const identities = [];
+  let termsAccepted = false, verifiedAt = null;
+  const AGENT_ID_CONFIG = { resources: {
+    mail: { live: true, verificationRequired: false, paidPlanRequired: false }, wallet: { live: true, verificationRequired: true, paidPlanRequired: false },
+    card: { live: false, waitlist: true, verificationRequired: true, paidPlanRequired: true }, vm: { live: true, verificationRequired: false, paidPlanRequired: false },
+    phone: { live: false, waitlist: true, verificationRequired: false, paidPlanRequired: true },
+  }, connectors: { available: true }, verification: { person: "stripe_identity" } };
+  const agentIdFail = (status, message, code = null) => { throw Object.assign(new Error(message), { status, code }); };
+  const ago = minutes => new Date(Date.now() - minutes * 60000).toISOString();
+  const usd = amount => ({ amount, currency: "USD", display: `${(amount / 100).toFixed(2)} USD` });
+  const event = (kind, fields) => ({ id: crypto.randomUUID(), kind, direction: "in", status: "completed", counterparty: null, subject: null, text: null, amount: null, thread: null, data: {}, read: false, ...fields });
+  function giveResource(item, kind) {
+    const address = kind === "mail" ? `${item.handle}@agents.timewarpdev.com` : kind === "wallet" ? "0x" + crypto.randomBytes(20).toString("hex") : null;
+    item.resources[kind] = { id: crypto.randomUUID(), kind, mode: "live", provider: { mail: "resend", wallet: "privy", vm: "azure_sandbox" }[kind], status: "active", address, label: null, settings: {}, details: kind === "vm" ? { size: "small" } : {}, currency: kind === "wallet" ? "USD" : null, createdAt: new Date().toISOString() };
+    if (kind === "mail") item.mail = [
+      event("mail", { folder: "inbox", counterparty: "orders@example.com", subject: "Your order has shipped", text: "Hi,\n\nYour order #4821 is on its way and should arrive on Tuesday.\n\nThanks for shopping with us.", at: ago(42) }),
+      event("mail", { folder: "inbox", counterparty: "alex@preview.invalid", subject: "Notes from today's call", text: "Here are the notes from today's call. Can you turn them into a short summary for the team?", read: true, at: ago(60 * 26), attachments: [{ id: crypto.randomUUID(), filename: "call-notes.pdf", contentType: "application/pdf", size: 48213 }] }),
+    ];
+    if (kind === "wallet") item.transactions = [
+      event("wallet", { counterparty: "0x5f3a" + crypto.randomBytes(18).toString("hex"), amount: usd(2500), at: ago(60 * 5) }),
+      event("wallet", { direction: "out", counterparty: "api.example.com", subject: "API credits", amount: usd(1260), at: ago(60 * 3) }),
+    ];
+    if (kind === "vm") { item.machine = "stopped"; item.commands = [event("vm", { direction: "none", subject: "python3 summarize.py notes.md", data: { exitCode: 0 }, at: ago(90) }), event("vm", { direction: "none", status: "exited", subject: "npm test", data: { exitCode: 1 }, at: ago(60 * 30) })]; }
+  }
+  // The tools Agent ID's MCP server describes (mcp.ts), as many as the preview answers.
+  const AGENT_ID_TOOLS = [
+    ["whoami", "Your Agent ID: your id, name, your owner's verification and everything you have.", true, {}],
+    ["mail_list", "Messages in your mailbox, newest first.", true, { folder: { type: "string" } }],
+    ["mail_send", "Send an email from your own address.", false, { to: { type: "string" }, subject: { type: "string" }, text: { type: "string" } }],
+    ["wallet_get", "Your wallet: its address and its balance in US dollars.", true, {}],
+    ["vm_get", "Your virtual machine and whether it is running.", true, {}],
+    ["connectors_list", "The apps your owner connected and lets you use.", true, {}],
+    ["automations_list", "The automations that run you on a schedule in Timewarp.", true, {}],
+  ].map(([name, description, readOnly, properties]) => ({ name, description, inputSchema: { type: "object", properties, required: [], additionalProperties: false }, annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: !readOnly } }));
+  async function agentIdRoute(method, route, { body, query, agent } = {}) {
+    const mine = () => identities.filter(item => item.ownerId === USER.id);
+    const view = ({ ownerId, mail, transactions, machine, commands, applications, keys, automations, requests, vault, approvals, ...item }) => item;
+    const person = () => verifiedAt === null ? { status: "unverified" } : Date.now() < verifiedAt ? { status: "pending", provider: "stripe_identity" } : { status: "verified", provider: "stripe_identity", verifiedAt: new Date(verifiedAt).toISOString() };
+    const page = items => ({ items: items.filter(item => !query?.before || item.at < query.before).slice(0, 20) });
+    if (method === "GET" && route === "/v1/agents") return { agents: mine().filter(item => item.status !== "revoked").map(view) };
+    if (method === "GET" && route === "/v1/account") return { person: person(), config: AGENT_ID_CONFIG, terms: { accepted: termsAccepted, version: termsAccepted ? "2026-10-20" : null, current: "2026-10-20" } };
+    if (method === "POST" && route === "/v1/account/terms") { termsAccepted = true; return { terms: { accepted: true, version: body.version, current: "2026-10-20" } }; }
+    if (method === "POST" && route === "/v1/account/verification") {
+      if (body?.consent !== true) agentIdFail(400, "Agree to the identity check first.", "consent_required");
+      if (verifiedAt === null) verifiedAt = Date.now() + 4000;
+      return { person: person() };
+    }
+    if (method === "POST" && route === "/v1/agents") {
+      if (!termsAccepted) agentIdFail(403, "Accept the Agent ID Terms first.", "terms_required");
+      const id = "agt_" + crypto.randomBytes(12).toString("hex");
+      const handle = String(body.name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) + "-" + id.slice(4, 8);
+      const secret = "twa_preview_" + crypto.randomBytes(16).toString("hex");
+      const item = { id, ownerId: USER.id, name: body.name, handle, mascot: "Cosmo", status: "active", runtime: "timewarp", desktopAgentId: body.desktopAgentId || null, createdAt: new Date().toISOString(),
+        model: { kind: "agent", label: "AI agent", provider: null, name: null }, apps: [{ app: "timewarp", label: "Timewarp", model: null, models: [] }],
+        resources: {}, applications: {}, keys: [secret], automations: [], requests: [], vault: null, approvals: [] };
+      giveResource(item, "mail");
+      identities.push(item);
+      return { agent: view(item), key: { id: crypto.randomUUID(), name: body.keyName, prefix: "twa_prev" }, secret };
+    }
+    if (method === "DELETE" && /^\/v1\/agents\/[^/]+\/keys\/[^/]+$/.test(route)) return { revoked: true };
+    const ownedAgent = id => mine().find(entry => entry.id === decodeURIComponent(id)) || agentIdFail(404, "This agent does not exist.", "not_found");
+    const keyed = /^\/v1\/agents\/([^/]+)\/keys$/.exec(route);
+    if (keyed && method === "POST") { const item = ownedAgent(keyed[1]), secret = "twa_preview_" + crypto.randomBytes(16).toString("hex"); item.keys.push(secret); return { key: { id: crypto.randomUUID(), name: body?.name, prefix: "twa_prev" }, secret }; }
+    // Automations as Timewarp sends them, and the website's requests (automations.ts).
+    const automations = /^\/v1\/agents\/([^/]+)\/automations$/.exec(route);
+    if (automations) {
+      const item = ownedAgent(automations[1]);
+      if (method === "PUT") item.automations = (body.automations || []).map(entry => ({ ...entry, device: body.device || null, updatedAt: new Date().toISOString() }));
+      return { automations: item.automations, pending: item.requests.filter(request => request.status === "pending") };
+    }
+    const asked = /^\/v1\/agents\/([^/]+)\/automations\/([^/]+)\/requests$/.exec(route);
+    if (asked) { const item = ownedAgent(asked[1]), request = { id: crypto.randomUUID(), agentId: item.id, automationId: decodeURIComponent(asked[2]), action: body.action, status: "pending", createdAt: new Date().toISOString() }; item.requests.push(request); return { request }; }
+    if (method === "GET" && route === "/v1/automation-requests") return { requests: mine().flatMap(item => item.requests.filter(request => request.status === "pending").map(request => ({ ...request, desktopAgentId: item.desktopAgentId }))) };
+    const answered = /^\/v1\/automation-requests\/([^/]+)$/.exec(route);
+    if (answered) { const request = mine().flatMap(item => item.requests).find(entry => entry.id === answered[1] && entry.status === "pending") || agentIdFail(404, "No waiting request with that id.", "not_found"); Object.assign(request, { status: body.status, error: body.error || null, doneAt: new Date().toISOString() }); return { request }; }
+    // The vault, with a real key pair: items the app seals are opened here, as the agent's computer would.
+    const vaultRoute = /^\/v1\/agents\/([^/]+)\/vault(?:\/(setup|items)(?:\/([^/]+))?)?$/.exec(route);
+    if (vaultRoute) {
+      const item = ownedAgent(vaultRoute[1]);
+      const status = () => ({ vault: { computer: item.resources.vm ? "ready" : "none", ready: !!item.vault, publicKey: item.vault?.publicKey || null, test: true }, items: item.vault?.items || [] });
+      if (vaultRoute[2] === "setup") {
+        if (!item.resources.vm) giveResource(item, "vm");
+        if (!item.vault) { const pair = crypto.generateKeyPairSync("rsa", { modulusLength: 2048, publicKeyEncoding: { type: "spki", format: "pem" }, privateKeyEncoding: { type: "pkcs8", format: "pem" } }); item.vault = { publicKey: pair.publicKey, privateKey: pair.privateKey, items: [] }; }
+        return status();
+      }
+      if (vaultRoute[2] === "items" && method === "POST") {
+        if (!item.vault) agentIdFail(409, "Set the vault up first.", "vault_not_ready");
+        const { envelope } = body;
+        let secret;
+        try {
+          const aes = crypto.privateDecrypt({ key: item.vault.privateKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, Buffer.from(envelope.key, "base64"));
+          const data = Buffer.from(envelope.data, "base64"), decipher = crypto.createDecipheriv("aes-256-gcm", aes, Buffer.from(envelope.iv, "base64"));
+          decipher.setAuthTag(data.subarray(data.length - 16));
+          secret = JSON.parse(Buffer.concat([decipher.update(data.subarray(0, data.length - 16)), decipher.final()]).toString());
+        } catch { agentIdFail(400, "This vault item couldn't be opened on the agent's computer.", "invalid"); }
+        const saved = { id: "vlt_" + crypto.randomBytes(12).toString("hex"), kind: secret.kind, label: body.label, site: secret.site || null, hosts: secret.hosts || [], send: secret.send?.as || null, totp: !!secret.totp, savedBy: "owner", createdAt: new Date().toISOString(), lastUsedAt: null };
+        item.vault.items.push(saved);
+        return { item: saved };
+      }
+      if (vaultRoute[2] === "items" && method === "DELETE") { item.vault.items = item.vault.items.filter(entry => entry.id !== vaultRoute[3]); return { removed: true }; }
+      return status();
+    }
+    if (method === "GET" && route === "/v1/approvals") return { approvals: mine().flatMap(item => item.approvals.filter(entry => entry.status === "pending")) };
+    const decided = /^\/v1\/approvals\/([^/]+)$/.exec(route);
+    if (decided) {
+      const owner = mine().find(item => item.approvals.some(entry => entry.id === decided[1])) || agentIdFail(404, "No approval with that id.", "not_found");
+      const approval = owner.approvals.find(entry => entry.id === decided[1]);
+      approval.status = body.decision === "approve" ? "completed" : "denied";
+      if (approval.status === "completed" && approval.mail) owner.mail.unshift(event("mail", { folder: "sent", direction: "out", status: "sent", read: true, at: new Date().toISOString(), ...approval.mail }));
+      return { status: approval.status };
+    }
+    const events = /^\/v1\/agents\/([^/]+)\/events$/.exec(route);
+    if (events) { const item = ownedAgent(events[1]); return { events: [...(item.mail || []), ...(item.transactions || []), ...(item.commands || [])].map(({ folder, attachments, ...entry }) => entry).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 20), more: false }; }
+    const owned = /^\/v1\/agents\/([^/]+)\/(resources|card-application|phone-application)$/.exec(route);
+    if (owned) {
+      const item = ownedAgent(owned[1]);
+      if (owned[2] === "resources") {
+        if (item.resources[body.kind]) agentIdFail(409, "This agent already has one.", "already_has");
+        if (AGENT_ID_CONFIG.resources[body.kind]?.verificationRequired && person().status !== "verified") agentIdFail(403, "Verify your identity first.", "verification_required");
+        giveResource(item, body.kind);
+        return { resource: item.resources[body.kind] };
+      }
+      const kind = owned[2].split("-")[0];
+      if (method === "POST") item.applications[kind] = { status: "submitted", useCase: body.useCase, country: body.country, createdAt: new Date().toISOString(), ...(kind === "card" ? { monthlySpend: usd(body.monthlySpend) } : { uses: body.uses || ["sms", "calls"] }) };
+      return { application: item.applications[kind] || null };
+    }
+    if (route.startsWith("/v1/me/")) {
+      const item = mine().find(entry => entry.id === agent) || agentIdFail(403, "This endpoint acts as an agent.", "wrong_credential");
+      const has = kind => item.resources[kind] || agentIdFail(404, `This agent doesn't have ${kind === "vm" ? "a machine" : "a " + kind} yet.`, `no_${kind}`);
+      if (route === "/v1/me/mail/counts") { has("mail"); return { inbox: { total: item.mail.filter(m => m.folder === "inbox").length, unread: item.mail.filter(m => m.folder === "inbox" && !m.read).length }, sent: { total: item.mail.filter(m => m.folder === "sent").length }, trash: { total: 0 } }; }
+      if (route === "/v1/me/mail" && method === "GET") { has("mail"); const { items } = page(item.mail.filter(m => m.folder === (query?.folder || "inbox"))); return { messages: items.map(({ text, ...m }) => ({ ...m, preview: text.replace(/\s+/g, " ").slice(0, 200), attachments: m.attachments || [] })), more: false }; }
+      if (route === "/v1/me/mail" && method === "POST") {
+        const mail = has("mail");
+        if (!body?.to || !body?.subject || !body?.text) agentIdFail(400, "to, subject and text are required.", "invalid");
+        const sent = event("mail", { folder: "sent", direction: "out", status: "sent", counterparty: body.to, subject: body.subject, text: body.text, read: true, at: new Date().toISOString(), data: { from: mail.address } });
+        item.mail.unshift(sent);
+        return { message: sent };
+      }
+      const message = /^\/v1\/me\/mail\/([^/]+)$/.exec(route);
+      if (message) { has("mail"); return { message: { attachments: [], ...(item.mail.find(m => m.id === message[1]) || agentIdFail(404, "No message with that id.", "not_found")) } }; }
+      if (route === "/v1/me/wallet") { const wallet = has("wallet"); return { wallet: { address: wallet.address, mode: "live", provider: "privy", network: "base", currency: "USD", balance: usd(1240), assets: [{ asset: "USDC", amount: usd(1240) }], limits: {}, sent: { last24Hours: usd(0), last30Days: usd(1260) } } }; }
+      if (route === "/v1/me/wallet/transactions") { has("wallet"); return { transactions: page(item.transactions).items, more: false }; }
+      if (route === "/v1/me/vm") { has("vm"); return { machine: { label: null, mode: "live", status: "active", state: item.machine, size: "small" } }; }
+      if (route === "/v1/me/vm/start" || route === "/v1/me/vm/stop") { has("vm"); item.machine = route.endsWith("start") ? "running" : "stopped"; return { machine: { state: item.machine, ...(item.machine === "running" ? { note: "A running machine stops by itself after a minute without commands." } : {}) } }; }
+      if (route === "/v1/me/vm/commands") { has("vm"); return { commands: page(item.commands).items, more: false }; }
+      if (route === "/v1/me/automations") return { automations: item.automations };
+      if (route === "/v1/me/card" || route === "/v1/me/card/transactions") has("card");
+      if (route === "/v1/me/sms" || route === "/v1/me/calls") has("phone");
+    }
+    agentIdFail(404, "Unavailable in preview mode.", "not_found");
+  }
+  // The agent's MCP server, as its key reaches it (agent-id-tools.cjs): sending
+  // mail waits for the owner's yes, as an action that asks first does.
+  function agentIdMcp(item, message) {
+    const result = value => ({ result: { content: [{ type: "text", text: JSON.stringify(value) }] } });
+    if (message.method === "initialize") return { result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "timewarp-agent-id" } }, session: "mcs_" + crypto.randomBytes(12).toString("hex") };
+    const { name, arguments: args = {} } = message.params || {};
+    if (args.model) { const app = item.apps.find(entry => entry.app === "timewarp"); app.model = String(args.model); app.models = [...new Set([...(app.models || []), app.model])]; }
+    if (name === "whoami") return result({ agent: { id: item.id, name: item.name, handle: item.handle }, resources: Object.keys(item.resources) });
+    if (name === "mail_list") return result({ messages: (item.mail || []).filter(m => m.folder === (args.folder || "inbox")).map(({ text, ...m }) => m) });
+    if (name === "mail_send") {
+      const approval = { id: crypto.randomUUID(), agentId: item.id, agentName: item.name, kind: "action", request: { action: "mail.send", kind: "mail", summary: { to: args.to, subject: args.subject, text: args.text } }, status: "pending", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 86400000).toISOString(), mail: { counterparty: args.to, subject: args.subject, text: args.text } };
+      item.approvals.push(approval);
+      return result({ status: "needs_approval", approval: approval.id, message: "Your owner asked to approve mail first. Tell them and check later with approval_status." });
+    }
+    if (name === "wallet_get") return result(item.resources.wallet ? { wallet: { address: item.resources.wallet.address, balance: usd(1240) } } : { error: "no_wallet" });
+    if (name === "automations_list") return result({ automations: item.automations });
+    return { result: { isError: true, content: [{ type: "text", text: `${name} isn't answered in preview mode.` }] } };
+  }
+  async function agentId(method, route, options = {}) {
+    if (latency) await new Promise(resolve => setTimeout(resolve, latency));
+    if (process.env.TIMEWARP_FIXTURE_AGENT_ID === "offline") agentIdFail(503, "Agent ID could not be reached.");
+    const answer = value => options.withHeaders ? { value, headers: new Headers(value?.session ? { "mcp-session-id": value.session } : {}) } : value;
+    if (method === "GET" && route === "/v1/mcp/tools") return answer({ tools: AGENT_ID_TOOLS });
+    // An agent's own key: the MCP server acts as it.
+    if (options.key) {
+      const item = identities.find(entry => entry.keys?.includes(options.key)) || agentIdFail(401, "This key is not valid.", "invalid_key");
+      if (route === "/mcp") return answer(agentIdMcp(item, options.body));
+      return answer(await agentIdRoute(method, route, { ...options, agent: item.id }));
+    }
+    if (!signedIn) agentIdFail(401, "Your Timewarp session has expired. Sign in again.", "unauthenticated");
+    return answer(await agentIdRoute(method, route, options));
+  }
   // Sample files from other assistants, so previews never read the real home folder.
   function sampleHome(directory) {
     const fs = require("node:fs"), path = require("node:path");
@@ -344,7 +539,7 @@ function createFixture() {
     write(".codex/skills/release-notes/SKILL.md", "---\nname: release-notes\ndescription: Draft release notes from a list of changes.\n---\n\nGroup changes by area.\n");
     return directory;
   }
-  return { auth, cloud, get user() { return USER; }, sampleHome, setPlan: value => { plan = value; } };
+  return { auth, cloud, agentId, get user() { return USER; }, sampleHome, setPlan: value => { plan = value; } };
 }
 
 module.exports = { createFixture, scriptedResponse, fixtureCloudStore };

@@ -13,6 +13,7 @@ import { Chat, FeedbackDialog } from "./components/Chat.jsx";
 import { ALIASES, CreateOrganizationDialog, InviteDialog, SECTIONS, Settings, sectionHref, uploadPicture } from "./components/Settings.jsx";
 import { AgentDialog } from "./components/AgentDialog.jsx";
 import { Pane } from "./components/Pane.jsx";
+import { AGENT_SECTIONS } from "./components/AgentId.jsx";
 import { IncomingShares, ShareDialog } from "./components/Share.jsx";
 import { FirstSteps } from "./components/FirstSteps.jsx";
 
@@ -274,6 +275,8 @@ function Shell({ account, setAccount, settings, setSettings }) {
   });
   useEvent("app.navigate", ({ route: target } = {}) => { if (typeof target === "string" && target.startsWith("#/")) go(target); });
   useEvent("history.status", state => { if (state.state === "synced") { void loadAgents(); void loadConversations(); void loadRunning(); } });
+  // Chats that changed on the account's other computers, as they arrive.
+  useEvent("history.restored", () => { void loadAgents(); void loadConversations(); });
   // Agents changed on the account's other computer.
   useEvent("account.synced", () => { void loadAgents(); });
   useEvent("funding.changed", () => { void loadModels(); loadFunding(); });
@@ -284,6 +287,24 @@ function Shell({ account, setAccount, settings, setSettings }) {
     for (const account of connected || []) toast({ title: `${account.app || "App"} connected`, body: accountText(account) || "Your account is ready for your agents." });
   });
   useEvent("browser.agent", ({ conversationId }) => { if (route.view === "chat" && conversationId === route.id && pane === "closed") setPane("open"); });
+  // A sign-in started in the chat (connecting an app, ChatGPT or an MCP
+  // server) shows in its pane, beside the agent. A pane opened just for it
+  // closes again once the sign-in's tab goes, unless the user turned to another tab.
+  const signinPane = useRef(null);
+  useEvent("browser.signin", ({ conversationId, tabId }) => {
+    if (route.view !== "chat" || conversationId !== route.id) return;
+    if (pane === "closed") { signinPane.current = { conversationId, tabId, active: true }; setPane("open"); }
+  });
+  useEvent("browser.state", state => {
+    const opened = signinPane.current;
+    if (!opened || state?.conversationId !== opened.conversationId) return;
+    if (state.tabs.some(tab => tab.id === opened.tabId)) { opened.active = state.active === opened.tabId; return; }
+    signinPane.current = null;
+    if (opened.active && route.view === "chat" && route.id === opened.conversationId) setPane("closed");
+  });
+  useEffect(() => { if (signinPane.current && (route.view !== "chat" || route.id !== signinPane.current.conversationId)) signinPane.current = null; }, [route.view, route.id]);
+  // How a sign-in Codex completes (ChatGPT, an MCP server) went; app connections say so themselves.
+  useEvent("signin.finished", ({ ok, title, message } = {}) => { if (title) toast(ok ? title : { title, body: message }, ok ? undefined : "error"); });
   // Tab links in a chat open that tab in the pane.
   useEffect(() => {
     const openTab = ({ detail }) => {
@@ -302,9 +323,15 @@ function Shell({ account, setAccount, settings, setSettings }) {
         })
         .catch(error => toast(error, "error"));
     };
+    // A link to the chat's agent's page (timewarp://agent/<part>) opens it in the chat's pane.
+    const openAgent = ({ detail }) => {
+      const chatId = detail?.conversationId || (route.view === "chat" ? route.id : null);
+      if (chatId) showAgentPage(chatId, AGENT_SECTIONS.includes(detail.section) && detail.section !== "instructions" ? "agent:" + detail.section : "agent");
+    };
     window.addEventListener("tw:open-tab", openTab);
     window.addEventListener("tw:open-url", openUrl);
-    return () => { window.removeEventListener("tw:open-tab", openTab); window.removeEventListener("tw:open-url", openUrl); };
+    window.addEventListener("tw:open-agent", openAgent);
+    return () => { window.removeEventListener("tw:open-tab", openTab); window.removeEventListener("tw:open-url", openUrl); window.removeEventListener("tw:open-agent", openAgent); };
   }, [route.view, route.id, pane]);
 
   // Starts a chat from the home screen with its first message.
@@ -332,10 +359,14 @@ function Shell({ account, setAccount, settings, setSettings }) {
   function editAgent(agent) {
     const chat = route.view === "chat" && opened?.agentId === agent.id ? opened : [...conversations].filter(item => item.agentId === agent.id).sort(byActivity)[0];
     if (!chat) { setDialog({ open: true, agent }); return; }
-    write("tw.pane." + chat.id, "open");
-    setPaneTool({ conversationId: chat.id, tool: "agent", at: Date.now() });
-    if (route.view === "chat" && route.id === chat.id) { if (pane === "closed") setPane("open"); }
-    else go("#/conversation/" + chat.id);
+    showAgentPage(chat.id, "agent");
+  }
+  // The agent page ("agent", or "agent:<part>") in a chat's pane, opening the chat.
+  function showAgentPage(chatId, tool) {
+    write("tw.pane." + chatId, "open");
+    setPaneTool({ conversationId: chatId, tool, at: Date.now() });
+    if (route.view === "chat" && route.id === chatId) { if (pane === "closed") setPane("open"); }
+    else go("#/conversation/" + chatId);
   }
   // As before, a chat an automation runs in asks first; archiving it pauses its automations.
   async function archiveConversation(conversation) {

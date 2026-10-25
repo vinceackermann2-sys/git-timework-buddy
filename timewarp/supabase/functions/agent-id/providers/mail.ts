@@ -8,20 +8,13 @@ import type { AgentRow, Ctx, ResourceRow } from '../context.ts';
 export async function provisionMail(ctx: Ctx, agent: AgentRow, mode: 'live' | 'test') {
   const domain = mode === 'live' ? ctx.config.mailDomain : ctx.config.testMailDomain;
   const address = `${agent.handle}@${domain}`;
-  if (mode === 'live') {
-    // The previous Timewarp app gave its agents addresses on the same domain.
-    for (const [table, column] of [['timewarp_personal_agents', 'email'], ['timewarp_agent_teams', 'shared_email']]) {
-      const { data, error } = await ctx.admin.from(table).select(column).eq(column, address).limit(1);
-      if (!error && Array.isArray(data) && data.length) throw fail(409, 'address_taken', 'That mail address is already in use. Rename the agent and try again.');
-    }
-  }
   return { provider: mode === 'live' ? 'resend' : 'test', address, label: address, providerRef: null as string | null, state: {} };
 }
 
 // A display name safe for a From header.
 const headerName = (name: string) => str(name, 60, 'name').replace(/["<>\\]/g, '') || 'Agent';
 
-export type OutgoingMail = { to: string[]; cc: string[]; subject: string; text: string; html?: string; inReplyTo?: string; attachments?: { filename: string; content: string; content_type: string }[] };
+export type OutgoingMail = { to: string[]; cc: string[]; subject: string; text: string; html?: string; inReplyTo?: string; attachments?: { filename: string; content: string; content_type: string }[]; trace?: string | null };
 
 export async function sendResend(ctx: Ctx, resource: ResourceRow, agent: AgentRow, mail: OutgoingMail, idempotencyKey: string) {
   const key = ctx.config.env('RESEND_API_KEY');
@@ -37,7 +30,8 @@ export async function sendResend(ctx: Ctx, resource: ResourceRow, agent: AgentRo
       text: mail.text,
       ...(mail.html ? { html: mail.html } : {}),
       reply_to: resource.address,
-      ...(mail.inReplyTo ? { headers: { 'In-Reply-To': mail.inReplyTo, References: mail.inReplyTo } } : {}),
+      // Agent-Trace: where the message can be traced back to its agent.
+      ...(mail.inReplyTo || mail.trace ? { headers: { ...(mail.inReplyTo ? { 'In-Reply-To': mail.inReplyTo, References: mail.inReplyTo } : {}), ...(mail.trace ? { 'Agent-Trace': mail.trace } : {}) } } : {}),
       ...(mail.attachments?.length ? { attachments: mail.attachments } : {}),
       tags: [{ name: 'agent_id', value: agent.id }],
     }),

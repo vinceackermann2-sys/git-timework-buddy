@@ -59,10 +59,15 @@ export type Resource = {
   createdAt: string;
 };
 
+// Timewarp's mascots, one per agent as its face.
+export type Mascot = "orbit" | "nova" | "cosmo";
+
 export type Agent = {
   id: string;
   name: string;
   handle: string;
+  // Older servers leave it out: then it follows from the id (mascotOf).
+  mascot?: Mascot;
   runtime: Runtime;
   status: AgentStatus;
   organizationId: string | null;
@@ -75,7 +80,23 @@ export type Agent = {
   origin?: AgentOrigin | null;
   // Every app this one Agent ID is used in, most recent first.
   apps?: AgentApp[];
+  // Which of its actions wait for the owner's yes (older servers leave it out).
+  askFirst?: Record<AskKind, boolean>;
+  // What kind of AI it is and whose model, as the owner says (older servers leave it out).
+  model?: AgentModel;
 };
+
+export type ModelKind =
+  "agent" | "llm" | "image" | "voice" | "video" | "code" | "text" | "decision" | "other";
+export type AgentModel = {
+  kind: ModelKind;
+  label: string;
+  provider: string | null;
+  name: string | null;
+};
+
+// The actions an owner can ask to approve first.
+export type AskKind = "mail" | "sms" | "call" | "contacts" | "vault";
 
 export type AgentApp = {
   app: string;
@@ -83,6 +104,9 @@ export type AgentApp = {
   clientName?: string | null;
   lastSeenAt?: string | null;
   firstSeenAt?: string | null;
+  // The model the agent last said it was in this app, and every one it has.
+  model?: string | null;
+  models?: string[];
 };
 
 export type AgentOrigin = {
@@ -161,13 +185,23 @@ export type PublicConfig = {
   mailDomain: string;
   resources: Record<Kind, ResourceAvailability>;
   verification: {
-    person: "stripe_identity" | "test" | "manual";
-    business: "test" | "manual";
+    // Bridge where it moves money to and from banks: one check covers both.
+    person: "bridge" | "stripe_identity" | "test" | "manual";
+    // Bridge checks businesses too where it moves money; else Timewarp reviews them.
+    business: "bridge" | "test" | "manual";
     requiredToCreateAgents: boolean;
   };
   passports: { available: boolean; lifetimeSeconds: number };
   // Bank transfers in and out of live wallets (Bridge); older servers leave it out.
   bank?: { available: boolean };
+  // The owner's connected apps (Composio) for their agents; older servers leave it out.
+  connectors?: { available: boolean };
+  // No subscription: free machine hours, then Timewarp credits (bought in packs).
+  pricing?: {
+    computeFreeHours: number;
+    computeCreditsPerHour: number;
+    creditPacks: { credits: number; priceUsd: number }[];
+  };
   // True on development deployments: test resources, test money.
   testMode?: boolean;
   legal?: { termsVersion: string; termsUrl: string; privacyUrl: string };
@@ -193,6 +227,9 @@ export type VatCheck = {
 
 export type Business = {
   status: VerificationStatus;
+  provider?: "bridge" | "test" | "manual";
+  // Bridge's page, while its business check waits for the person to finish it.
+  link?: string;
   legalName?: string | null;
   registrationNumber?: string | null;
   vatNumber?: string | null;
@@ -215,6 +252,8 @@ export type Account = {
   plan: string;
   reviewer: boolean;
   agents: { count: number; max: number };
+  // Free machine time, in seconds: the allowance and what's been used.
+  compute?: { freeSeconds: number; usedSeconds: number };
   config: PublicConfig;
   // version/acceptedAt: what the user last accepted; current: the version in force.
   terms?: {
@@ -229,8 +268,17 @@ export type Approval = {
   id: string;
   agentId: string;
   agentName: string | null;
-  kind: "wallet_transfer";
-  request: { to?: string; amount?: number; currency?: string; memo?: string | null };
+  kind: "wallet_transfer" | "action";
+  // A payment, or an action the owner asked to approve first (`action` set).
+  request: {
+    to?: string;
+    amount?: number;
+    currency?: string;
+    memo?: string | null;
+    action?: string;
+    kind?: AskKind;
+    summary?: Record<string, unknown>;
+  };
   status: "pending" | "approved" | "denied" | "completed" | "failed";
   reason: string | null;
   result: Record<string, unknown> | null;
@@ -283,6 +331,23 @@ export type BusinessReview = Business & {
 };
 
 // What the agent ("me") routes return when the owner acts as an agent.
+// Who a payment would go to, before sending: the agent an id or handle names.
+export type RecipientLookup =
+  | { found: false }
+  | {
+      found: true;
+      agent: {
+        id: string;
+        name: string;
+        handle: string;
+        mascot?: Mascot;
+        verified: boolean;
+        yours: boolean;
+        // The kind of wallet it has (test or live), or none.
+        wallet: Mode | null;
+      };
+    };
+
 export type WalletSummary = {
   address: string | null;
   mode: Mode;
@@ -291,7 +356,8 @@ export type WalletSummary = {
   provider?: string;
   currency?: string | null;
   balance: Money | null;
-  assets?: { asset: string; amount: number }[];
+  // Each stablecoin it holds, as money (the API's shape).
+  assets?: { asset: string; amount: Money | null }[];
   balanceError?: string;
   limits: ResourceSettings;
   sent: { last24Hours: Money | null; last30Days: Money | null };
@@ -321,14 +387,35 @@ export type AddMoneyInfo = {
   mode: Mode;
   network: { id: string; name: string } | null;
   assets: string[];
-  card: { available: boolean };
+  // Privy's funding (the onramps switched on in Privy), MoonPay on its own page,
+  // or Stripe's onramp (the US).
+  card: {
+    available: boolean;
+    provider?: "privy" | "moonpay" | "stripe";
+    privy?: { appId: string; environment: "sandbox" | "production" };
+  };
   bank?: { available: boolean };
   test: boolean;
 };
 
-// Embedded with the publishable key when the server has one; otherwise
-// Stripe's own page at `url`.
-export type CardOnrampSession = { clientSecret: string; publishableKey?: string; url?: string };
+// MoonPay's page at `url`; or Stripe's onramp, embedded with the publishable
+// key when the server has one, otherwise Stripe's own page at `url`.
+// Privy's: where the browser sends the card purchase, recorded on Agent ID first.
+export type PrivyCardSession = {
+  provider: "privy";
+  appId: string;
+  environment: "sandbox" | "production";
+  address: string;
+  chain: `${string}:${string}`;
+  asset: string;
+  currency: "eur" | "usd";
+  email: string | null;
+  reference: string;
+};
+export type CardOnrampSession =
+  | PrivyCardSession
+  | { provider: "moonpay"; url: string }
+  | { provider?: "stripe"; clientSecret: string; publishableKey?: string; url?: string };
 
 export type WithdrawResult = {
   status: "completed" | "pending";
@@ -371,6 +458,88 @@ export type BankDeposit = {
   bic: string | null;
   reference: string | null;
 };
+// Adding money with one SEPA transfer of a set amount: where to send it, and
+// how far it got (Bridge's transfer states).
+export type BankPayin = {
+  id: string;
+  currency: "eur";
+  amount: number;
+  state: string;
+  instructions: {
+    currency: "eur";
+    amount: string;
+    beneficiary: string;
+    iban: string;
+    bic: string | null;
+    bankName: string | null;
+    bankAddress: string | null;
+    reference: string;
+  };
+  createdAt: string;
+};
+// An agent's vault: sign-ins and keys kept on its computer, sealed in the
+// owner's browser. Agent ID lists them without their values.
+export type VaultItem = {
+  id: string;
+  kind: "login" | "key";
+  label: string;
+  site: string | null;
+  hosts: string[];
+  send: "bearer" | "header" | "query" | "basic" | null;
+  totp: boolean;
+  // The agent saves keys it's given too (sealed on its own computer).
+  savedBy?: "owner" | "agent";
+  createdAt: string;
+  lastUsedAt: string | null;
+};
+// computer: "none" (it gets one at set-up), "ready", or "replace" (made before
+// agents ran as an ordinary user, so not trusted with a vault).
+export type VaultStatus = {
+  computer: "none" | "ready" | "replace";
+  ready: boolean;
+  publicKey: string | null;
+  test: boolean;
+};
+
+// The owner's connected accounts (Gmail, Slack…, connected in Timewarp) and
+// which of them this agent may use. all: every one, also ones connected later.
+// timewarp: the agent is a Timewarp agent, so this is its Tools setting there.
+export type Connector = {
+  id: string;
+  toolkit: string;
+  app: string;
+  label: string | null;
+  allowed: boolean;
+};
+export type AgentConnectors = { all: boolean; timewarp: boolean; connectors: Connector[] };
+export type ConnectorsChange = { all: true } | { connections: string[] };
+
+// An agent's automations, as Timewarp reports them from the computer that runs
+// them. Pausing, resuming or running one waits until Timewarp there picks it up.
+export type AutomationAction = "pause" | "resume" | "run";
+export type Automation = {
+  id: string;
+  name: string;
+  schedule: Record<string, unknown>;
+  summary: string | null;
+  enabled: boolean;
+  nextRunAt: string | null;
+  lastRun: { status: string | null; at: string | null } | null;
+  device: string | null;
+  updatedAt: string;
+};
+export type AutomationRequest = {
+  id: string;
+  agentId: string;
+  automationId: string;
+  action: AutomationAction;
+  status: "pending" | "done" | "failed";
+  error: string | null;
+  createdAt: string;
+  doneAt: string | null;
+};
+export type AgentAutomations = { automations: Automation[]; pending: AutomationRequest[] };
+
 export type NewBankAccount =
   | {
       kind: "iban";

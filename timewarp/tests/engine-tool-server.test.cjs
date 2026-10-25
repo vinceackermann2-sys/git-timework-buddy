@@ -48,7 +48,12 @@ test("a chat's workers learn its agent, and its writable folders follow the memo
 
 test("Timewarp's MCP servers point at the bridge and skip approval reviews for its own tools", () => {
   const servers = toolServers(7788);
-  assert.deepEqual(Object.keys(servers), ["timewarp_composio", "timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats", "timewarp_team", "timewarp_app"]);
+  assert.deepEqual(Object.keys(servers), ["timewarp_composio", "timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats", "timewarp_team", "timewarp_app", "timewarp_agent_id"]);
+  // The agent's own Agent ID: left for code mode to find, reviewed like connected apps, never holding a chat back.
+  assert.equal(servers.timewarp_agent_id.url, "http://127.0.0.1:7788/mcp/timewarp_agent_id");
+  assert.equal(servers.timewarp_agent_id.omit_tools_from, undefined);
+  assert.equal(servers.timewarp_agent_id.default_tools_approval_mode, undefined);
+  assert.notEqual(servers.timewarp_agent_id.required, true);
   assert.equal(servers.timewarp_composio.url, "http://127.0.0.1:7788/mcp/composio");
   assert.equal(servers.timewarp_composio.default_tools_approval_mode, undefined, "connected-app actions keep Codex's review");
   for (const name of ["timewarp_browser", "timewarp_vault", "timewarp_automations", "timewarp_chats", "timewarp_team", "timewarp_app"]) {

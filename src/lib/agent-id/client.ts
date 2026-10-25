@@ -4,9 +4,21 @@
 import type {
   Account,
   AddMoneyInfo,
+  AgentAutomations,
+  AgentConnectors,
+  AutomationAction,
+  AutomationRequest,
+  ConnectorsChange,
   BankAccount,
   BankCurrency,
   BankDeposit,
+  AskKind,
+  BankPayin,
+  Mascot,
+  ModelKind,
+  RecipientLookup,
+  VaultItem,
+  VaultStatus,
   BankStatus,
   CardOnrampSession,
   AdminSetup,
@@ -55,6 +67,7 @@ import type {
   NewBankAccount,
   WithdrawResult,
 } from "./types";
+import type { SealedItem } from "./vault";
 
 export class AgentIdError extends Error {
   readonly status: number;
@@ -116,7 +129,7 @@ export function buildUrl(base: string, path: string, query?: Query): string {
 }
 
 export type RequestOptions = {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   query?: Query;
   body?: unknown;
   // A file sent as the raw body (uploads), with its own headers.
@@ -227,6 +240,8 @@ export function createAgentIdClient(options: ClientOptions) {
     // Deployment and account
     config: () => request<PublicConfig>("/v1/config"),
     account: () => request<Account>("/v1/account"),
+    // The agent an id or handle names (anyone's), before sending it money.
+    recipient: (to: string) => request<RecipientLookup>("/v1/recipients", { query: { to } }),
     acceptTerms: (version: string) =>
       request<{ terms: { accepted: boolean; version: string; acceptedAt: string } }>(
         "/v1/account/terms",
@@ -239,14 +254,15 @@ export function createAgentIdClient(options: ClientOptions) {
     verifyBusiness: (input: {
       organizationId: string;
       legalName: string;
-      registrationNumber: string;
+      // Bridge's own page asks for the registration where it checks businesses.
+      registrationNumber?: string;
       vatNumber?: string;
       country: string;
       website?: string;
       representativeRole?: string;
       attestation?: boolean;
     }) =>
-      request<{ business: Business }>("/v1/account/verification", {
+      request<{ business: Business; url?: string }>("/v1/account/verification", {
         body: { kind: "business", ...input },
       }),
     // The business's registration certificate (PDF or photo, at most 10 MB).
@@ -269,6 +285,7 @@ export function createAgentIdClient(options: ClientOptions) {
       name: string;
       runtime?: Runtime;
       origin?: { app: string; detail?: string | null };
+      model?: { kind?: ModelKind; provider?: string | null; name?: string | null };
       organizationId?: string | null;
       desktopAgentId?: string;
     }) => request<CreatedAgent>("/v1/agents", { body: input }),
@@ -282,6 +299,9 @@ export function createAgentIdClient(options: ClientOptions) {
         organizationId?: string | null;
         desktopAgentId?: string | null;
         origin?: { app: string; detail?: string | null };
+        mascot?: Mascot;
+        askFirst?: Partial<Record<AskKind, boolean>>;
+        model?: { kind?: ModelKind; provider?: string | null; name?: string | null };
       },
     ) => request<{ agent: Agent }>(`/v1/agents/${id(agentId)}`, { method: "PATCH", body: patch }),
     cardApplication: (agentId: string) =>
@@ -330,13 +350,42 @@ export function createAgentIdClient(options: ClientOptions) {
         method: "PATCH",
         body: patch,
       }),
+    // The vault on the agent's computer; items go in sealed (lib/agent-id/vault.ts).
+    vault: (agentId: string) =>
+      request<{ vault: VaultStatus; items: VaultItem[] }>(`/v1/agents/${id(agentId)}/vault`),
+    setupVault: (agentId: string) =>
+      request<{ vault: VaultStatus; items: VaultItem[] }>(`/v1/agents/${id(agentId)}/vault/setup`, {
+        body: {},
+      }),
+    addVaultItem: (agentId: string, input: { label: string; envelope: SealedItem }) =>
+      request<{ item: VaultItem }>(`/v1/agents/${id(agentId)}/vault/items`, { body: input }),
+    removeVaultItem: (agentId: string, itemId: string) =>
+      request<{ removed: boolean }>(`/v1/agents/${id(agentId)}/vault/items/${id(itemId)}`, {
+        method: "DELETE",
+      }),
+    // The owner's connected apps this agent may use (Timewarp's Tools setting
+    // for a Timewarp agent), and its automations as Timewarp reports them.
+    connectors: (agentId: string) =>
+      request<AgentConnectors>(`/v1/agents/${id(agentId)}/connectors`),
+    setConnectors: (agentId: string, change: ConnectorsChange) =>
+      request<AgentConnectors>(`/v1/agents/${id(agentId)}/connectors`, {
+        method: "PUT",
+        body: change,
+      }),
+    automations: (agentId: string) =>
+      request<AgentAutomations>(`/v1/agents/${id(agentId)}/automations`),
+    automationRequest: (agentId: string, automationId: string, action: AutomationAction) =>
+      request<{ request: AutomationRequest }>(
+        `/v1/agents/${id(agentId)}/automations/${id(automationId)}/requests`,
+        { body: { action } },
+      ),
     removeResource: (agentId: string, kind: Kind) =>
       request<{ released: boolean }>(`/v1/agents/${id(agentId)}/resources/${kind}`, {
         method: "DELETE",
       }),
     addMoneyInfo: (agentId: string) =>
       request<AddMoneyInfo>(`/v1/agents/${id(agentId)}/wallet/add-money`),
-    // Buying USDC by card (Stripe's crypto onramp), only where offered.
+    // Buying USDC by card (MoonPay, or Stripe's crypto onramp), only where offered.
     buyWithCard: (agentId: string, amount?: string) =>
       request<CardOnrampSession>(`/v1/agents/${id(agentId)}/wallet/add-money`, {
         body: amount ? { amount } : {},
@@ -354,6 +403,21 @@ export function createAgentIdClient(options: ClientOptions) {
       request<{ deposit: BankDeposit }>(`/v1/agents/${id(agentId)}/wallet/bank-deposit`, {
         body: { currency },
       }),
+    // Adding money by SEPA: one transfer of a set amount (cents), to this wallet.
+    bankPayins: (agentId: string) =>
+      request<{ payins: BankPayin[] }>(`/v1/agents/${id(agentId)}/wallet/bank-payins`),
+    startBankPayin: (agentId: string, amount: number) =>
+      request<{ payin: BankPayin }>(`/v1/agents/${id(agentId)}/wallet/bank-payins`, {
+        body: { amount },
+      }),
+    cancelBankPayin: (agentId: string, payinId: string) =>
+      request<{ canceled: boolean }>(
+        `/v1/agents/${id(agentId)}/wallet/bank-payins/${id(payinId)}`,
+        { method: "DELETE" },
+      ),
+    // A pack of Timewarp credits: Stripe Checkout's page to pay on.
+    buyCredits: (credits: number) =>
+      request<{ url: string }>("/v1/account/credits", { body: { credits } }),
     bank: () => request<BankStatus>("/v1/account/bank"),
     startBankVerification: () => request<BankStatus>("/v1/account/bank/verify", { body: {} }),
     addBankAccount: (input: NewBankAccount) =>

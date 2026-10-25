@@ -5,7 +5,7 @@ import { call, errorText, useEvent } from "../api.js";
 import { Markdown } from "../markdown.jsx";
 import { copyText, stripCitations, userMessageText } from "../cards.mjs";
 import { skillChips } from "../mentions.mjs";
-import { applyEvent, clock, commentaryLine, mergeDeltas, mergeTurns, plainQuote, quotedMessage, replyParts, runsLabel, separatorLabel, threadState, transcript, turnsFromMessages, userContent, userFiles, userImages, userSkills, userText } from "../turns.mjs";
+import { applyEvent, clock, commentaryLine, loadedTurns, mergeDeltas, mergeTurns, plainQuote, quotedMessage, replyParts, runsLabel, separatorLabel, threadState, transcript, userContent, userFiles, userImages, userSkills, userText } from "../turns.mjs";
 import { AttachmentImage, FileChip } from "../widgets.jsx";
 import { AgentActivity, AgentThreadSheet, Collapsible, GeneratedImage } from "./AgentThread.jsx";
 import { ApprovalCard } from "./Approval.jsx";
@@ -406,9 +406,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
       const owner = account?.user?.id;
       // A first message sent, or a reply that started or finished, while the
       // history loaded stays as the events left it.
-      updateTurns(current => mergeTurns(history.turns?.length
-        ? [...turnsFromMessages(history.earlier || [], owner), ...history.turns, ...turnsFromMessages(history.failed || [], owner)]
-        : turnsFromMessages(history.messages || [], owner), current));
+      updateTurns(current => mergeTurns(loadedTurns(history, owner), current));
       if (!history.turns?.length && history.messages?.length && history.transcriptUnavailable !== undefined) setNotice("Earlier tool activity from another device isn't available here. Your messages are.");
       setThreadStatus(current => current || (live.current ? null : history.thread?.status) || null);
       if (!live.current) setRunning(current => current || !!status.running);
@@ -419,6 +417,17 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
     markRead();
     return () => { cancelled = true; };
   }, [id]);
+
+  // Messages written on the chat's other computers while it's open here
+  // (history sync) show at once, unless a reply is on its way.
+  const shownId = useRef(id);
+  shownId.current = id;
+  useEvent("history.restored", ({ ids } = {}) => {
+    if (!ids?.includes(id) || runningNow.current) return;
+    void call("conversations.history", { id }).then(history => {
+      if (shownId.current === id && !runningNow.current) updateTurns(current => mergeTurns(loadedTurns(history, account?.user?.id), current));
+    }).catch(() => {});
+  });
 
   // The first message of a chat started from the home screen.
   useEffect(() => {
@@ -623,7 +632,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
     return latest.current.send(replied ? { ...message, text: quote(replied) + message.text } : message).catch(error => { setReply(current => current ?? replied); throw error; });
   }, []);
   const onStop = useCallback(() => call("conversations.interrupt", { id }).catch(error => toast(error, "error")), [id, toast]);
-  const banner = useMemo(() => <><ReconnectBanner agentId={agent.id} /><FundingBanner funding={funding} onOptions={() => onSettings("billing")} /></>, [agent.id, funding, onSettings]);
+  const banner = useMemo(() => <><ReconnectBanner agentId={agent.id} conversationId={conversation.id} /><FundingBanner funding={funding} onOptions={() => onSettings("billing")} conversationId={conversation.id} /></>, [agent.id, conversation.id, funding, onSettings]);
   // The trace shows the turns as they are when it opens, with what waited for it.
   traceOpen.current = dialog === "trace";
   useLayoutEffect(() => { if (dialog === "trace") flush(); }, [dialog, flush]);
@@ -670,7 +679,7 @@ export function Chat({ conversation, agent, account, models, funding, onChanged,
           {approvals.map(approval => <ApprovalCard key={approval.id} approval={approval} />)}
           {loading ? null : (
             <AgentActivity state={state} commentary={commentaryLine(turns)} workers={workers} browserTab={browserTab} working={running}
-              onOpenThread={openThread} onOpenBrowser={openBrowser} onContinue={onContinue} funding={funding} onSettings={onSettings} />
+              onOpenThread={openThread} onOpenBrowser={openBrowser} onContinue={onContinue} funding={funding} onSettings={onSettings} conversationId={conversation.id} />
           )}
         </div>
       </div>
