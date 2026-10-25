@@ -871,10 +871,14 @@ async function boot() {
     const account = userId();
     if (!account) { history?.stop(); history = null; historyStatus = { state: "signed-out" }; accountSync?.stop(); accountSync = null; accountSyncStatus = { state: "signed-out" }; return; }
     if (!history) {
+      // A chat changed here goes to the account's other computers a few
+      // seconds later; what changed there comes at each pass.
       history = require("../../desktop/local-history.cjs").createLocalHistory({
-        ...adapter, userId: () => userId(), cloud: services.cloudJson,
+        ...adapter, userId: () => userId(), cloud: services.cloudJson, pushDelayMs: 3000,
         onStatus: state => { historyStatus = state; broadcast("history.status", state); },
+        onRestored: ids => broadcast("history.restored", { ids }),
         onError: () => console.error("[timewarp] Chat history sync is pending; local chats are preserved."),
+        log: message => appLog.info("history", message),
       });
     }
     try { importLegacyVault({ store, vault, decrypt: cipher.decrypt, runtimeDir, log: (...args) => console.error("[timewarp]", ...args) }); }
@@ -1051,9 +1055,21 @@ async function boot() {
   await accountReady().catch(error => console.error("[timewarp] Account startup failed:", error.message));
   trace("account ready");
   startUpdates();
+  // Besides the passes every 30 seconds, the account's chats and data are
+  // brought up to date as the window gets the focus (at most every 15
+  // seconds), as the computer wakes or unlocks, and as it sleeps or locks, so
+  // the next computer picks up where this one left off.
+  let caughtUp = 0;
+  const catchUp = ({ now = false } = {}) => {
+    if (!userId() || (!now && Date.now() - caughtUp < 15000)) return;
+    caughtUp = Date.now();
+    void history?.sync(); void accountSync?.sync();
+  };
+  app.on("browser-window-focus", (_event, window) => { if (window === mainWindow) catchUp(); });
+  for (const name of ["resume", "unlock-screen", "suspend", "lock-screen"]) require("electron").powerMonitor.on(name, () => catchUp({ now: true }));
   app.on("will-quit", () => { appLog.info("shutdown", "Timewarp quit"); try { fs.rmSync(sessionMarker, { force: true }); } catch {} });
   // Quitting waits (a few seconds at most) for Codex to stop and chat history
-  // to save, then closes the database, so nothing writes to it once closed.
+  // and account data to save, then closes the database, so nothing writes to it once closed.
   // An update's installer starts as Timewarp quits, so that quit doesn't wait.
   let quitting = false, installing = false;
   try { require("electron").autoUpdater.on("before-quit-for-update", () => { installing = true; }); } catch {}
@@ -1074,8 +1090,8 @@ async function boot() {
     automations.stop(); browser.destroy(); clearTimeout(executionNotice); guard.stop?.();
     const within = (promise, ms) => Promise.race([Promise.resolve(promise).catch(() => {}), new Promise(resolve => setTimeout(resolve, ms))]);
     void (async () => {
-      await within(history?.sync(), 2000);
-      history?.stop(); services.close(); bridge.close();
+      await within(Promise.all([history?.sync(), accountSync?.sync()]), 2000);
+      history?.stop(); accountSync?.stop(); services.close(); bridge.close();
       await within(client.stop(), 3000);
       storeClosed = true;
       try { store.close(); } catch {}

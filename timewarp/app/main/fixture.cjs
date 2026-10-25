@@ -184,6 +184,9 @@ function fixtureCloudStore(file) {
       if (input.operation === "list") return { protocol: 2, manifest: Object.values(chats).map(chat => ({ id: chat.conversation.id, version: chat.version })), nextOffset: null };
       if (input.operation === "get") return { protocol: 2, chats: (input.ids || []).map(id => chats[id]).filter(Boolean) };
       const { conversation, agents, entries } = input.snapshot;
+      // As the cloud (cloud/nativeHistory.ts), only ids that are UUIDs.
+      const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+      if (![conversation.id, ...agents.map(agent => agent.id), ...entries.map(entry => entry.id)].every(id => uuid.test(id))) throw Object.assign(new Error("Invalid chat identifier."), { status: 400 });
       const before = chats[conversation.id], merged = new Map((before?.entries || []).map(entry => [entry.id, entry]));
       for (const entry of entries) merged.set(entry.id, entry);
       chats[conversation.id] = {
@@ -310,7 +313,7 @@ function createFixture() {
     if (route === "/billing") return json({ plan, included: 504, purchased: 20, monthlyIncluded: 700, renewsAt: new Date(Date.now() + 20 * 86400000).toISOString() });
     if (route === "/billing/service") return json(billingStatus());
     if (route === "/billing/history") return json({ events: [{ id: "e1", kind: "usage", description: "AI usage", credits: -3.2, createdAt: new Date(Date.now() - 3600000).toISOString() }, { id: "e2", kind: "purchase", description: "Extra credits", credits: 20, createdAt: new Date(Date.now() - 86400000).toISOString() }] });
-    if (route === "/history") return json(shared.file ? shared.history(USER.id, payload || {}) : payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true });
+    if (route === "/history") { try { return json(shared.file ? shared.history(USER.id, payload || {}) : payload?.operation === "list" ? { protocol: 2, manifest: [], nextOffset: null } : payload?.operation === "get" ? { chats: [] } : { saved: true }); } catch (error) { return json({ error: error.message }, error.status || 400); } }
     if (route === "/account-data") { try { return json(shared.accountData(USER.id, payload || {})); } catch (error) { return json({ error: error.message }, 400); } }
     if (route === "/native/rpc") return json(rpc(payload.rpc, payload.input || {}));
     if (route === "/v1/transcriptions") return json({ text: `Preview dictation (${payload?.length || 0} bytes of audio).` });

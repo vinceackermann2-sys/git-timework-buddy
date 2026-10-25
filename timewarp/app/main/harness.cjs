@@ -100,6 +100,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   const notChats = new Set();
   const workers = new Set(); // sub-agent threads seen in this Codex session
   const loaded = new Set(); // threads resumed or started in this Codex session
+  const injected = new Map(); // thread id -> seq of the last stored message given to it (catchUp)
   // conversation id -> { threadId, turnId, stopRequested, started }; set as a
   // message is sent, before Codex has the turn (turnId null until then).
   const active = new Map();
@@ -164,6 +165,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
   client.on("status", state => {
     if (state.status === "ready" || state.status === "starting") return;
     loaded.clear();
+    injected.clear();
     workers.clear();
     steered.clear();
     notChats.clear();
@@ -324,12 +326,12 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     }
   }
 
-  // Earlier messages for a chat that continues in a new thread: restored from
-  // the cloud without a local transcript, or started before the current tools.
-  function historyItems(conversation, exceptId) {
+  // Stored messages as thread items: the latest of them, up to HISTORY_MESSAGES
+  // and HISTORY_CHARS.
+  function itemsOf(conversation, messages) {
     const items = [];
     let size = 0;
-    for (const message of store.messages.list(conversation.id).filter(item => item.id !== exceptId && item.status !== "failed" && item.status !== "replaced").slice(-HISTORY_MESSAGES).reverse()) {
+    for (const message of messages.slice(-HISTORY_MESSAGES).reverse()) {
       if (size + message.text.length > HISTORY_CHARS) break;
       size += message.text.length;
       // A message another agent sent (team-tools.cjs) was this chat's input, as the user's are.
@@ -337,6 +339,27 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       items.unshift({ type: "message", role: user ? "user" : "assistant", content: [{ type: user ? "input_text" : "output_text", text: message.text }] });
     }
     return items;
+  }
+  const lastSeq = messages => messages.reduce((last, message) => Math.max(last, message.seq), 0);
+  // Earlier messages for a chat that continues in a new thread: restored from
+  // the cloud without a local transcript, or started before the current tools.
+  // The thread has seen them all (injected).
+  function historyItems(conversation, threadId, exceptId) {
+    const messages = store.messages.list(conversation.id).filter(item => item.id !== exceptId);
+    injected.set(threadId, lastSeq(messages));
+    return itemsOf(conversation, messages.filter(item => item.status !== "failed" && item.status !== "replaced"));
+  }
+  // Messages the chat got from its other computers (history sync keeps them as
+  // sent, with no turn here) since its thread last saw it go into the thread
+  // before the next message, so the agent carries on from where the chat is.
+  // The thread has seen every message up to the last one of a turn here, and
+  // those it was given (injected: thread id -> the last message's seq).
+  async function catchUp(conversation, threadId, exceptId) {
+    const through = Math.max(injected.get(threadId) || 0, store.messages.lastTurnSeq(conversation.id));
+    const missing = store.messages.after(conversation.id, through).filter(message => message.id !== exceptId && message.status === "sent" && !message.turnId);
+    if (!missing.length) return;
+    injected.set(threadId, lastSeq(missing));
+    await client.request("thread/inject_items", { threadId, items: itemsOf(conversation, missing) }).catch(error => log("Messages from another computer could not be added to the thread.", error.message));
   }
 
   // The chat's writable folders, given again with each message so a change
@@ -407,7 +430,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
     try {
       loaded.add(threadId);
       own(threadId, conversation.id);
-      const history = historyItems(conversation, exceptMessageId);
+      const history = historyItems(conversation, threadId, exceptMessageId);
       if (history.length) await client.request("thread/inject_items", { threadId, items: history }).catch(error => log("Earlier messages could not be added to the new thread.", error.message));
       const previousThreadIds = conversation.codexThreadId ? [...conversation.previousThreadIds, conversation.codexThreadId] : conversation.previousThreadIds;
       store.conversations.update(conversation.id, { codexThreadId: threadId, toolsVersion, previousThreadIds });
@@ -572,6 +595,7 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
         });
       };
       let threadId = await threadFor(id, { exceptMessageId: userMessage.id });
+      await catchUp(conversation, threadId, userMessage.id);
       let result;
       try { result = await turnStart(threadId); }
       catch (error) {
@@ -672,11 +696,15 @@ function createHarness({ store, client, userId, instructionsFor, threadConfig = 
       const firstTurn = turns[0]?.startedAt ? turns[0].startedAt * 1000 : Infinity;
       const shown = messages.filter(message => message.status !== "replaced");
       const earlier = shown.filter(message => !turnIds.has(message.turnId) && message.status !== "failed" && Date.parse(message.createdAt) < firstTurn - 2000);
+      // Messages written on the chat's other computers after its first turn
+      // here (sent, with no turn here), shown between this computer's turns.
+      const before = new Set(earlier.map(message => message.id));
+      const elsewhere = turns.length ? shown.filter(message => message.status === "sent" && !message.turnId && !before.has(message.id)) : [];
       // Messages that never reached the agent, offered for retry after the last turn.
       const lastTurn = turns.at(-1)?.startedAt ? turns.at(-1).startedAt * 1000 : 0;
       const files = store.settings.get(failedKey(id), {}) || {};
       const failed = shown.filter(message => message.status === "failed" && Date.parse(message.createdAt) >= lastTurn - 2000).map(message => ({ ...message, ...files[message.id] }));
-      return { turns, messages: shown, earlier, failed, thread, ...(unavailable ? { transcriptUnavailable: unavailable } : {}) };
+      return { turns, messages: shown, earlier, elsewhere, failed, thread, ...(unavailable ? { transcriptUnavailable: unavailable } : {}) };
     },
     // Opens the chat's thread ahead of the first message so sending starts at once.
     async warm(id) {

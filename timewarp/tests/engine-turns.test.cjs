@@ -48,6 +48,21 @@ test("restored cloud messages render without a local transcript", async () => {
   assert.deepEqual(transcript(restored).map(row => [row.sender, row.text, !!row.undelivered]), [["user", "Question", false], ["agent", "Answer", false], ["user", "Lost", true]]);
 });
 
+test("messages written on the chat's other computer go between this computer's turns by time", async () => {
+  const { loadedTurns, transcript } = await turns;
+  const at = minutes => new Date(Date.UTC(2026, 9, 24, 10, minutes)).toISOString();
+  const turn = (id, minutes, text) => ({ id, startedAt: Date.parse(at(minutes)) / 1000, status: "completed", items: [{ type: "userMessage", id: id + "-u", content: [{ type: "text", text }] }] });
+  const history = {
+    turns: [turn("t1", 1, "First here"), turn("t2", 9, "Back here")],
+    earlier: [{ id: "e1", authorId: "me", createdAt: at(0), text: "Restored", status: "sent" }],
+    elsewhere: [{ id: "x1", authorId: "me", createdAt: at(5), text: "On the laptop", status: "sent" }, { id: "x2", authorId: "agent", createdAt: at(6), text: "Laptop reply", status: "sent" }, { id: "x3", authorId: "me", createdAt: at(12), text: "Later on the laptop", status: "sent" }],
+    failed: [{ id: "f1", authorId: "me", createdAt: at(13), text: "Not sent", status: "failed" }],
+  };
+  assert.deepEqual(transcript(loadedTurns(history, "me")).map(row => row.text), ["Restored", "First here", "On the laptop", "Laptop reply", "Back here", "Later on the laptop", "Not sent"]);
+  // Without turns here, the chat is its messages.
+  assert.deepEqual(transcript(loadedTurns({ turns: [], messages: history.elsewhere }, "me")).map(row => row.text), ["On the laptop", "Laptop reply", "Later on the laptop"]);
+});
+
 test("automatic approval reviews attach to their turn with a readable action", async () => {
   const { applyEvent } = await turns;
   let state = applyEvent([], "turn/started", { turn: { id: "t1", startedAt: 1 } });

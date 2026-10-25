@@ -608,6 +608,21 @@ export function turnsFromMessages(messages, ownerId) {
   });
 }
 
+// A chat as loaded (conversations.history): messages from before its first
+// turn here (a chat restored from the cloud), this computer's turns with the
+// messages written on its other computers between them by time, then messages
+// that weren't sent.
+export function loadedTurns(history, ownerId) {
+  if (!history.turns?.length) return turnsFromMessages(history.messages || [], ownerId);
+  const elsewhere = turnsFromMessages(history.elsewhere || [], ownerId), turns = [];
+  let next = 0;
+  for (const turn of history.turns) {
+    while (next < elsewhere.length && turn.startedAt && elsewhere[next].startedAt && elsewhere[next].startedAt < turn.startedAt) turns.push(elsewhere[next++]);
+    turns.push(turn);
+  }
+  return [...turnsFromMessages(history.earlier || [], ownerId), ...turns, ...elsewhere.slice(next), ...turnsFromMessages(history.failed || [], ownerId)];
+}
+
 // A stored message's images and files. Messages brought over from the
 // previous app can list theirs as attachments ({ path, name, contentType }).
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
