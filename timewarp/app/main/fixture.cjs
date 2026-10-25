@@ -49,15 +49,14 @@ function scriptedResponse(body) {
   // Code mode exposes the tools through one "exec" JavaScript tool.
   const codeMode = (body.input || []).filter(item => item.type === "additional_tools").flatMap(item => item.tools || [])
     .flatMap(item => item.type === "namespace" ? item.tools || [] : [item]).some(item => item.type === "custom" && item.name === "exec");
-  // "%n" in the dump path numbers each request.
+  // TIMEWARP_FIXTURE_DUMP: each request as the model would get it; "%n" in the
+  // path numbers them, and without it the file holds the latest.
   if (process.env.TIMEWARP_FIXTURE_DUMP) require("node:fs").writeFileSync(process.env.TIMEWARP_FIXTURE_DUMP.replace("%n", String(++dumped)), JSON.stringify(body, null, 1));
   // described: which of Timewarp's tool servers the request describes anywhere (its
   // tools or code mode's text), so ones left for tool search can be told apart.
   const whole = process.env.TIMEWARP_FIXTURE_LOG ? JSON.stringify(body) : "";
   const described = ["timewarp_browser", "timewarp_vault", "timewarp_app", "timewarp_agent_id", "tool_search"].filter(name => whole.includes(name));
   if (process.env.TIMEWARP_FIXTURE_LOG) console.error("[timewarp] fixture request", JSON.stringify({ latest, codeMode, tools: (body.tools || []).map(item => item.name || item.type), described, inputs: (body.input || []).map(item => item.type + ":" + (item.role || "")), outputs: outputs.length }));
-  // TIMEWARP_FIXTURE_DUMP: the latest request as the model would get it, in that file.
-  if (process.env.TIMEWARP_FIXTURE_DUMP) try { require("node:fs").writeFileSync(process.env.TIMEWARP_FIXTURE_DUMP, JSON.stringify(body, null, 1)); } catch {}
   const events = [{ type: "response.created", response: { id } }];
   // Background jobs (memory-writer.cjs) answer in JSON: a title from the
   // first words of the chat, and nothing new to remember.
