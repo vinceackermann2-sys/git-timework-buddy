@@ -234,6 +234,29 @@ test("signed Mac packages add the update zip and the generic feed; drafts stay a
   for (const updateUrl of ["http://github.com/a/", "https://static.getenergy.com/mac/"]) assert.throws(() => checkMacFeed({ enabled: true, version: "1.3.0", updateUrl }), /public Timewarp/);
 });
 
+// Codex's V8 programs keep OpenAI's entitlements: with allow-jit alone, the code
+// tool's host crashes on Intel Macs and no GPT model can use a tool.
+test("Mac packages sign Codex's V8 programs with Codex's entitlements and nothing else with them", () => {
+  const { withCodexEntitlements, CODEX_ENTITLEMENTS } = require("../scripts/sign-mac.cjs");
+  const config = require("../mac-release.json");
+  for (const draft of [false, true]) {
+    const options = builderOptions({ app: "app", output: "out", codex: "codex", version: config.version, draft, config: draft ? null : config, feed: draft ? null : { updateUrl: config.updateUrl } });
+    assert.equal(options.config.mac.sign, path.join(__dirname, "../scripts/sign-mac.cjs"));
+  }
+  const plist = fs.readFileSync(CODEX_ENTITLEMENTS, "utf8");
+  const keys = [...plist.matchAll(/<key>([^<]+)<\/key><true\/>/g)].map(match => match[1]).sort();
+  assert.deepEqual(keys, ["com.apple.security.cs.allow-jit", "com.apple.security.cs.allow-unsigned-executable-memory"], "OpenAI's entitlements for codex and codex-code-mode-host");
+  const app = "/build/mac/Timewarp.app", inherited = path.join(__dirname, "../assets/entitlements.mac.plist");
+  const chosen = withCodexEntitlements(file => ({ entitlements: file === app ? "main.plist" : inherited, hardenedRuntime: true }));
+  for (const name of ["codex", "codex-code-mode-host", "codex-app-server"]) {
+    assert.deepEqual(chosen(`${app}/Contents/Resources/codex/bin/${name}`), { entitlements: CODEX_ENTITLEMENTS, hardenedRuntime: true }, name);
+  }
+  for (const file of [app, `${app}/Contents/Resources/codex/codex-path/rg`, `${app}/Contents/Frameworks/Timewarp Helper (Renderer).app`, `${app}/Contents/Resources/codex/bin/codex-voice-host`]) {
+    assert.notEqual(chosen(file).entitlements, CODEX_ENTITLEMENTS, file);
+  }
+  assert.ok(!fs.readFileSync(inherited, "utf8").includes("allow-unsigned-executable-memory"), "The app and its web helpers keep the stricter runtime");
+});
+
 // electron-builder checks its configuration only when it builds, on a Mac;
 // the signed release then fails late. Check both here against its schema.
 test("the Mac packaging configuration matches electron-builder's schema", async () => {
