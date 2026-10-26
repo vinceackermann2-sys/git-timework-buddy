@@ -337,14 +337,11 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
     "browser.pin": ({ conversationId, tabId, pinned }) => { signedIn(); browserOf(conversationId); return browser.pin(conversationId, tabId, !!pinned); },
     "browser.reload": ({ conversationId, tabId }) => { signedIn(); browserOf(conversationId); return browser.reload(conversationId, tabId); },
     "browser.stop": ({ conversationId, tabId }) => { signedIn(); browserOf(conversationId); return browser.stop(conversationId, tabId); },
-    "browser.profiles": () => { signedIn(); store.browserProfiles.ensureDefault(); return store.browserProfiles.list(); },
-    // Separate sets of sign-ins for the built-in browser.
-    "browser.createProfile": ({ label }) => {
+    // The account's one browser profile, shared by all its chats.
+    "browser.profiles": () => { signedIn(); return [store.browserProfiles.ensureDefault()]; },
+    "browser.createProfile": () => {
       signedIn();
-      const name = text(label, 60).trim();
-      if (!name) throw fail(400, "Give the profile a name.");
-      if (store.browserProfiles.list().length >= 20) throw fail(409, "You can have up to 20 browser profiles.");
-      return store.browserProfiles.create({ label: name });
+      throw fail(400, "Timewarp uses one shared browser profile. Import sign-ins into it in Browser settings.");
     },
     "browser.renameProfile": ({ id, label }) => {
       signedIn();
@@ -362,14 +359,13 @@ function createMethods({ app, dialog, shell, store, services, agents, harness, c
       store.browserProfiles.remove(id);
       return store.browserProfiles.list();
     },
-    // Profiles found in Chrome, Edge and other browsers on this computer.
+    // Profiles found in Chrome, Edge and other browsers on this computer, whose
+    // sign-ins can be copied into the shared profile (again, to refresh them).
     "browser.importable": () => { signedIn(); store.browserProfiles.ensureDefault(); return browserImport ? browserImport.importable() : []; },
     "browser.importProfile": async ({ browserId, profilePath }) => {
       signedIn();
       if (!browserImport) throw fail(404, "Browser profiles can't be imported here.");
-      if (store.browserProfiles.list().length >= 20) throw fail(409, "You can have up to 20 browser profiles.");
-      const result = await browserImport.importProfiles({ selections: [{ browserId: text(browserId, 40), profilePath: text(profilePath, 120) }] });
-      return { ...result.profiles[0], cookies: result.summary };
+      return browserImport.importProfiles({ selections: [{ browserId: text(browserId, 40), profilePath: text(profilePath, 120) }] });
     },
     "browser.setProfile": ({ conversationId, profileId }) => { signedIn(); harness.conversations.get(conversationId); return browser.setProfile(conversationId, profileId); },
     "browser.takeControl": ({ conversationId }) => { signedIn(); browserOf(conversationId); return browser.setUserControl(conversationId, true); },

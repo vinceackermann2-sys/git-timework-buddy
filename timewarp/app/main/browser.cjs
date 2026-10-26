@@ -1,7 +1,7 @@
 "use strict";
 // The built-in browser: tabs per conversation, shown as native views in the
-// right pane. Each browser profile has its own persistent session, so sign-ins
-// stay on this device and separate between profiles.
+// right pane. All of an account's chats and browser workers share its one
+// persistent profile, so sign-ins stay on this device and come in once.
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -10,6 +10,9 @@ const { WebContentsView, BrowserWindow, Menu, clipboard, dialog, session: electr
 const MAX_LIVE_TABS = 16;
 // The previous app's storage for a profile: "browser-profile:v1:" and the SHA-256 of its id.
 const LEGACY_PARTITION = /^browser-profile:v1:[0-9a-f]{64}$/;
+// Each session's user agent before Timewarp changed it, so setting a session
+// up again (Electron keeps them for the whole run) starts from the original.
+const ORIGINAL_USER_AGENTS = new WeakMap();
 // What pages may use. The camera and microphone are asked for per site
 // (askMedia); everything else, such as notifications, reading the clipboard
 // and location, is refused, for checks as well as requests.
@@ -140,7 +143,10 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     if (later.length) store.settings.set(REMOVE_LATER, left);
   } catch {}
 
-  function sessionFor(profileId) {
+  // migration: the storage of a profile from before there was one per account,
+  // for merging its sign-ins into the shared profile or removing it.
+  function sessionFor(profileId, { migration = false } = {}) {
+    if (!migration) profileId = chatProfile();
     // Profiles from the previous app keep their storage, and with it their sign-ins.
     const legacy = store.browserProfiles.get(profileId)?.source?.partition;
     const partition = LEGACY_PARTITION.test(legacy || "") ? "persist:" + legacy : "persist:tw-browser-" + profileId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -156,7 +162,8 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
       if (!value.getPreloadScripts().some(script => script.id === "timewarp-no-passkeys")) value.registerPreloadScript({ type: "frame", id: "timewarp-no-passkeys", filePath: NO_PASSKEYS });
       // Pages see the same Chrome identity as in Chrome itself, except Google's
       // sign-in page (GOOGLE_SIGN_IN), which gets it with Timewarp's name.
-      const own = value.getUserAgent().replace(/\s*Electron\/\S+/, "").trim();
+      if (!ORIGINAL_USER_AGENTS.has(value)) ORIGINAL_USER_AGENTS.set(value, value.getUserAgent());
+      const own = ORIGINAL_USER_AGENTS.get(value).replace(/\s*Electron\/\S+/, "").trim();
       value.setUserAgent(own.replace(/(\(KHTML, like Gecko\)\s+)(?:[^\s/]+\/\S+\s+)+(?=Chrome\/)/, "$1").replace(/\s*timewarp(?:-desktop)?\/\S+/gi, "").trim());
       value.webRequest?.onBeforeSendHeaders({ urls: [GOOGLE_SIGN_IN] }, (details, callback) => {
         const name = Object.keys(details.requestHeaders || {}).find(key => key.toLowerCase() === "user-agent");
@@ -253,11 +260,9 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
   const SAVED_KEY = "browserTabs", SAVED_CHATS = 50, SAVED_TABS = 12, SAVED_HISTORY = 10;
   const restored = new Set(), dirty = new Set();
   let saveTimer = null;
-  // The chat's profile when it is one of the signed-in account's own (a chat
-  // can name one from before each account had its own), else its default.
-  function chatProfile(conversationId) {
-    const chosen = store.conversations.get(conversationId)?.browserProfileId;
-    return chosen && store.browserProfiles.list().some(profile => profile.id === chosen) ? chosen : store.browserProfiles.ensureDefault().id;
+  // Every chat uses the signed-in account's one profile.
+  function chatProfile() {
+    return store.browserProfiles.ensureDefault().id;
   }
   function restore(conversationId) {
     if (!conversationId || restored.has(conversationId)) return;
@@ -265,8 +270,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
     let saved;
     try { saved = store.settings.get(SAVED_KEY, {})?.[conversationId]; } catch { return; }
     if (!Array.isArray(saved?.tabs) || !saved.tabs.length) return;
-    const profiles = new Set(store.browserProfiles.list().map(profile => profile.id));
-    const fallback = () => chatProfile(conversationId);
+    const profileId = chatProfile();
     let active = null;
     saved.tabs.slice(-SAVED_TABS).forEach((item, index) => {
       const url = item.kind === "web" && recordable(item.url) ? item.url : null;
@@ -274,7 +278,7 @@ function createBrowser({ window: getWindow, store, notify = () => {}, log = null
       let history = url ? validHistory(item.history, SAVED_HISTORY) : null;
       if (history?.entries[history.index].url !== url) history = null;
       tabs.set(id, {
-        id, conversationId, profileId: profiles.has(item.profileId) ? item.profileId : fallback(), kind: url ? "web" : "home", url, title: String(item.title || "").slice(0, 300),
+        id, conversationId, profileId, kind: url ? "web" : "home", url, title: String(item.title || "").slice(0, 300),
         order: Date.now() - SAVED_TABS + index, usedAt: 0, pinned: item.pinned === true, history: history && { ...history, entries: history.entries.map(({ url: address, title }) => ({ url: address, title })) },
       });
       if (item.active || !active) active = id;
@@ -532,7 +536,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     const group = list => { if (!list.length) return; if (items.length) items.push({ type: "separator" }); items.push(...list); };
     if (params.misspelledWord) group((params.dictionarySuggestions || []).slice(0, 4).map(word => ({ label: word, click: () => contents.replaceMisspelling(word) })));
     if (params.linkURL && recordable(params.linkURL)) group([
-      { label: "Open link in new tab", click: () => { try { openTab(tab.conversationId, { url: params.linkURL, profileId: tab.profileId, activate: false, after: tab }); } catch {} } },
+      { label: "Open link in new tab", click: () => { try { openTab(tab.conversationId, { url: params.linkURL, activate: false, after: tab }); } catch {} } },
       { label: "Copy link address", click: () => clipboard.writeText(params.linkURL) },
     ]);
     if (params.mediaType === "image" && params.srcURL) group([
@@ -608,9 +612,9 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
 
   // worker: a worker's own background tab (its downloads go to the workspace).
   // after: the tab it opens from, to place it right after that one.
-  function openTab(conversationId, { url = null, profileId, activate = true, worker = false, after = null } = {}) {
+  function openTab(conversationId, { url = null, activate = true, worker = false, after = null } = {}) {
     restore(conversationId);
-    const profile = profileId || chatProfile(conversationId);
+    const profile = chatProfile();
     const tab = { id: crypto.randomUUID(), conversationId, profileId: profile, kind: url ? "web" : "home", url: url ? safeUrl(url) : null, title: "", order: after ? orderAfter(after) : nextOrder(), usedAt: Date.now(), worker: !!worker };
     tabs.set(tab.id, tab);
     if (!groups.has(conversationId)) groups.set(conversationId, { active: null });
@@ -734,10 +738,11 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     setMuted(conversationId, tabId, muted) { const tab = tabFor(conversationId, tabId); tab.muted = !!muted; tab.view?.webContents.setAudioMuted(tab.muted); changed(conversationId); return stateOf(tab); },
     // Readies the browser for a page about to open (First steps): the
     // profile's storage and a connection to each site.
-    warm(conversationId, urls) { const session = sessionFor(chatProfile(conversationId)); for (const url of urls) try { session.preconnect({ url: safeUrl(url), numSockets: 2 }); } catch {} },
-    // The chat's tabs reopen in the chosen profile, with its own sign-ins.
+    warm(conversationId, urls) { const session = sessionFor(chatProfile()); for (const url of urls) try { session.preconnect({ url: safeUrl(url), numSockets: 2 }); } catch {} },
+    // Moves a chat's tabs to the shared profile (the only one there is now),
+    // reopening them there, with its sign-ins.
     setProfile(conversationId, profileId) {
-      if (!store.browserProfiles.list().some(profile => profile.id === profileId)) throw fail(404, "This browser profile is unavailable.");
+      if (profileId !== chatProfile()) throw fail(400, "Timewarp uses one shared browser profile.");
       store.conversations.update(conversationId, { browserProfileId: profileId }, { touch: false });
       const open = [...tabs.values()].filter(tab => tab.conversationId === conversationId && tab.profileId !== profileId).sort((a, b) => a.order - b.order);
       const active = groups.get(conversationId)?.active;
@@ -748,7 +753,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
         discard(tab);
         tabs.delete(tab.id);
         let reopened = null;
-        try { reopened = openTab(conversationId, { url: url && recordable(url) ? url : null, profileId, activate: tab.id === active }); } catch {}
+        try { reopened = openTab(conversationId, { url: url && recordable(url) ? url : null, activate: tab.id === active }); } catch {}
         if (reopened) Object.assign(tabs.get(reopened.id), { order: tab.order, pinned: tab.pinned });
       }
       layout();
@@ -760,10 +765,9 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     // removed at the next start.
     async removeProfile(profileId) {
       for (const [conversationId] of groups) if ([...tabs.values()].some(tab => tab.conversationId === conversationId && tab.profileId === profileId)) {
-        const fallback = store.browserProfiles.ensureDefault().id;
-        this.setProfile(conversationId, fallback);
+        this.setProfile(conversationId, chatProfile());
       }
-      const value = sessionFor(profileId);
+      const value = sessionFor(profileId, { migration: true });
       await value.clearStorageData().catch(() => {});
       await value.clearCache?.().catch(() => {});
       const permissions = sitePermissions();
@@ -773,7 +777,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
       log?.warn("browser-profile", "A removed profile's storage is in use; it's removed at the next start");
       try { store.settings.set(REMOVE_LATER, [...new Set([...(store.settings.get(REMOVE_LATER, []) || []), folder])]); } catch {}
     },
-    recent: (conversationId, profileId) => store.recentSites.list(profileId || chatProfile(conversationId), conversationId).slice(0, 4),
+    recent: conversationId => store.recentSites.list(chatProfile(), conversationId).slice(0, 4),
     // Agent tools act on the conversation's active web tab.
     webContents(conversationId, tabId) {
       const tab = tabFor(conversationId, tabId);
@@ -819,7 +823,7 @@ addEventListener("keydown", event => { if (event.key === "Escape") document.titl
     // without a tab or changing the visible page; it closes once read.
     async readAway(conversationId, url, read) {
       const address = safeUrl(url);
-      const profileId = chatProfile(conversationId);
+      const profileId = chatProfile();
       const view = new WebContentsView({ webPreferences: preferences(profileId) });
       const contents = view.webContents;
       away.add(contents);

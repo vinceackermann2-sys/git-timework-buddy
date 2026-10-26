@@ -92,6 +92,8 @@ function snippetOf(text, query, room = SNIPPET_ROOM) {
   return { snippet: lead + source.slice(from, to) + (to < source.length ? "..." : ""), highlight: { start: offset, end: offset + end - start } };
 }
 const parse = value => { if (value === null || value === undefined) return null; try { return JSON.parse(value); } catch { return null; } };
+// Browser profiles whose sign-ins are still to be merged, by the profile they merge into.
+const BROWSER_MERGES = "browserProfileMergePending";
 // The search index needs FTS5 with contentless_delete (SQLite 3.43 and later).
 function fts5(db) {
   try { db.exec("create virtual table temp.fts5_probe using fts5(x, content='', contentless_delete=1, tokenize='trigram case_sensitive 1', detail='none'); drop table temp.fts5_probe"); return true; }
@@ -523,8 +525,9 @@ function createStore(db) {
   };
   const browserProfiles = {
     list() { const [where, args] = ownProfiles(); return all(`select * from browser_profiles where deleted_at is null and ${where} order by is_default desc, created_at`, ...args).map(profileOf); },
-    // Any account's profile, for the browser's own use (its storage, its permissions).
-    get: id => profileOf(one("select * from browser_profiles where id = ? and deleted_at is null", id)),
+    // Any account's profile, for the browser's own use (its storage, its
+    // permissions), including one folded into the default (consolidate).
+    get: id => profileOf(one("select * from browser_profiles where id = ?", id)),
     create({ id = crypto.randomUUID(), label, source = { type: "timewarp" }, isDefault = false }) {
       run("insert into browser_profiles(id, label, source, is_default, created_at, owner_id) values (?,?,?,?,?,?)", id, label, JSON.stringify(source), isDefault ? 1 : 0, now(), profileOwner());
       changed("browserProfiles", id);
@@ -549,6 +552,38 @@ function createStore(db) {
       const owner = profileOwner();
       return browserProfiles.create({ id: owner && owner !== profileScope.legacy() ? `timewarp:default:${owner}` : "timewarp:default", label: "Timewarp", isDefault: true });
     },
+    // An account has one browser profile now: its other profiles fold into the
+    // default. Their chats, saved tabs and recent sites move over; the profiles
+    // leave the list but keep their storage, so their sign-ins can be merged in
+    // (browser-import.cjs), again at a later start if that's interrupted.
+    consolidate() {
+      const target = browserProfiles.ensureDefault(), ids = new Set(browserProfiles.list().filter(item => item.id !== target.id).map(item => item.id));
+      if (!ids.size) return target;
+      transaction(() => {
+        const pending = settings.get(BROWSER_MERGES, {}) || {};
+        settings.set(BROWSER_MERGES, { ...pending, [target.id]: [...new Set([...(pending[target.id] || []), ...ids])] });
+        for (const id of ids) {
+          run("update recent_sites set profile_id = ? where profile_id = ? and not exists (select 1 from recent_sites r where r.profile_id = ? and r.conversation_id = recent_sites.conversation_id and r.url = recent_sites.url)", target.id, id, target.id);
+          run("update browser_profiles set deleted_at = ? where id = ?", now(), id);
+          run("update conversations set browser_profile_id = ? where browser_profile_id = ?", target.id, id);
+        }
+        const saved = settings.get("browserTabs", {}) || {};
+        for (const group of Object.values(saved)) for (const tab of group?.tabs || []) if (ids.has(tab.profileId)) tab.profileId = target.id;
+        settings.set("browserTabs", saved);
+      });
+      changed("browserProfiles", target.id);
+      return target;
+    },
+    // Another browser's sign-ins came into this profile (browser-import.cjs).
+    markImported(id) {
+      const profile = browserProfiles.get(id);
+      if (!profile) return;
+      run("update browser_profiles set source = ? where id = ?", JSON.stringify({ ...profile.source, importedAt: now() }), id);
+      changed("browserProfiles", id);
+    },
+    // Profiles whose sign-ins are still to be merged into the default target.
+    pendingMerges: target => (settings.get(BROWSER_MERGES, {}) || {})[target] || [],
+    setPendingMerges: (target, ids) => settings.set(BROWSER_MERGES, { ...(settings.get(BROWSER_MERGES, {}) || {}), [target]: ids }),
     scopeTo(owner, legacy) { profileScope = { owner, legacy }; },
   };
 

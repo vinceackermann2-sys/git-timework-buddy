@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { openStore } = require("../app/main/store.cjs");
-const { createBrowserImport, detectProfiles } = require("../app/main/browser-import.cjs");
+const { createBrowserImport, detectProfiles, sourceDirectory, consolidateBrowserProfiles } = require("../app/main/browser-import.cjs");
 
 function fakeBrowsers(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-browsers-"));
@@ -36,6 +36,119 @@ test("other browsers' profiles are found from their profile lists only", t => {
   assert.deepEqual(detectProfiles({ ...options, platform: "sunos" }), { profiles: [], errors: [] });
 });
 
+function importingFixture(t, options = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tw-import-test-"));
+  const store = openStore(path.join(root, "store.sqlite")), written = [];
+  t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const source = { browserId: "chrome", profilePath: "Default" };
+  const imports = createBrowserImport({ store,
+    detect: () => ({ profiles: [{ browser: "Chrome", label: "Work", source }] }), resolveSource: () => ({}),
+    sessionFor: () => ({ cookies: { set: async value => written.push(value), flushStore: async () => {} } }),
+    ...options,
+  });
+  return { store, written, imports, selection: { selections: [source] } };
+}
+
+test("protected cookies use the browser helper, and cancellation never claims success", async t => {
+  let cancelled = true, attempts = 0;
+  const f = importingFixture(t, { readCookies: async () => ({ cookies: [], failedDecryption: 3 }), assist: async () => { attempts++; return cancelled ? null : [{ domain: ".example.com", name: "protected", value: "fixture", secure: true }]; } });
+  assert.equal((await f.imports.importProfiles(f.selection)).outcome, "cancelled");
+  assert.equal(f.written.length, 0);
+  cancelled = false;
+  const result = await f.imports.importProfiles(f.selection);
+  assert.equal(result.summary.imported, 1);
+  assert.equal(result.summary.failedDecryption, 0);
+  assert.equal(attempts, 2);
+  assert.equal(f.store.browserProfiles.list().length, 1);
+  assert.ok(!JSON.stringify(result).includes("fixture"), "cookie values never reach the renderer");
+});
+
+test("cookie writes report partial failure, and persistence failures reject the import", async t => {
+  const f = importingFixture(t, { readCookies: async () => ({ cookies: [{ domain: "example.com", name: "session", value: "fixture" }], failedDecryption: 2 }),
+    sessionFor: () => ({ cookies: { set: async () => { throw Error("fixture"); }, flushStore: async () => {} } }),
+  });
+  const result = await f.imports.importProfiles(f.selection);
+  assert.equal(result.outcome, "partial");
+  assert.equal(result.summary.failedWrite, 1);
+  assert.equal(result.warnings.length, 2);
+  const g = importingFixture(t, { readCookies: async () => ({ cookies: [], failedDecryption: 0 }), sessionFor: () => ({ cookies: { flushStore: async () => { throw Error("disk full"); } } }) });
+  await assert.rejects(g.imports.importProfiles(g.selection), /could not be saved/);
+});
+
+test("an import cannot overlap another import or write cookies after an account change", async t => {
+  let release, owner = "a";
+  const f = importingFixture(t, { userId: () => owner, readCookies: () => new Promise(resolve => { release = resolve; }) });
+  const first = f.imports.importProfiles(f.selection);
+  await assert.rejects(f.imports.importProfiles(f.selection), /already running/);
+  owner = "b";
+  release({ cookies: [{ domain: "example.com", name: "session", value: "fixture" }], failedDecryption: 0 });
+  await assert.rejects(first, /account changed/);
+  assert.equal(f.written.length, 0);
+});
+
+test("existing profiles collapse into one, keep sign-ins and tab history, and retry interrupted merges", async t => {
+  const f = importingFixture(t), { store } = f;
+  const target = store.browserProfiles.ensureDefault();
+  const old = store.browserProfiles.create({ label: "Work", source: { type: "chrome", partition: "browser-profile:v1:" + "a".repeat(64) } });
+  const agent = store.agents.create({ ownerId: "u", name: "Orbit", workspace: "/fixture" });
+  const chat = store.conversations.create({ ownerId: "u", agentId: agent.id, browserProfileId: old.id });
+  store.settings.set("browserTabs", { [chat.id]: { tabs: [{ id: "saved", profileId: old.id, url: "https://example.com", history: { index: 0 } }] } });
+  store.recentSites.record(old.id, chat.id, "https://example.com", "Fixture");
+  const cookie = (name, value) => ({ domain: ".example.com", name, value, path: "/", secure: true });
+  const destination = [cookie("keep", "default")]; let locked = true;
+  const sessionFor = id => ({ cookies: {
+    get: async () => { if (id !== target.id && locked) throw Error("locked"); return id === target.id ? destination : [cookie("keep", "old"), cookie("import", "old")]; },
+    set: async cookie => destination.push(cookie), flushStore: async () => {},
+  } });
+  await consolidateBrowserProfiles({ store, sessionFor });
+  assert.deepEqual(store.browserProfiles.list().map(profile => profile.id), [target.id]);
+  assert.deepEqual(store.browserProfiles.pendingMerges(target.id), [old.id]);
+  assert.equal(store.conversations.get(chat.id).browserProfileId, target.id);
+  assert.equal(store.settings.get("browserTabs")[chat.id].tabs[0].profileId, target.id);
+  assert.equal(store.settings.get("browserTabs")[chat.id].tabs[0].history.index, 0);
+  assert.equal(store.recentSites.list(target.id, chat.id).length, 1);
+  assert.equal(store.browserProfiles.get(old.id).source.partition, old.source.partition, "old storage remains recoverable");
+  locked = false;
+  await consolidateBrowserProfiles({ store, sessionFor });
+  assert.deepEqual(store.browserProfiles.pendingMerges(target.id), []);
+  assert.deepEqual(destination.map(cookie => [cookie.name, cookie.value]), [["keep", "default"], ["import", "old"]]);
+});
+
+test("the public API lists one profile, rejects creation and preserves import receipts", async t => {
+  const f = importingFixture(t), expected = { outcome: "partial", summary: { imported: 1, failedWrite: 1 }, warnings: ["Retry"] };
+  f.store.browserProfiles.ensureDefault();
+  f.store.browserProfiles.create({ label: "old" });
+  const { createMethods } = require("../app/main/methods.cjs");
+  const methods = createMethods({ store: f.store, services: { auth: { userId: () => "user" } }, browserImport: { importProfiles: async () => expected } });
+  assert.equal(methods["browser.profiles"]().length, 1);
+  assert.throws(() => methods["browser.createProfile"]({ label: "extra" }), /one shared/);
+  assert.equal(await methods["browser.importProfile"]({ browserId: "chrome", profilePath: "Default" }), expected);
+});
+
+test("onboarding uses the shared cookie importer and never marks cancelled, empty or partial imports connected", async t => {
+  const f = importingFixture(t, { readCookies: async () => ({ cookies: [{ domain: "example.com", name: "session", value: "fixture" }], failedDecryption: 0 }) });
+  const { createOnboardingService } = require("../desktop/onboarding-service.cjs");
+  let saved = null, outcome = null;
+  const browserImport = { ...f.imports, importProfiles: input => outcome ? Promise.resolve(outcome) : f.imports.importProfiles(input) };
+  const service = createOnboardingService({ storage: { load: () => saved, save: value => { saved = value; } }, userId: () => "user",
+    native: () => ({ settings: { get: async () => ({ appearance: {} }) }, caller: () => ({ codex: { setupImport: { detect: async () => ({ items: [] }) } } }) }), browsers: () => browserImport,
+  });
+  const detected = await service.detect(), selection = { profiles: [detected.profiles[0].id] };
+  for (const receipt of [{ outcome: "cancelled" }, { outcome: "imported", summary: { imported: 0 } }, { outcome: "partial", summary: { imported: 1, failedWrite: 1 }, warnings: ["Retry"] }]) {
+    outcome = receipt;
+    const result = await service.run("import", selection);
+    assert.equal(result.profiles.length, 0);
+    assert.ok(result.warnings.length);
+    assert.equal(Object.keys((await service.read()).imports || {}).length, 0);
+  }
+  outcome = null;
+  const result = await service.run("import", selection);
+  assert.equal(result.cookies, 1);
+  assert.equal(result.profiles.length, 1);
+  assert.equal(f.store.browserProfiles.list().length, 1);
+  assert.equal(Object.keys((await service.read()).imports).length, 1);
+});
+
 test("profiles used most recently come first, then by name", t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-browsers-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -46,55 +159,30 @@ test("profiles used most recently come first, then by name", t => {
   assert.deepEqual(profiles.map(profile => profile.browser + " " + profile.name), ["Edge Profil 1", "Chrome Person 1", "Edge Alpha", "Chrome Beta"]);
 });
 
-test("importing makes one Timewarp profile per browser profile", async t => {
+test("importing copies cookies into the single shared Timewarp profile, including on repeat", async t => {
   const options = fakeBrowsers(t);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-store-"));
   const store = openStore(path.join(root, "timewarp.sqlite"));
   t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
   store.browserProfiles.ensureDefault();
-  const imports = createBrowserImport({ store, detect: () => detectProfiles(options) });
+  const written = [];
+  let flushes = 0;
+  const imports = createBrowserImport({ store, detect: () => detectProfiles(options),
+    resolveSource: source => sourceDirectory(source, options),
+    readCookies: async () => ({ cookies: [{ domain: ".example.com", name: "session", value: "fixture", path: "/", secure: true, httpOnly: true }], failedDecryption: 0 }),
+    sessionFor: id => { assert.equal(id, "timewarp:default"); return { cookies: { set: async cookie => written.push(cookie), flushStore: async () => flushes++ } }; },
+  });
   assert.equal(imports.importable().length, 2);
   const first = await imports.importProfiles({ selections: [{ browserId: "chrome", profilePath: "Default" }] });
-  assert.equal(first.profiles[0].label, "Person 1 (ada@example.com)");
-  assert.deepEqual(first.profiles[0].source, { type: "chrome", profilePath: "Default", browser: "Chrome", email: "ada@example.com" });
+  assert.equal(first.profiles[0].id, "timewarp:default");
+  assert.equal(first.summary.imported, 1);
+  assert.equal(written[0].httpOnly, true);
+  assert.equal(written[0].url, "https://example.com/");
   const again = await imports.importProfiles({ selections: [{ browserId: "chrome", profilePath: "Default" }] });
   assert.equal(again.profiles[0].id, first.profiles[0].id);
-  assert.deepEqual(imports.importable().map(profile => profile.label), ["Work"]);
-  assert.equal(store.browserProfiles.list().length, 2);
+  assert.equal(imports.importable().length, 2, "sources stay available to refresh sessions");
+  assert.equal(written.length, 2);
+  assert.equal(flushes, 2);
+  assert.equal(store.browserProfiles.list().length, 1);
   await assert.rejects(imports.importProfiles({ selections: [{ browserId: "chrome", profilePath: "Gone" }] }), /no longer on this computer/);
-});
-
-test("importing copies the browser's sign-ins into the new profile's session", async t => {
-  const options = fakeBrowsers(t);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-store-"));
-  const store = openStore(path.join(root, "timewarp.sqlite"));
-  t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
-  store.browserProfiles.ensureDefault();
-  const calls = [];
-  const imports = createBrowserImport({
-    store, detect: () => detectProfiles(options),
-    sessionFor: profileId => ({ profileId }),
-    importCookies: async (source, session) => { calls.push({ source, session }); return { imported: 4, failedDecryption: 0, appBound: 2, needsSignin: true }; },
-  });
-  const result = await imports.importProfiles({ selections: [{ browserId: "chrome", profilePath: "Default" }] });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].source.browserId, "chrome");
-  assert.ok(calls[0].source.profilePath.endsWith("Default"), "the absolute profile path is passed");
-  assert.equal(calls[0].session.profileId, result.profiles[0].id, "cookies go into the new profile's session");
-  assert.deepEqual(result.summary, { created: 1, imported: 4, failedDecryption: 0, failedWrite: 0, appBound: 2, needsSignin: true });
-});
-
-test("a failed cookie read still imports the profile and asks for a sign-in", async t => {
-  const options = fakeBrowsers(t);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "timewarp-store-"));
-  const store = openStore(path.join(root, "timewarp.sqlite"));
-  t.after(() => { store.close(); fs.rmSync(root, { recursive: true, force: true }); });
-  store.browserProfiles.ensureDefault();
-  const imports = createBrowserImport({
-    store, detect: () => detectProfiles(options), sessionFor: () => ({}),
-    importCookies: async () => { throw new Error("locked"); },
-  });
-  const result = await imports.importProfiles({ selections: [{ browserId: "chrome", profilePath: "Default" }] });
-  assert.equal(result.profiles.length, 1);
-  assert.equal(result.summary.needsSignin, true);
 });
