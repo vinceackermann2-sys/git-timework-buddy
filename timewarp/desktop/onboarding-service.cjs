@@ -44,9 +44,24 @@ function createOnboardingService({storage,userId,native,browsers,cloud,updatePro
       const available=await detect();check(id);
       const chosen=selectedItems.map(selection=>{const item=available.items.find(item=>item.id===selection.id);if(!item||!Array.isArray(selection.names)||!selection.names.length||selection.names.some(value=>!item.names.includes(value)))throw Error('An import selection is no longer available. Refresh and try again.');return{id:item.id,names:[...new Set(selection.names)]}});
       if(selectedProfiles.some(key=>!available.profiles.some(item=>item.id===key)))throw Error('A browser profile is no longer available. Refresh and try again.');
-      const result={profiles:[],memoryFiles:0,skills:0,warnings:[]};
-      // Record each completed operation so a partial failure never claims all succeeded.
-      for(const key of selectedProfiles){check(id);const detected=await browsers().profileManager.detect();const profile=detected.profiles.find(item=>profileId(item.source)===key);if(!profile)throw Error('The browser profile changed. Refresh and try again.');const imported=await browsers().importProfiles({onboardingRunId:null,selections:[{browserId:profile.source.browserId,profilePath:profile.source.profilePath}]});result.profiles.push(key);if(imported.summary?.needsSignin||imported.passwords?.outcome==='failed')result.warnings.push((profile.label||profile.name||'Browser')+': some sign-ins stay protected by the browser. Open this profile in Timewarp’s browser and sign in once.');save(id,{imports:{...draft(id).imports,[key]:{kind:'browser',label:profile.label||profile.name,at:Date.now()}}});}
+      const result={profiles:[],cookies:0,memoryFiles:0,skills:0,warnings:[]};
+      // Record each completed operation so a partial failure never claims all succeeded:
+      // a cancelled, empty or partial browser import isn't marked connected.
+      for(const key of selectedProfiles){
+        check(id);const detected=await browsers().profileManager.detect();check(id);
+        const profile=detected.profiles.find(item=>profileId(item.source)===key);
+        if(!profile)throw Error('The browser profile changed. Refresh and try again.');
+        const imported=await browsers().importProfiles({onboardingRunId:null,selections:[{browserId:profile.source.browserId,profilePath:profile.source.profilePath}]});check(id);
+        if(imported.outcome==='cancelled'){result.warnings.push('Browser import cancelled. You can retry here or in Browser settings.');continue;}
+        result.cookies+=imported.summary?.imported||0;
+        result.warnings.push(...(imported.warnings||[]));
+        if(imported.summary?.failedDecryption||imported.summary?.failedWrite||imported.passwords?.outcome==='failed'){
+          if(!imported.warnings?.length)result.warnings.push((profile.label||profile.name||'Browser')+': some sign-ins could not be imported. Retry or sign in inside Timewarp.');
+          continue;
+        }
+        if(!imported.summary?.imported){result.warnings.push('No cookies found in '+(profile.label||profile.name||'this profile')+'. Choose another profile or sign in inside Timewarp.');continue;}
+        result.profiles.push(key);save(id,{imports:{...draft(id).imports,[key]:{kind:'browser',label:profile.label||profile.name,at:Date.now()}}});
+      }
       for(const item of chosen){check(id);const receipt=await n.caller().codex.setupImport.import({sync:false,items:[item]});check(id);result.memoryFiles+=receipt.imported.memoryFiles;result.skills+=receipt.imported.skills;save(id,{imports:{...draft(id).imports,[item.id]:{kind:item.id.split(':')[1],names:item.names,at:Date.now()}}});}
       return result;
     }else if(action==='knowledge-done'){save(id,{step:'theme'});

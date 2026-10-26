@@ -1,13 +1,14 @@
 "use strict";
 // Profiles in the other browsers on this computer, offered in Settings →
-// Browser and during setup. Only each browser's profile list (its "Local
-// State" file: profile names and signed-in accounts) is read. Importing makes
-// a Timewarp browser profile with the same name; the other browser's cookies
-// and saved passwords are not read. Saved passwords come in from a CSV export
-// (Vault), and sites are signed in to once in Timewarp's browser.
+// Browser and during setup, which share this importer. A source profile's
+// cookies (browser-cookies.cjs) go into the signed-in account's one Timewarp
+// browser profile, so its sites stay signed in; importing never creates a
+// profile, and a source can be imported again to refresh its sign-ins. Saved
+// passwords come in from a CSV export (Vault).
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { readBrowserCookies, cookieDetails } = require("./browser-cookies.cjs");
 
 const BROWSERS = {
   win32: [
@@ -74,8 +75,6 @@ function detectProfiles({ platform = process.platform, env = process.env, home =
         accountName: text(info?.gaia_name) || null,
         picture: email ? picture(path.join(root, directory)) : null,
         browser: browser.name,
-        // absolutePath is used to read the profile's sign-ins; it isn't stored.
-        absolutePath: path.join(root, directory),
         source: { browserId: browser.id, profilePath: directory },
       });
     }
@@ -86,55 +85,100 @@ function detectProfiles({ platform = process.platform, env = process.env, home =
   return { profiles, errors };
 }
 
-// The default cookie importer; split out so tests can inject a fake.
-function defaultImportCookies(source, session, options) {
-  return require("./browser-cookies.cjs").importCookies(source, session, options);
+function sourceDirectory(source, { platform = process.platform, env = process.env, home = os.homedir() } = {}) {
+  const browser = (BROWSERS[platform] || []).find(item => item.id === source.browserId);
+  if (!browser || !/^[\w .-]{1,80}$/.test(source.profilePath) || source.profilePath.startsWith(".")) throw new Error("This browser profile is unavailable.");
+  const base = browser.base === "HOME" ? home : env[browser.base];
+  if (!base) throw new Error("This browser profile is unavailable.");
+  const root = fs.realpathSync(path.join(base, browser.dir)), directory = fs.realpathSync(path.join(root, source.profilePath));
+  if (path.dirname(directory) !== root) throw new Error("This browser profile is outside its browser's data folder.");
+  return { root, directory, browserId: browser.id, platform };
 }
 
-// sessionFor(profileId) gives a created profile's Electron session, so a
-// browser's sign-ins can be copied into it. Without it (or in tests) only the
-// profile is created. cookieOptions lets tests set platform/env.
-function createBrowserImport({ store, detect = detectProfiles, sessionFor = null, importCookies = defaultImportCookies, cookieOptions = {}, log = () => {} } = {}) {
-  const sameSource = (profile, source) => profile.source?.type === source.browserId && profile.source?.profilePath === source.profilePath;
+function createBrowserImport({ store, detect = detectProfiles, sessionFor, readCookies = readBrowserCookies, resolveSource = sourceDirectory, assist = null, userId = () => null } = {}) {
+  let importing = false;
   return {
     profileManager: { detect: async () => detect() },
-    // Importable profiles that aren't in Timewarp yet.
-    importable() {
-      const existing = store.browserProfiles.list();
-      return detect().profiles.filter(profile => !existing.some(item => sameSource(item, profile.source)));
-    },
+    // Keep sources available so the user can refresh expired sessions.
+    importable: () => detect().profiles,
     async importProfiles({ selections = [] } = {}) {
-      const found = detect().profiles, created = [];
-      const summary = { created: 0, imported: 0, failedDecryption: 0, failedWrite: 0, appBound: 0, needsSignin: false };
-      for (const selection of selections) {
-        const profile = found.find(item => item.source.browserId === selection.browserId && item.source.profilePath === selection.profilePath);
-        if (!profile) throw Object.assign(new Error("That browser profile is no longer on this computer."), { status: 404 });
-        const existing = store.browserProfiles.list().find(item => sameSource(item, profile.source));
-        const record = existing || store.browserProfiles.create({
-          label: profile.label.slice(0, 120),
-          source: { type: profile.source.browserId, profilePath: profile.source.profilePath, browser: profile.browser, email: profile.email },
-        });
-        if (!existing) summary.created++;
-        created.push(record);
-        // Carry the browser's sign-ins into the new profile's session, so
-        // imported sites stay signed in. App-Bound browsers can't be copied;
-        // the summary then asks for a one-time sign-in.
-        if (sessionFor) {
-          try {
-            const result = await importCookies({ browserId: profile.source.browserId, profilePath: profile.absolutePath }, sessionFor(record.id), cookieOptions);
-            summary.imported += result.imported || 0;
-            summary.failedDecryption += result.failedDecryption || 0;
-            summary.appBound += result.appBound || 0;
-            summary.needsSignin = summary.needsSignin || !!result.needsSignin;
-          } catch (error) {
-            log("Sign-ins couldn't be copied for an imported browser profile: " + error.message);
-            summary.needsSignin = true;
+      if (importing) throw Object.assign(new Error("A browser import is already running."), { status: 409 });
+      if (!Array.isArray(selections) || selections.length > 20) throw new Error("Choose up to 20 source profiles.");
+      if (!sessionFor) throw new Error("The Timewarp browser session is unavailable.");
+      importing = true;
+      const owner = userId();
+      const check = () => { if (userId() !== owner) throw new Error("Your account changed. Retry the browser import."); };
+      try {
+        const found = detect().profiles, profiles = [], warnings = [];
+        const summary = { created: 0, imported: 0, skipped: 0, failedDecryption: 0, failedWrite: 0 };
+        for (const selection of selections) {
+          const profile = found.find(item => item.source.browserId === selection.browserId && item.source.profilePath === selection.profilePath);
+          if (!profile) throw Object.assign(new Error("That browser profile is no longer on this computer."), { status: 404 });
+          const location = resolveSource(profile.source);
+          let result;
+          try { result = await readCookies(location); }
+          catch (error) { if (!assist) throw error; result = { cookies: [], failedDecryption: 1 }; }
+          check();
+          if (result.failedDecryption && assist) {
+            const cookies = await assist(profile);
+            check();
+            if (cookies === null) return { outcome: "cancelled", profiles, summary, warnings };
+            result = { cookies, failedDecryption: 0 };
           }
+          const target = store.browserProfiles.ensureDefault(), session = sessionFor(target.id);
+          summary.failedDecryption += result.failedDecryption || 0;
+          summary.skipped += result.skipped || 0;
+          for (const cookie of result.cookies) {
+            let details;
+            try { details = cookieDetails(cookie); } catch { details = null; }
+            if (!details) { summary.skipped++; continue; }
+            check();
+            try { await session.cookies.set(details); summary.imported++; } catch { summary.failedWrite++; }
+          }
+          check();
+          // A flush failure must not be reported as a successful import.
+          try { await session.cookies.flushStore(); } catch { throw new Error("Imported cookies could not be saved. Retry the browser import."); }
+          check();
+          if (summary.imported) store.browserProfiles.markImported(target.id);
+          if (!profiles.length) profiles.push(store.browserProfiles.get(target.id) || target);
         }
-      }
-      return { profiles: created, summary, passwords: { outcome: "skipped" } };
+        if (summary.failedDecryption) warnings.push(`${summary.failedDecryption} protected cookies could not be imported. Sign in to those sites in Timewarp.`);
+        if (summary.failedWrite) warnings.push(`${summary.failedWrite} cookies could not be saved. Retry importing or sign in to those sites in Timewarp.`);
+        if (summary.skipped) warnings.push(`${summary.skipped} expired, partitioned or unsupported cookies were skipped.`);
+        return { outcome: summary.failedDecryption || summary.failedWrite ? "partial" : "imported", profiles, summary, warnings, passwords: { outcome: "skipped" } };
+      } finally { importing = false; }
     },
   };
 }
 
-module.exports = { createBrowserImport, detectProfiles, BROWSERS };
+// The signed-in account's other browser profiles (made before there was one
+// per account) fold into its default one: their cookies are copied over where
+// the default has none of the same name, domain and path. sessionFor reaches
+// each profile's own storage.
+async function consolidateBrowserProfiles({ store, sessionFor, log = null }) {
+  const target = store.browserProfiles.consolidate();
+  const pending = store.browserProfiles.pendingMerges(target.id);
+  if (!pending.length) return;
+  const destination = sessionFor(target.id), left = [];
+  const identity = cookie => [cookie.domain, cookie.path, cookie.name].join("\n");
+  let existing;
+  try { existing = new Set((await destination.cookies.get({})).map(identity)); }
+  catch { log?.warn("browser", "Previous browser sign-ins will be merged at the next start; their storage was kept."); return; }
+  for (const id of pending) {
+    try {
+      const cookies = await sessionFor(id).cookies.get({});
+      for (const cookie of cookies) {
+        if (existing.has(identity(cookie))) continue;
+        const details = cookieDetails(cookie);
+        if (!details) continue;
+        await destination.cookies.set(details);
+        existing.add(identity(cookie));
+      }
+      await destination.cookies.flushStore();
+    } catch { left.push(id); }
+  }
+  store.browserProfiles.setPendingMerges(target.id, left);
+  if (left.length) log?.warn("browser", "Some previous browser sign-ins could not be merged; their storage was kept for retry at the next start.");
+}
+
+module.exports = { createBrowserImport, detectProfiles, sourceDirectory, consolidateBrowserProfiles, BROWSERS };

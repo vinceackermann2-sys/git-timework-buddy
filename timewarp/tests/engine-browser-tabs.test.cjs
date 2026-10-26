@@ -84,18 +84,23 @@ function fakeWindow() {
   return { closed: false, minimized: false, isDestroyed() { return this.closed; }, isMinimized() { return this.minimized; }, isVisible: () => true, contentView: { children, addChildView: view => children.add(view), removeChildView: view => children.delete(view) } };
 }
 
-test("a chat's tabs, their profile and the active tab are restored after a restart", () => {
+test("a chat's tabs and the active tab are restored after a restart, all in the shared profile", () => {
   const store = memoryStore();
   const first = createBrowser({ window: () => null, store });
   const home = first.openTab("chat-1");
-  const page = first.openTab("chat-1", { url: "https://example.com/a", profileId: "work" });
+  const page = first.openTab("chat-1", { url: "https://example.com/a" });
   first.openTab("chat-2", { url: "https://example.org/" });
   first.activate("chat-1", home.id);
   first.destroy(); // quitting saves at once
+  // A tab saved in another profile, before there was one per account.
+  const saved = store.settings.get("browserTabs", {});
+  saved["chat-1"].tabs[1].profileId = "work";
+  store.settings.set("browserTabs", saved);
 
   const second = createBrowser({ window: () => null, store });
   const state = second.state("chat-1");
-  assert.deepEqual(state.tabs.map(tab => [tab.id, tab.kind, tab.url, tab.profileId]), [[home.id, "home", null, "default"], [page.id, "web", "https://example.com/a", "work"]]);
+  assert.deepEqual(state.tabs.map(tab => [tab.id, tab.kind, tab.url, tab.profileId]), [[home.id, "home", null, "default"], [page.id, "web", "https://example.com/a", "default"]]);
+  assert.throws(() => second.setProfile("chat-1", "work"), /one shared browser profile/);
   assert.equal(state.active, home.id, "the tab that was active is active again");
   assert.equal(second.state("chat-2").tabs[0].url, "https://example.org/");
   // A tab link from an earlier reply still finds its tab.
@@ -120,14 +125,16 @@ test("closing a chat's tabs forgets them, and only web addresses are kept", () =
   second.destroy();
 });
 
-test("profiles from the previous app open in their own storage; pages can't show notifications or read the clipboard", () => {
+test("the shared profile keeps the previous app's storage; pages can't show notifications or read the clipboard", () => {
   const store = memoryStore();
   const legacy = "browser-profile:v1:" + "a".repeat(64);
   store.browserProfiles.list = () => [{ id: "energy:default", source: { type: "timewarp", partition: legacy } }, { id: "work", source: { type: "chrome", partition: "../elsewhere" } }];
+  store.browserProfiles.ensureDefault = () => store.browserProfiles.list()[0];
   const browser = createBrowser({ window: () => null, store });
   const session = browser.sessionFor("energy:default");
   assert.equal(session.partition, "persist:" + legacy);
-  assert.equal(browser.sessionFor("work").partition, "persist:tw-browser-work", "only the previous app's partition names are used");
+  assert.equal(browser.sessionFor("work"), session, "every page uses the shared profile");
+  assert.equal(browser.sessionFor("work", { migration: true }).partition, "persist:tw-browser-work", "only the previous app's partition names are used");
   for (const permission of ["notifications", "clipboard-read", "geolocation"]) {
     assert.equal(session.check(null, permission), false, permission + " check");
     let granted; session.request(null, permission, value => { granted = value; }); assert.equal(granted, false, permission + " request");
@@ -189,14 +196,15 @@ test("Google's sign-in gets the browser identity with Timewarp's name; other sit
 
 test("every page of a profile, sign-in windows' too, runs the script that keeps the system's passkey window closed", () => {
   const browser = createBrowser({ window: () => null, store: memoryStore() });
-  const session = browser.sessionFor("passkeys");
-  browser.sessionFor("passkeys");
+  const session = browser.sessionFor("passkeys", { migration: true });
+  browser.sessionFor("passkeys", { migration: true });
   // Electron keeps a session for the whole run, past this browser.
   const again = createBrowser({ window: () => null, store: memoryStore() });
-  assert.equal(again.sessionFor("passkeys"), session);
+  assert.equal(again.sessionFor("passkeys", { migration: true }), session);
   assert.deepEqual(session.preloads, [{ type: "frame", id: "timewarp-no-passkeys", filePath: path.join(__dirname, "..", "app", "preload", "no-passkeys.cjs") }], "Registered once for the profile's session");
   assert.ok(fs.existsSync(session.preloads[0].filePath));
-  assert.equal(browser.sessionFor("passkeys-work").preloads.length, 1, "Every profile gets it");
+  assert.equal(browser.sessionFor("passkeys-work", { migration: true }).preloads.length, 1, "Every profile gets it");
+  assert.equal(browser.sessionFor("anything").preloads.length, 1, "The shared profile too");
   browser.destroy();
   again.destroy();
 });
@@ -370,12 +378,12 @@ test("removing a profile clears its storage and removes its folder, or does so a
   const folderOf = name => { const folder = path.join(root, "Partitions", name); fs.mkdirSync(folder, { recursive: true }); fs.writeFileSync(path.join(folder, "Cookies"), "x"); return folder; };
   const store = memoryStore();
   const browser = createBrowser({ window: () => null, store });
-  const session = browser.sessionFor("work");
+  const session = browser.sessionFor("work", { migration: true });
   session.storagePath = folderOf("tw-browser-work");
   await browser.removeProfile("work");
   assert.deepEqual([session.cleared, fs.existsSync(session.storagePath)], [true, false]);
   // Files still in use: left for the next start.
-  const locked = browser.sessionFor("locked");
+  const locked = browser.sessionFor("locked", { migration: true });
   locked.storagePath = folderOf("tw-browser-locked");
   const rm = fs.promises.rm;
   fs.promises.rm = async () => { throw Object.assign(new Error("busy"), { code: "EBUSY" }); };
@@ -591,14 +599,13 @@ test("a sign-in started in a chat opens in front as the user's own tab; it isn't
   next.destroy();
 });
 
-test("a sign-in tab moving to another profile is closed rather than reopened midway", () => {
+test("a sign-in tab stays open when its chat is set to the shared profile it already uses", () => {
   const browser = createBrowser({ window: () => null, store: memoryStore() });
   browser.openTab("chat-1", { url: "https://example.com/" });
   let closed = 0;
   const signin = browser.openSignin("chat-1", "https://connect.example.com/link", { onClosed: () => closed++ });
-  const state = browser.setProfile("chat-1", "work");
-  assert.equal(closed, 1);
-  assert.ok(!state.tabs.some(tab => tab.id === signin.id || tab.signin));
-  assert.deepEqual(state.tabs.map(tab => tab.url), ["https://example.com/"]);
+  const state = browser.setProfile("chat-1", "default");
+  assert.equal(closed, 0);
+  assert.ok(state.tabs.some(tab => tab.id === signin.id));
   browser.destroy();
 });

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Blocks, BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Ellipsis, Globe, KeyRound, LayoutGrid, Monitor, Moon, Pencil, Plus, Search, Settings2, Sun, Trash2, TriangleAlert, UserPlus, UserRound } from "lucide-react";
+import { Blocks, BookMarked, Brain, Building2, CalendarClock, ChevronDown, CreditCard, Ellipsis, Globe, KeyRound, LayoutGrid, Monitor, Moon, Pencil, Plus, Search, Settings2, Sun, TriangleAlert, UserPlus, UserRound } from "lucide-react";
 import { presets, hexToAccent } from "../../../../shared/appearance.cjs";
 import { accountText, call, initials, relativeTime, request, useEvent } from "../api.js";
 import { applyAppearance } from "../theme.js";
@@ -380,7 +380,6 @@ function Browser() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(null);
   const toast = useToast();
-  const confirm = useConfirm();
   const load = () => {
     call("browser.profiles").then(setProfiles).catch(error => toast(error, "error"));
     call("browser.importable").then(setImportable).catch(() => setImportable([]));
@@ -390,27 +389,25 @@ function Browser() {
     event.preventDefault();
     call("browser.renameProfile", { id: editing.id, label: name }).then(() => { setEditing(null); load(); }).catch(error => toast(error, "error"));
   };
-  const remove = async profile => {
-    if (!await confirm({ title: `Remove ${profile.label}?`, body: "Its sign-ins and cookies are deleted from this device, and chats using it switch to the default profile.", action: "Remove", danger: true })) return;
-    call("browser.removeProfile", { id: profile.id }).then(load).catch(error => toast(error, "error"));
-  };
+  // A browser's sign-ins come into the shared profile; importing again refreshes them.
+  const sourceKey = profile => profile.source.browserId + "/" + profile.source.profilePath;
   const add = profile => {
-    setBusy(profile.label);
-    call("browser.importProfile", profile.source).then(created => {
-      const cookies = created.cookies || {};
-      const copied = cookies.imported ? `Brought ${cookies.imported} sign-in${cookies.imported === 1 ? "" : "s"} across. ` : "";
-      const body = cookies.needsSignin
-        ? `${copied}Modern Chrome and Edge protect some sign-ins — open this profile from the profile button in a chat's browser and sign in to those once. Saved passwords can come in from Vault → Import.`
-        : `${copied}Choose it from the profile button in a chat's browser. Saved passwords can come in from Vault → Import.`;
-      toast({ title: `${created.label} added`, body });
+    setBusy(sourceKey(profile));
+    call("browser.importProfile", profile.source).then(result => {
+      if (result.outcome === "cancelled") return;
+      const imported = result.summary?.imported || 0;
+      toast({
+        title: imported ? `${imported} cookie${imported === 1 ? "" : "s"} imported` : "No cookies imported",
+        body: result.warnings?.length ? result.warnings.join(" ") : imported ? "Your signed-in sessions are available in every Timewarp chat. Refresh open pages to use them." : "This profile has no cookies to copy. Sign in to your sites there or choose another profile.",
+      });
       load();
     }).catch(error => toast(error, "error")).finally(() => setBusy(null));
   };
   return (
     <div className="tw-page">
-      <PageHead title="Browser" subtitle="Manage which accounts Timewarp can use when browsing." />
-      <p className="tw-lead">Browser profiles, cookies, passwords and browser actions stay on this device. The local harness uses the cloud model.</p>
-      <h3 className="tw-sub">Your browser profiles</h3>
+      <PageHead title="Browser" subtitle="One browser profile shared by all your chats." />
+      <p className="tw-lead">Cookies, passwords and browser actions stay on this device. Saved passwords can be imported separately in Vault.</p>
+      <h3 className="tw-sub">Your Timewarp browser</h3>
       <div className="tw-list-panel">
         {profiles.map(profile => (
           <div key={profile.id} className="tw-list-row tw-profile-row">
@@ -419,7 +416,6 @@ function Browser() {
             <span className="tw-row-actions">
               <Menu align="right" width={180} trigger={({ toggle }) => <button type="button" className="tw-icon-button" aria-label={"Options for " + profile.label} onClick={toggle}><Ellipsis size={16} /></button>}>
                 <button type="button" className="tw-menu-item" data-close onClick={() => { setName(profile.label); setEditing(profile); }}><Pencil size={15} /><span className="grow">Rename</span></button>
-                {profile.isDefault ? null : <button type="button" className="tw-menu-item" data-close onClick={() => void remove(profile)}><Trash2 size={15} /><span className="grow">Remove</span></button>}
               </Menu>
             </span>
           </div>
@@ -427,13 +423,13 @@ function Browser() {
       </div>
       {importable.length ? (
         <>
-          <h3 className="tw-sub">Importable browser profiles</h3>
+          <h3 className="tw-sub">Import sign-ins from a browser</h3>
           <div className="tw-list-panel">
             {importable.map(profile => (
-              <div key={profile.source.browserId + "/" + profile.source.profilePath} className="tw-list-row tw-profile-row">
+              <div key={sourceKey(profile)} className="tw-list-row tw-profile-row">
                 <ProfileAvatar type={profile.source.browserId} picture={profile.picture} account={profile.source.browserId === "chrome" ? profile.accountName : null} />
                 <div><strong>{profile.label}</strong><span className="desc">{profile.browser}</span></div>
-                <button type="button" className="tw-btn soft" disabled={!!busy} onClick={() => add(profile)}>{busy === profile.label ? "Importing…" : "Import"}</button>
+                <button type="button" className="tw-btn soft" disabled={!!busy} onClick={() => add(profile)}>{busy === sourceKey(profile) ? "Importing…" : "Import"}</button>
               </div>
             ))}
           </div>

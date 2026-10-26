@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pin, PinOff, Plus, RotateCw, Settings, UserRound, Volume2, VolumeX, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Files as FilesIcon, Globe, KeyRound, Maximize2, Minimize2, PanelRight, Pin, PinOff, Plus, RotateCw, UserRound, Volume2, VolumeX, X } from "lucide-react";
 import { call, useEvent } from "../api.js";
 import { Avatar, ContextMenu, Menu, useToast } from "./common.jsx";
 import { Files } from "./Files.jsx";
@@ -103,7 +103,6 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
   const [tools, setTools] = useState(saved.current.tools);
   const [fileStates, setFileStates] = useState(saved.current.files);
   const [profiles, setProfiles] = useState([]);
-  const [profileId, setProfileId] = useState(null);
   const [tabMenu, setTabMenu] = useState(null);
   const closeTabMenu = useCallback(() => setTabMenu(null), []);
   const content = useRef(null);
@@ -235,7 +234,8 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
     return true;
   };
   useEffect(() => { onRegisterClose?.(() => latest.current()); return () => onRegisterClose?.(null); }, []);
-  const profile = profiles.find(item => item.id === (profileId || active?.profileId || conversation.browserProfileId)) || profiles.find(item => item.isDefault) || profiles[0];
+  // The account's one browser profile, shared by all its chats.
+  const profile = profiles[0];
   const tabTitle = tab => (tab.kind === "home" ? toolTitle(tools[tab.id]) || "New tab" : tab.title || host(tab.url) || "New tab");
   const menuTab = tabMenu && state.tabs.find(tab => tab.id === tabMenu.tabId);
   return (
@@ -292,15 +292,7 @@ export function Pane({ conversation, agent, expanded, narrow = false, onExpand, 
         {state.userControl
           ? <button type="button" className="tw-btn tw-control" title="Let the agent use the browser again" onClick={() => run("browser.handBack")}>Hand back</button>
           : active?.agent ? <button type="button" className="tw-btn tw-control" title="Pause the agent's browser actions and use the page yourself" onClick={() => run("browser.takeControl")}>Take over</button> : null}
-        <Menu align="right" width={224} className="tw-profile-menu" trigger={({ toggle }) => <button type="button" className="tw-icon-button tw-profile-button" aria-label={"Browser profile: " + (profile?.label || "Timewarp")} title={"Browser profile: " + (profile?.label || "Timewarp")} onClick={toggle}><ProfileFace profile={profile} /></button>}>
-          {profiles.map(item => (
-            <button key={item.id} type="button" className="tw-menu-item" data-close onClick={() => { if (item.id !== profile?.id) void run("browser.setProfile", { profileId: item.id }).then(value => { if (value) setProfileId(item.id); }); }}>
-              <ProfileFace profile={item} /><span className="grow">{item.label}</span>{item.id === profile?.id ? <Check size={15} /> : null}
-            </button>
-          ))}
-          <div className="tw-menu-sep" />
-          <button type="button" className="tw-menu-item" data-close onClick={() => onSettings?.("browser")}><Settings size={16} strokeWidth={1.7} /><span className="grow">Manage browser profiles</span></button>
-        </Menu>
+        <button type="button" className="tw-icon-button tw-profile-button" aria-label="Browser settings" title={"Browser profile: " + (profile?.label || "Timewarp")} onClick={() => onSettings?.("browser")}><ProfileFace profile={profile} /></button>
       </form>
       <div className="tw-pane-content" ref={content}>
         {tool === "files" ? <ToolPage title="Files" onBack={() => setTool(null)}><Files key={active.id} agent={agent} files={filesOf(active.id)} onChange={value => setFilesOf(active.id, value)} openPath={fileTab?.tabId === active?.id ? fileTab : null} /></ToolPage>

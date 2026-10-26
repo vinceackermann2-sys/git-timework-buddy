@@ -926,6 +926,10 @@ async function boot() {
     await history.sync();
     agents.assignMascots();
     agents.prepareWorkspaces();
+    // The account's browser profiles from before there was one per account
+    // fold into its shared profile, their sign-ins with them.
+    void require("./browser-import.cjs").consolidateBrowserProfiles({ store, sessionFor: id => browser.sessionFor(id, { migration: true }), log: appLog })
+      .catch(error => appLog.warn("browser", "Earlier browser profiles could not be merged: " + error.message));
     await selectModel().catch(() => console.error("[timewarp] The default model could not be updated."));
     if (fixture && !process.env.TIMEWARP_FIXTURE_ONBOARDING) await onboarding.skip();
     // The command sandbox is set up for every account, whether or not it
@@ -955,9 +959,12 @@ async function boot() {
     };
   }
   const defaultAppearance = () => ({ scheme: "system", accent: defaultAccent, radiance: 0.5, texture: { type: "dots", step: 0 } });
-  // Browser profile import arrives with the profile importer. It writes the
-  // browser's sign-ins into the new profile's session (browser.sessionFor).
-  const browserImport = require("./browser-import.cjs").createBrowserImport({ store, sessionFor: profileId => browser.sessionFor(profileId), log: message => appLog.info("browser-import", message) });
+  // Browser import (Settings → Browser and setup) writes another browser's
+  // sign-ins into the account's shared profile (browser.sessionFor); the ones
+  // that browser protects come through the browser import helper.
+  const browserImport = require("./browser-import.cjs").createBrowserImport({ store, sessionFor: profileId => browser.sessionFor(profileId), userId: () => userId(),
+    assist: require("./browser-import-helper.cjs").createBrowserImportHelper({ profile, dialog, shell }),
+  });
   // Memory, projects and scheduled tasks pasted from ChatGPT, Claude and the
   // like, in setup and on the Memories page.
   const assistantImport = require("./assistant-import.cjs").createAssistantImport({ knowledge, agents, automations });

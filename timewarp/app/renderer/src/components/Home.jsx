@@ -94,10 +94,10 @@ export function Home({ agents, agentId, onAgent, models, onModel, funding, autom
     const count = counts(source);
     if (count.total) suggestions.push({ id: "import-" + source, icon: <Icon name={{ "claude-code": "claude", cursor: "cursor" }[source] || "chatgpt"} />, title: `Import your ${SOURCES[source]} setup`, meta: count.text, action: "Import", run: () => setImporting(source) });
   }
-  // Until a browser profile has been imported, as before.
-  if (profiles && !profiles.some(profile => profile.source?.type && profile.source.type !== "timewarp")) suggestions.push({
+  // Until a browser's sign-ins have been imported, as before.
+  if (profiles && !profiles.some(profile => profile.source?.importedAt || (profile.source?.type && profile.source.type !== "timewarp"))) suggestions.push({
     id: "browser-profiles", icon: browsers.length ? <span className="tw-icons">{browsers.map(id => <Icon key={id} name={BROWSER_ICONS[id] || id} />)}</span> : <Globe size={16} />,
-    title: "Browser profiles", meta: "Manage profiles on this device", action: "Manage", run: () => onSettings("browser"),
+    title: "Browser sign-ins", meta: "Import them from your browsers", action: "Import", run: () => onSettings("browser"),
   });
   const agent = agents.find(item => item.id === agentId) || agents[0];
   // The chosen agent's next chat gets ready: its connected apps load now and,
